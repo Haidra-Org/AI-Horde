@@ -40,10 +40,10 @@ api = Api(REST_API)
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALIDKAI:
         logging.warning(f'Invalid KAI instance: {kwargs["kai_instance"]}')
-        return(f"Server {kai_instance} appears running but does not appear to be a KoboldAI instance. Please start KoboldAI first then try again!")
+        return(f"Server {kwargs["kai_instance"]} appears running but does not appear to be a KoboldAI instance. Please start KoboldAI first then try again!")
     if error == ServerErrors.CONNECTIONERR:
         logging.warning(f'Connection Error when attempting to reach server: {kwargs["kai_instance"]}')
-        return(f"KoboldAI instance {kai_instance} does not seem to be responding. Please load KoboldAI first, ensure it's reachable through the internet, then try again", 400)
+        return(f"KoboldAI instance {kwargs["kai_instance"]} does not seem to be responding. Please load KoboldAI first, ensure it's reachable through the internet, then try again", 400)
     if error == ServerErrors.BADARGS:
         logging.warning(f'{kwargs["username"]} send bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}')
         return(f'Bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}', 400)
