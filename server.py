@@ -184,6 +184,7 @@ def generate(prompt, username, models = [], params = {}):
         return(f'{get_error(ServerErrors.REJECTED,username = username, rejection_details = rejections)}',400)
     return(generations, 200)
 
+
 @REST_API.after_request
 def after_request(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -212,6 +213,7 @@ class Register(Resource):
         )
         return(ret)
 
+
 class List(Resource):
     def get(self):
         servers_ret = []
@@ -224,13 +226,16 @@ class List(Resource):
             servers_ret.append(sdict)
         return(servers_ret,200)
 
+
 class Usage(Resource):
     def get(self):
         return(usage,200)
 
+
 class Contributions(Resource):
     def get(self):
         return(contributions,200)
+
 
 class Generate(Resource):
     decorators = [limiter.limit("10/minute")]
@@ -249,6 +254,15 @@ class Generate(Resource):
         )
         return(ret)
 
+
+class AsyncGeneratePrompt(Resource):
+    decorators = [limiter.limit("30/minute")]
+    def get(self, id):
+        wp = waiting_prompts.get(id)
+        if not wp:
+            return("ID not found", 404)
+        return(wp.get_status(), 200)
+
 class AsyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
     def post(self):
@@ -265,7 +279,7 @@ class AsyncGenerate(Resource):
             args["params"],
 
         )
-        return(wp.id, 200)
+        return({"id":wp.id}, 200)
 
 
 class PromptPop(Resource):
@@ -371,10 +385,17 @@ class WaitingPrompt:
     def get_status(self):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
+        ret_dict["done"] = self.is_completed()
+        ret_dict["generations"] = []
+        for procgen in self.processing_gens:
+            if procgen.is_completed():
+                ret_dict["generations"].append(procgen.generation)
+        return(ret_dict)
 
     def record_usage(self):
         self.total_usage += self.tokens
         usage[self.username] = self.tokens
+
 
 class ProcessingGeneration:
     def __init__(self, owner, username):
@@ -397,6 +418,7 @@ class ProcessingGeneration:
             return(True)
         return(False)
 
+
 class UsageStore(object):
 	def __init__(self, interval = 10):
 		self.interval = interval
@@ -409,6 +431,7 @@ class UsageStore(object):
 		while True:
 			write_usage_to_disk()
 			time.sleep(self.interval)
+
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
@@ -429,6 +452,7 @@ if __name__ == "__main__":
     api.add_resource(Usage, "/usage")
     api.add_resource(Contributions, "/contributions")
     api.add_resource(AsyncGenerate, "/generate/prompt")
+    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
     api.add_resource(PromptPop, "/generate/pop")
     api.add_resource(SubmitGeneration, "/generate/submit")
     UsageStore()
