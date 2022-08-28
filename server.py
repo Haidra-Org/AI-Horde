@@ -8,12 +8,14 @@ import requests
 import json, os
 from enum import Enum
 import threading, time
+from uuid import uuid4
 
 class ServerErrors(Enum):
     INVALIDKAI = 0
     CONNECTIONERR = 1
     BADARGS = 2
     REJECTED = 3
+    WRONG_CREDENTIALS = 4
 
 ###Variables goes here###
 
@@ -50,6 +52,9 @@ def get_error(error, **kwargs):
     if error == ServerErrors.REJECTED:
         logging.warning(f'{kwargs["username"]} prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
         return(f'prompt rejected by all instances with reasons: {kwargs["rejection_details"]}', 400)
+    if error == ServerErrors.WRONG_CREDENTIALS:
+        logging.warning(f'{kwargs["kai_instance"]} sent wrong credentials for modifying instance {kwargs["kai_instance"]}')
+        return(f'wrong credentials for modifying instance {kwargs["kai_instance"]}', 400)
 
 def write_servers_to_disk():
 	with open(servers_file, 'w') as db:
@@ -74,11 +79,16 @@ def update_instance_details(kai_instance, **kwargs):
         return(f"{get_error(ServerErrors.CONNECTIONERR,kai_instance = kai_instance)}",400)
     # If the username arg is provided, we consider this server new
     if "username" in kwargs:
+        existing_details = servers.get(kai_instance)
         username = kwargs["username"]
+        password = kwargs["password"]
+        if existing_details and existing_details['password'] != password:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = kai_instance, username = username)}",400)
         logging.info(f'{username} added server {kai_instance}')
         servers_dict = {
             "model": model,
             "username": username,
+            "password": password,
             "max_length": kwargs.get("max_length", 512),
             "max_content_length": kwargs.get("max_content_length", 2048)
         }
@@ -173,13 +183,15 @@ class Register(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("url", type=str, required=True, help="Full URL The KoboldAI server. E.g. 'https://example.com:5000'")
-        parser.add_argument("username", type=str, required=True, help="Username for questions")
+        parser.add_argument("username", type=str, required=True, help="Username for contributions")
+        parser.add_argument("password", type=str, required=True, help="Password for changing server settings")
         parser.add_argument("max_length", type=int, required=False, default=80, help="The max number of tokens this server can generate. This will set the max for each client.")
         parser.add_argument("max_content_length", type=int, required=False, default=1024, help="The max amount of context to submit to this AI for sampling. This will set the max for each client.")
         args = parser.parse_args()
         ret = update_instance_details(
             args["url"],
             username = args["username"],
+            password = args["password"],
             max_length = args["max_length"],
             max_content_length = args["max_content_length"],
         )
@@ -187,7 +199,15 @@ class Register(Resource):
 
 class List(Resource):
     def get(self):
-        return(servers,200)
+        servers_ret = []
+        for s in servers:
+            sdict = {
+                "model": servers[s]["model"],
+                "max_length": servers[s]["max_length"],
+                "max_content_length": servers[s]["max_content_length"],
+            }
+            servers_ret.append(sdict)
+        return(servers_ret,200)
 
 class Usage(Resource):
     def get(self):
