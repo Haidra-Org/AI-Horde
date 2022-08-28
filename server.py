@@ -85,48 +85,64 @@ def update_instance_details(kai_instance, **kwargs):
 def generate(prompt, username, models = [], params = {}):
     rejections = {}
     generations = []
-
-    for kai_instance in servers:
-        kai_details = servers[kai_instance]
-        max_length = params.get("max_length", 80)
-        if type(max_length) is not int:
-            return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_length", bad_value = max_length)}',400)
-        if max_length > kai_details["max_length"]:
-            rejections["max_length"] = rejections.get("max_length",0) + 1
-            rejections["total"] = rejections.get("total",0) + 1
-            continue
-        max_content_length = params.get("max_content_length", 80)
-        if type(max_content_length) is not int:
-            return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_content_length", bad_value = max_content_length)}',400)
-        if max_content_length > kai_details["max_content_length"]:
-            rejections["total"] = rejections.get("total",0) + 1
-            rejections["max_content_length"] = rejections.get("max_content_length",0) + 1
-            continue
-        srv_chk = update_instance_details(kai_instance)
-        if srv_chk[1] != 200:
-            rejections["total"] = rejections.get("total",0) + 1
-            rejections["server_unavailable"] = rejections.get("server_unavailable",0) + 1
-            continue
-        models = params.get("models", [])
-        if type(models) is not list:
-            return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "models", bad_value = models)}',400)
-        if models != [] and kai_details["model"] not in models:
-            rejections["total"] = rejections.get("total",0) + 1
-            rejections["models"] = rejections.get("models",0) + 1
-            continue
-        try:
-            gen_dict = params
-            gen_dict["prompt"] = prompt
-            print(gen_dict)
-            gen_req = requests.post(kai_instance + '/api/latest/generate/', json = gen_dict)
-            if type(gen_req.json()) is not dict:
-                logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}')
-                continue
-            print(gen_req.json())
-            generations.append(gen_req.json()["results"][0]["text"])
-        except:
-            logging.error(f'KAI instance {kai_instance} API unexpected error on generate: {prompt} with params {params}')
-            continue
+    gen_n = params.get('n', 1)
+    params['n'] = 1
+    rejecting_servers = []
+    for iter in range(gen_n):
+        current_generation = None
+        while not current_generation and len(servers):
+            for kai_instance in servers:
+                if kai_instance in rejecting_servers:
+                    continue
+                kai_details = servers[kai_instance]
+                max_length = params.get("max_length", 80)
+                if type(max_length) is not int:
+                    return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_length", bad_value = max_length)}',400)
+                if max_length > kai_details["max_length"]:
+                    rejections["max_length"] = rejections.get("max_length",0) + 1
+                    rejections["total"] = rejections.get("total",0) + 1
+                    rejecting_servers.append(kai_instance)
+                    continue
+                max_content_length = params.get("max_content_length", 80)
+                if type(max_content_length) is not int:
+                    return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_content_length", bad_value = max_content_length)}',400)
+                if max_content_length > kai_details["max_content_length"]:
+                    rejections["total"] = rejections.get("total",0) + 1
+                    rejections["max_content_length"] = rejections.get("max_content_length",0) + 1
+                    rejecting_servers.append(kai_instance)
+                    continue
+                # We only refresh server status on first iteration
+                if iter == 0:
+                    srv_chk = update_instance_details(kai_instance)
+                    if srv_chk[1] != 200:
+                        rejections["total"] = rejections.get("total",0) + 1
+                        rejections["server_unavailable"] = rejections.get("server_unavailable",0) + 1
+                        continue
+                models = params.get("models", [])
+                if type(models) is not list:
+                    return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "models", bad_value = models)}',400)
+                if models != [] and kai_details["model"] not in models:
+                    rejections["total"] = rejections.get("total",0) + 1
+                    rejections["models"] = rejections.get("models",0) + 1
+                    rejecting_servers.append(kai_instance)
+                    continue
+                try:
+                    gen_dict = params
+                    gen_dict["prompt"] = prompt
+                    print(gen_dict)
+                    gen_req = requests.post(kai_instance + '/api/latest/generate/', json = gen_dict)
+                    if type(gen_req.json()) is not dict:
+                        logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}')
+                        continue
+                    print(gen_req.status_code)
+                    if gen_req.status_code == 503:
+                        logging.info(f'KAI instance {kai_instance} Busy. Will try again later')
+                        continue
+                    current_generation = gen_req.json()["results"][0]["text"]
+                    generations.append(current_generation)
+                except:
+                    logging.error(f'KAI instance {kai_instance} API unexpected error on generate: {prompt} with params {params}')
+                    continue
     if len(generations) == 0:
         return(f'{get_error(ServerErrors.REJECTED,username = username, rejection_details = rejections)}',400)
     return(generations, 200)
