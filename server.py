@@ -2,7 +2,6 @@ from flask import Flask
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import socket
 import logging
 import requests
 import json, os
@@ -424,14 +423,14 @@ if __name__ == "__main__":
         with open(contributions_file) as db:
             contributions = json.load(db)
 
-    api.add_resource(Register, "/register/")
-    api.add_resource(List, "/list/")
-    api.add_resource(Generate, "/generate/")
-    api.add_resource(Usage, "/usage/")
-    api.add_resource(Contributions, "/contributions/")
-    api.add_resource(AsyncGenerate, "/generate/prompt/")
-    api.add_resource(PromptPop, "/generate/pop/")
-    api.add_resource(SubmitGeneration, "/generate/submit/")
+    api.add_resource(Register, "/register")
+    api.add_resource(List, "/list")
+    api.add_resource(Generate, "/generate")
+    api.add_resource(Usage, "/usage")
+    api.add_resource(Contributions, "/contributions")
+    api.add_resource(AsyncGenerate, "/generate/prompt")
+    api.add_resource(PromptPop, "/generate/pop")
+    api.add_resource(SubmitGeneration, "/generate/submit")
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve

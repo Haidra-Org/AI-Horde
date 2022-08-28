@@ -132,3 +132,4 @@ dmypy.json
 servers.json
 usage.json
 contributions.json
+clientData.py
