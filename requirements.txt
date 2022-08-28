@@ -2,3 +2,4 @@ Flask
 flask_restful
 flask_limiter
 waitress
+requests
