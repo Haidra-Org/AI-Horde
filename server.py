@@ -9,6 +9,7 @@ import json, os
 from enum import Enum
 import threading, time
 from uuid import uuid4
+from nltk.tokenize import word_tokenize
 
 class ServerErrors(Enum):
     INVALIDKAI = 0
@@ -16,13 +17,23 @@ class ServerErrors(Enum):
     BADARGS = 2
     REJECTED = 3
     WRONG_CREDENTIALS = 4
+    INVALID_PROCGEN = 5
+    DUPLICATE_GEN = 6
 
-###Variables goes here###
+### Globals
 
+# This is used for asynchronous generations
+# They key is the ID of the prompt, the value is the WaitingPrompt object
+waiting_prompts = {}
+# They key is the ID of the generation, the value is the ProcessingGeneration object
+processing_generations = {}
+# This is used for synchronous generations
 servers_file = "servers.json"
 servers = {}
+# How many tokens each user has requested
 usage_file = "usage.json"
 usage = {}
+# How many tokens each user's server has generated
 contributions_file = "contributions.json"
 contributions = {}
 
@@ -45,16 +56,22 @@ def get_error(error, **kwargs):
         return(f"Server {kwargs['kai_instance']} appears running but does not appear to be a KoboldAI instance. Please start KoboldAI first then try again!")
     if error == ServerErrors.CONNECTIONERR:
         logging.warning(f'Connection Error when attempting to reach server: {kwargs["kai_instance"]}')
-        return(f"KoboldAI instance {kwargs['kai_instance']} does not seem to be responding. Please load KoboldAI first, ensure it's reachable through the internet, then try again", 400)
+        return(f"KoboldAI instance {kwargs['kai_instance']} does not seem to be responding. Please load KoboldAI first, ensure it's reachable through the internet, then try again")
     if error == ServerErrors.BADARGS:
         logging.warning(f'{kwargs["username"]} send bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}')
-        return(f'Bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}', 400)
+        return(f'Bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}')
     if error == ServerErrors.REJECTED:
         logging.warning(f'{kwargs["username"]} prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
-        return(f'prompt rejected by all instances with reasons: {kwargs["rejection_details"]}', 400)
+        return(f'prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
     if error == ServerErrors.WRONG_CREDENTIALS:
         logging.warning(f'{kwargs["kai_instance"]} sent wrong credentials for modifying instance {kwargs["kai_instance"]}')
-        return(f'wrong credentials for modifying instance {kwargs["kai_instance"]}', 400)
+        return(f'wrong credentials for modifying instance {kwargs["kai_instance"]}')
+    if error == ServerErrors.INVALID_PROCGEN:
+        logging.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
+        return(f'Processing Generation with ID {kwargs["id"]} does not exist')
+    if error == ServerErrors.DUPLICATE_GEN:
+        logging.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
+        return(f'Processing Generation with ID {kwargs["id"]} already submitted')
 
 def write_servers_to_disk():
 	with open(servers_file, 'w') as db:
@@ -243,14 +260,46 @@ class AsyncGenerate(Resource):
         parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
-
-        ret = generate(
+        wp = WaitingPrompt(
             args["prompt"],
             args["username"],
             args["models"],
             args["params"],
+
         )
-        return(ret)
+        return(wp.id, 200)
+
+class PromptPop(Resource):
+    decorators = [limiter.limit("1/second")]
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument("username", type=str, required=True, help="Username to track contributions")
+        parser.add_argument("model", type=str, required=False, default=[], help="The model currently running on this KoboldAI")
+        args = parser.parse_args()
+        for wp in waiting_prompts:
+            if not wp.needs_gen():
+                continue
+            if args['model'] not in wp.models:
+                continue
+            wp.start_generation(args['username'])
+            return({"id": wp.id, "prompt": wp.prompt}, 200)
+        return({"id": None}, 200)
+
+
+class SubmitGeneration(Resource):
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
+        parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
+        args = parser.parse_args()
+        procgen = processing_generations.get(args['id'])
+        if not procgen:
+            return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",500)
+        tokens = procgen.set_generation(args['generation'])
+        if tokens == 0:
+            return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
+        return({"reward": tokens}, 200)
+
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
@@ -260,6 +309,8 @@ class WaitingPrompt:
         self.models = models
         self.params = params
         self.n = params.get('n', 1)
+        self.tokens = len(word_tokenize(prompt))
+        self.total_usage = 0
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = params
@@ -267,41 +318,65 @@ class WaitingPrompt:
         # We always send only 1 iteration to KoboldAI
         self.gen_payload["n"] = 1
         # The generations that have been created already
-        self.generations = []
         self.processing_gens = []
+        waiting_prompts[self.id] = self
 
     def needs_gen(self):
         if self.n > 0:
             return(True)
         return(False)
 
-    def pop(self, server):
+    def start_generation(self, username):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(self, server)
+        new_gen = ProcessingGeneration(self, username)
         self.processing_gens.append(new_gen)
         self.n -= 1
         return(self.gen_payload, new_gen)
 
     def is_completed(self):
-        if needs_gen():
+        if self.needs_gen():
             return(False)
-        for procgen in processing_gens:
+        for procgen in self.processing_gens:
             if not procgen.is_completed():
                 return(False)
         return(True)
 
+    def count_processing_gens(self):
+        ret_dict = {
+            "finished": 0,
+            "processing": 0,
+        }
+        for procgen in self.processing_gens:
+            if procgen.is_completed():
+                ret_dict["finished"] += 1
+            else:
+                ret_dict["processing"] += 1
+        return(ret_dict)
+
+    def get_status(self):
+        ret_dict = self.count_processing_gens()
+        ret_dict["waiting"] = self.n
+
+    def record_usage(self):
+        self.total_usage += self.tokens
+        usage[self.username] = self.tokens
 
 class ProcessingGeneration:
-    # Every 10 secs we store usage data to disk
-    def __init__(self, owner, server):
+    def __init__(self, owner, username):
         self.id = str(uuid4())
         self.owner = owner
-        self.server = server
+        self.username = username
         self.generation = None
+        processing_generations[self.id] = self
 
     def set_generation(self, generation):
+        if self.is_completed():
+            return(0)
         self.generation = generation
+        tokens = len(word_tokenize(generation))
+        contributions[self.username] = tokens
+        return(tokens)
 
     def is_completed(self):
         if self.generation:
@@ -309,7 +384,6 @@ class ProcessingGeneration:
         return(False)
 
 class UsageStore(object):
-	# Every 10 secs we store usage data to disk
 	def __init__(self, interval = 10):
 		self.interval = interval
 
@@ -340,6 +414,9 @@ if __name__ == "__main__":
     api.add_resource(Generate, "/generate/")
     api.add_resource(Usage, "/usage/")
     api.add_resource(Contributions, "/contributions/")
+    api.add_resource(AsyncGenerate, "/generate/prompt/")
+    api.add_resource(PromptPop, "/generate/pop/")
+    api.add_resource(SubmitGeneration, "/generate/submit/")
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
