@@ -140,16 +140,13 @@ def generate(prompt, username, models = [], params = {}):
                 try:
                     gen_dict = params
                     gen_dict["prompt"] = prompt
-                    print(gen_dict)
                     gen_req = requests.post(kai_instance + '/api/latest/generate/', json = gen_dict)
                     if type(gen_req.json()) is not dict:
                         logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}')
                         continue
-                    print(gen_req.status_code)
                     if gen_req.status_code == 503:
                         logging.info(f'KAI instance {kai_instance} Busy. Will try again later')
                         continue
-                    print(kai_details)
                     c_username = kai_details["username"]
                     contributions[c_username] = contributions.get(c_username,0) + max_length
                     usage[username] = usage.get(username,0) + max_length
@@ -189,10 +186,16 @@ class Register(Resource):
         return(ret)
 
 class List(Resource):
-    #decorators = [limiter.limit("1/minute")]
-    decorators = [limiter.limit("10/minute")]
     def get(self):
         return(servers,200)
+
+class Usage(Resource):
+    def get(self):
+        return(usage,200)
+
+class Contributions(Resource):
+    def get(self):
+        return(contributions,200)
 
 class Generate(Resource):
     #decorators = [limiter.limit("1/minute")]
@@ -242,6 +245,8 @@ if __name__ == "__main__":
     api.add_resource(Register, "/register/")
     api.add_resource(List, "/list/")
     api.add_resource(Generate, "/generate/")
+    api.add_resource(Usage, "/usage/")
+    api.add_resource(Contributions, "/contributions/")
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
