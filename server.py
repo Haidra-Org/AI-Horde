@@ -9,7 +9,6 @@ import json, os
 from enum import Enum
 import threading, time
 from uuid import uuid4
-from nltk.tokenize import word_tokenize
 
 class ServerErrors(Enum):
     INVALIDKAI = 0
@@ -269,21 +268,35 @@ class AsyncGenerate(Resource):
         )
         return(wp.id, 200)
 
+
 class PromptPop(Resource):
     decorators = [limiter.limit("1/second")]
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("username", type=str, required=True, help="Username to track contributions")
-        parser.add_argument("model", type=str, required=False, default=[], help="The model currently running on this KoboldAI")
+        parser.add_argument("model", type=str, required=True, default=[], help="The model currently running on this KoboldAI")
+        parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
+        parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
         args = parser.parse_args()
-        for wp in waiting_prompts:
+        skipped = {}
+        for wp_id in waiting_prompts:
+            wp = waiting_prompts[wp_id]
             if not wp.needs_gen():
                 continue
-            if args['model'] not in wp.models:
+            if len(wp.models) and args['model'] not in wp.models:
+                skipped["model"] = skipped.get("model",0) + 1
                 continue
-            wp.start_generation(args['username'])
-            return({"id": wp.id, "prompt": wp.prompt}, 200)
-        return({"id": None}, 200)
+            if args['max_length'] < wp.max_length:
+                skipped["max_length"] = skipped.get("max_length",0) + 1
+                continue
+            if args['max_content_length'] < wp.max_length:
+                skipped["max_content_length"] = skipped.get("max_content_length",0) + 1
+                continue
+            ret = wp.start_generation(args['username'])
+            payload = ret[0]
+            procgen = ret[1]
+            return({"id": procgen.id, "payload": payload}, 200)
+        return({"id": None, "skipped": skipped}, 200)
 
 
 class SubmitGeneration(Resource):
@@ -309,7 +322,9 @@ class WaitingPrompt:
         self.models = models
         self.params = params
         self.n = params.get('n', 1)
-        self.tokens = len(word_tokenize(prompt))
+        self.tokens = len(prompt.split())
+        self.max_length = params.get("max_length", 80)
+        self.max_content_length = params.get("max_content_length", 1024)
         self.total_usage = 0
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
@@ -374,7 +389,7 @@ class ProcessingGeneration:
         if self.is_completed():
             return(0)
         self.generation = generation
-        tokens = len(word_tokenize(generation))
+        tokens = len(generation.split())
         contributions[self.username] = tokens
         return(tokens)
 
