@@ -11,6 +11,8 @@ from enum import Enum
 class ServerErrors(Enum):
     INVALIDKAI = 0
     CONNECTIONERR = 1
+    BADARGS = 2
+    REJECTED = 3
 
 ###Variables goes here###
 
@@ -30,38 +32,104 @@ limiter = Limiter(
 api = Api(REST_API)
 
 
-def get_error(error, kai_instance):
+def get_error(error, **kwargs):
     if error == ServerErrors.INVALIDKAI:
-        logging.warning(f'Invalid KAI instance: {kai_instance}')
+        logging.warning(f'Invalid KAI instance: {kwargs["kai_instance"]}')
         return(f"Server {kai_instance} appears running but does not appear to be a KoboldAI instance. Please start KoboldAI first then try again!")
     if error == ServerErrors.CONNECTIONERR:
-        logging.warning(f'Connection Error when attempting to reach server: {kai_instance}')
+        logging.warning(f'Connection Error when attempting to reach server: {kwargs["kai_instance"]}')
         return(f"KoboldAI instance {kai_instance} does not seem to be responding. Please load KoboldAI first, ensure it's reachable through the internet, then try again", 400)
+    if error == ServerErrors.BADARGS:
+        logging.warning(f'{kwargs["username"]} send bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}')
+        return(f'Bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}', 400)
+    if error == ServerErrors.REJECTED:
+        logging.warning(f'{kwargs["username"]} prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
+        return(f'prompt rejected by all instances with reasons: {kwargs["rejection_details"]}', 400)
 
 def write_servers_to_disk():
 	with open(servers_file, 'w') as db:
 		json.dump(servers,db)
 
 
-def update_instance_details(kai_instance, username):
+def update_instance_details(kai_instance, **kwargs):
     try:
         model_req = requests.get(kai_instance + '/api/latest/model')
         if type(model_req.json()) is not dict:
-            return(f"{get_error(ServerErrors.INVALIDKAI,kai_instance)}",400)
+            return(f"{get_error(ServerErrors.INVALIDKAI,kai_instance = kai_instance)}",400)
         model = model_req.json()["result"]
     except requests.exceptions.JSONDecodeError:
-        return(f"{get_error(ServerErrors.INVALIDKAI,kai_instance)}",400)
+        return(f"{get_error(ServerErrors.INVALIDKAI,kai_instance = kai_instance)}",400)
     except requests.exceptions.ConnectionError:
-        return(f"{get_error(ServerErrors.CONNECTIONERR,kai_instance)}",400)
-    logging.info(f'{username} added server {kai_instance}')
-    servers_dict = {
-        "model": model,
-        "username": username,
-    }
-    servers[kai_instance] = servers_dict
-    write_servers_to_disk()
+        return(f"{get_error(ServerErrors.CONNECTIONERR,kai_instance = kai_instance)}",400)
+    # If the username arg is provided, we consider this server new
+    if "username" in kwargs:
+        username = kwargs["username"]
+        logging.info(f'{username} added server {kai_instance}')
+        servers_dict = {
+            "model": model,
+            "username": username,
+            "max_length": kwargs.get("max_length", 512),
+            "max_content_length": kwargs.get("max_content_length", 2048)
+        }
+        servers[kai_instance] = servers_dict
+        write_servers_to_disk()
+    elif servers[kai_instance]["model"] != model:
+        logging.info(f'Updated server {kai_instance} model from {servers_dict[model]} to {model}')
+        servers_dict = servers[kai_instance]
+        servers_dict[model] = model
+        servers[kai_instance] = servers_dict
+        write_servers_to_disk()
     return('OK',200)
 
+
+def generate(prompt, username, models = [], params = {}):
+    rejections = {}
+    generations = []
+
+    for kai_instance in servers:
+        kai_details = servers[kai_instance]
+        max_length = params.get("max_length", 80)
+        if type(max_length) is not int:
+            return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_length", bad_value = max_length)}',400)
+        if max_length > kai_details["max_length"]:
+            rejections["max_length"] = rejections.get("max_length",0) + 1
+            rejections["total"] = rejections.get("total",0) + 1
+            continue
+        max_content_length = params.get("max_content_length", 80)
+        if type(max_content_length) is not int:
+            return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_content_length", bad_value = max_content_length)}',400)
+        if max_content_length > kai_details["max_content_length"]:
+            rejections["total"] = rejections.get("total",0) + 1
+            rejections["max_content_length"] = rejections.get("max_content_length",0) + 1
+            continue
+        srv_chk = update_instance_details(kai_instance)
+        if srv_chk[1] != 200:
+            rejections["total"] = rejections.get("total",0) + 1
+            rejections["server_unavailable"] = rejections.get("server_unavailable",0) + 1
+            continue
+        models = params.get("models", [])
+        if type(models) is not list:
+            return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "models", bad_value = models)}',400)
+        if models != [] and kai_details["model"] not in models:
+            rejections["total"] = rejections.get("total",0) + 1
+            rejections["models"] = rejections.get("models",0) + 1
+            continue
+        try:
+            gen_dict = params
+            gen_dict["prompt"] = prompt
+            print(gen_dict)
+            gen_req = requests.post(kai_instance + '/api/latest/generate/', json = gen_dict)
+            if type(gen_req.json()) is not dict:
+                logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}')
+                continue
+            print(gen_req.json())
+            generations.append(gen_req.json()["results"][0]["text"])
+        except:
+            logging.error(f'KAI instance {kai_instance} API unexpected error on generate: {prompt} with params {params}')
+            continue
+    if len(generations) == 0:
+        return(f'{get_error(ServerErrors.REJECTED,username = username, rejection_details = rejections)}',400)
+    return(generations, 200)
 
 @REST_API.after_request
 def after_request(response):
@@ -70,6 +138,7 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
+
 class Register(Resource):
     #decorators = [limiter.limit("1/minute")]
     decorators = [limiter.limit("10/minute")]
@@ -77,9 +146,15 @@ class Register(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("url", type=str, required=True, help="Full URL The KoboldAI server. E.g. 'https://example.com:5000'")
         parser.add_argument("username", type=str, required=True, help="Username for questions")
+        parser.add_argument("max_length", type=int, required=False, default=80, help="The max number of tokens this server can generate. This will set the max for each client.")
+        parser.add_argument("max_content_length", type=int, required=False, default=1024, help="The max amount of context to submit to this AI for sampling. This will set the max for each client.")
         args = parser.parse_args()
-        kai_instance = args["url"]
-        ret = update_instance_details(kai_instance,args["username"])
+        ret = update_instance_details(
+            args["url"],
+            username = args["username"],
+            max_length = args["max_length"],
+            max_content_length = args["max_content_length"],
+        )
         return(ret)
 
 class List(Resource):
@@ -87,6 +162,25 @@ class List(Resource):
     decorators = [limiter.limit("10/minute")]
     def get(self):
         return(servers,200)
+
+class Generate(Resource):
+    #decorators = [limiter.limit("1/minute")]
+    decorators = [limiter.limit("10/minute")]
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
+        parser.add_argument("username", type=str, required=True, help="Username to track usage")
+        parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
+        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
+        args = parser.parse_args()
+        ret = generate(
+            args["prompt"],
+            args["username"],
+            args["models"],
+            args["params"],
+        )
+        return(ret)
+
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
@@ -97,6 +191,7 @@ if __name__ == "__main__":
 
     api.add_resource(Register, "/register/")
     api.add_resource(List, "/list/")
+    api.add_resource(Generate, "/generate/")
     # api.add_resource(Register, "/register")
     from waitress import serve
     #serve(REST_API, host="0.0.0.0", port="5000")
