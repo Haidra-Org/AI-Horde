@@ -7,6 +7,7 @@ import logging
 import requests
 import json, os
 from enum import Enum
+import threading, time
 
 class ServerErrors(Enum):
     INVALIDKAI = 0
@@ -16,8 +17,12 @@ class ServerErrors(Enum):
 
 ###Variables goes here###
 
-servers_file = "servers_file.json"
+servers_file = "servers.json"
 servers = {}
+usage_file = "usage.json"
+usage = {}
+contributions_file = "contributions.json"
+contributions = {}
 
 ###Code goes here###
 
@@ -49,6 +54,12 @@ def get_error(error, **kwargs):
 def write_servers_to_disk():
 	with open(servers_file, 'w') as db:
 		json.dump(servers,db)
+
+def write_usage_to_disk():
+    with open(usage_file, 'w') as db:
+        json.dump(usage,db)
+    with open(contributions_file, 'w') as db:
+        json.dump(contributions,db)
 
 
 def update_instance_details(kai_instance, **kwargs):
@@ -138,9 +149,13 @@ def generate(prompt, username, models = [], params = {}):
                     if gen_req.status_code == 503:
                         logging.info(f'KAI instance {kai_instance} Busy. Will try again later')
                         continue
+                    print(kai_details)
+                    c_username = kai_details["username"]
+                    contributions[c_username] = contributions.get(c_username,0) + max_length
+                    usage[username] = usage.get(username,0) + max_length
                     current_generation = gen_req.json()["results"][0]["text"]
                     generations.append(current_generation)
-                except:
+                except requests.exceptions.ConnectionError:
                     logging.error(f'KAI instance {kai_instance} API unexpected error on generate: {prompt} with params {params}')
                     continue
     if len(generations) == 0:
@@ -197,6 +212,19 @@ class Generate(Resource):
         )
         return(ret)
 
+class UsageStore(object):
+	# Every 10 secs we store usage data to disk
+	def __init__(self, interval = 10):
+		self.interval = interval
+
+		thread = threading.Thread(target=self.store_usage, args=())
+		thread.daemon = True
+		thread.start()
+
+	def store_usage(self):
+		while True:
+			write_usage_to_disk()
+			time.sleep(self.interval)
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
@@ -204,10 +232,17 @@ if __name__ == "__main__":
     if os.path.isfile(servers_file):
         with open(servers_file) as db:
             servers = json.load(db)
+    if os.path.isfile(usage_file):
+        with open(usage_file) as db:
+            usage = json.load(db)
+    if os.path.isfile(contributions_file):
+        with open(contributions_file) as db:
+            contributions = json.load(db)
 
     api.add_resource(Register, "/register/")
     api.add_resource(List, "/list/")
     api.add_resource(Generate, "/generate/")
+    UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
     #serve(REST_API, host="0.0.0.0", port="5000")
