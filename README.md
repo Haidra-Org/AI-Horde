@@ -46,6 +46,8 @@ This repository comes with a little bridge script which you can run on your own 
 * install the requirements with pip: `python -m pip install -r requirements.txt --user`
 * Edit the clientData.py file and add your own username. The `password` is not being used at the moment
 * Edit the clientData.py file and add your KAI server. If it's a local instance, leave it as it is. If it's a remote instance, fill in the URL and port accordingly.
+* Modify your KAI settings from the GUI so that the "Amount to Generate" and "Typical Sampling" are at the max values your KAI instance can handle. This doesn't mean all requests will use this amount. It just limits which requests your server will choose to fulfil.
+* Softprompts don't hurt, but at this point they are not taken into account, so you will mess with people's expectation on what you generate. I suggest you put softprompt to none for now.
 * Finally, run the script: `python bridge.py`
 
 If all goes well, it will connect to your KAI instance and then will start polling the cluster for incoming requests.
