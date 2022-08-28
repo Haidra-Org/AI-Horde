@@ -394,7 +394,7 @@ class WaitingPrompt:
 
     def record_usage(self):
         self.total_usage += self.tokens
-        usage[self.username] = self.tokens
+        usage[self.username] += self.tokens
 
 
 class ProcessingGeneration:
@@ -410,7 +410,8 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         tokens = len(generation.split())
-        contributions[self.username] = tokens
+        contributions[self.username] += tokens
+        self.owner.record_usage()
         return(tokens)
 
     def is_completed(self):
@@ -420,17 +421,17 @@ class ProcessingGeneration:
 
 
 class UsageStore(object):
-	def __init__(self, interval = 10):
-		self.interval = interval
+    def __init__(self, interval = 10):
+        self.interval = interval
 
-		thread = threading.Thread(target=self.store_usage, args=())
-		thread.daemon = True
-		thread.start()
+        thread = threading.Thread(target=self.store_usage, args=())
+        thread.daemon = True
+        thread.start()
 
-	def store_usage(self):
-		while True:
-			write_usage_to_disk()
-			time.sleep(self.interval)
+    def store_usage(self):
+        while True:
+            write_usage_to_disk()
+            time.sleep(self.interval)
 
 
 if __name__ == "__main__":
@@ -458,5 +459,5 @@ if __name__ == "__main__":
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
-    #serve(REST_API, host="0.0.0.0", port="5000")
-    REST_API.run(debug=True,host="0.0.0.0",port="5001")
+    serve(REST_API, host="0.0.0.0", port="5001")
+    # REST_API.run(debug=True,host="0.0.0.0",port="5001")
