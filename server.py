@@ -218,7 +218,6 @@ class Contributions(Resource):
         return(contributions,200)
 
 class Generate(Resource):
-    #decorators = [limiter.limit("1/minute")]
     decorators = [limiter.limit("10/minute")]
     def post(self):
         parser = reqparse.RequestParser()
@@ -234,6 +233,80 @@ class Generate(Resource):
             args["params"],
         )
         return(ret)
+
+class AsyncGenerate(Resource):
+    decorators = [limiter.limit("10/minute")]
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
+        parser.add_argument("username", type=str, required=True, help="Username to track usage")
+        parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
+        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
+        args = parser.parse_args()
+
+        ret = generate(
+            args["prompt"],
+            args["username"],
+            args["models"],
+            args["params"],
+        )
+        return(ret)
+
+class WaitingPrompt:
+    # Every 10 secs we store usage data to disk
+    def __init__(self, prompt, username, models, params):
+        self.prompt = prompt
+        self.username = username
+        self.models = models
+        self.params = params
+        self.n = params.get('n', 1)
+        self.id = str(uuid4())
+        # This is what we send to KoboldAI to the /generate/ API
+        self.gen_payload = params
+        self.gen_payload["prompt"] = prompt
+        # We always send only 1 iteration to KoboldAI
+        self.gen_payload["n"] = 1
+        # The generations that have been created already
+        self.generations = []
+        self.processing_gens = []
+
+    def needs_gen(self):
+        if self.n > 0:
+            return(True)
+        return(False)
+
+    def pop(self, server):
+        if self.n <= 0:
+            return
+        new_gen = ProcessingGeneration(self, server)
+        self.processing_gens.append(new_gen)
+        self.n -= 1
+        return(self.gen_payload, new_gen)
+
+    def is_completed(self):
+        if needs_gen():
+            return(False)
+        for procgen in processing_gens:
+            if not procgen.is_completed():
+                return(False)
+        return(True)
+
+
+class ProcessingGeneration:
+    # Every 10 secs we store usage data to disk
+    def __init__(self, owner, server):
+        self.id = str(uuid4())
+        self.owner = owner
+        self.server = server
+        self.generation = None
+
+    def set_generation(self, generation):
+        self.generation = generation
+
+    def is_completed(self):
+        if self.generation:
+            return(True)
+        return(False)
 
 class UsageStore(object):
 	# Every 10 secs we store usage data to disk
