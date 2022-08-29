@@ -56,7 +56,7 @@ If all goes well, it will connect to your KAI instance and then will start polli
 
 * GET `dbzer0.com:5001/servers` To see the info of all currently active servers and their statistics.
    ```json
-   [{"name": "Db0's Awesome Instance", "id": "019e34e3-3109-4ea9-820a-b0c4f6a53c07", "model": "KoboldAI/fairseq-dense-2.7B-Nerys", "max_length": 80, "max_content_length": 1632, "tokens_generated": 30, "requests_fulfilled": 2, "latest_performance": "1.36 seconds per token"}]```
+   [{"name": "Db0's Awesome Instance", "id": "019e34e3-3109-4ea9-820a-b0c4f6a53c07", "model": "KoboldAI/fairseq-dense-2.7B-Nerys", "max_length": 80, "max_content_length": 1632, "tokens_generated": 30, "requests_fulfilled": 2, "latest_performance": "1.36 seconds per token"}]
 * GET `dbzer0.com:5001/servers/<UUID>` To see the information of a specific server by UUID.
 * GET `dbzer0.com:5001/usage` to see how much each user has consumed this service.
 * GET `dbzer0.com:5001/contributions` to see how much each user has contributed to this service with their own resources.
