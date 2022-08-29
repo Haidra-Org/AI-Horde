@@ -63,8 +63,8 @@ def get_error(error, **kwargs):
         logging.warning(f'{kwargs["username"]} prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
         return(f'prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
     if error == ServerErrors.WRONG_CREDENTIALS:
-        logging.warning(f'{kwargs["kai_instance"]} sent wrong credentials for modifying instance {kwargs["kai_instance"]}')
-        return(f'wrong credentials for modifying instance {kwargs["kai_instance"]}')
+        logging.warning(f'{kwargs["username"]} sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
+        return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
     if error == ServerErrors.INVALID_PROCGEN:
         logging.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
         return(f'Processing Generation with ID {kwargs["id"]} does not exist')
@@ -275,6 +275,7 @@ class PromptPop(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("username", type=str, required=True, help="Username to track contributions")
+        parser.add_argument("password", type=str, required=True, help="Password to authenticate with")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
         parser.add_argument("model", type=str, required=True, default=[], help="The model currently running on this KoboldAI")
         parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
@@ -283,7 +284,9 @@ class PromptPop(Resource):
         skipped = {}
         server = servers.get(args['name'])
         if not server:
-            server = KAIServer(args['username'], args['name'])
+            server = KAIServer(args['username'], args['name'], args['password'])
+        if args['password'] != server.password:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'])
         for wp_id in waiting_prompts:
             wp = waiting_prompts[wp_id]
@@ -309,11 +312,14 @@ class SubmitGeneration(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
+        parser.add_argument("password", type=str, required=True, help="The processing generation uuid")
         parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
         args = parser.parse_args()
         procgen = processing_generations.get(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",500)
+        if args['password'] != procgen.server.password:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = procgen.server.name, username = procgen.server.username)}",401)
         tokens = procgen.set_generation(args['generation'])
         if tokens == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
@@ -456,8 +462,9 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, username = None, name = None):
+    def __init__(self, username = None, name = None, password = None):
         self.username = username
+        self.password = password
         self.name = name
         self.contributions = 0
         self.fulfilments = 0
@@ -493,6 +500,7 @@ class KAIServer:
     def serialize(self):
         ret_dict = {
             "username": self.username,
+            "password": self.password,
             "name": self.name,
             "model": self.model,
             "max_length": self.max_length,
@@ -507,6 +515,7 @@ class KAIServer:
 
     def deserialize(self, saved_dict):
         self.username = saved_dict["username"]
+        self.password = saved_dict["password"]
         self.name = saved_dict["name"]
         self.model = saved_dict["model"]
         self.max_length = saved_dict["max_length"]
