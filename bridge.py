@@ -108,11 +108,15 @@ if __name__ == "__main__":
         while current_id and current_generation:
             try:
                 submit_req = requests.post(cd.server + '/generate/submit', json = submit_dict)
-                if not submit_req.ok:
+                if submit_req.status_code == 404:
+                    logging.warning(f"The generation we were working on got stale. Aborting!")
+                elif not submit_req.ok:
+                    logging.error(submit_req.status_code)
                     logging.warning(f"During gen submit, server {cd.server} responded: {submit_req.text}. Waiting for 10 seconds...")
                     time.sleep(10)
                     continue
-                logging.info(f'Submitted generation with id {current_id} and contributed for {submit_req.json()["reward"]}')
+                else:
+                    logging.info(f'Submitted generation with id {current_id} and contributed for {submit_req.json()["reward"]}')
                 current_id = None
                 current_payload = None
                 current_generation = None

@@ -242,6 +242,8 @@ class SyncGenerate(Resource):
         )
         while True:
             time.sleep(1)
+            if wp.is_stale():
+                return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
         return(wp.get_status()['generations'], 200)
@@ -322,7 +324,7 @@ class SubmitGeneration(Resource):
         args = parser.parse_args()
         procgen = processing_generations.get(args['id'])
         if not procgen:
-            return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",500)
+            return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
         if args['password'] != procgen.server.password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = procgen.server.name, username = procgen.server.username)}",401)
         tokens = procgen.set_generation(args['generation'])
@@ -392,7 +394,15 @@ class WaitingPrompt:
         self.gen_payload["n"] = 1
         # The generations that have been created already
         self.processing_gens = []
+        self.last_process_time = datetime.now()
+        # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
+        self.stale_time = 600
         waiting_prompts[self.id] = self
+
+
+        thread = threading.Thread(target=self.check_for_stale, args=())
+        thread.daemon = True
+        thread.start()
 
     def needs_gen(self):
         if self.n > 0:
@@ -405,6 +415,7 @@ class WaitingPrompt:
         new_gen = ProcessingGeneration(self, server)
         self.processing_gens.append(new_gen)
         self.n -= 1
+        self.refresh()
         return(self.gen_payload, new_gen)
 
     def is_completed(self):
@@ -440,7 +451,28 @@ class WaitingPrompt:
     def record_usage(self):
         self.total_usage += self.tokens
         usage[self.username] += self.tokens
+        self.refresh()
 
+    def check_for_stale(self):
+        while True:
+            if self.is_stale():
+                self.delete()
+                break
+            time.sleep(10)
+
+    def delete(self):
+        for gen in self.processing_gens:
+            gen.delete()
+        del waiting_prompts[self.id]
+        del self
+
+    def refresh(self):
+        self.last_process_time = datetime.now()
+
+    def is_stale(self):
+        if (datetime.now() - self.last_process_time).seconds > self.stale_time:
+            return(True)
+        return(False)
 
 class ProcessingGeneration:
     def __init__(self, owner, server):
@@ -464,6 +496,10 @@ class ProcessingGeneration:
         if self.generation:
             return(True)
         return(False)
+
+    def delete(self):
+        del processing_generations[self.id]
+        del self
 
 
 class KAIServer:
