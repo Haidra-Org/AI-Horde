@@ -340,8 +340,8 @@ class List(Resource):
         return(servers_ret,200)
 
 class ListSingle(Resource):
-    server = None
     def get(self, server_id):
+        server = None
         for s in servers:
             if servers[s].id == server_id:
                 server = servers[s]
