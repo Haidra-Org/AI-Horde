@@ -44,7 +44,7 @@ This repository comes with a little bridge script which you can run on your own 
 * First clone this repo and then open a terminal/console and `cd` into it
 * Make sure you have python3 installed
 * install the requirements with pip: `python -m pip install -r requirements.txt --user`
-* Edit the clientData.py file and add your own username. The `password` is not being used at the moment
+* Edit the clientData.py file and add your own username and password. The password is stored in plaintext for now, so don't reuse an existing one.
 * Edit the clientData.py file and add your KAI server. If it's a local instance, leave it as it is. If it's a remote instance, fill in the URL and port accordingly.
 * Modify your KAI settings from the GUI so that the "Amount to Generate" and "Typical Sampling" are at the max values your KAI instance can handle. This doesn't mean all requests will use this amount. It just limits which requests your server will choose to fulfil.
 * Softprompts don't hurt, but at this point they are not taken into account, so you will mess with people's expectation on what you generate. I suggest you put softprompt to none for now.
@@ -54,8 +54,10 @@ If all goes well, it will connect to your KAI instance and then will start polli
 
 ## Other endpoints
 
-* GET dbzer0.com:5001/usage to see how much each user has consumed this service
-* GET dbzer0.com:5001/contributions to see how much each user has contributed to this service with their own resources
+* GET `dbzer0.com:5001/servers` To see the info of all currently active servers and their statistics.
+* GET `dbzer0.com:5001/servers/<UUID>` To see the information of a specific server by UUID.
+* GET `dbzer0.com:5001/usage` to see how much each user has consumed this service.
+* GET `dbzer0.com:5001/contributions` to see how much each user has contributed to this service with their own resources.
 
 ## Other Info
 
