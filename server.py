@@ -271,7 +271,7 @@ class AsyncGenerate(Resource):
 
 
 class PromptPop(Resource):
-    decorators = [limiter.limit("1/second")]
+    decorators = [limiter.limit("2/second")]
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("username", type=str, required=True, help="Username to track contributions")
