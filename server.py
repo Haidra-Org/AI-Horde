@@ -73,8 +73,11 @@ def get_error(error, **kwargs):
         return(f'Processing Generation with ID {kwargs["id"]} already submitted')
 
 def write_servers_to_disk():
-	with open(servers_file, 'w') as db:
-		json.dump(servers,db)
+    serialized_list = []
+    for s in servers:
+        serialized_list.append(servers[s].serialize())
+    with open(servers_file, 'w') as db:
+        json.dump(serialized_list,db)
 
 def write_usage_to_disk():
     with open(usage_file, 'w') as db:
@@ -223,9 +226,9 @@ class List(Resource):
                 "model": servers[s].model,
                 "max_length": servers[s].max_length,
                 "max_content_length": servers[s].max_content_length,
-                "token_generated": servers[s].contributions,
+                "tokens_generated": servers[s].contributions,
                 "requests_fulfilled": servers[s].fulfilments,
-                "average_performance": servers[s].get_performance(),
+                "latest_performance": servers[s].get_performance(),
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -432,13 +435,14 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, username, name):
+    def __init__(self, username = None, name = None):
         self.username = username
         self.name = name
         self.contributions = 0
         self.fulfilments = 0
-        self.performance = []
-        servers[name] = self
+        self.performance = 0
+        if name:
+            servers[self.name] = self
 
     def check_in(self, model, max_length, max_content_length):
         self.last_check_in = datetime.now()
@@ -450,27 +454,48 @@ class KAIServer:
         contributions[self.username] = contributions.get(self.username,0) + tokens
         self.contributions += tokens
         self.fulfilments += 1
-        self.performance.append(seconds_taken)
+        self.performance = round(tokens / seconds_taken,2)
 
     def get_performance(self):
-        avg = 0
-        if len(self.performance):
-            avg = sum(self.performance) / len(self.performance)
-        if avg:
-            ret_str = f'{avg} per token'
+        if self.performance:
+            ret_str = f'{self.performance} seconds per token'
         else:
             ret_str = f'No requests fulfiled yet'
         return(ret_str)
-
 
     def is_stale(self):
         if (datetime.now() - self.last_check_in).seconds > 300:
             return(True)
         return(False)
 
+    def serialize(self):
+        ret_dict = {
+            "username": self.username,
+            "name": self.name,
+            "model": self.model,
+            "max_length": self.max_length,
+            "max_content_length": self.max_content_length,
+            "contributions": self.contributions,
+            "fulfilments": self.fulfilments,
+            "performance": self.performance,
+            "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        return(ret_dict)
+
+    def deserialize(self, saved_dict):
+        self.username = saved_dict["username"]
+        self.name = saved_dict["name"]
+        self.model = saved_dict["model"]
+        self.max_length = saved_dict["max_length"]
+        self.max_content_length = saved_dict["max_content_length"]
+        self.contributions = saved_dict["contributions"]
+        self.fulfilments = saved_dict["fulfilments"]
+        self.performance = saved_dict["performance"]
+        self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
+        servers[self.name] = self
 
 class UsageStore(object):
-    def __init__(self, interval = 10):
+    def __init__(self, interval = 3):
         self.interval = interval
 
         thread = threading.Thread(target=self.store_usage, args=())
@@ -480,6 +505,7 @@ class UsageStore(object):
     def store_usage(self):
         while True:
             write_usage_to_disk()
+            write_servers_to_disk()
             time.sleep(self.interval)
 
 
@@ -488,8 +514,11 @@ if __name__ == "__main__":
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     if os.path.isfile(servers_file):
         with open(servers_file) as db:
-            servers = json.load(db)
-            logging.info(servers)
+            serialized_servers = json.load(db)
+            for server_dict in serialized_servers:
+                new_server = KAIServer()
+                new_server.deserialize(server_dict)
+                servers[new_server.name] = new_server
     if os.path.isfile(usage_file):
         with open(usage_file) as db:
             usage = json.load(db)
@@ -509,5 +538,5 @@ if __name__ == "__main__":
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
-    # serve(REST_API, host="0.0.0.0", port="5001")
-    REST_API.run(debug=True,host="0.0.0.0",port="5001")
+    serve(REST_API, host="0.0.0.0", port="5001")
+    # REST_API.run(debug=True,host="0.0.0.0",port="5001")
