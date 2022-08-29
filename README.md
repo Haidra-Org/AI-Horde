@@ -52,6 +52,9 @@ This repository comes with a little bridge script which you can run on your own 
 
 If all goes well, it will connect to your KAI instance and then will start polling the cluster for incoming requests.
 
+A server will be considered "stale" and not shown in the general list, if it doesn't check in for at least 5 minutes. You can see still them through their individual UUID endpoint, and it will continue where it left off as soon as it checks back in to fulfil requests. In fact, it doesn't technically need to be the same server. You can switch to a different box and long as your server name and auth is the same, your stats will carry on. This means that you can keep plugging in different collab instances while retaining the same stats.
+
+
 ## Other endpoints
 
 * GET `dbzer0.com:5001/servers` To see the info of all currently active servers and their statistics.

@@ -1,5 +1,5 @@
 server = "http://dbzer0.com:5001"
 kai = "http://localhost:5000"
-kai_name = "Db0's Awesome Instance"
+kai_name = "My Awesome Instance"
 username = "username"
 password = "password"
