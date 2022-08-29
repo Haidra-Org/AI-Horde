@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -219,6 +219,7 @@ class List(Resource):
             if servers[s].is_stale():
                 continue
             sdict = {
+                "name": servers[s].name,
                 "model": servers[s].model,
                 "max_length": servers[s].max_length,
                 "max_content_length": servers[s].max_content_length,
@@ -291,18 +292,15 @@ class PromptPop(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("username", type=str, required=True, help="Username to track contributions")
+        parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
         parser.add_argument("model", type=str, required=True, default=[], help="The model currently running on this KoboldAI")
         parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
         parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
         args = parser.parse_args()
         skipped = {}
-        if request.environ.get('HTTP_X_FORWARDED_FOR') is None:
-            server_ip = request.environ['REMOTE_ADDR']
-        else:
-            server_ip = request.environ['HTTP_X_FORWARDED_FOR'] # if behind a proxy
-        server = servers.get(server_ip)
+        server = servers.get(args['name'])
         if not server:
-            server = KAIServer(server_ip, args['username'])
+            server = KAIServer(args['username'], args['name'])
         server.check_in(args['model'], args['max_length'], args['max_content_length'])
         for wp_id in waiting_prompts:
             wp = waiting_prompts[wp_id]
@@ -434,13 +432,13 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, ip, username):
-        self.ip = ip
+    def __init__(self, username, name):
         self.username = username
+        self.name = name
         self.contributions = 0
         self.fulfilments = 0
         self.performance = []
-        servers[ip] = self
+        servers[name] = self
 
     def check_in(self, model, max_length, max_content_length):
         self.last_check_in = datetime.now()
@@ -449,15 +447,15 @@ class KAIServer:
         self.max_length = max_length
 
     def record_contribution(self, tokens, seconds_taken):
-        contributions[self.username] += tokens
+        contributions[self.username] = contributions.get(self.username,0) + tokens
         self.contributions += tokens
         self.fulfilments += 1
         self.performance.append(seconds_taken)
 
     def get_performance(self):
         avg = 0
-        if len(performance):
-            avg = sum(performance) / len(performance)
+        if len(self.performance):
+            avg = sum(self.performance) / len(self.performance)
         if avg:
             ret_str = f'{avg} per token'
         else:
@@ -466,7 +464,7 @@ class KAIServer:
 
 
     def is_stale(self):
-        if (datetime.now() - self.last_check_in).seconds < 300:
+        if (datetime.now() - self.last_check_in).seconds > 300:
             return(True)
         return(False)
 
@@ -491,6 +489,7 @@ if __name__ == "__main__":
     if os.path.isfile(servers_file):
         with open(servers_file) as db:
             servers = json.load(db)
+            logging.info(servers)
     if os.path.isfile(usage_file):
         with open(usage_file) as db:
             usage = json.load(db)
@@ -510,5 +509,5 @@ if __name__ == "__main__":
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
-    serve(REST_API, host="0.0.0.0", port="5001")
-    # REST_API.run(debug=True,host="0.0.0.0",port="5001")
+    # serve(REST_API, host="0.0.0.0", port="5001")
+    REST_API.run(debug=True,host="0.0.0.0",port="5001")

@@ -65,6 +65,7 @@ if __name__ == "__main__":
             continue
         gen_dict = {
             "username": cd.username,
+            "name": cd.kai_name,
             "model": model,
             "max_length": max_length,
             "max_content_length": max_content_length,
