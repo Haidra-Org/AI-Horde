@@ -340,19 +340,25 @@ class List(Resource):
         return(servers_ret,200)
 
 class ListSingle(Resource):
+    server = None
     def get(self, server_id):
-        server = servers[server_id]
-        sdict = {
-            "name": server.name,
-            "id": server.id,
-            "model": server.model,
-            "max_length": server.max_length,
-            "max_content_length": server.max_content_length,
-            "tokens_generated": server.contributions,
-            "requests_fulfilled": server.fulfilments,
-            "latest_performance": server.get_performance(),
-        }
-        return(sdict,200)
+        for s in servers:
+            if servers[s].id == server_id:
+                server = servers[s]
+        if server:
+            sdict = {
+                "name": server.name,
+                "id": server.id,
+                "model": server.model,
+                "max_length": server.max_length,
+                "max_content_length": server.max_content_length,
+                "tokens_generated": server.contributions,
+                "requests_fulfilled": server.fulfilments,
+                "latest_performance": server.get_performance(),
+            }
+            return(sdict,200)
+        else:
+            return("Not found", 404)
 
 
 class WaitingPrompt:
@@ -458,7 +464,7 @@ class KAIServer:
         self.performance = 0
         self.id = str(uuid4())
         if name:
-            servers[self.id] = self
+            servers[self.name] = self
 
     def check_in(self, model, max_length, max_content_length):
         self.last_check_in = datetime.now()
@@ -510,7 +516,7 @@ class KAIServer:
         self.performance = saved_dict["performance"]
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
-        servers[self.id] = self
+        servers[self.name] = self
 
 class UsageStore(object):
     def __init__(self, interval = 3):
