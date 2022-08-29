@@ -253,7 +253,7 @@ class AsyncGeneratePrompt(Resource):
         wp = waiting_prompts.get(id)
         if not wp:
             return("ID not found", 404)
-        return(wp.get_status(), 200)
+        return(wp.get_status()['generations'], 200)
 
 
 class AsyncGenerate(Resource):
