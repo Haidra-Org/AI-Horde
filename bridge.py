@@ -103,6 +103,7 @@ if __name__ == "__main__":
         submit_dict = {
             "id": current_id,
             "generation": current_generation,
+            "password": cd.password,
         }
         while current_id and current_generation:
             try:

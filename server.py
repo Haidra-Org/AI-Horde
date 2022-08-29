@@ -312,7 +312,7 @@ class SubmitGeneration(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
-        parser.add_argument("password", type=str, required=True, help="The processing generation uuid")
+        parser.add_argument("password", type=str, required=True, help="The server password")
         parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
         args = parser.parse_args()
         procgen = processing_generations.get(args['id'])
