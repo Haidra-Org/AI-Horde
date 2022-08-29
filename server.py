@@ -333,6 +333,16 @@ class SubmitGeneration(Resource):
         return({"reward": tokens}, 200)
 
 
+class Models(Resource):
+    def get(self):
+        models_ret = {}
+        for s in servers:
+            if servers[s].is_stale():
+                continue
+            models_ret[servers[s].model] = models_ret.get(servers[s].model,0) + 1
+        return(models_ret,200)
+
+
 class List(Resource):
     def get(self):
         servers_ret = []
@@ -609,6 +619,7 @@ if __name__ == "__main__":
     api.add_resource(Usage, "/usage")
     api.add_resource(Contributions, "/contributions")
     api.add_resource(List, "/servers")
+    api.add_resource(Models, "/models")
     api.add_resource(ListSingle, "/servers/<string:server_id>")
     UsageStore()
     # api.add_resource(Register, "/register")
