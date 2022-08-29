@@ -224,7 +224,7 @@ class Contributions(Resource):
         return(contributions,200)
 
 
-class Generate(Resource):
+class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
     def post(self):
         parser = reqparse.RequestParser()
@@ -233,13 +233,18 @@ class Generate(Resource):
         parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
-        ret = generate(
+        wp = WaitingPrompt(
             args["prompt"],
             args["username"],
             args["models"],
             args["params"],
+
         )
-        return(ret)
+        while True:
+            time.sleep(1)
+            if wp.is_completed():
+                break
+        return(wp.get_status(), 200)
 
 
 class AsyncGeneratePrompt(Resource):
@@ -560,15 +565,15 @@ if __name__ == "__main__":
             contributions = json.load(db)
 
     # api.add_resource(Register, "/register")
-    api.add_resource(List, "/servers")
-    api.add_resource(ListSingle, "/servers/<string:server_id>")
-    # api.add_resource(Generate, "/generate")
-    api.add_resource(Usage, "/usage")
-    api.add_resource(Contributions, "/contributions")
-    api.add_resource(AsyncGenerate, "/generate/prompt")
+    api.add_resource(SyncGenerate, "/generate/sync")
+    api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
     api.add_resource(PromptPop, "/generate/pop")
     api.add_resource(SubmitGeneration, "/generate/submit")
+    api.add_resource(Usage, "/usage")
+    api.add_resource(Contributions, "/contributions")
+    api.add_resource(List, "/servers")
+    api.add_resource(ListSingle, "/servers/<string:server_id>")
     UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
