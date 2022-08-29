@@ -214,26 +214,6 @@ class Register(Resource):
         )
         return(ret)
 
-
-class List(Resource):
-    def get(self):
-        servers_ret = []
-        for s in servers:
-            if servers[s].is_stale():
-                continue
-            sdict = {
-                "name": servers[s].name,
-                "model": servers[s].model,
-                "max_length": servers[s].max_length,
-                "max_content_length": servers[s].max_content_length,
-                "tokens_generated": servers[s].contributions,
-                "requests_fulfilled": servers[s].fulfilments,
-                "latest_performance": servers[s].get_performance(),
-            }
-            servers_ret.append(sdict)
-        return(servers_ret,200)
-
-
 class Usage(Resource):
     def get(self):
         return(usage,200)
@@ -340,6 +320,41 @@ class SubmitGeneration(Resource):
         return({"reward": tokens}, 200)
 
 
+class List(Resource):
+    def get(self):
+        servers_ret = []
+        for s in servers:
+            if servers[s].is_stale():
+                continue
+            sdict = {
+                "name": servers[s].name,
+                "id": servers[s].id,
+                "model": servers[s].model,
+                "max_length": servers[s].max_length,
+                "max_content_length": servers[s].max_content_length,
+                "tokens_generated": servers[s].contributions,
+                "requests_fulfilled": servers[s].fulfilments,
+                "latest_performance": servers[s].get_performance(),
+            }
+            servers_ret.append(sdict)
+        return(servers_ret,200)
+
+class ListSingle(Resource):
+    def get(self, server_id):
+        server = servers[server_id]
+        sdict = {
+            "name": server.name,
+            "id": server.id,
+            "model": server.model,
+            "max_length": server.max_length,
+            "max_content_length": server.max_content_length,
+            "tokens_generated": server.contributions,
+            "requests_fulfilled": server.fulfilments,
+            "latest_performance": server.get_performance(),
+        }
+        return(sdict,200)
+
+
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
     def __init__(self, prompt, username, models, params):
@@ -441,8 +456,9 @@ class KAIServer:
         self.contributions = 0
         self.fulfilments = 0
         self.performance = 0
+        self.id = str(uuid4())
         if name:
-            servers[self.name] = self
+            servers[self.id] = self
 
     def check_in(self, model, max_length, max_content_length):
         self.last_check_in = datetime.now()
@@ -479,6 +495,7 @@ class KAIServer:
             "fulfilments": self.fulfilments,
             "performance": self.performance,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
+            "id": self.id,
         }
         return(ret_dict)
 
@@ -492,7 +509,8 @@ class KAIServer:
         self.fulfilments = saved_dict["fulfilments"]
         self.performance = saved_dict["performance"]
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
-        servers[self.name] = self
+        self.id = saved_dict["id"]
+        servers[self.id] = self
 
 class UsageStore(object):
     def __init__(self, interval = 3):
@@ -527,7 +545,8 @@ if __name__ == "__main__":
             contributions = json.load(db)
 
     # api.add_resource(Register, "/register")
-    api.add_resource(List, "/list")
+    api.add_resource(List, "/servers")
+    api.add_resource(ListSingle, "/servers/<string:server_id>")
     # api.add_resource(Generate, "/generate")
     api.add_resource(Usage, "/usage")
     api.add_resource(Contributions, "/contributions")
