@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -8,6 +8,7 @@ import json, os
 from enum import Enum
 import threading, time
 from uuid import uuid4
+from datetime import datetime
 
 class ServerErrors(Enum):
     INVALIDKAI = 0
@@ -96,14 +97,12 @@ def update_instance_details(kai_instance, **kwargs):
     if "username" in kwargs:
         existing_details = servers.get(kai_instance)
         username = kwargs["username"]
-        password = kwargs["password"]
         if existing_details and existing_details['password'] != password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = kai_instance, username = username)}",400)
         logging.info(f'{username} added server {kai_instance}')
         servers_dict = {
             "model": model,
             "username": username,
-            "password": password,
             "max_length": kwargs.get("max_length", 512),
             "max_content_length": kwargs.get("max_content_length", 2048)
         }
@@ -192,7 +191,6 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
-
 class Register(Resource):
     #decorators = [limiter.limit("1/minute")]
     decorators = [limiter.limit("10/minute")]
@@ -218,10 +216,15 @@ class List(Resource):
     def get(self):
         servers_ret = []
         for s in servers:
+            if servers[s].is_stale():
+                continue
             sdict = {
-                "model": servers[s]["model"],
-                "max_length": servers[s]["max_length"],
-                "max_content_length": servers[s]["max_content_length"],
+                "model": servers[s].model,
+                "max_length": servers[s].max_length,
+                "max_content_length": servers[s].max_content_length,
+                "token_generated": servers[s].contributions,
+                "requests_fulfilled": servers[s].fulfilments,
+                "average_performance": servers[s].get_performance(),
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -263,6 +266,7 @@ class AsyncGeneratePrompt(Resource):
             return("ID not found", 404)
         return(wp.get_status(), 200)
 
+
 class AsyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
     def post(self):
@@ -292,6 +296,14 @@ class PromptPop(Resource):
         parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
         args = parser.parse_args()
         skipped = {}
+        if request.environ.get('HTTP_X_FORWARDED_FOR') is None:
+            server_ip = request.environ['REMOTE_ADDR']
+        else:
+            server_ip = request.environ['HTTP_X_FORWARDED_FOR'] # if behind a proxy
+        server = servers.get(server_ip)
+        if not server:
+            server = KAIServer(server_ip, args['username'])
+        server.check_in(args['model'], args['max_length'], args['max_content_length'])
         for wp_id in waiting_prompts:
             wp = waiting_prompts[wp_id]
             if not wp.needs_gen():
@@ -305,7 +317,7 @@ class PromptPop(Resource):
             if args['max_content_length'] < wp.max_length:
                 skipped["max_content_length"] = skipped.get("max_content_length",0) + 1
                 continue
-            ret = wp.start_generation(args['username'])
+            ret = wp.start_generation(server)
             payload = ret[0]
             procgen = ret[1]
             return({"id": procgen.id, "payload": payload}, 200)
@@ -354,10 +366,10 @@ class WaitingPrompt:
             return(True)
         return(False)
 
-    def start_generation(self, username):
+    def start_generation(self, server):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(self, username)
+        new_gen = ProcessingGeneration(self, server)
         self.processing_gens.append(new_gen)
         self.n -= 1
         return(self.gen_payload, new_gen)
@@ -398,11 +410,12 @@ class WaitingPrompt:
 
 
 class ProcessingGeneration:
-    def __init__(self, owner, username):
+    def __init__(self, owner, server):
         self.id = str(uuid4())
         self.owner = owner
-        self.username = username
+        self.server = server
         self.generation = None
+        self.start_time = datetime.now()
         processing_generations[self.id] = self
 
     def set_generation(self, generation):
@@ -410,12 +423,50 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         tokens = len(generation.split())
-        contributions[self.username] += tokens
+        self.server.record_contribution(tokens, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage()
         return(tokens)
 
     def is_completed(self):
         if self.generation:
+            return(True)
+        return(False)
+
+
+class KAIServer:
+    def __init__(self, ip, username):
+        self.ip = ip
+        self.username = username
+        self.contributions = 0
+        self.fulfilments = 0
+        self.performance = []
+        servers[ip] = self
+
+    def check_in(self, model, max_length, max_content_length):
+        self.last_check_in = datetime.now()
+        self.model = model
+        self.max_content_length = max_content_length
+        self.max_length = max_length
+
+    def record_contribution(self, tokens, seconds_taken):
+        contributions[self.username] += tokens
+        self.contributions += tokens
+        self.fulfilments += 1
+        self.performance.append(seconds_taken)
+
+    def get_performance(self):
+        avg = 0
+        if len(performance):
+            avg = sum(performance) / len(performance)
+        if avg:
+            ret_str = f'{avg} per token'
+        else:
+            ret_str = f'No requests fulfiled yet'
+        return(ret_str)
+
+
+    def is_stale(self):
+        if (datetime.now() - self.last_check_in).seconds < 300:
             return(True)
         return(False)
 
@@ -447,9 +498,9 @@ if __name__ == "__main__":
         with open(contributions_file) as db:
             contributions = json.load(db)
 
-    api.add_resource(Register, "/register")
+    # api.add_resource(Register, "/register")
     api.add_resource(List, "/list")
-    api.add_resource(Generate, "/generate")
+    # api.add_resource(Generate, "/generate")
     api.add_resource(Usage, "/usage")
     api.add_resource(Contributions, "/contributions")
     api.add_resource(AsyncGenerate, "/generate/prompt")
