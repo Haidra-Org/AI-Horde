@@ -545,7 +545,7 @@ class KAIServer:
 
     def can_generate(self, models, max_content_length, max_length):
         is_matching = True
-        if len(models) == 0 or self.model not in models:
+        if len(models) >= 1 and self.model not in models:
             is_matching = False
         if self.max_content_length < max_content_length:
             is_matching = False
