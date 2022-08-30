@@ -513,7 +513,7 @@ class ProcessingGeneration:
         tokens = len(generation.split())
         self.server.record_contribution(tokens, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage()
-        logging.info(f"New Generation delivered by server: {self.name}")
+        logging.info(f"New Generation delivered by server: {self.server.name}")
         return(tokens)
 
     def is_completed(self):
