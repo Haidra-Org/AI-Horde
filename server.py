@@ -187,6 +187,15 @@ def generate(prompt, username, models = [], params = {}):
     return(generations, 200)
 
 
+def get_available_models():
+    models_ret = {}
+    for s in servers:
+        if servers[s].is_stale():
+            continue
+        models_ret[servers[s].model] = models_ret.get(servers[s].model,0) + 1
+    return(models_ret)
+
+
 @REST_API.after_request
 def after_request(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -230,9 +239,16 @@ class SyncGenerate(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("username", type=str, required=True, help="Username to track usage")
-        parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
+        parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
+        server_found = False
+        for s in servers:
+            logging.info(args["models"])
+            if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80)):
+                server_found = True
+        if not server_found:
+            return("No active server found to fulfil this request. Please Try again later...", 503)
         wp = WaitingPrompt(
             args["prompt"],
             args["username"],
@@ -264,7 +280,7 @@ class AsyncGenerate(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("username", type=str, required=True, help="Username to track usage")
-        parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
+        parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
         wp = WaitingPrompt(
@@ -332,15 +348,9 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
         return({"reward": tokens}, 200)
 
-
 class Models(Resource):
     def get(self):
-        models_ret = {}
-        for s in servers:
-            if servers[s].is_stale():
-                continue
-            models_ret[servers[s].model] = models_ret.get(servers[s].model,0) + 1
-        return(models_ret,200)
+        return(get_available_models(),200)
 
 
 class List(Resource):
@@ -533,6 +543,16 @@ class KAIServer:
         self.model = model
         self.max_content_length = max_content_length
         self.max_length = max_length
+
+    def can_generate(self, models, max_content_length, max_length):
+        is_matching = True
+        if self.model not in models:
+            is_matching = False
+        if self.max_content_length < max_content_length:
+            is_matching = False
+        if self.max_length < max_length:
+            is_matching = False
+        return(is_matching)
 
     def record_contribution(self, tokens, seconds_taken):
         contributions[self.username] = contributions.get(self.username,0) + tokens
