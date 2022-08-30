@@ -244,7 +244,6 @@ class SyncGenerate(Resource):
         args = parser.parse_args()
         server_found = False
         for s in servers:
-            logging.info(args["models"])
             if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80)):
                 server_found = True
         if not server_found:
@@ -546,7 +545,7 @@ class KAIServer:
 
     def can_generate(self, models, max_content_length, max_length):
         is_matching = True
-        if self.model not in models:
+        if len(models) == 0 or self.model not in models:
             is_matching = False
         if self.max_content_length < max_content_length:
             is_matching = False
