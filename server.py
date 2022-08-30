@@ -460,6 +460,9 @@ class WaitingPrompt:
 
     def record_usage(self):
         self.total_usage += self.tokens
+        if self.username not in usage:
+            usage[self.username] = 0
+            logging.info(f'New user requested generation: {self.username}')
         usage[self.username] += self.tokens
         self.refresh()
 
