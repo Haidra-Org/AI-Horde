@@ -523,7 +523,7 @@ class KAIServer:
         self.id = str(uuid4())
         if name:
             servers[self.name] = self
-        logging.info(f'New server checked-in: {name} by {username}')
+            logging.info(f'New server checked-in: {name} by {username}')
 
     def check_in(self, model, max_length, max_content_length):
         self.last_check_in = datetime.now()
