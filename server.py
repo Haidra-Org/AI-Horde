@@ -417,7 +417,7 @@ class WaitingPrompt:
         # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
         self.stale_time = 600
         waiting_prompts[self.id] = self
-        logging.info(f"New prompt request by user: {username}")
+        logging.info(f"New prompt request by user: {self.username}")
 
 
         thread = threading.Thread(target=self.check_for_stale, args=())
@@ -513,7 +513,7 @@ class ProcessingGeneration:
         tokens = len(generation.split())
         self.server.record_contribution(tokens, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage()
-        logging.info(f"New Generation delivered by server: {name}")
+        logging.info(f"New Generation delivered by server: {self.name}")
         return(tokens)
 
     def is_completed(self):
