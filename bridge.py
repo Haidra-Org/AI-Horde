@@ -7,11 +7,11 @@ import clientData as cd
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--interval', action="store", required=False, type=int, default=1, help="The amount of seconds with which to check if there's new prompts to generate")
-arg_parser.add_argument('-u', '--username', action="store", required=False, type=str, default='Anonymous', help="The username of the owner of the KAI instance. Used to track contributions.")
-arg_parser.add_argument('-p', '--password', action="store", required=False, type=str, default='Password', help="The password to make sure nobody spoofs your server instance.")
-arg_parser.add_argument('-n', '--kai_name', action="store", required=False, type=str, default='My Awsome Instance', help="The server name. It will be shown to the world and there can be only one.")
-arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=str, default='http://localhost:5000', help="The KoboldAI server URL. Where the bridge will get its generations from.")
-arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, default='http://dbzer0.com:5001', help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
+arg_parser.add_argument('-u', '--username', action="store", required=False, type=str, help="The username of the owner of the KAI instance. Used to track contributions.")
+arg_parser.add_argument('-p', '--password', action="store", required=False, type=str, help="The password to make sure nobody spoofs your server instance.")
+arg_parser.add_argument('-n', '--kai_name', action="store", required=False, type=str, help="The server name. It will be shown to the world and there can be only one.")
+arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=str, help="The KoboldAI server URL. Where the bridge will get its generations from.")
+arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
 
 model = ''
 max_content_length = 1024
@@ -68,6 +68,7 @@ if __name__ == "__main__":
     kai_name = args.kai_name if args.kai_name else cd.kai_name
     kai_url = args.kai_url if args.kai_url else cd.kai_url
     cluster = args.cluster_url if args.cluster_url else cd.cluster_url
+    logging.info(f"Starting {kai_name} instance registered to {username}")
     while True:
         if not validate_kai(kai_url):
             logging.warning(f"Waiting 10 seconds...")
