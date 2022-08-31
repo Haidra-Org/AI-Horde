@@ -15,6 +15,8 @@ class ServerErrors(Enum):
     INVALID_PROCGEN = 1
     DUPLICATE_GEN = 2
     TOO_MANY_PROMPTS = 3
+    EMPTY_USERNAME = 4
+    EMPTY_PROMPT = 5
 
 ### Globals
 
@@ -48,7 +50,7 @@ api = Api(REST_API)
 
 def get_error(error, **kwargs):
     if error == ServerErrors.WRONG_CREDENTIALS:
-        logging.warning(f'{kwargs["username"]} sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
+        logging.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
         return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
     if error == ServerErrors.INVALID_PROCGEN:
         logging.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
@@ -57,8 +59,14 @@ def get_error(error, **kwargs):
         logging.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
         return(f'Processing Generation with ID {kwargs["id"]} already submitted')
     if error == ServerErrors.TOO_MANY_PROMPTS:
-        logging.warning(f'User {kwargs["username"]} has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
+        logging.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
         return("Too many parallel requests from same user. Please try again later.")
+    if error == ServerErrors.EMPTY_USERNAME:
+        logging.warning(f'Request sent with an invalid username. Aborting!')
+        return("Please provide a valid username.")
+    if error == ServerErrors.EMPTY_PROMPT:
+        logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
+        return("You cannot specify an empty prompt.")
 
 def write_servers_to_disk():
     serialized_list = []
@@ -135,6 +143,10 @@ class SyncGenerate(Resource):
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
+        if args['username'] == '':
+            return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
+        if args['prompt'] == '':
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
         server_found = False
         for s in servers:
             if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80)):
@@ -179,6 +191,10 @@ class AsyncGenerate(Resource):
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
         wp_count = count_waiting_requests(args.username)
+        if args['username'] == '':
+            return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
+        if args['prompt'] == '':
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
