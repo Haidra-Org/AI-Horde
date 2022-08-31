@@ -11,14 +11,10 @@ from uuid import uuid4
 from datetime import datetime
 
 class ServerErrors(Enum):
-    INVALIDKAI = 0
-    CONNECTIONERR = 1
-    BADARGS = 2
-    REJECTED = 3
-    WRONG_CREDENTIALS = 4
-    INVALID_PROCGEN = 5
-    DUPLICATE_GEN = 6
-    TOO_MANY_PROMPTS = 7
+    WRONG_CREDENTIALS = 0
+    INVALID_PROCGEN = 1
+    DUPLICATE_GEN = 2
+    TOO_MANY_PROMPTS = 3
 
 ### Globals
 
@@ -51,18 +47,6 @@ api = Api(REST_API)
 
 
 def get_error(error, **kwargs):
-    if error == ServerErrors.INVALIDKAI:
-        logging.warning(f'Invalid KAI instance: {kwargs["kai_instance"]}')
-        return(f"Server {kwargs['kai_instance']} appears running but does not appear to be a KoboldAI instance. Please start KoboldAI first then try again!")
-    if error == ServerErrors.CONNECTIONERR:
-        logging.warning(f'Connection Error when attempting to reach server: {kwargs["kai_instance"]}')
-        return(f"KoboldAI instance {kwargs['kai_instance']} does not seem to be responding. Please load KoboldAI first, ensure it's reachable through the internet, then try again")
-    if error == ServerErrors.BADARGS:
-        logging.warning(f'{kwargs["username"]} send bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}')
-        return(f'Bad value for {kwargs["bad_arg"]}: {kwargs["bad_value"]}')
-    if error == ServerErrors.REJECTED:
-        logging.warning(f'{kwargs["username"]} prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
-        return(f'prompt rejected by all instances with reasons: {kwargs["rejection_details"]}')
     if error == ServerErrors.WRONG_CREDENTIALS:
         logging.warning(f'{kwargs["username"]} sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
         return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
@@ -88,107 +72,6 @@ def write_usage_to_disk():
         json.dump(usage,db)
     with open(contributions_file, 'w') as db:
         json.dump(contributions,db)
-
-
-def update_instance_details(kai_instance, **kwargs):
-    try:
-        model_req = requests.get(kai_instance + '/api/latest/model')
-        if type(model_req.json()) is not dict:
-            return(f"{get_error(ServerErrors.INVALIDKAI,kai_instance = kai_instance)}",400)
-        model = model_req.json()["result"]
-    except requests.exceptions.JSONDecodeError:
-        return(f"{get_error(ServerErrors.INVALIDKAI,kai_instance = kai_instance)}",400)
-    except requests.exceptions.ConnectionError:
-        return(f"{get_error(ServerErrors.CONNECTIONERR,kai_instance = kai_instance)}",400)
-    # If the username arg is provided, we consider this server new
-    if "username" in kwargs:
-        existing_details = servers.get(kai_instance)
-        username = kwargs["username"]
-        if existing_details and existing_details['password'] != password:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = kai_instance, username = username)}",400)
-        logging.info(f'{username} added server {kai_instance}')
-        servers_dict = {
-            "model": model,
-            "username": username,
-            "max_length": kwargs.get("max_length", 512),
-            "max_content_length": kwargs.get("max_content_length", 2048)
-        }
-        servers[kai_instance] = servers_dict
-        write_servers_to_disk()
-    elif servers[kai_instance]["model"] != model:
-        logging.info(f'Updated server {kai_instance} model from {servers_dict[model]} to {model}')
-        servers_dict = servers[kai_instance]
-        servers_dict[model] = model
-        servers[kai_instance] = servers_dict
-        write_servers_to_disk()
-    return('OK',200)
-
-
-def generate(prompt, username, models = [], params = {}):
-    rejections = {}
-    generations = []
-    gen_n = params.get('n', 1)
-    params['n'] = 1
-    rejecting_servers = []
-    for iter in range(gen_n):
-        current_generation = None
-        while not current_generation and len(servers):
-            for kai_instance in servers:
-                if kai_instance in rejecting_servers:
-                    continue
-                kai_details = servers[kai_instance]
-                max_length = params.get("max_length", 80)
-                if type(max_length) is not int:
-                    return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_length", bad_value = max_length)}',400)
-                if max_length > kai_details["max_length"]:
-                    rejections["max_length"] = rejections.get("max_length",0) + 1
-                    rejections["total"] = rejections.get("total",0) + 1
-                    rejecting_servers.append(kai_instance)
-                    continue
-                max_content_length = params.get("max_content_length", 80)
-                if type(max_content_length) is not int:
-                    return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "max_content_length", bad_value = max_content_length)}',400)
-                if max_content_length > kai_details["max_content_length"]:
-                    rejections["total"] = rejections.get("total",0) + 1
-                    rejections["max_content_length"] = rejections.get("max_content_length",0) + 1
-                    rejecting_servers.append(kai_instance)
-                    continue
-                # We only refresh server status on first iteration
-                if iter == 0:
-                    srv_chk = update_instance_details(kai_instance)
-                    if srv_chk[1] != 200:
-                        rejections["total"] = rejections.get("total",0) + 1
-                        rejections["server_unavailable"] = rejections.get("server_unavailable",0) + 1
-                        continue
-                models = params.get("models", [])
-                if type(models) is not list:
-                    return(f'{get_error(ServerErrors.BADARGS,username = username, bad_arg = "models", bad_value = models)}',400)
-                if models != [] and kai_details["model"] not in models:
-                    rejections["total"] = rejections.get("total",0) + 1
-                    rejections["models"] = rejections.get("models",0) + 1
-                    rejecting_servers.append(kai_instance)
-                    continue
-                try:
-                    gen_dict = params
-                    gen_dict["prompt"] = prompt
-                    gen_req = requests.post(kai_instance + '/api/latest/generate/', json = gen_dict)
-                    if type(gen_req.json()) is not dict:
-                        logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}')
-                        continue
-                    if gen_req.status_code == 503:
-                        logging.info(f'KAI instance {kai_instance} Busy. Will try again later')
-                        continue
-                    c_username = kai_details["username"]
-                    contributions[c_username] = contributions.get(c_username,0) + max_length
-                    usage[username] = usage.get(username,0) + max_length
-                    current_generation = gen_req.json()["results"][0]["text"]
-                    generations.append(current_generation)
-                except requests.exceptions.ConnectionError:
-                    logging.error(f'KAI instance {kai_instance} API unexpected error on generate: {prompt} with params {params}')
-                    continue
-    if len(generations) == 0:
-        return(f'{get_error(ServerErrors.REJECTED,username = username, rejection_details = rejections)}',400)
-    return(generations, 200)
 
 
 def get_available_models():
