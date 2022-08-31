@@ -7,6 +7,11 @@ import clientData as cd
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--interval', action="store", required=False, type=int, default=1, help="The amount of seconds with which to check if there's new prompts to generate")
+arg_parser.add_argument('-u', '--username', action="store", required=False, type=str, default='Anonymous', help="The username of the owner of the KAI instance. Used to track contributions.")
+arg_parser.add_argument('-p', '--password', action="store", required=False, type=str, default='Password', help="The password to make sure nobody spoofs your server instance.")
+arg_parser.add_argument('-n', '--kai_name', action="store", required=False, type=str, default='My Awsome Instance', help="The server name. It will be shown to the world and there can be only one.")
+arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=str, default='http://localhost:5000', help="The KoboldAI server URL. Where the bridge will get its generations from.")
+arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, default='http://dbzer0.com:5001', help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
 
 model = ''
 max_content_length = 1024
@@ -58,15 +63,20 @@ if __name__ == "__main__":
     current_id = None
     current_payload = None
     loop_retry = 0
+    username = args.username if args.username else cd.username
+    password = args.password if args.password else cd.password
+    kai_name = args.kai_name if args.kai_name else cd.kai_name
+    kai_url = args.kai_url if args.kai_url else cd.kai_url
+    cluster = args.cluster_url if args.cluster_url else cd.cluster_url
     while True:
-        if not validate_kai(cd.kai):
+        if not validate_kai(kai_url):
             logging.warning(f"Waiting 10 seconds...")
             time.sleep(10)
             continue
         gen_dict = {
-            "username": cd.username,
-            "password": cd.password,
-            "name": cd.kai_name,
+            "username": username,
+            "password": password,
+            "name": kai_name,
             "model": model,
             "max_length": max_length,
             "max_content_length": max_content_length,
@@ -75,23 +85,23 @@ if __name__ == "__main__":
             loop_retry += 1
         else:
             try:
-                pop_req = requests.post(cd.server + '/generate/pop', json = gen_dict)
+                pop_req = requests.post(cluster + '/generate/pop', json = gen_dict)
             except requests.exceptions.ConnectionError:
-                logging.warning(f"Server {cd.server} unavailable during pop. Waiting 10 seconds...")
+                logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
             if not pop_req.ok:
-                logging.warning(f"During gen pop, server {cd.server} responded: {pop_req.text}. Waiting for 10 seconds...")
+                logging.warning(f"During gen pop, server {cluster} responded: {pop_req.text}. Waiting for 10 seconds...")
                 time.sleep(10)
                 continue
             pop = pop_req.json()
             if not pop["id"]:
-                logging.info(f"Server {cd.server} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
+                logging.info(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
                 time.sleep(interval)
                 continue
             current_id = pop['id']
             current_payload = pop['payload']
-        gen_req = requests.post(cd.kai + '/api/latest/generate/', json = current_payload)
+        gen_req = requests.post(kai_url + '/api/latest/generate/', json = current_payload)
         if type(gen_req.json()) is not dict:
             logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}. Sleeping 10 seconds...')
             time.sleep(9)
@@ -103,16 +113,16 @@ if __name__ == "__main__":
         submit_dict = {
             "id": current_id,
             "generation": current_generation,
-            "password": cd.password,
+            "password": password,
         }
         while current_id and current_generation:
             try:
-                submit_req = requests.post(cd.server + '/generate/submit', json = submit_dict)
+                submit_req = requests.post(cluster + '/generate/submit', json = submit_dict)
                 if submit_req.status_code == 404:
                     logging.warning(f"The generation we were working on got stale. Aborting!")
                 elif not submit_req.ok:
                     logging.error(submit_req.status_code)
-                    logging.warning(f"During gen submit, server {cd.server} responded: {submit_req.text}. Waiting for 10 seconds...")
+                    logging.warning(f"During gen submit, server {cluster} responded: {submit_req.text}. Waiting for 10 seconds...")
                     time.sleep(10)
                     continue
                 else:
@@ -121,7 +131,7 @@ if __name__ == "__main__":
                 current_payload = None
                 current_generation = None
             except requests.exceptions.ConnectionError:
-                logging.warning(f"Server {cd.server} unavailable during submit. Waiting 10 seconds...")
+                logging.warning(f"Server {cluster} unavailable during submit. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
         time.sleep(interval)
