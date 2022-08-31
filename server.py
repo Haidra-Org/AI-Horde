@@ -142,6 +142,7 @@ class SyncGenerate(Resource):
         parser.add_argument("username", type=str, required=True, help="Username to track usage")
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
+        parser.add_argument("server", type=str, required=False, help="If specified, only the server with this ID will be able to generate this prompt")
         args = parser.parse_args()
         if args['username'] == '':
             return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
@@ -149,6 +150,8 @@ class SyncGenerate(Resource):
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
         server_found = False
         for s in servers:
+            if args.server and args.server != servers[s].id:
+                continue
             if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80)):
                 server_found = True
         if not server_found:
