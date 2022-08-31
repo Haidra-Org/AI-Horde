@@ -42,9 +42,9 @@ Once the `finished` arg is equal to your `n`, then your request is completed.
 
 The United branch of KoboldAI now supports using the bridge directly from its interface. To do so, you will need to start it with special variables (as the GUI has not been updated yet)
 
-If you're using the `play.(sh|bat)` file, then pass the arguments to staryt a KAI instance in cluster mode like so (Change "Anonynous" to your own username of course)
+If you're using the `play.(sh|bat)` file, then pass the arguments to start a KAI instance in cluster mode like so (Change "Anonynous" to your own username of course)
 
-UNIX
+LINUX
 
 ```bash
 USERNAME=Anonymous
