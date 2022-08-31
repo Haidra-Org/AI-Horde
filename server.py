@@ -143,10 +143,9 @@ class SyncGenerate(Resource):
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+        parser.add_argument("softprompts", type=str, action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
         # Not implemented yet
         parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
-        # Not implemented yet
-        parser.add_argument("softprompt", type=str, required=False, help="If specified, only servers who can load this softprompt will generate this request")
         args = parser.parse_args()
         if args['username'] == '':
             return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
@@ -156,7 +155,7 @@ class SyncGenerate(Resource):
         for s in servers:
             if len(args.servers) and servers[s].id not in args.servers:
                 continue
-            if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80)):
+            if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80),args["softprompts"]):
                 server_found = True
         if not server_found:
             return("No active server found to fulfil this request. Please Try again later...", 503)
@@ -168,6 +167,8 @@ class SyncGenerate(Resource):
             args["username"],
             args["models"],
             args["params"],
+            servers=args["servers"],
+            softprompts=args["softprompts"],
 
         )
         while True:
@@ -196,6 +197,8 @@ class AsyncGenerate(Resource):
         parser.add_argument("username", type=str, required=True, help="Username to track usage")
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
+        parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+        parser.add_argument("softprompts", action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
         args = parser.parse_args()
         wp_count = count_waiting_requests(args.username)
         if args['username'] == '':
@@ -209,6 +212,8 @@ class AsyncGenerate(Resource):
             args["username"],
             args["models"],
             args["params"],
+            servers=args["servers"],
+            softprompts=args["softprompts"],
 
         )
         return({"id":wp.id}, 200)
@@ -225,11 +230,12 @@ class PromptPop(Resource):
         parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
         parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
         parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
+        parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
         args = parser.parse_args()
         skipped = {}
         server = servers.get(args['name'])
         if not server:
-            server = KAIServer(args['username'], args['name'], args['password'])
+            server = KAIServer(args['username'], args['name'], args['password'], args["softprompts"])
         if args['password'] != server.password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'])
@@ -245,6 +251,10 @@ class PromptPop(Resource):
         for wp in prioritized_wp:
             if not wp.needs_gen():
                 continue
+            # If the prompt requested a specific server and we're not it, ignore it
+            if len(wp.servers) and server.id not in wp.servers:
+                skipped["server_id"] = skipped.get("server_id",0) + 1
+                continue
             if len(wp.models) and args['model'] not in wp.models:
                 skipped["model"] = skipped.get("model",0) + 1
                 continue
@@ -254,10 +264,22 @@ class PromptPop(Resource):
             if args['max_content_length'] < wp.max_length:
                 skipped["max_content_length"] = skipped.get("max_content_length",0) + 1
                 continue
-            ret = wp.start_generation(server)
-            payload = ret[0]
-            procgen = ret[1]
-            return({"id": procgen.id, "payload": payload}, 200)
+            matching_softprompt = False
+            for sp in wp.softprompts:
+                # If a None softprompts has been provided, we always match, since we can always remove the softprompt
+                if sp == '':
+                    matching_softprompt = sp
+                    break
+                for sp_name in args['softprompts']:
+                    logging.info([sp_name,sp_name,sp in sp_name])
+                    if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
+                        matching_softprompt = sp_name
+                        break
+            if matching_softprompt == False:
+                skipped["softprompts"] = skipped.get("softprompts",0) + 1
+                continue
+            ret = wp.start_generation(server, matching_softprompt)
+            return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
 
 
@@ -326,7 +348,7 @@ class ListSingle(Resource):
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
-    def __init__(self, prompt, username, models, params):
+    def __init__(self, prompt, username, models, params, **kwargs):
         self.prompt = prompt
         self.username = username
         self.models = models
@@ -349,6 +371,8 @@ class WaitingPrompt:
         # The generations that have been created already
         self.processing_gens = []
         self.last_process_time = datetime.now()
+        self.servers = kwargs.get("servers", [])
+        self.softprompts = kwargs.get("softprompts", [''])
         # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
         self.stale_time = 600
         waiting_prompts[self.id] = self
@@ -364,14 +388,19 @@ class WaitingPrompt:
             return(True)
         return(False)
 
-    def start_generation(self, server):
+    def start_generation(self, server, matching_softprompt):
         if self.n <= 0:
             return
         new_gen = ProcessingGeneration(self, server)
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
-        return(self.gen_payload, new_gen)
+        prompt_payload = {
+            "payload": self.gen_payload,
+            "softprompt": matching_softprompt,
+            "id": new_gen.id,
+        }
+        return(prompt_payload)
 
     def is_completed(self):
         if self.needs_gen():
@@ -462,10 +491,11 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, username = None, name = None, password = None):
+    def __init__(self, username = None, name = None, password = None, softprompts = []):
         self.username = username
         self.password = password
         self.name = name
+        self.softprompts = softprompts
         self.contributions = 0
         self.fulfilments = 0
         self.performance = 0
@@ -480,7 +510,7 @@ class KAIServer:
         self.max_content_length = max_content_length
         self.max_length = max_length
 
-    def can_generate(self, models, max_content_length, max_length):
+    def can_generate(self, models, max_content_length, max_length, softprompts):
         is_matching = True
         if len(models) >= 1 and self.model not in models:
             is_matching = False
@@ -488,6 +518,19 @@ class KAIServer:
             is_matching = False
         if self.max_length < max_length:
             is_matching = False
+        matching_softprompt = False
+        for sp in softprompts:
+            # If a None softprompts has been provided, we always match, since we can always remove the softprompt
+            if sp == '':
+                matching_softprompt = True
+                break
+            for sp_name in self.softprompts:
+                if sp in sp_name: 
+                    matching_softprompt = True
+                    break
+        if not matching_softprompt:
+            is_matching = False
+        logging.info(is_matching)
         return(is_matching)
 
     def record_contribution(self, tokens, seconds_taken):
@@ -521,6 +564,7 @@ class KAIServer:
             "performance": self.performance,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
+            "softprompts": self.softprompts,
         }
         return(ret_dict)
 
@@ -536,6 +580,7 @@ class KAIServer:
         self.performance = saved_dict["performance"]
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
+        self.softprompts = saved_dict["softprompts"]
         servers[self.name] = self
 
 class UsageStore(object):

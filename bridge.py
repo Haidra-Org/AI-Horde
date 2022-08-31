@@ -17,17 +17,21 @@ arg_parser.add_argument('--priority_usernames',type=str, action='append', requir
 model = ''
 max_content_length = 1024
 max_length = 80
+current_softprompt = None
+softprompts = []
 
 def validate_kai(kai):
     global model
     global max_content_length
     global max_length
+    global softprompts
+    global current_softprompt
     try:
-        model_req = requests.get(kai + '/api/latest/model')
-        if type(model_req.json()) is not dict:
+        req = requests.get(kai + '/api/latest/model')
+        if type(req.json()) is not dict:
             logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
             return(False)
-        model = model_req.json()["result"]
+        model = req.json()["result"]
     except requests.exceptions.JSONDecodeError:
         logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
@@ -35,20 +39,38 @@ def validate_kai(kai):
         logging.error(f"Server {kai} is not reachable. Are you sure it's running?")
         return(False)
     try:
-        model_req = requests.get(kai + '/api/latest/config/max_context_length')
-        if type(model_req.json()) is not dict:
+        req = requests.get(kai + '/api/latest/config/max_context_length')
+        if type(req.json()) is not dict:
             logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
             return(False)
-        max_content_length = model_req.json()["value"]
+        max_content_length = req.json()["value"]
     except requests.exceptions.JSONDecodeError:
         logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
     try:
-        model_req = requests.get(kai + '/api/latest/config/max_length')
-        if type(model_req.json()) is not dict:
+        req = requests.get(kai + '/api/latest/config/max_length')
+        if type(req.json()) is not dict:
             logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
             return(False)
-        max_length = model_req.json()["value"]
+        max_length = req.json()["value"]
+    except requests.exceptions.JSONDecodeError:
+        logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
+        return(False)
+    try:
+        req = requests.get(kai + '/api/latest/config/soft_prompts_list')
+        if type(req.json()) is not dict:
+            logging.warn(f"Server {kai} is up but does not appear to be running the latest KoboldAI server. Are you sure it's running the UNITED branch?")
+            return(True)
+        softprompts = [sp['value'] for sp in req.json()["values"]]
+    except requests.exceptions.JSONDecodeError:
+        logging.warn(f"Server {kai} is up but does not appear to be running the latest version of KoboldAI server. Are you sure it's running the UNITED branch?")
+        return(True)
+    try:
+        req = requests.get(kai + '/api/latest/config/soft_prompt')
+        if type(req.json()) is not dict:
+            logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
+            return(False)
+        current_softprompt = req.json()["value"]
     except requests.exceptions.JSONDecodeError:
         logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
@@ -87,6 +109,7 @@ if __name__ == "__main__":
             "max_length": max_length,
             "max_content_length": max_content_length,
             "priority_usernames": priority_usernames,
+            "softprompts": softprompts,
         }
         if current_id:
             loop_retry += 1
@@ -108,6 +131,10 @@ if __name__ == "__main__":
                 continue
             current_id = pop['id']
             current_payload = pop['payload']
+            requested_softprompt = pop['softprompt']
+        if requested_softprompt != current_softprompt:
+            req = requests.put(kai_url + '/api/latest/config/soft_prompt/', json = {"value": requested_softprompt})
+            time.sleep(1) # Wait a second to unload the softprompt
         gen_req = requests.post(kai_url + '/api/latest/generate/', json = current_payload)
         if type(gen_req.json()) is not dict:
             logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}. Sleeping 10 seconds...')
