@@ -1,6 +1,7 @@
 # KoboldAI-cluster
 
-Turns KoboldAI into a giant crowdsourced distributed cluster
+Turns KoboldAI into a giant crowdsourced distributed cluster. This allows people without a powerful GPU to use KAI by relying on spare/idle resources provided by the community.
+It also allows clients other than KAI, such as games and apps, to use KAI-provided generations.
 
 # Generating Prompts
 
@@ -36,6 +37,8 @@ curl dbzer0.com:5001/generate/prompt/2a72f411-a4c3-49e1-aad4-41005e1ff769
 Once the `finished` arg is equal to your `n`, then your request is completed.
 
 # Using KoboldAI client
+
+**You KoboldAI client must be using the UNITED branch!**
 
 The United branch of KoboldAI now supports using the bridge directly from its interface. To do so, you will need to start it with special variables (as the GUI has not been updated yet)
 
@@ -98,7 +101,7 @@ The bridge also does not save any prompts, but of course this is not under my co
 
 This system stores how many tokens you requested to generate, and how many your own servers have generated for others. This is not used yet, but eventually this will be how we balance resources among the users.
 
-## Advanced Usage Local and Cluster KAI
+## Advanced Usage: Local + Cluster KAI
 
 If you want to both play with KAI AND share resources with the community, you can achieve this by running two instances of KAI side by side. One normal one, and one in cluster mode. That way when you're using the clustered KAI, you will ensure there's always at least one instance to serve you (your own), while also taking advantage of any other instances that are onboarded at the time.
 
