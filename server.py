@@ -18,6 +18,7 @@ class ServerErrors(Enum):
     WRONG_CREDENTIALS = 4
     INVALID_PROCGEN = 5
     DUPLICATE_GEN = 6
+    TOO_MANY_PROMPTS = 7
 
 ### Globals
 
@@ -71,6 +72,9 @@ def get_error(error, **kwargs):
     if error == ServerErrors.DUPLICATE_GEN:
         logging.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
         return(f'Processing Generation with ID {kwargs["id"]} already submitted')
+    if error == ServerErrors.TOO_MANY_PROMPTS:
+        logging.warning(f'User {kwargs["username"]} has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
+        return("Too many parallel requests from same user. Please try again later.")
 
 def write_servers_to_disk():
     serialized_list = []
@@ -195,6 +199,12 @@ def get_available_models():
         models_ret[servers[s].model] = models_ret.get(servers[s].model,0) + 1
     return(models_ret)
 
+def count_waiting_requests(username):
+    count = 0
+    for wp in waiting_prompts:
+        if waiting_prompts[wp].username == username and not waiting_prompts[wp].is_completed():
+            count += 1
+    return(count)
 
 @REST_API.after_request
 def after_request(response):
@@ -248,6 +258,9 @@ class SyncGenerate(Resource):
                 server_found = True
         if not server_found:
             return("No active server found to fulfil this request. Please Try again later...", 503)
+        wp_count = count_waiting_requests(args.username)
+        if wp_count >= 3:
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             args["prompt"],
             args["username"],
@@ -282,6 +295,9 @@ class AsyncGenerate(Resource):
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         args = parser.parse_args()
+        wp_count = count_waiting_requests(args.username)
+        if wp_count >= 3:
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             args["prompt"],
             args["username"],
@@ -401,6 +417,10 @@ class WaitingPrompt:
         self.models = models
         self.params = params
         self.n = params.get('n', 1)
+        # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
+        if self.n > 20:
+            logging.warning(f"User {self.username} requested {self.n} gens per action. Reducing to 20...")
+            self.n = 20
         self.tokens = len(prompt.split())
         self.max_length = params.get("max_length", 80)
         self.max_content_length = params.get("max_content_length", 1024)
