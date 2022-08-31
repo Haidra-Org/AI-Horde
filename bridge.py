@@ -12,6 +12,7 @@ arg_parser.add_argument('-p', '--password', action="store", required=False, type
 arg_parser.add_argument('-n', '--kai_name', action="store", required=False, type=str, help="The server name. It will be shown to the world and there can be only one.")
 arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=str, help="The KoboldAI server URL. Where the bridge will get its generations from.")
 arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
+arg_parser.add_argument('--priority_usernames',type=str, action='append', required=False, help="Usernames which get priority use in this server. The owner's username is always in this list.")
 
 model = ''
 max_content_length = 1024
@@ -68,6 +69,10 @@ if __name__ == "__main__":
     kai_name = args.kai_name if args.kai_name else cd.kai_name
     kai_url = args.kai_url if args.kai_url else cd.kai_url
     cluster = args.cluster_url if args.cluster_url else cd.cluster_url
+    priority_usernames = args.priority_usernames if args.priority_usernames else cd.priority_usernames
+    if username not in priority_usernames:
+        # Owner always gets most priority
+        priority_usernames.insert(0,username)
     logging.info(f"Starting {kai_name} instance registered to {username}")
     while True:
         if not validate_kai(kai_url):
@@ -81,6 +86,7 @@ if __name__ == "__main__":
             "model": model,
             "max_length": max_length,
             "max_content_length": max_content_length,
+            "priority_usernames": priority_usernames,
         }
         if current_id:
             loop_retry += 1

@@ -155,7 +155,6 @@ class SyncGenerate(Resource):
         server_found = False
         for s in servers:
             if len(args.servers) and servers[s].id not in args.servers:
-                print([args.servers,servers[s].id])
                 continue
             if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80)):
                 server_found = True
@@ -222,9 +221,10 @@ class PromptPop(Resource):
         parser.add_argument("username", type=str, required=True, help="Username to track contributions")
         parser.add_argument("password", type=str, required=True, help="Password to authenticate with")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
-        parser.add_argument("model", type=str, required=True, default=[], help="The model currently running on this KoboldAI")
+        parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
         parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
         parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
+        parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
         args = parser.parse_args()
         skipped = {}
         server = servers.get(args['name'])
@@ -233,8 +233,17 @@ class PromptPop(Resource):
         if args['password'] != server.password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'])
+        # This ensures that the priority requested by the bridge is respected
+        prioritized_wp = []
+        for priority_username in args.priority_usernames:
+            for wp_id in waiting_prompts:
+                if waiting_prompts[wp_id].username == priority_username:
+                    prioritized_wp.append(waiting_prompts[wp_id])
         for wp_id in waiting_prompts:
-            wp = waiting_prompts[wp_id]
+            if waiting_prompts[wp_id] not in prioritized_wp:
+                prioritized_wp.append(waiting_prompts[wp_id])
+        logging.info([args.priority_usernames,[wp.username for wp in prioritized_wp]])
+        for wp in prioritized_wp:
             if not wp.needs_gen():
                 continue
             if len(wp.models) and args['model'] not in wp.models:
