@@ -1,4 +1,4 @@
-# KoboldAI Hoarde
+# KoboldAI Horde
 
 This turns KoboldAI into a giant crowdsourced distributed cluster. It allows people without a powerful GPU to use KAI by relying on spare/idle resources provided by the community.
 It also allows clients other than KAI, such as games and apps, to use KAI-provided generations.
