@@ -242,7 +242,6 @@ class PromptPop(Resource):
         for wp_id in waiting_prompts:
             if waiting_prompts[wp_id] not in prioritized_wp:
                 prioritized_wp.append(waiting_prompts[wp_id])
-        logging.info([args.priority_usernames,[wp.username for wp in prioritized_wp]])
         for wp in prioritized_wp:
             if not wp.needs_gen():
                 continue
