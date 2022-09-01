@@ -238,7 +238,7 @@ class PromptPop(Resource):
             server = KAIServer(args['username'], args['name'], args['password'], args["softprompts"])
         if args['password'] != server.password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
-        server.check_in(args['model'], args['max_length'], args['max_content_length'])
+        server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         for priority_username in args.priority_usernames:
@@ -504,11 +504,12 @@ class KAIServer:
             servers[self.name] = self
             logging.info(f'New server checked-in: {name} by {username}')
 
-    def check_in(self, model, max_length, max_content_length):
+    def check_in(self, model, max_length, max_content_length, softprompts):
         self.last_check_in = datetime.now()
         self.model = model
         self.max_content_length = max_content_length
         self.max_length = max_length
+        self.softprompts = softprompts
 
     def can_generate(self, models, max_content_length, max_length, softprompts):
         is_matching = True
@@ -520,19 +521,16 @@ class KAIServer:
             is_matching = False
         matching_softprompt = False
         for sp in softprompts:
-            logging.info([sp,self.softprompts])
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
             if sp == '':
                 matching_softprompt = True
                 break
             for sp_name in self.softprompts:
-                logging.info([sp,sp_name,sp in sp_name])
                 if sp in sp_name: 
                     matching_softprompt = True
                     break
         if not matching_softprompt:
             is_matching = False
-        logging.info(is_matching)
         return(is_matching)
 
     def record_contribution(self, tokens, seconds_taken):
