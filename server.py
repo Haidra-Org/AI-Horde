@@ -525,12 +525,13 @@ class KAIServer:
                 matching_softprompt = True
                 break
             for sp_name in self.softprompts:
+                logging.info([sp,sp_name,sp in sp_name])
                 if sp in sp_name: 
                     matching_softprompt = True
                     break
         if not matching_softprompt:
             is_matching = False
-        logging.info(is_matching)
+        # logging.info(is_matching)
         return(is_matching)
 
     def record_contribution(self, tokens, seconds_taken):
