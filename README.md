@@ -36,6 +36,16 @@ curl dbzer0.com:5001/generate/prompt/2a72f411-a4c3-49e1-aad4-41005e1ff769
 
 Once the `finished` arg is equal to your `n`, then your request is completed.
 
+## Specifying servers
+
+You can optionally specify only specific servers to generate for you. Grab one or more server IDs from `/servers` and then send it with your payload as a list in the "servers" arg. Your generation will only be fulfiled by servers with the specified IDs
+
+## Specifying softprompts
+
+You can optionally specify only specific softprompts to use with generation. You can type all or part of the softprompt **filename** that you want to be used. Only servers which can find that softprompt name for their model will fulfil your request. If you don't specify anything, or specify an empty list, then any active softprompts will be turned off for your generation.
+
+The softprompts you specify need to exist on the KAI server side. If you want to be able to generate using a specific softprompt on other servers, distribute it and ask people to add it to their softprompts folder.
+
 # Using KoboldAI client
 
 **You KoboldAI client must be using the UNITED branch!**
@@ -82,12 +92,15 @@ If all goes well, it will connect to your KAI instance and then will start polli
 
 A server will be considered "stale" and not shown in the general list, if it doesn't check in for at least 5 minutes. You can see still them through their individual UUID endpoint, and it will continue where it left off as soon as it checks back in to fulfil requests. In fact, it doesn't technically need to be the same server. You can switch to a different box and long as your server name and auth is the same, your stats will carry on. This means that you can keep plugging in different collab instances while retaining the same stats.
 
+## Softprompts
 
-## Other endpoints
+The bridge will automatically enable or disable softprompts at the clients request, assuming they exist in your files. If you want to help more specialized requests, make sure you download and install other people's softprompts on your server so that they are available to generate for people using them.
+
+# Other endpoints
 
 * GET `/servers` To see the info of all currently active servers and their statistics.
    ```json
-   [{"name": "Db0's Awesome Instance", "id": "019e34e3-3109-4ea9-820a-b0c4f6a53c07", "model": "KoboldAI/fairseq-dense-2.7B-Nerys", "max_length": 80, "max_content_length": 1632, "tokens_generated": 30, "requests_fulfilled": 2, "latest_performance": "1.36 seconds per token"}]
+   [{"name": "Db0's Awesome Instance", "id": "019e34e3-3109-4ea9-820a-b0c4f6a53c07", "model": "KoboldAI/fairseq-dense-2.7B-Nerys", "max_length": 80, "max_content_length": 1632, "tokens_generated": 30, "requests_fulfilled": 2, "latest_performance": "1.36 tokens per second"}]
 * GET `/servers/<UUID>` To see the information of a specific server by UUID.
 * GET `/usage` to see how much each user has consumed this service.
 * GET `/contributions` to see how much each user has contributed to this service with their own resources.
