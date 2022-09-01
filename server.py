@@ -9,6 +9,7 @@ from enum import Enum
 import threading, time
 from uuid import uuid4
 from datetime import datetime
+from markdown import markdown
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -104,25 +105,7 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
-class Register(Resource):
-    #decorators = [limiter.limit("1/minute")]
-    decorators = [limiter.limit("10/minute")]
-    def post(self):
-        parser = reqparse.RequestParser()
-        parser.add_argument("url", type=str, required=True, help="Full URL The KoboldAI server. E.g. 'https://example.com:5000'")
-        parser.add_argument("username", type=str, required=True, help="Username for contributions")
-        parser.add_argument("password", type=str, required=True, help="Password for changing server settings")
-        parser.add_argument("max_length", type=int, required=False, default=80, help="The max number of tokens this server can generate. This will set the max for each client.")
-        parser.add_argument("max_content_length", type=int, required=False, default=1024, help="The max amount of context to submit to this AI for sampling. This will set the max for each client.")
-        args = parser.parse_args()
-        ret = update_instance_details(
-            args["url"],
-            username = args["username"],
-            password = args["password"],
-            max_length = args["max_length"],
-            max_content_length = args["max_content_length"],
-        )
-        return(ret)
+
 
 class Usage(Resource):
     def get(self):
@@ -597,6 +580,11 @@ class UsageStore(object):
             write_servers_to_disk()
             time.sleep(self.interval)
 
+@REST_API.route('/')
+def index():
+    with open('index.md') as index_file:
+        index = index_file.read()
+    return(markdown(index))
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
@@ -615,7 +603,6 @@ if __name__ == "__main__":
         with open(contributions_file) as db:
             contributions = json.load(db)
 
-    # api.add_resource(Register, "/register")
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
