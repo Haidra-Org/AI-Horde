@@ -580,7 +580,7 @@ class KAIServer:
         self.performance = saved_dict["performance"]
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
-        self.softprompts = saved_dict["softprompts"]
+        self.softprompts = saved_dict.get("softprompts",[])
         servers[self.name] = self
 
 class UsageStore(object):
