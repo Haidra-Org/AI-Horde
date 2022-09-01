@@ -520,7 +520,7 @@ class KAIServer:
             is_matching = False
         matching_softprompt = False
         for sp in softprompts:
-            logging.info(sp)
+            logging.info([sp,self.softprompts])
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
             if sp == '':
                 matching_softprompt = True
