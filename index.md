@@ -1,6 +1,6 @@
 # KoboldAI Horde
 
-This is a crowdsource distributed cluster of [KoboldAI clients](https://github.com/KoboldAI/KoboldAI-Client). You can download the client and use it to experience stories similar to AI-Dungeon for free. If you like this service, consider joining the horde yourself!
+This is a crowdsourced distributed cluster of [KoboldAI clients](https://github.com/KoboldAI/KoboldAI-Client). You can download the client and use it to experience stories similar to AI-Dungeon for free. If you like this service, consider joining the horde yourself!
 
 You can find the source and documentation for [KoboldAI Horde](https://github.com/db0/KoboldAI-Horde) in github.
 
