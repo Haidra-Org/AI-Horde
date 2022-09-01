@@ -520,6 +520,7 @@ class KAIServer:
             is_matching = False
         matching_softprompt = False
         for sp in softprompts:
+            logging.info(sp)
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
             if sp == '':
                 matching_softprompt = True
@@ -531,7 +532,7 @@ class KAIServer:
                     break
         if not matching_softprompt:
             is_matching = False
-        # logging.info(is_matching)
+        logging.info(is_matching)
         return(is_matching)
 
     def record_contribution(self, tokens, seconds_taken):
