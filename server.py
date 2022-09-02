@@ -542,7 +542,7 @@ class KAIServer:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{sum(self.performances) / len(self.performances)} tokens per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),2)} tokens per second'
         else:
             ret_str = f'No requests fulfiled yet'
         return(ret_str)
