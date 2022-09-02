@@ -303,6 +303,7 @@ class List(Resource):
                 "tokens_generated": servers[s].contributions,
                 "requests_fulfilled": servers[s].fulfilments,
                 "latest_performance": servers[s].get_performance(),
+                "uptime": servers[s].uptime,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -482,17 +483,30 @@ class KAIServer:
         self.contributions = 0
         self.fulfilments = 0
         self.performance = 0
+        self.uptime = 0
         self.id = str(uuid4())
         if name:
             servers[self.name] = self
             logging.info(f'New server checked-in: {name} by {username}')
 
     def check_in(self, model, max_length, max_content_length, softprompts):
+        if not self.is_stale():
+            self.uptime += (datetime.now() - self.last_check_in).seconds
         self.last_check_in = datetime.now()
         self.model = model
         self.max_content_length = max_content_length
         self.max_length = max_length
         self.softprompts = softprompts
+
+    def get_human_readable_uptime(self):
+        if self.uptime < 60:
+            return(f"{self.uptime} seconds")
+        elif self.uptime < 60*60:
+            return(f"{round(self.uptime/60,2)} minutes")
+        elif self.uptime < 60*60*24:
+            return(f"{round(self.uptime/60/60,2)} hours")
+        else:
+            return(f"{round(self.uptime/60/60/24,2)} days")
 
     def can_generate(self, models, max_content_length, max_length, softprompts):
         is_matching = True
@@ -548,6 +562,7 @@ class KAIServer:
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
             "softprompts": self.softprompts,
+            "uptime": self.uptime,
         }
         return(ret_dict)
 
@@ -564,6 +579,7 @@ class KAIServer:
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
         self.softprompts = saved_dict.get("softprompts",[])
+        self.uptime = saved_dict.get("uptime",0)
         servers[self.name] = self
 
 class UsageStore(object):
@@ -601,9 +617,16 @@ def index():
     top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
 ### Users
-**{top_contributor}**: {top_contribution} tokens generated.
+This is the person whose server(s) have generated the most tokens for the horde.
+
+### {top_contributor}
+* {top_contribution} tokens generated.
 ### Servers
-**{top_server.name}**: {top_server_contribution} tokens generated.
+This is the server which has generated the most tokens for the horde.
+### {top_server.name}
+* {top_server_contribution} tokens generated.
+* {top_server.fulfilments} request fulfilments.
+* {top_server.get_human_readable_uptime()} uptime.
 """
     return(markdown(index + top_contributors))
 
