@@ -304,7 +304,7 @@ class List(Resource):
                 "max_content_length": servers[s].max_content_length,
                 "tokens_generated": servers[s].contributions,
                 "requests_fulfilled": servers[s].fulfilments,
-                "latest_performance": servers[s].get_performance(),
+                "performance": servers[s].get_performance(),
                 "uptime": servers[s].uptime,
             }
             servers_ret.append(sdict)
@@ -484,7 +484,7 @@ class KAIServer:
         self.softprompts = softprompts
         self.contributions = 0
         self.fulfilments = 0
-        self.performance = 0
+        self.performances = []
         self.uptime = 0
         self.id = str(uuid4())
         if name:
@@ -536,11 +536,13 @@ class KAIServer:
         contributions[self.username] = contributions.get(self.username,0) + tokens
         self.contributions += tokens
         self.fulfilments += 1
-        self.performance = round(tokens / seconds_taken,2)
+        self.performances.append(round(tokens / seconds_taken))
+        if len(self.performances) > 20:
+            del self.performances[0]
 
     def get_performance(self):
-        if self.performance:
-            ret_str = f'{self.performance} tokens per second'
+        if len(self.performances):
+            ret_str = f'{sum(self.performances) / len(self.performances)} tokens per second'
         else:
             ret_str = f'No requests fulfiled yet'
         return(ret_str)
@@ -564,7 +566,7 @@ class KAIServer:
             "max_content_length": self.max_content_length,
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
-            "performance": self.performance,
+            "performances": self.performances,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
             "softprompts": self.softprompts,
@@ -581,7 +583,7 @@ class KAIServer:
         self.max_content_length = saved_dict["max_content_length"]
         self.contributions = saved_dict["contributions"]
         self.fulfilments = saved_dict["fulfilments"]
-        self.performance = saved_dict["performance"]
+        self.performances = saved_dict.get("performances",[])
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
         self.softprompts = saved_dict.get("softprompts",[])
