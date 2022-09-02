@@ -1,5 +1,5 @@
 # The cluster url
-cluster_url = "http://dbzer0.com:5001"
+cluster_url = "http://koboldai.net"
 # Where can your bridge reach your KAI instance
 kai_url = "http://localhost:5000"
 # Give a cool name to your instance

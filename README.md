@@ -8,7 +8,7 @@ It also allows clients other than KAI, such as games and apps, to use KAI-provid
 To request the generation for a prompt, you need to send a post request like so:
 
 ```
-curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "username":"db0", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' http://dbzer0.com:5001/generate/prompt
+curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "username":"db0", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://horde.dbzer0.com/generate/prompt
 ```
 
 The "params" dictionary is the same as the parameters you pass to the KoboldAI API in the `api/latest/generate endpoint`, the only difference is that the "prompt" is outside the "params" dictionary.
@@ -58,14 +58,14 @@ LINUX
 
 ```bash
 USERNAME=Anonymous
-play.sh --path http://dbzer0.com:5001 --model CLUSTER --apikey ${USERNAME}
+play.sh --path https://horde.dbzer0.com --model CLUSTER --apikey ${USERNAME}
 ```
 
 WINDOWS
 
 
 ```bash
-play.bat --path http://dbzer0.com:5001 --model CLUSTER --apikey Anonymous
+play.bat --path https://horde.dbzer0.com --model CLUSTER --apikey Anonymous
 ```
 
 This will use any available model on the cluster. If you want to use only specific models, pass the wanted modules via one or more `req_model` args. Example `--req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"`
@@ -122,7 +122,7 @@ If you want to both play with KAI AND share resources with the community, you ca
 2. open a terminal window at your KAI installation, and now run `play.(sh|bat)` using a different port in CLUSTER mode. This will start open another KAI window, while leaving your model-loaded KAI intact. Make sure the `req_model` you pass, includes the model loaded in your own KAI instance.
 
 ```bash
-play.bat --port 5002 --path http://dbzer0.com:5001 --model CLUSTER --apikey Anonymous --req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"
+play.bat --port 5002 --path https://horde.dbzer0.com --model CLUSTER --apikey Anonymous --req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"
 ```
 
 Now use the CLUSTER KAI to play. You will see the requests being fulfilled by the model-loaded KAI after you press the button.
