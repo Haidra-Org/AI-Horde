@@ -4,7 +4,7 @@ This is a crowdsourced distributed cluster of [KoboldAI clients](https://github.
 
 You can find the source and documentation for [KoboldAI Horde](https://github.com/db0/KoboldAI-Horde) in github.
 
-# Usage
+## Usage
 
 1. Download KoboldAI following the instruction it its repository. 
     * If on windows, use the update-koboldai.bat to switch to the UNITED branch
@@ -15,10 +15,17 @@ You can find the source and documentation for [KoboldAI Horde](https://github.co
 1. Enjoy
 
 
-# Community
+## Community
 
-Join us [on discord](https://discord.gg/XuQWadgU9k)
+Join us [on discord](https://koboldai.org/discord)
 
+## Credits
 
+These are the people who made this sotware possible.
 
+* [Divided by Zer0](https://dbzer0.com) - Development and Maintenance
+* VE VORBYDERNE - REST API 
+* Ebolam - GUI Integration
+
+And of course, everyone contributing their KAI to the horde!
 

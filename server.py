@@ -584,7 +584,28 @@ class UsageStore(object):
 def index():
     with open('index.md') as index_file:
         index = index_file.read()
-    return(markdown(index))
+    top_contributor = 'N/A'
+    top_contribution = 0
+    for user in contributions:
+        if contributions[user] > top_contribution:
+            top_contributor = user
+            top_contribution = contributions[user]
+        elif contributions[user] == top_contribution:
+            top_contributor += ', ' + user
+    top_server = None
+    top_server_contribution = 0
+    for server in servers:
+        if servers[server].contributions > top_server_contribution:
+            top_server = servers[server]
+            top_server_contribution = servers[server].contributions
+    top_contributors = f"""\n## Top Contributors
+These are the people and servers who have contributed most to this horde.
+### Users
+**{top_contributor}**: {top_contribution} tokens generated.
+### Servers
+**{top_server.name}**: {top_server_contribution} tokens generated.
+"""
+    return(markdown(index + top_contributors))
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
