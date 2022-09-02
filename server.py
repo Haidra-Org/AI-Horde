@@ -549,8 +549,9 @@ class KAIServer:
         try:
             if (datetime.now() - self.last_check_in).seconds > 300:
                 return(True)
-        except:
-            logging.error(vars(self))
+        # If the last_check_in isn't set, it's a new server, so it's stale by default
+        except AttributeError:
+            return(True)
         return(False)
 
     def serialize(self):
