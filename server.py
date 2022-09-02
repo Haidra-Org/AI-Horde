@@ -546,8 +546,11 @@ class KAIServer:
         return(ret_str)
 
     def is_stale(self):
-        if (datetime.now() - self.last_check_in).seconds > 300:
-            return(True)
+        try:
+            if (datetime.now() - self.last_check_in).seconds > 300:
+                return(True)
+        except:
+            logging.error(vars(self))
         return(False)
 
     def serialize(self):
