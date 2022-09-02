@@ -18,7 +18,7 @@ model = ''
 max_content_length = 1024
 max_length = 80
 current_softprompt = None
-softprompts = []
+softprompts = {}
 
 def validate_kai(kai):
     global model
@@ -56,15 +56,16 @@ def validate_kai(kai):
     except requests.exceptions.JSONDecodeError:
         logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
-    try:
-        req = requests.get(kai + '/api/latest/config/soft_prompts_list')
-        if type(req.json()) is not dict:
-            logging.warn(f"Server {kai} is up but does not appear to be running the latest KoboldAI server. Are you sure it's running the UNITED branch?")
+    if model not in softprompts:
+        try:
+            req = requests.get(kai + '/api/latest/config/soft_prompts_list')
+            if type(req.json()) is not dict:
+                logging.warn(f"Server {kai} is up but does not appear to be running the latest KoboldAI server. Are you sure it's running the UNITED branch?")
+                return(True)
+            softprompts[model] = [sp['value'] for sp in req.json()["values"]]
+        except requests.exceptions.JSONDecodeError:
+            logging.warn(f"Server {kai} is up but does not appear to be running the latest version of KoboldAI server. Are you sure it's running the UNITED branch?")
             return(True)
-        softprompts = [sp['value'] for sp in req.json()["values"]]
-    except requests.exceptions.JSONDecodeError:
-        logging.warn(f"Server {kai} is up but does not appear to be running the latest version of KoboldAI server. Are you sure it's running the UNITED branch?")
-        return(True)
     try:
         req = requests.get(kai + '/api/latest/config/soft_prompt')
         if type(req.json()) is not dict:
@@ -109,7 +110,7 @@ if __name__ == "__main__":
             "max_length": max_length,
             "max_content_length": max_content_length,
             "priority_usernames": priority_usernames,
-            "softprompts": softprompts,
+            "softprompts": softprompts[model],
         }
         if current_id:
             loop_retry += 1
