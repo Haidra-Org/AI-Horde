@@ -26,6 +26,7 @@ These are the people who made this sotware possible.
 * [Divided by Zer0](https://dbzer0.com) - Development and Maintenance
 * VE VORBYDERNE - REST API 
 * Ebolam - GUI Integration
+* Mr.Seeker - Brainstorming and general model mastery
 
 And of course, everyone contributing their KAI to the horde!
 
