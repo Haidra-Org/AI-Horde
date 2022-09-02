@@ -10,6 +10,8 @@ import threading, time
 from uuid import uuid4
 from datetime import datetime
 from markdown import markdown
+import random
+
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -614,6 +616,10 @@ def index():
         if servers[server].contributions > top_server_contribution:
             top_server = servers[server]
             top_server_contribution = servers[server].contributions
+    align_image = random.randint(2, 6)
+    big_image = align_image
+    while big_image == align_image:
+        big_image = random.randint(2, 6)
     top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
 ### Users
@@ -627,8 +633,10 @@ This is the server which has generated the most tokens for the horde.
 * {top_server_contribution} tokens generated.
 * {top_server.fulfilments} request fulfilments.
 * {top_server.get_human_readable_uptime()} uptime.
+
+<img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
 """
-    return(markdown(index + top_contributors))
+    return(markdown(index.format(kobold_image = align_image) + top_contributors))
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
