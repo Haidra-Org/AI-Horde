@@ -12,7 +12,7 @@ You can find the source and documentation for [KoboldAI Horde](https://github.co
     * If on linux, switch your origin to https://github.com/henk717/koboldai and switch to the united branch
 1. Start KoboldAI with play.(bat|sh)
 1. In the AI menu on the top, select Online Serves > KoboldAI Horde
-1. Type https://koboldai.net in the url, and a username in the api key. When the menu with the models appear, select all, or a specific model (if you know what you're doing)
+1. Type the address you're currently at in the url, and a username in the api key. When the menu with the models appear, select all, or a specific model (if you know what you're doing)
 1. Enjoy
 
 ## Community
