@@ -619,11 +619,11 @@ These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most tokens for the horde.
 
-### {top_contributor}
+#### {top_contributor}
 * {top_contribution} tokens generated.
 ### Servers
 This is the server which has generated the most tokens for the horde.
-### {top_server.name}
+#### {top_server.name}
 * {top_server_contribution} tokens generated.
 * {top_server.fulfilments} request fulfilments.
 * {top_server.get_human_readable_uptime()} uptime.
