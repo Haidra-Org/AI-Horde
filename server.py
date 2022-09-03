@@ -21,16 +21,6 @@ class ServerErrors(Enum):
     EMPTY_USERNAME = 4
     EMPTY_PROMPT = 5
 
-### Globals
-
-# This is used for asynchronous generations
-# They key is the ID of the prompt, the value is the WaitingPrompt object
-waiting_prompts = {}
-# They key is the ID of the generation, the value is the ProcessingGeneration object
-processing_generations = {}
-###Code goes here###
-
-
 REST_API = Flask(__name__)
 # Very basic DOS prevention
 limiter = Limiter(
@@ -61,20 +51,6 @@ def get_error(error, **kwargs):
         logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
 
-def get_available_models():
-    models_ret = {}
-    for s in servers:
-        if servers[s].is_stale():
-            continue
-        models_ret[servers[s].model] = models_ret.get(servers[s].model,0) + 1
-    return(models_ret)
-
-def count_waiting_requests(username):
-    count = 0
-    for wp in waiting_prompts:
-        if waiting_prompts[wp].username == username and not waiting_prompts[wp].is_completed():
-            count += 1
-    return(count)
 
 @REST_API.after_request
 def after_request(response):
@@ -82,7 +58,6 @@ def after_request(response):
     response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS, PUT, DELETE"
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
-
 
 
 class Usage(Resource):
@@ -112,11 +87,13 @@ class SyncGenerate(Resource):
             return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
-        wp_count = count_waiting_requests(args.username)
+        wp_count = _waiting_prompts.count_waiting_requests(args.username)
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
+            _waiting_prompts,
+            _processing_generations,
             args["prompt"],
             args["username"],
             args["models"],
@@ -149,7 +126,7 @@ class SyncGenerate(Resource):
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("30/minute")]
     def get(self, id):
-        wp = waiting_prompts.get(id)
+        wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
         return(wp.get_status(), 200)
@@ -166,7 +143,7 @@ class AsyncGenerate(Resource):
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
         parser.add_argument("softprompts", action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
         args = parser.parse_args()
-        wp_count = count_waiting_requests(args.username)
+        wp_count = _waiting_prompts.count_waiting_requests(args.username)
         if args['username'] == '':
             return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
         if args['prompt'] == '':
@@ -175,6 +152,8 @@ class AsyncGenerate(Resource):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
+            _waiting_prompts,
+            _processing_generations,
             args["prompt"],
             args["username"],
             args["models"],
@@ -210,12 +189,12 @@ class PromptPop(Resource):
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         for priority_username in args.priority_usernames:
-            for wp_id in waiting_prompts:
-                if waiting_prompts[wp_id].username == priority_username:
-                    prioritized_wp.append(waiting_prompts[wp_id])
-        for wp_id in waiting_prompts:
-            if waiting_prompts[wp_id] not in prioritized_wp:
-                prioritized_wp.append(waiting_prompts[wp_id])
+            for wp in _waiting_prompts.get_all():
+                if wp.username == priority_username:
+                    prioritized_wp.append(wp)
+        for wp in _waiting_prompts.get_all():
+            if wp not in prioritized_wp:
+                prioritized_wp.append(wp)
         for wp in prioritized_wp:
             if not wp.needs_gen():
                 continue
@@ -248,7 +227,7 @@ class SubmitGeneration(Resource):
         parser.add_argument("password", type=str, required=True, help="The server password")
         parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
         args = parser.parse_args()
-        procgen = processing_generations.get(args['id'])
+        procgen = _processing_generations.get_item(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
         if args['password'] != procgen.server.password:
@@ -260,7 +239,7 @@ class SubmitGeneration(Resource):
 
 class Models(Resource):
     def get(self):
-        return(get_available_models(),200)
+        return(_db.get_available_models(),200)
 
 
 class List(Resource):
@@ -307,8 +286,10 @@ class ListSingle(Resource):
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
-    def __init__(self, _db, prompt, username, models, params, **kwargs):
-        self._db = _db
+    def __init__(self, db, wps, pgs, prompt, username, models, params, **kwargs):
+        self._db = db
+        self._waiting_prompts = wps
+        self._processing_generations = pgs
         self.prompt = prompt
         self.username = username
         self.models = models
@@ -334,13 +315,13 @@ class WaitingPrompt:
         self.servers = kwargs.get("servers", [])
         self.softprompts = kwargs.get("softprompts", [''])
         # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
-        self.stale_time = 600
+        self.stale_time = 10
 
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid server for it
         # Before we add it to the queue
-        waiting_prompts[self.id] = self
+        self._waiting_prompts.add_item(self)
         logging.info(f"New prompt request by user: {self.username}")
         thread = threading.Thread(target=self.check_for_stale, args=())
         thread.daemon = True
@@ -354,7 +335,7 @@ class WaitingPrompt:
     def start_generation(self, server, matching_softprompt):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(self, server)
+        new_gen = ProcessingGeneration(self, self._processing_generations, server)
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
@@ -410,7 +391,7 @@ class WaitingPrompt:
     def delete(self):
         for gen in self.processing_gens:
             gen.delete()
-        del waiting_prompts[self.id]
+        self._waiting_prompts.del_item(self)
         del self
 
     def refresh(self):
@@ -422,13 +403,14 @@ class WaitingPrompt:
         return(False)
 
 class ProcessingGeneration:
-    def __init__(self, owner, server):
+    def __init__(self, owner, pgs, server):
+        self._processing_generations = pgs
         self.id = str(uuid4())
         self.owner = owner
         self.server = server
         self.generation = None
         self.start_time = datetime.now()
-        processing_generations[self.id] = self
+        self._processing_generations.add_item(self)
 
     def set_generation(self, generation):
         if self.is_completed():
@@ -446,7 +428,7 @@ class ProcessingGeneration:
         return(False)
 
     def delete(self):
-        del processing_generations[self.id]
+        self._processing_generations.del_item(self)
         del self
 
 
@@ -574,7 +556,7 @@ class KAIServer:
         self.uptime = saved_dict.get("uptime",0)
         self._db.servers[self.name] = self
 
-class Database(object):
+class Database:
     def __init__(self, interval = 3):
         self.interval = interval
         # This is used for synchronous generations
@@ -688,6 +670,46 @@ class Database(object):
             "requests": self.contributions[username]["requests"],
         }
         return(ret_dict)
+    
+    def get_available_models(self):
+        models_ret = {}
+        for server in self.servers.values():
+            if server.is_stale():
+                continue
+            models_ret[server.model] = models_ret.get(server.model,0) + 1
+        return(models_ret)
+
+
+
+class Index:
+    def __init__(self):
+        self._index = {}
+
+    def add_item(self, item):
+        self._index[item.id] = item
+
+    def get_item(self, uuid):
+        return(self._index.get(uuid))
+
+    def del_item(self, item):
+        del self._index[item.id]
+
+    def get_all(self):
+        return(self._index.values())
+
+
+class PromptsIndex(Index):
+
+    def count_waiting_requests(self, username):
+        count = 0
+        for wp in self._index.values():
+            if wp.username == username and not wp.is_completed():
+                count += 1
+        return(count)
+
+
+class GenerationsIndex(Index):
+    pass
 
 
 @REST_API.route('/')
@@ -724,9 +746,13 @@ This is the server which has generated the most tokens for the horde.
 
 if __name__ == "__main__":
     global _db
+    global _waiting_prompts
+    global _processing_generations
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     _db = Database()
+    _waiting_prompts = PromptsIndex()
+    _processing_generations = GenerationsIndex()
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
