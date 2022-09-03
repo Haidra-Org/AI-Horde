@@ -421,7 +421,14 @@ class WaitingPrompt:
         if self.username not in usage:
             usage[self.username] = 0
             logging.info(f'New user requested generation: {self.username}')
-        usage[self.username] += self.tokens
+        if self.username not in usage:
+            usage[self.username] = {"tokens":0, "requests": 0}
+        # Conver all format. Will remove this eventually
+        elif type(usage[self.username]) is not dict:
+            old_tokens = usage[self.username]
+            usage[self.username] = {"tokens":old_tokens, "requests": 0}
+        usage[self.username]["tokens"] += self.tokens
+        usage[self.username]["requests"] += 1
         self.refresh()
 
     def check_for_stale(self):
