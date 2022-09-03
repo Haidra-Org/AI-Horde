@@ -28,7 +28,7 @@ class ServerErrors(Enum):
 waiting_prompts = {}
 # They key is the ID of the generation, the value is the ProcessingGeneration object
 processing_generations = {}
-_stats = None
+_db = None
 ###Code goes here###
 
 
@@ -88,12 +88,12 @@ def after_request(response):
 
 class Usage(Resource):
     def get(self):
-        return(_stats.usage,200)
+        return(_db.usage,200)
 
 
 class Contributions(Resource):
     def get(self):
-        return(_stats.contributions,200)
+        return(_db.contributions,200)
 
 
 class SyncGenerate(Resource):
@@ -117,7 +117,7 @@ class SyncGenerate(Resource):
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
-            _stats,
+            _db,
             args["prompt"],
             args["username"],
             args["models"],
@@ -127,10 +127,10 @@ class SyncGenerate(Resource):
 
         )
         server_found = False
-        for s in _stats.servers:
+        for s in _db.servers:
             if len(args.servers) and servers[s].id not in args.servers:
                 continue
-            if _stats.servers[s].can_generate(wp)[0]:
+            if _db.servers[s].can_generate(wp)[0]:
                 server_found = True
                 break
         if not server_found:
@@ -175,7 +175,7 @@ class AsyncGenerate(Resource):
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
-            _stats,
+            _db,
             args["prompt"],
             args["username"],
             args["models"],
@@ -202,9 +202,9 @@ class PromptPop(Resource):
         parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
         args = parser.parse_args()
         skipped = {}
-        server = _stats.servers.get(args['name'])
+        server = _db.servers.get(args['name'])
         if not server:
-            server = KAIServer(_stats, args['username'], args['name'], args['password'], args["softprompts"])
+            server = KAIServer(_db, args['username'], args['name'], args['password'], args["softprompts"])
         if args['password'] != server.password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
@@ -267,19 +267,19 @@ class Models(Resource):
 class List(Resource):
     def get(self):
         servers_ret = []
-        for s in _stats.servers:
-            if _stats.servers[s].is_stale():
+        for s in _db.servers:
+            if _db.servers[s].is_stale():
                 continue
             sdict = {
-                "name": _stats.servers[s].name,
-                "id": _stats.servers[s].id,
-                "model": _stats.servers[s].model,
-                "max_length": _stats.servers[s].max_length,
-                "max_content_length": _stats.servers[s].max_content_length,
-                "tokens_generated": _stats.servers[s].contributions,
-                "requests_fulfilled": _stats.servers[s].fulfilments,
-                "performance": _stats.servers[s].get_performance(),
-                "uptime": _stats.servers[s].uptime,
+                "name": _db.servers[s].name,
+                "id": _db.servers[s].id,
+                "model": _db.servers[s].model,
+                "max_length": _db.servers[s].max_length,
+                "max_content_length": _db.servers[s].max_content_length,
+                "tokens_generated": _db.servers[s].contributions,
+                "requests_fulfilled": _db.servers[s].fulfilments,
+                "performance": _db.servers[s].get_performance(),
+                "uptime": _db.servers[s].uptime,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -287,9 +287,9 @@ class List(Resource):
 class ListSingle(Resource):
     def get(self, server_id):
         server = None
-        for s in _stats.servers:
-            if _stats.servers[s].id == server_id:
-                server = _stats.servers[s]
+        for s in _db.servers:
+            if _db.servers[s].id == server_id:
+                server = _db.servers[s]
         if server:
             sdict = {
                 "name": server.name,
@@ -308,8 +308,8 @@ class ListSingle(Resource):
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
-    def __init__(self, _stats, prompt, username, models, params, **kwargs):
-        self._stats = _stats
+    def __init__(self, _db, prompt, username, models, params, **kwargs):
+        self._db = _db
         self.prompt = prompt
         self.username = username
         self.models = models
@@ -398,7 +398,7 @@ class WaitingPrompt:
 
     def record_usage(self):
         self.total_usage += self.tokens
-        _stats.add_usage(self.username, self.tokens)
+        _db.add_usage(self.username, self.tokens)
         self.refresh()
 
     def check_for_stale(self):
@@ -452,8 +452,8 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, _stats, username = None, name = None, password = None, softprompts = []):
-        self._stats = _stats
+    def __init__(self, _db, username = None, name = None, password = None, softprompts = []):
+        self._db = _db
         self.username = username
         self.password = password
         self.name = name
@@ -464,7 +464,7 @@ class KAIServer:
         self.uptime = 0
         self.id = str(uuid4())
         if name:
-            self._stats.servers[self.name] = self
+            self._db.servers[self.name] = self
             logging.info(f'New server checked-in: {name} by {username}')
 
     def check_in(self, model, max_length, max_content_length, softprompts):
@@ -518,7 +518,7 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     def record_contribution(self, tokens, seconds_taken):
-        _stats.add_contribution(self.username, tokens)
+        _db.add_contribution(self.username, tokens)
         self.contributions += tokens
         self.fulfilments += 1
         self.performances.append(round(tokens / seconds_taken))
@@ -573,9 +573,9 @@ class KAIServer:
         self.id = saved_dict["id"]
         self.softprompts = saved_dict.get("softprompts",[])
         self.uptime = saved_dict.get("uptime",0)
-        self._stats.servers[self.name] = self
+        self._db.servers[self.name] = self
 
-class Stats(object):
+class Database(object):
     def __init__(self, interval = 3):
         self.interval = interval
         # This is used for synchronous generations
@@ -695,8 +695,8 @@ class Stats(object):
 def index():
     with open('index.md') as index_file:
         index = index_file.read()
-    top_contributor = _stats.get_top_contributor()
-    top_server = _stats.get_top_server()
+    top_contributor = _db.get_top_contributor()
+    top_server = _db.get_top_server()
     align_image = random.randint(1, 6)
     big_image = align_image
     while big_image == align_image:
@@ -722,7 +722,7 @@ This is the server which has generated the most tokens for the horde.
 """
     return(markdown(index.format(kobold_image = align_image) + top_contributors))
 
-_stats = Stats()
+_db = Database()
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
