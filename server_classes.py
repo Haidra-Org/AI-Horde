@@ -2,6 +2,8 @@ import json, os
 from uuid import uuid4
 from datetime import datetime
 import threading, time
+import logging
+
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
@@ -97,7 +99,7 @@ class WaitingPrompt:
 
     def record_usage(self):
         self.total_usage += self.tokens
-        _db.add_usage(self.username, self.tokens)
+        self._db.add_usage(self.username, self.tokens)
         self.refresh()
 
     def check_for_stale(self):
@@ -120,6 +122,7 @@ class WaitingPrompt:
         if (datetime.now() - self.last_process_time).seconds > self.stale_time:
             return(True)
         return(False)
+
 
 class ProcessingGeneration:
     def __init__(self, owner, pgs, server):
@@ -152,8 +155,8 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, _db, username = None, name = None, password = None, softprompts = []):
-        self._db = _db
+    def __init__(self, db, username = None, name = None, password = None, softprompts = []):
+        self._db = db
         self.username = username
         self.password = password
         self.name = name
@@ -218,7 +221,7 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     def record_contribution(self, tokens, seconds_taken):
-        _db.add_contribution(self.username, tokens)
+        self._db.add_contribution(self.username, tokens)
         self.contributions += tokens
         self.fulfilments += 1
         self.performances.append(round(tokens / seconds_taken))
@@ -274,6 +277,7 @@ class KAIServer:
         self.softprompts = saved_dict.get("softprompts",[])
         self.uptime = saved_dict.get("uptime",0)
         self._db.servers[self.name] = self
+
 
 class Database:
     def __init__(self, interval = 3):
@@ -397,7 +401,6 @@ class Database:
                 continue
             models_ret[server.model] = models_ret.get(server.model,0) + 1
         return(models_ret)
-
 
 
 class Index:

@@ -2,11 +2,9 @@ from flask import Flask
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import logging
-import requests
+import logging, requests, random, time
 from enum import Enum
 from markdown import markdown
-import random
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,Database,PromptsIndex,GenerationsIndex
 
 
