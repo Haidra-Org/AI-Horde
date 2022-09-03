@@ -254,12 +254,13 @@ class PromptPop(Resource):
                 # If a None softprompts has been provided, we always match, since we can always remove the softprompt
                 if sp == '':
                     matching_softprompt = sp
-                    break
                 for sp_name in args['softprompts']:
-                    logging.info([sp_name,sp_name,sp in sp_name])
+                    # logging.info([sp_name,sp,sp in sp_name])
                     if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
                         matching_softprompt = sp_name
                         break
+                if matching_softprompt:
+                    break
             if matching_softprompt == False:
                 skipped["softprompts"] = skipped.get("softprompts",0) + 1
                 continue
