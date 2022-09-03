@@ -28,7 +28,6 @@ class ServerErrors(Enum):
 waiting_prompts = {}
 # They key is the ID of the generation, the value is the ProcessingGeneration object
 processing_generations = {}
-_db = None
 ###Code goes here###
 
 
@@ -722,12 +721,12 @@ This is the server which has generated the most tokens for the horde.
 """
     return(markdown(index.format(kobold_image = align_image) + top_contributors))
 
-_db = Database()
 
 if __name__ == "__main__":
+    global _db
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
-
+    _db = Database()
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
