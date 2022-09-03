@@ -28,16 +28,7 @@ class ServerErrors(Enum):
 waiting_prompts = {}
 # They key is the ID of the generation, the value is the ProcessingGeneration object
 processing_generations = {}
-# This is used for synchronous generations
-servers_file = "servers.json"
-servers = {}
-# How many tokens each user has requested
-usage_file = "usage.json"
-usage = {}
-# How many tokens each user's server has generated
-contributions_file = "contributions.json"
-contributions = {}
-
+_stats = None
 ###Code goes here###
 
 
@@ -71,20 +62,6 @@ def get_error(error, **kwargs):
         logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
 
-def write_servers_to_disk():
-    serialized_list = []
-    for s in servers:
-        serialized_list.append(servers[s].serialize())
-    with open(servers_file, 'w') as db:
-        json.dump(serialized_list,db)
-
-def write_usage_to_disk():
-    with open(usage_file, 'w') as db:
-        json.dump(usage,db)
-    with open(contributions_file, 'w') as db:
-        json.dump(contributions,db)
-
-
 def get_available_models():
     models_ret = {}
     for s in servers:
@@ -111,12 +88,12 @@ def after_request(response):
 
 class Usage(Resource):
     def get(self):
-        return(usage,200)
+        return(_stats.usage,200)
 
 
 class Contributions(Resource):
     def get(self):
-        return(contributions,200)
+        return(_stats.contributions,200)
 
 
 class SyncGenerate(Resource):
@@ -140,6 +117,7 @@ class SyncGenerate(Resource):
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
+            _stats,
             args["prompt"],
             args["username"],
             args["models"],
@@ -149,10 +127,10 @@ class SyncGenerate(Resource):
 
         )
         server_found = False
-        for s in servers:
+        for s in _stats.servers:
             if len(args.servers) and servers[s].id not in args.servers:
                 continue
-            if servers[s].can_generate(wp)[0]:
+            if _stats.servers[s].can_generate(wp)[0]:
                 server_found = True
                 break
         if not server_found:
@@ -197,6 +175,7 @@ class AsyncGenerate(Resource):
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
         wp = WaitingPrompt(
+            _stats,
             args["prompt"],
             args["username"],
             args["models"],
@@ -223,9 +202,9 @@ class PromptPop(Resource):
         parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
         args = parser.parse_args()
         skipped = {}
-        server = servers.get(args['name'])
+        server = _stats.servers.get(args['name'])
         if not server:
-            server = KAIServer(args['username'], args['name'], args['password'], args["softprompts"])
+            server = KAIServer(_stats, args['username'], args['name'], args['password'], args["softprompts"])
         if args['password'] != server.password:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
@@ -288,19 +267,19 @@ class Models(Resource):
 class List(Resource):
     def get(self):
         servers_ret = []
-        for s in servers:
-            if servers[s].is_stale():
+        for s in _stats.servers:
+            if _stats.servers[s].is_stale():
                 continue
             sdict = {
-                "name": servers[s].name,
-                "id": servers[s].id,
-                "model": servers[s].model,
-                "max_length": servers[s].max_length,
-                "max_content_length": servers[s].max_content_length,
-                "tokens_generated": servers[s].contributions,
-                "requests_fulfilled": servers[s].fulfilments,
-                "performance": servers[s].get_performance(),
-                "uptime": servers[s].uptime,
+                "name": _stats.servers[s].name,
+                "id": _stats.servers[s].id,
+                "model": _stats.servers[s].model,
+                "max_length": _stats.servers[s].max_length,
+                "max_content_length": _stats.servers[s].max_content_length,
+                "tokens_generated": _stats.servers[s].contributions,
+                "requests_fulfilled": _stats.servers[s].fulfilments,
+                "performance": _stats.servers[s].get_performance(),
+                "uptime": _stats.servers[s].uptime,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -308,9 +287,9 @@ class List(Resource):
 class ListSingle(Resource):
     def get(self, server_id):
         server = None
-        for s in servers:
-            if servers[s].id == server_id:
-                server = servers[s]
+        for s in _stats.servers:
+            if _stats.servers[s].id == server_id:
+                server = _stats.servers[s]
         if server:
             sdict = {
                 "name": server.name,
@@ -329,7 +308,8 @@ class ListSingle(Resource):
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
-    def __init__(self, prompt, username, models, params, **kwargs):
+    def __init__(self, _stats, prompt, username, models, params, **kwargs):
+        self._stats = _stats
         self.prompt = prompt
         self.username = username
         self.models = models
@@ -418,17 +398,7 @@ class WaitingPrompt:
 
     def record_usage(self):
         self.total_usage += self.tokens
-        if self.username not in usage:
-            usage[self.username] = 0
-            logging.info(f'New user requested generation: {self.username}')
-        if self.username not in usage:
-            usage[self.username] = {"tokens":0, "requests": 0}
-        # Conver all format. Will remove this eventually
-        elif type(usage[self.username]) is not dict:
-            old_tokens = usage[self.username]
-            usage[self.username] = {"tokens":old_tokens, "requests": 0}
-        usage[self.username]["tokens"] += self.tokens
-        usage[self.username]["requests"] += 1
+        _stats.add_usage(self.username, self.tokens)
         self.refresh()
 
     def check_for_stale(self):
@@ -482,7 +452,8 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, username = None, name = None, password = None, softprompts = []):
+    def __init__(self, _stats, username = None, name = None, password = None, softprompts = []):
+        self._stats = _stats
         self.username = username
         self.password = password
         self.name = name
@@ -493,7 +464,7 @@ class KAIServer:
         self.uptime = 0
         self.id = str(uuid4())
         if name:
-            servers[self.name] = self
+            self._stats.servers[self.name] = self
             logging.info(f'New server checked-in: {name} by {username}')
 
     def check_in(self, model, max_length, max_content_length, softprompts):
@@ -547,7 +518,7 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     def record_contribution(self, tokens, seconds_taken):
-        contributions[self.username] = contributions.get(self.username,0) + tokens
+        _stats.add_contribution(self.username, tokens)
         self.contributions += tokens
         self.fulfilments += 1
         self.performances.append(round(tokens / seconds_taken))
@@ -602,11 +573,33 @@ class KAIServer:
         self.id = saved_dict["id"]
         self.softprompts = saved_dict.get("softprompts",[])
         self.uptime = saved_dict.get("uptime",0)
-        servers[self.name] = self
+        self._stats.servers[self.name] = self
 
-class UsageStore(object):
+class Stats(object):
     def __init__(self, interval = 3):
         self.interval = interval
+        # This is used for synchronous generations
+        self.SERVERS_FILE = "servers.json"
+        self.servers = {}
+        # How many tokens each user has requested
+        self.USAGE_FILE = "usage.json"
+        self.usage = {}
+        # How many tokens each user's server has generated
+        self.CONTRIBUTIONS_FILE = "contributions.json"
+        self.contributions = {}
+        if os.path.isfile(self.SERVERS_FILE):
+            with open(self.SERVERS_FILE) as db:
+                serialized_servers = json.load(db)
+                for server_dict in serialized_servers:
+                    new_server = KAIServer(self)
+                    new_server.deserialize(server_dict)
+                    self.servers[new_server.name] = new_server
+        if os.path.isfile(self.USAGE_FILE):
+            with open(self.USAGE_FILE) as db:
+                self.usage = json.load(db)
+        if os.path.isfile(self.CONTRIBUTIONS_FILE):
+            with open(self.CONTRIBUTIONS_FILE) as db:
+                self.contributions = json.load(db)
 
         thread = threading.Thread(target=self.store_usage, args=())
         thread.daemon = True
@@ -614,43 +607,114 @@ class UsageStore(object):
 
     def store_usage(self):
         while True:
-            write_usage_to_disk()
-            write_servers_to_disk()
+            self.write_usage_to_disk()
+            self.write_servers_to_disk()
             time.sleep(self.interval)
+
+    def write_servers_to_disk(self):
+        serialized_list = []
+        for s in self.servers:
+            serialized_list.append(self.servers[s].serialize())
+        with open(self.SERVERS_FILE, 'w') as db:
+            json.dump(serialized_list,db)
+
+    def write_usage_to_disk(self):
+        with open(self.USAGE_FILE, 'w') as db:
+            json.dump(self.usage,db)
+        with open(self.CONTRIBUTIONS_FILE, 'w') as db:
+            json.dump(self.contributions,db)
+
+    def _ensure_user_exists(self, username):
+        if username not in self.usage:
+            logging.info(f'New user requested generation: {username}')
+            self.usage[username] =  {
+                "tokens":0, 
+                "requests": 0
+            }
+        # Convert of style entry. Will remove eventually
+        elif type(self.usage[username]) is not dict:
+            old_tokens = self.usage[username]
+            self.usage[username] = {
+                "tokens":old_tokens, 
+                "requests": 0
+            }
+
+    def _ensure_contributor_exists(self, username):
+        if username not in self.contributions:
+            self.contributions[username] =  {
+                "tokens":0, 
+                "requests": 0
+            }
+        # Convert of style entry. Will remove eventually
+        elif type(self.contributions[username]) is not dict:
+            old_tokens = self.contributions[username]
+            self.contributions[username] = {
+                "tokens":old_tokens, 
+                "requests": 0
+            }
+
+    def add_contribution(self,username, tokens):
+        self._ensure_contributor_exists(username)
+        self.contributions[username]['tokens'] += tokens
+        self.contributions[username]['requests'] += 1
+
+    def add_usage(self,username, tokens):
+        self._ensure_user_exists(username)
+        self.usage[username]['tokens'] += tokens
+        self.usage[username]['requests'] += 1
+
+    def get_top_contributor(self):
+        top_contribution = 0
+        top_contributors = None
+        for user in self.contributions:
+            if self.contributions[user]['tokens'] > top_contribution:
+                top_contributors = self.get_contributor_entry(user)
+                top_contribution = self.contributions[user]
+        return(top_contributors)
+
+    def get_top_server(self):
+        top_server = None
+        top_server_contribution = 0
+        for server in self.servers:
+            if self.servers[server].contributions > top_server_contribution:
+                top_server = self.servers[server]
+                top_server_contribution = self.servers[server].contributions
+        return(top_server)
+
+    def get_contributor_entry(self, username):
+        self._ensure_contributor_exists(username)
+        ret_dict = {
+            "username": username,
+            "tokens": self.contributions[username]["tokens"],
+            "requests": self.contributions[username]["requests"],
+        }
+        return(ret_dict)
+
 
 @REST_API.route('/')
 def index():
     with open('index.md') as index_file:
         index = index_file.read()
-    top_contributor = 'N/A'
-    top_contribution = 0
-    for user in contributions:
-        if contributions[user] > top_contribution:
-            top_contributor = user
-            top_contribution = contributions[user]
-        elif contributions[user] == top_contribution:
-            top_contributor += ', ' + user
-    top_server = None
-    top_server_contribution = 0
-    for server in servers:
-        if servers[server].contributions > top_server_contribution:
-            top_server = servers[server]
-            top_server_contribution = servers[server].contributions
+    top_contributor = _stats.get_top_contributor()
+    top_server = _stats.get_top_server()
     align_image = random.randint(1, 6)
     big_image = align_image
     while big_image == align_image:
         big_image = random.randint(1, 6)
-    top_contributors = f"""\n## Top Contributors
+    if not top_contributor or not top_server:
+        top_contributors = f'\n<img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />'
+    else:
+        top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most tokens for the horde.
-
-#### {top_contributor}
-* {top_contribution} tokens generated.
+#### {top_contributor['username']}
+* {top_contributor['tokens']} tokens generated.
+* {top_contributor['requests']} requests fulfiled.
 ### Servers
 This is the server which has generated the most tokens for the horde.
 #### {top_server.name}
-* {top_server_contribution} tokens generated.
+* {top_server.contributions} tokens generated.
 * {top_server.fulfilments} request fulfilments.
 * {top_server.get_human_readable_uptime()} uptime.
 
@@ -658,22 +722,11 @@ This is the server which has generated the most tokens for the horde.
 """
     return(markdown(index.format(kobold_image = align_image) + top_contributors))
 
+_stats = Stats()
+
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
-    if os.path.isfile(servers_file):
-        with open(servers_file) as db:
-            serialized_servers = json.load(db)
-            for server_dict in serialized_servers:
-                new_server = KAIServer()
-                new_server.deserialize(server_dict)
-                servers[new_server.name] = new_server
-    if os.path.isfile(usage_file):
-        with open(usage_file) as db:
-            usage = json.load(db)
-    if os.path.isfile(contributions_file):
-        with open(contributions_file) as db:
-            contributions = json.load(db)
 
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
@@ -685,7 +738,6 @@ if __name__ == "__main__":
     api.add_resource(List, "/servers")
     api.add_resource(Models, "/models")
     api.add_resource(ListSingle, "/servers/<string:server_id>")
-    UsageStore()
     # api.add_resource(Register, "/register")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001")
