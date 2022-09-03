@@ -136,14 +136,6 @@ class SyncGenerate(Resource):
             return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
-        server_found = False
-        for s in servers:
-            if len(args.servers) and servers[s].id not in args.servers:
-                continue
-            if servers[s].can_generate(args["models"],args["params"].get("max_content_length", 1024),args["params"].get("max_length", 80),args["softprompts"]):
-                server_found = True
-        if not server_found:
-            return("No active server found to fulfil this request. Please Try again later...", 503)
         wp_count = count_waiting_requests(args.username)
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
@@ -156,6 +148,18 @@ class SyncGenerate(Resource):
             softprompts=args["softprompts"],
 
         )
+        server_found = False
+        for s in servers:
+            if len(args.servers) and servers[s].id not in args.servers:
+                continue
+            if servers[s].can_generate(wp)[0]:
+                server_found = True
+                break
+        if not server_found:
+            del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
+            return("No active server found to fulfil this request. Please Try again later...", 503)
+        # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
+        wp.activate()
         while True:
             time.sleep(1)
             if wp.is_stale():
@@ -201,6 +205,7 @@ class AsyncGenerate(Resource):
             softprompts=args["softprompts"],
 
         )
+        wp.activate()
         return({"id":wp.id}, 200)
 
 
@@ -236,18 +241,10 @@ class PromptPop(Resource):
         for wp in prioritized_wp:
             if not wp.needs_gen():
                 continue
-            # If the prompt requested a specific server and we're not it, ignore it
-            if len(wp.servers) and server.id not in wp.servers:
-                skipped["server_id"] = skipped.get("server_id",0) + 1
-                continue
-            if len(wp.models) and args['model'] not in wp.models:
-                skipped["model"] = skipped.get("model",0) + 1
-                continue
-            if args['max_length'] < wp.max_length:
-                skipped["max_length"] = skipped.get("max_length",0) + 1
-                continue
-            if args['max_content_length'] < wp.max_length:
-                skipped["max_content_length"] = skipped.get("max_content_length",0) + 1
+            check_gen = server.can_generate(wp)
+            if not check_gen[0]:
+                skipped_reason = check_gen[1]
+                skipped[skipped_reason] = skipped.get(skipped_reason,0) + 1
                 continue
             matching_softprompt = False
             for sp in wp.softprompts:
@@ -261,9 +258,6 @@ class PromptPop(Resource):
                         break
                 if matching_softprompt:
                     break
-            if matching_softprompt == False:
-                skipped["softprompts"] = skipped.get("softprompts",0) + 1
-                continue
             ret = wp.start_generation(server, matching_softprompt)
             return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
@@ -362,10 +356,13 @@ class WaitingPrompt:
         self.softprompts = kwargs.get("softprompts", [''])
         # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
         self.stale_time = 600
+
+
+    def activate(self):
+        # We separate the activation from __init__ as often we want to check if there's a valid server for it
+        # Before we add it to the queue
         waiting_prompts[self.id] = self
         logging.info(f"New prompt request by user: {self.username}")
-
-
         thread = threading.Thread(target=self.check_for_stale, args=())
         thread.daemon = True
         thread.start()
@@ -511,16 +508,24 @@ class KAIServer:
         else:
             return(f"{round(self.uptime/60/60/24,2)} days")
 
-    def can_generate(self, models, max_content_length, max_length, softprompts):
+    def can_generate(self, waiting_prompt):
+        # takes as an argument a WaitingPrompt class and checks if this server is valid for generating it
         is_matching = True
-        if len(models) >= 1 and self.model not in models:
+        skipped_reason = None
+        if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
-        if self.max_content_length < max_content_length:
+            skipped_reason = 'server_id'
+        if len(waiting_prompt.models) >= 1 and self.model not in waiting_prompt.models:
             is_matching = False
-        if self.max_length < max_length:
+            skipped_reason = 'models'
+        if self.max_content_length < waiting_prompt.max_content_length:
             is_matching = False
+            skipped_reason = 'max_content_length'
+        if self.max_length < waiting_prompt.max_length:
+            is_matching = False
+            skipped_reason = 'max_length'
         matching_softprompt = False
-        for sp in softprompts:
+        for sp in waiting_prompt.softprompts:
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
             if sp == '':
                 matching_softprompt = True
@@ -531,7 +536,8 @@ class KAIServer:
                     break
         if not matching_softprompt:
             is_matching = False
-        return(is_matching)
+            skipped_reason = 'matching_softprompt'
+        return([is_matching,skipped_reason])
 
     def record_contribution(self, tokens, seconds_taken):
         contributions[self.username] = contributions.get(self.username,0) + tokens
