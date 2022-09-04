@@ -1,12 +1,13 @@
-from flask import Flask
+from flask import Flask, render_template, redirect, url_for
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import logging, requests, random, time
+from flask_dance.contrib.google import make_google_blueprint, google
+import logging, requests, random, time, os
 from enum import Enum
 from markdown import markdown
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,Database,PromptsIndex,GenerationsIndex
-
+from dotenv import load_dotenv
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -24,6 +25,7 @@ limiter = Limiter(
     default_limits=["90 per minute"]
 )
 api = Api(REST_API)
+load_dotenv()
 
 
 def get_error(error, **kwargs):
@@ -320,15 +322,46 @@ This is the server which has generated the most tokens for the horde.
     )
     return(markdown(findex + top_contributors))
 
+@REST_API.route('/authtest')
+def authtest():
+    google_data = None
+    user_info_endpoint = '/oauth2/v2/userinfo'
+    if google.authorized:
+        google_data = google.get(user_info_endpoint).json()
+
+    return render_template('index.j2',
+                           google_data=google_data,
+                           fetch_url=google.base_url + user_info_endpoint)
+
+@REST_API.route('/login')
+def login():
+    return redirect(url_for('google.login'))
+
 
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
+    # global secret_key
+    # global client_secret
+    # global client_secret
+
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     _db = Database()
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GLOOGLE_CLIENT_SECRET")
+    REST_API.secret_key = os.getenv("secret_key")
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+    blueprint = make_google_blueprint(
+        client_id = client_id,
+        client_secret = client_secret,
+        reprompt_consent = True,
+        scope = ["profile","email"],
+    )
+    REST_API.register_blueprint(blueprint,url_prefix="/login")
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
