@@ -106,7 +106,7 @@ class SyncGenerate(Resource):
                 break
         if not server_found:
             del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
-            return("No active server found to fulfil this request. Please Try again later...", 503)
+            return("No active server found to fulfill this request. Please Try again later...", 503)
         # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
         wp.activate()
         while True:
@@ -299,12 +299,12 @@ These are the people and servers who have contributed most to this horde.
 This is the person whose server(s) have generated the most tokens for the horde.
 #### {top_contributor['username']}
 * {top_contributor['tokens']} tokens generated.
-* {top_contributor['requests']} requests fulfiled.
+* {top_contributor['requests']} requests fulfilled.
 ### Servers
 This is the server which has generated the most tokens for the horde.
 #### {top_server.name}
 * {top_server.contributions} tokens generated.
-* {top_server.fulfilments} request fulfilments.
+* {top_server.fulfilments} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
