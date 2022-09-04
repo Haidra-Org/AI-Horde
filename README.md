@@ -3,6 +3,8 @@
 This turns KoboldAI into a giant crowdsourced distributed cluster. It allows people without a powerful GPU to use KAI by relying on spare/idle resources provided by the community.
 It also allows clients other than KAI, such as games and apps, to use KAI-provided generations.
 
+You can find visit [official KoboldAI Horde](https://koboldai.net)
+
 # Generating Prompts
 
 To request the generation for a prompt, you need to send a post request like so:
@@ -30,7 +32,7 @@ Once run, This request will return a UUID
 You can now request the status of this prompt using this UUID from the server
 
 ```
-curl dbzer0.com:5001/generate/prompt/2a72f411-a4c3-49e1-aad4-41005e1ff769
+curl https://horde.dbzer0.com/generate/prompt/2a72f411-a4c3-49e1-aad4-41005e1ff769
 {"finished": 1, "processing": 0, "waiting": 1, "done": false, "generations": [" as he stood before me."]}
 ```
 
@@ -50,22 +52,24 @@ The softprompts you specify need to exist on the KAI server side. If you want to
 
 **You KoboldAI client must be using the UNITED branch!**
 
-The United branch of KoboldAI now supports using the bridge directly from its interface. To do so, you will need to start it with special variables (as the GUI has not been updated yet)
+The United branch of KoboldAI now supports using the bridge directly from its interface. To use it go to the AI menu on the top left, then select Online Services > KoboldAI Horde. In the next window that opens, you have to fill in the url of the Horde (You can use `https://koboldai.net`) and then type a username. If the models window hasn't appeared yet, click away from the textbox and it should. You can select one of more models that you want to use for your generations, or All, if you don't care. Then finally click `Load`.
 
-If you're using the `play.(sh|bat)` file, then pass the arguments to start a KAI instance in cluster mode like so (Change "Anonynous" to your own username of course)
+![](gui_select.png)
+
+You can also start KAI directly in horde mode by using the command line in the `play.(sh|bat)` file. Pass the arguments to start a KAI instance in cluster mode like so (Change "Anonynous" to your own username of course)
 
 LINUX
 
 ```bash
 USERNAME=Anonymous
-play.sh --path https://horde.dbzer0.com --model CLUSTER --apikey ${USERNAME}
+play.sh --path https://koboldai.net --model CLUSTER --apikey ${USERNAME}
 ```
 
 WINDOWS
 
 
 ```bash
-play.bat --path https://horde.dbzer0.com --model CLUSTER --apikey Anonymous
+play.bat --path https://koboldai.net --model CLUSTER --apikey Anonymous
 ```
 
 This will use any available model on the cluster. If you want to use only specific models, pass the wanted modules via one or more `req_model` args. Example `--req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"`
@@ -81,6 +85,7 @@ This repository comes with a little bridge script which you can run on your own 
 * First clone this repo and then open a terminal/console and `cd` into it
 * Make sure you have python3 installed
 * install the requirements with pip: `python -m pip install -r requirements.txt --user`
+* Copy clientData_template.py into clientData.py
 * Edit the clientData.py file and add your own username and password. The password is stored in plaintext for now, so don't reuse an existing one.
 * Edit the clientData.py file and add your KAI server. If it's a local instance, leave it as it is. If it's a remote instance, fill in the URL and port accordingly.
 * Modify your KAI settings from the GUI so that the "Amount to Generate" and "Typical Sampling" are at the max values your KAI instance can handle. This doesn't mean all requests will use this amount. It just limits which requests your server will choose to fulfil.
