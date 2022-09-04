@@ -385,8 +385,8 @@ class Database:
             self._ensure_contributor_exists(user) # Will remove later
             logging.info([self.contributions[user],top_contribution])
             if self.contributions[user]['tokens'] > top_contribution:
-                top_contributors = self.get_contributor_entry(user)
-                top_contribution = self.contributions[user]
+                top_contributors = user
+                top_contribution = self.contributions[user]['tokens']
         return(top_contributors)
 
     def get_top_server(self):
