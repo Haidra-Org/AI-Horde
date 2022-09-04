@@ -413,6 +413,13 @@ class Database:
             models_ret[server.model] = models_ret.get(server.model,0) + 1
         return(models_ret)
 
+    def count_active_servers(self):
+        count = 0
+        for server in self.servers.values():
+            if not server.is_stale():
+                count += 1
+        return(count)
+
     def get_total_usage(self):
         totals = {
             "tokens": 0,

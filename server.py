@@ -315,6 +315,7 @@ This is the server which has generated the most tokens for the horde.
         avg_performance= _db.get_request_avg(), 
         total_tokens = totals["tokens"], 
         total_fulfillments = totals["fulfilments"],
+        active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
     return(markdown(findex + top_contributors))
