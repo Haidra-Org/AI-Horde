@@ -129,7 +129,4 @@ dmypy.json
 .pyre/
 
 
-servers.json
-usage.json
-contributions.json
-clientData.py
+db/*

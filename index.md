@@ -4,6 +4,12 @@
 
 You can find the source and documentation for [KoboldAI Horde](https://github.com/db0/KoboldAI-Horde) in github.
 
+## Stats 
+
+* Average Recent Performance: {avg_performance} tokens per second
+* Total tokens generated: {total_tokens}
+* Total requests fulfilled: {total_fulfillments}
+* Current Request Queue: {total_queue}
 
 ## Usage
 

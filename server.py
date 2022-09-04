@@ -309,14 +309,21 @@ This is the server which has generated the most tokens for the horde.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
 """
-    return(markdown(index.format(kobold_image = align_image) + top_contributors))
+    totals = _db.get_total_usage()
+    findex = index.format(
+        kobold_image = align_image, 
+        avg_performance= _db.get_request_avg(), 
+        total_tokens = totals["tokens"], 
+        total_fulfillments = totals["fulfilments"],
+        total_queue = _waiting_prompts.count_total_waiting_generations(),
+    )
+    return(markdown(findex + top_contributors))
 
 
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
-    #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     _db = Database()
     _waiting_prompts = PromptsIndex()
@@ -331,7 +338,6 @@ if __name__ == "__main__":
     api.add_resource(List, "/servers")
     api.add_resource(Models, "/models")
     api.add_resource(ListSingle, "/servers/<string:server_id>")
-    # api.add_resource(Register, "/register")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001")
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")

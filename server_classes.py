@@ -221,10 +221,12 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     def record_contribution(self, tokens, seconds_taken):
+        perf = round(tokens / seconds_taken,2)
         self._db.add_contribution(self.username, tokens)
+        self._db.record_fulfilment(perf)
         self.contributions += tokens
         self.fulfilments += 1
-        self.performances.append(round(tokens / seconds_taken))
+        self.performances.append(perf)
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -283,14 +285,19 @@ class Database:
     def __init__(self, interval = 3):
         self.interval = interval
         # This is used for synchronous generations
-        self.SERVERS_FILE = "servers.json"
+        self.SERVERS_FILE = "db/servers.json"
         self.servers = {}
         # How many tokens each user has requested
-        self.USAGE_FILE = "usage.json"
+        self.USAGE_FILE = "db/usage.json"
         self.usage = {}
         # How many tokens each user's server has generated
-        self.CONTRIBUTIONS_FILE = "contributions.json"
+        self.CONTRIBUTIONS_FILE = "db/contributions.json"
         self.contributions = {}
+        # Other miscellaneous statistics
+        self.STATS_FILE = "db/stats.json"
+        self.stats = {
+            "fulfilment_times": [],
+        }
         if os.path.isfile(self.SERVERS_FILE):
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
@@ -304,6 +311,9 @@ class Database:
         if os.path.isfile(self.CONTRIBUTIONS_FILE):
             with open(self.CONTRIBUTIONS_FILE) as db:
                 self.contributions = json.load(db)
+        if os.path.isfile(self.STATS_FILE):
+            with open(self.STATS_FILE) as db:
+                self.stats = json.load(db)
 
         thread = threading.Thread(target=self.store_usage, args=())
         thread.daemon = True
@@ -311,22 +321,23 @@ class Database:
 
     def store_usage(self):
         while True:
-            self.write_usage_to_disk()
-            self.write_servers_to_disk()
+            self.write_files_to_disk()
             time.sleep(self.interval)
 
-    def write_servers_to_disk(self):
+    def write_files_to_disk(self):
+        if not os.path.exists('db'):
+            os.mkdir('db')
         serialized_list = []
         for s in self.servers:
             serialized_list.append(self.servers[s].serialize())
         with open(self.SERVERS_FILE, 'w') as db:
             json.dump(serialized_list,db)
-
-    def write_usage_to_disk(self):
         with open(self.USAGE_FILE, 'w') as db:
             json.dump(self.usage,db)
         with open(self.CONTRIBUTIONS_FILE, 'w') as db:
             json.dump(self.contributions,db)
+        with open(self.STATS_FILE, 'w') as db:
+            json.dump(self.stats,db)
 
     def _ensure_user_exists(self, username):
         if username not in self.usage:
@@ -402,6 +413,27 @@ class Database:
             models_ret[server.model] = models_ret.get(server.model,0) + 1
         return(models_ret)
 
+    def get_total_usage(self):
+        totals = {
+            "tokens": 0,
+            "fulfilments": 0,
+        }
+        for server in self.servers.values():
+            totals["tokens"] += server.contributions
+            totals["fulfilments"] += server.fulfilments
+        return(totals)
+
+    def record_fulfilment(self, token_per_sec):
+        if len(self.stats["fulfilment_times"]) >= 10:
+            del self.stats["fulfilment_times"][0]
+        self.stats["fulfilment_times"].append(token_per_sec)
+    
+    def get_request_avg(self):
+        if len(self.stats["fulfilment_times"]) == 0:
+            return(0)
+        avg = sum(self.stats["fulfilment_times"]) / len(self.stats["fulfilment_times"])
+        return(round(avg,2))
+
 
 class Index:
     def __init__(self):
@@ -427,6 +459,12 @@ class PromptsIndex(Index):
         for wp in self._index.values():
             if wp.username == username and not wp.is_completed():
                 count += 1
+        return(count)
+    
+    def count_total_waiting_generations(self):
+        count = 0
+        for wp in self._index.values():
+            count += wp.n
         return(count)
 
 
