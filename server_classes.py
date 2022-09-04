@@ -382,6 +382,7 @@ class Database:
         top_contribution = 0
         top_contributors = None
         for user in self.contributions:
+            self._ensure_contributor_exists(user) # Will remove later
             if self.contributions[user]['tokens'] > top_contribution:
                 top_contributors = self.get_contributor_entry(user)
                 top_contribution = self.contributions[user]
