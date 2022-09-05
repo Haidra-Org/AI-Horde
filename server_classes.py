@@ -36,7 +36,7 @@ class WaitingPrompt:
         self.servers = kwargs.get("servers", [])
         self.softprompts = kwargs.get("softprompts", [''])
         # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
-        self.stale_time = 10
+        self.stale_time = 600
 
 
     def activate(self):
