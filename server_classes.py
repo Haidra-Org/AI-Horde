@@ -445,7 +445,6 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            logging.info(user)
             if user.contributions['tokens'] > top_contribution:
                 top_contributor = user
                 top_contribution = user.contributions['tokens']

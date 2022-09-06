@@ -324,6 +324,12 @@ This is the server which has generated the most tokens for the horde.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
 """
+    policies = """
+## Policies
+
+[Privacy Policy](/privacy)
+
+[Terms of Service](/terms)"""
     totals = _db.get_total_usage()
     findex = index.format(
         kobold_image = align_image, 
@@ -333,7 +339,7 @@ This is the server which has generated the most tokens for the horde.
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
-    return(markdown(findex + top_contributors))
+    return(markdown(findex + top_contributors + policies))
 
 @REST_API.route('/register', methods=['GET', 'POST'])
 def register():
@@ -344,6 +350,7 @@ def register():
             google_data = google.get(user_info_endpoint).json()
     except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
         pass
+    print(google_data)
     api_key = None
     user = None
     welcome = 'Welcome'
@@ -382,6 +389,15 @@ def login():
     return redirect(url_for('google.login'))
 
 
+@REST_API.route('/privacy')
+def privacy():
+    return render_template('privacy_policy.html')
+
+@REST_API.route('/terms')
+def terms():
+    return render_template('terms_of_service.html')
+
+
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
@@ -400,7 +416,7 @@ if __name__ == "__main__":
         client_id = client_id,
         client_secret = client_secret,
         reprompt_consent = True,
-        scope = ["profile","email"],
+        scope = ["email"],
     )
     REST_API.register_blueprint(blueprint,url_prefix="/login")
     api.add_resource(SyncGenerate, "/generate/sync")
