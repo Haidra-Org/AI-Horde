@@ -58,17 +58,6 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
-
-class Usage(Resource):
-    def get(self):
-        return(_db.usage,200)
-
-
-class Contributions(Resource):
-    def get(self):
-        return(_db.contributions,200)
-
-
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
     def post(self):
@@ -254,32 +243,33 @@ class Models(Resource):
         return(_db.get_available_models(),200)
 
 
-class List(Resource):
+class Servers(Resource):
     def get(self):
         servers_ret = []
-        for s in _db.servers:
-            if _db.servers[s].is_stale():
+        for server in _db.servers.values():
+            if server.is_stale():
                 continue
             sdict = {
-                "name": _db.servers[s].name,
-                "id": _db.servers[s].id,
-                "model": _db.servers[s].model,
-                "max_length": _db.servers[s].max_length,
-                "max_content_length": _db.servers[s].max_content_length,
-                "tokens_generated": _db.servers[s].contributions,
-                "requests_fulfilled": _db.servers[s].fulfilments,
-                "performance": _db.servers[s].get_performance(),
-                "uptime": _db.servers[s].uptime,
+                "name": server.name,
+                "id": server.id,
+                "model": server.model,
+                "max_length": server.max_length,
+                "max_content_length": server.max_content_length,
+                "tokens_generated": server.contributions,
+                "requests_fulfilled": server.fulfilments,
+                "performance": server.get_performance(),
+                "uptime": server.uptime,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
 
-class ListSingle(Resource):
+class ServerSingle(Resource):
     def get(self, server_id):
         server = None
-        for s in _db.servers:
-            if _db.servers[s].id == server_id:
-                server = _db.servers[s]
+        for s in _db.servers.values():
+            if s.id == server_id:
+                server = s
+                break
         if server:
             sdict = {
                 "name": server.name,
@@ -295,6 +285,39 @@ class ListSingle(Resource):
         else:
             return("Not found", 404)
 
+
+
+class Users(Resource):
+    def get(self):
+        user_dict = {}
+        for user in _db.users.values():
+            user_dict[user.get_unique_alias()] = {
+                "id": user.id,
+                "kudos": user.kudos,
+                "usage": user.usage,
+                "contributions": user.contributions,
+            }
+        return(user_dict,200)
+
+
+class UserSingle(Resource):
+    def get(self, user_id):
+        logging.info(user_id)
+        user = None
+        for u in _db.users.values():
+            if str(u.id) == user_id:
+                user = u
+                break
+        if user:
+            udict = {
+                "username": user.get_unique_alias(),
+                "kudos": user.kudos,
+                "usage": user.usage,
+                "contributions": user.contributions,
+            }
+            return(udict,200)
+        else:
+            return("Not found", 404)
 
 
 @REST_API.route('/')
@@ -360,7 +383,7 @@ def register():
                 discord_data = discord.get(discord_info_endpoint).json()
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    print([google_data,discord_data])
+    logging.info([google_data,discord_data])
     api_key = None
     user = None
     welcome = 'Welcome'
@@ -402,6 +425,7 @@ def register():
 def google_login():
     print(url_for('google.login'))
     return redirect(url_for('google.login'))
+
 
 @REST_API.route('/discord')
 def discord_login():
@@ -452,11 +476,11 @@ if __name__ == "__main__":
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
     api.add_resource(PromptPop, "/generate/pop")
     api.add_resource(SubmitGeneration, "/generate/submit")
-    api.add_resource(Usage, "/usage")
-    api.add_resource(Contributions, "/contributions")
-    api.add_resource(List, "/servers")
+    api.add_resource(Users, "/users")
+    api.add_resource(UserSingle, "/users/<string:user_id>")
+    api.add_resource(Servers, "/servers")
+    api.add_resource(ServerSingle, "/servers/<string:server_id>")
     api.add_resource(Models, "/models")
-    api.add_resource(ListSingle, "/servers/<string:server_id>")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001")
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")

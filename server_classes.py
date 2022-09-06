@@ -403,7 +403,7 @@ class Database:
                     new_user.deserialize(user_dict)
                     self.users[new_user.email] = new_user
                     if new_user.id > self.last_user_id:
-                        self.new_user = new_user.id
+                        self.last_user_id = new_user.id
         if os.path.isfile(self.SERVERS_FILE):
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
@@ -523,3 +523,14 @@ class Database:
 
     def find_server_by_name(self,server_name):
         return(self.servers.get(server_name))
+
+    def compile_users(self):
+        user_dict = {}
+        for user in self.users.values():
+            user_dict[user.get_unique_alias()] = {
+                "kudos": user.kudos,
+                "usage": user.usage,
+                "contributions": user.contributions,
+                "creation_date": user.creation_date,
+            }
+        return(user_dict)
