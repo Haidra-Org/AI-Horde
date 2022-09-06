@@ -351,6 +351,14 @@ def register():
             google_data = google.get(user_info_endpoint).json()
     except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
         pass
+    discord_data = None
+    if not google_data:
+        discord_info_endpoint = '/discord/authorized'
+        try:
+            if discord.authorized:
+                discord_info_endpoint = discord.get(discord_info_endpoint).json()
+        except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+            pass
     print(google_data)
     api_key = None
     user = None
