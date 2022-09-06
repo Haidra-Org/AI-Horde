@@ -7,4 +7,3 @@ Markdown
 flask-dance[sqla]
 blinker
 python-dotenv
-blueprints
