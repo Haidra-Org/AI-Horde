@@ -457,7 +457,7 @@ if __name__ == "__main__":
     discord_client_secret = os.getenv("DISCORD_CLIENT_SECRET")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
-    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
     google_blueprint = make_google_blueprint(
         client_id = google_client_id,
         client_secret = google_client_secret,
