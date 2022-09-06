@@ -2,12 +2,18 @@
 {% block content %}
 {% if not google_data %}
     <div class="container">
-        <p style="color:#333;">You are not logged in, Click on the below link to sign in with google.</p>
+        <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
         <a href="/login" class="google-btn">
         <div class="google-icon-wrapper">
             <img class="google-icon" src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg"/>
         </div>
         <p class="btn-text"><b>Sign in with google</b></p>
+        </a>
+        <a href="/discord" class="google-btn">
+        <div class="google-icon-wrapper">
+            <img class="google-icon" src="https://upload.wikimedia.org/wikipedia/en/9/98/Discord_logo.svg"/>
+        </div>
+        <p class="btn-text"><b>Sign in with discord</b></p>
         </a>
     </div>   
 {% else %}

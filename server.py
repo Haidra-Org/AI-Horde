@@ -3,6 +3,7 @@ from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
+from flask_dance.contrib.discord import make_discord_blueprint, discord
 import logging, requests, random, time, os, oauthlib, secrets
 from enum import Enum
 from markdown import markdown
@@ -388,6 +389,10 @@ def register():
 def login():
     return redirect(url_for('google.login'))
 
+@REST_API.route('/discord')
+def discord():
+    return redirect(url_for('discord.login'))
+
 
 @REST_API.route('/privacy')
 def privacy():
@@ -407,18 +412,26 @@ if __name__ == "__main__":
     _db = Database()
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GLOOGLE_CLIENT_SECRET")
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+    google_client_secret = os.getenv("GLOOGLE_CLIENT_SECRET")
+    discord_client_id = os.getenv("DISCORD_APP_ID")
+    disocrd_client_secret = os.getenv("DISCORD_PUBLIC_KEY")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
-    blueprint = make_google_blueprint(
-        client_id = client_id,
-        client_secret = client_secret,
+    google_blueprint = make_google_blueprint(
+        client_id = google_client_id,
+        client_secret = google_client_secret,
         reprompt_consent = True,
         scope = ["email"],
     )
-    REST_API.register_blueprint(blueprint,url_prefix="/login")
+    REST_API.register_blueprint(google_blueprint,url_prefix="/login")
+    discord_blueprint = make_discord_blueprint(
+        client_id = discord_client_id,
+        client_secret = disocrd_client_secret,
+        scope = ["email"],
+    )
+    REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
