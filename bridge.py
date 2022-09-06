@@ -3,7 +3,25 @@ import json, os
 import time
 import argparse
 import logging
-import clientData as cd
+try:
+    import clientData as cd
+except:
+    class temp(object):
+        def __init__(self):
+            # The cluster url
+            self.cluster_url = "http://koboldai.net"
+            # Where can your bridge reach your KAI instance
+            self.kai_url = "http://localhost:5000"
+            # Give a cool name to your instance
+            self.kai_name = "My Awesome Instance"
+            # The owner's username. Used for assigning contributions
+            self.username = "username"
+            self.password = "password"
+            # Put other users whose prompts you want to prioritize.
+            # The owner's username is always included so you don't need to add it here, unless you want it to have lower priority than another user
+            self.priority_usernames = []
+    cd = temp()
+    pass
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--interval', action="store", required=False, type=int, default=1, help="The amount of seconds with which to check if there's new prompts to generate")
@@ -12,6 +30,7 @@ arg_parser.add_argument('-p', '--password', action="store", required=False, type
 arg_parser.add_argument('-n', '--kai_name', action="store", required=False, type=str, help="The server name. It will be shown to the world and there can be only one.")
 arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=str, help="The KoboldAI server URL. Where the bridge will get its generations from.")
 arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
+arg_parser.add_argument('--debug', action="store_true", default=False, help="Show debugging messages.")
 arg_parser.add_argument('--priority_usernames',type=str, action='append', required=False, help="Usernames which get priority use in this server. The owner's username is always in this list.")
 
 model = ''
@@ -80,8 +99,8 @@ def validate_kai(kai):
 
 if __name__ == "__main__":
     #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     args = arg_parser.parse_args()
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG if args.debug else logging.INFO)
     global interval
     interval = args.interval
     current_id = None
@@ -127,7 +146,7 @@ if __name__ == "__main__":
                 continue
             pop = pop_req.json()
             if not pop["id"]:
-                logging.info(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
+                logging.debug(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
                 time.sleep(interval)
                 continue
             current_id = pop['id']
@@ -142,7 +161,7 @@ if __name__ == "__main__":
             time.sleep(9)
             continue
         if gen_req.status_code == 503:
-            logging.info(f'KAI instance {kai_instance} Busy (attempt {loop_retry}). Will try again...')
+            logging.debug(f'KAI instance {kai_instance} Busy (attempt {loop_retry}). Will try again...')
             continue
         current_generation = gen_req.json()["results"][0]["text"]
         submit_dict = {
