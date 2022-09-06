@@ -1,21 +1,21 @@
-from flask import Flask, render_template, redirect, url_for
+from flask import Flask, render_template, redirect, url_for, request
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
-import logging, requests, random, time, os
+import logging, requests, random, time, os, oauthlib, secrets
 from enum import Enum
 from markdown import markdown
-from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,Database,PromptsIndex,GenerationsIndex
 from dotenv import load_dotenv
+from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
     INVALID_PROCGEN = 1
     DUPLICATE_GEN = 2
     TOO_MANY_PROMPTS = 3
-    EMPTY_USERNAME = 4
-    EMPTY_PROMPT = 5
+    EMPTY_PROMPT = 4
+    INVALID_API_KEY = 5
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -29,6 +29,9 @@ load_dotenv()
 
 
 def get_error(error, **kwargs):
+    if error == ServerErrors.INVALID_API_KEY:
+        logging.warning(f'Invalid API Key sent.')
+        return(f'No user matching sent API Key. Have you remembered to register at https://koboldai.net/register ?')
     if error == ServerErrors.WRONG_CREDENTIALS:
         logging.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
         return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
@@ -41,9 +44,6 @@ def get_error(error, **kwargs):
     if error == ServerErrors.TOO_MANY_PROMPTS:
         logging.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
         return("Too many parallel requests from same user. Please try again later.")
-    if error == ServerErrors.EMPTY_USERNAME:
-        logging.warning(f'Request sent with an invalid username. Aborting!')
-        return("Please provide a valid username.")
     if error == ServerErrors.EMPTY_PROMPT:
         logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
@@ -72,7 +72,7 @@ class SyncGenerate(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-        parser.add_argument("username", type=str, required=True, help="Username to track usage")
+        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
@@ -80,19 +80,20 @@ class SyncGenerate(Resource):
         # Not implemented yet
         parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
         args = parser.parse_args()
-        if args['username'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
-        wp_count = _waiting_prompts.count_waiting_requests(args.username)
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
+        wp_count = _waiting_prompts.count_waiting_requests(user)
         if wp_count >= 3:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = user.get_unique_alias(), wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
             _processing_generations,
             args["prompt"],
-            args["username"],
+            user,
             args["models"],
             args["params"],
             servers=args["servers"],
@@ -134,25 +135,26 @@ class AsyncGenerate(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-        parser.add_argument("username", type=str, required=True, help="Username to track usage")
+        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
         parser.add_argument("softprompts", action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
         args = parser.parse_args()
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
         wp_count = _waiting_prompts.count_waiting_requests(args.username)
-        if args['username'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
         if wp_count >= 3:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = user.get_unique_alias(), wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
             _processing_generations,
             args["prompt"],
-            args["username"],
+            user,
             args["models"],
             args["params"],
             servers=args["servers"],
@@ -167,8 +169,7 @@ class PromptPop(Resource):
     decorators = [limiter.limit("2/second")]
     def post(self):
         parser = reqparse.RequestParser()
-        parser.add_argument("username", type=str, required=True, help="Username to track contributions")
-        parser.add_argument("password", type=str, required=True, help="Password to authenticate with")
+        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
         parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
         parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
@@ -177,17 +178,26 @@ class PromptPop(Resource):
         parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
         args = parser.parse_args()
         skipped = {}
-        server = _db.servers.get(args['name'])
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
+        server = _db.find_server_by_name(args['name'])
         if not server:
-            server = KAIServer(_db, args['username'], args['name'], args['password'], args["softprompts"])
-        if args['password'] != server.password:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
+            server = KAIServer(_db)
+            server.create(user, args['name'], args["softprompts"])
+        if user != server.user:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
+        priority_users = [user]
         for priority_username in args.priority_usernames:
+            priority_user = _db.find_user_by_username(priority_username)
+            if priority_user:
+                priority_users.append(priority_user)
+        for priority_user in priority_users:
             for wp in _waiting_prompts.get_all():
-                if wp.username == priority_username:
+                if wp.user == priority_user:
                     prioritized_wp.append(wp)
         for wp in _waiting_prompts.get_all():
             if wp not in prioritized_wp:
@@ -221,14 +231,17 @@ class SubmitGeneration(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
-        parser.add_argument("password", type=str, required=True, help="The server password")
+        parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
         parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
         args = parser.parse_args()
         procgen = _processing_generations.get_item(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
-        if args['password'] != procgen.server.password:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = procgen.server.name, username = procgen.server.username)}",401)
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)
+        if user != procgen.server.user:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         tokens = procgen.set_generation(args['generation'])
         if tokens == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
@@ -299,9 +312,9 @@ def index():
 These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most tokens for the horde.
-#### {top_contributor['username']}
-* {top_contributor['tokens']} tokens generated.
-* {top_contributor['requests']} requests fulfilled.
+#### {top_contributor.get_unique_alias()}
+* {top_contributor.contributions['tokens']} tokens generated.
+* {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
 This is the server which has generated the most tokens for the horde.
 #### {top_server.name}
@@ -322,16 +335,47 @@ This is the server which has generated the most tokens for the horde.
     )
     return(markdown(findex + top_contributors))
 
-@REST_API.route('/authtest')
-def authtest():
+@REST_API.route('/register', methods=['GET', 'POST'])
+def register():
     google_data = None
     user_info_endpoint = '/oauth2/v2/userinfo'
-    if google.authorized:
-        google_data = google.get(user_info_endpoint).json()
-
-    return render_template('index.j2',
+    try:
+        if google.authorized:
+            google_data = google.get(user_info_endpoint).json()
+    except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+        pass
+    api_key = None
+    user = None
+    welcome = 'Welcome'
+    username = ''
+    existing_user = False
+    if google_data:
+        user = _db.find_user_by_email(google_data["email"])
+        if user:
+            existing_user = True
+            username = user.username
+        if request.method == 'POST':
+            api_key = secrets.token_urlsafe(16)
+            if user:
+                username = request.form['username']
+                user.username = request.form['username']
+                user.api_key = api_key
+            else:
+                user = User(_db)
+                user.create(request.form['username'], google_data["email"], api_key, request.form['inviter'])
+                username = request.form['username']
+        welcome = f"Welcome {google_data['name']}"
+        if user:
+            welcome = f"Welcome  back {google_data['name']} ({user.get_unique_alias()})"
+    return render_template('register.html',
+                           welcome=welcome,
+                           user=user,
+                           api_key=api_key,
+                           username=username,
+                           existing_user=existing_user,
                            google_data=google_data,
                            fetch_url=google.base_url + user_info_endpoint)
+
 
 @REST_API.route('/login')
 def login():
@@ -342,9 +386,6 @@ if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
-    # global secret_key
-    # global client_secret
-    # global client_secret
 
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     _db = Database()

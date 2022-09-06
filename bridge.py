@@ -7,8 +7,7 @@ import clientData as cd
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--interval', action="store", required=False, type=int, default=1, help="The amount of seconds with which to check if there's new prompts to generate")
-arg_parser.add_argument('-u', '--username', action="store", required=False, type=str, help="The username of the owner of the KAI instance. Used to track contributions.")
-arg_parser.add_argument('-p', '--password', action="store", required=False, type=str, help="The password to make sure nobody spoofs your server instance.")
+arg_parser.add_argument('-a', '--api_key', action="store", required=False, type=str, help="The API key corresponding to the owner of the KAI instance")
 arg_parser.add_argument('-n', '--kai_name', action="store", required=False, type=str, help="The server name. It will be shown to the world and there can be only one.")
 arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=str, help="The KoboldAI server URL. Where the bridge will get its generations from.")
 arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
@@ -87,24 +86,19 @@ if __name__ == "__main__":
     current_id = None
     current_payload = None
     loop_retry = 0
-    username = args.username if args.username else cd.username
-    password = args.password if args.password else cd.password
+    api_key = args.api_key if args.api_key else cd.api_key
     kai_name = args.kai_name if args.kai_name else cd.kai_name
     kai_url = args.kai_url if args.kai_url else cd.kai_url
     cluster = args.cluster_url if args.cluster_url else cd.cluster_url
     priority_usernames = args.priority_usernames if args.priority_usernames else cd.priority_usernames
-    if username not in priority_usernames:
-        # Owner always gets most priority
-        priority_usernames.insert(0,username)
-    logging.info(f"Starting {kai_name} instance registered to {username}")
+    logging.info(f"Starting {kai_name} instance")
     while True:
         if not validate_kai(kai_url):
             logging.warning(f"Waiting 10 seconds...")
             time.sleep(10)
             continue
         gen_dict = {
-            "username": username,
-            "password": password,
+            "api_key": api_key,
             "name": kai_name,
             "model": model,
             "max_length": max_length,
@@ -148,7 +142,7 @@ if __name__ == "__main__":
         submit_dict = {
             "id": current_id,
             "generation": current_generation,
-            "password": password,
+            "api_key": api_key,
         }
         while current_id and current_generation:
             try:
