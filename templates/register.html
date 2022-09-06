@@ -1,9 +1,9 @@
 {% extends "master.html" %}
 {% block content %}
-{% if not google_data %}
+{% if not email %}
     <div class="container">
         <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
-        <a href="/login" class="google-btn">
+        <a href="/google" class="google-btn">
         <div class="google-icon-wrapper">
             <img class="google-icon" src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg"/>
         </div>
@@ -17,7 +17,7 @@
         </a>
     </div>   
 {% else %}
-{% if google_data is not none %}
+{% if email is not none %}
    <div class="container">
         <h1>{{ welcome }}</h1>
         <h2>Set Display Name</h2>

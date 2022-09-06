@@ -4,6 +4,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
+from flask_dance.contrib.github import make_github_blueprint, github
 import logging, requests, random, time, os, oauthlib, secrets
 from enum import Enum
 from markdown import markdown
@@ -353,20 +354,26 @@ def register():
         pass
     discord_data = None
     if not google_data:
-        discord_info_endpoint = '/discord/authorized'
+        discord_info_endpoint = '/api/users/@me'
         try:
             if discord.authorized:
-                discord_info_endpoint = discord.get(discord_info_endpoint).json()
+                discord_data = discord.get(discord_info_endpoint).json()
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    print(google_data)
+    print([google_data,discord_data])
     api_key = None
     user = None
     welcome = 'Welcome'
     username = ''
     existing_user = False
+    email = None
     if google_data:
-        user = _db.find_user_by_email(google_data["email"])
+        email = google_data["email"]
+    if discord_data:
+        email = discord_data["email"]
+    logging.info(email)
+    if email:
+        user = _db.find_user_by_email(email)
         if user:
             existing_user = True
             username = user.username
@@ -378,27 +385,27 @@ def register():
                 user.api_key = api_key
             else:
                 user = User(_db)
-                user.create(request.form['username'], google_data["email"], api_key, request.form['inviter'])
+                user.create(request.form['username'], email, api_key, request.form['inviter'])
                 username = request.form['username']
-        welcome = f"Welcome {google_data['name']}"
         if user:
-            welcome = f"Welcome  back {google_data['name']} ({user.get_unique_alias()})"
+            welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
                            username=username,
                            existing_user=existing_user,
-                           google_data=google_data,
-                           fetch_url=google.base_url + user_info_endpoint)
+                           email=email)
 
 
-@REST_API.route('/login')
-def login():
+@REST_API.route('/google')
+def google_login():
+    print(url_for('google.login'))
     return redirect(url_for('google.login'))
 
 @REST_API.route('/discord')
-def discord():
+def discord_login():
+    print(url_for('discord.login'))
     return redirect(url_for('discord.login'))
 
 
@@ -422,8 +429,8 @@ if __name__ == "__main__":
     _processing_generations = GenerationsIndex()
     google_client_id = os.getenv("GOOGLE_CLIENT_ID")
     google_client_secret = os.getenv("GLOOGLE_CLIENT_SECRET")
-    discord_client_id = os.getenv("DISCORD_APP_ID")
-    disocrd_client_secret = os.getenv("DISCORD_PUBLIC_KEY")
+    discord_client_id = os.getenv("DISCORD_CLIENT_ID")
+    discord_client_secret = os.getenv("DISCORD_CLIENT_SECRET")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
@@ -433,11 +440,11 @@ if __name__ == "__main__":
         reprompt_consent = True,
         scope = ["email"],
     )
-    REST_API.register_blueprint(google_blueprint,url_prefix="/login")
+    REST_API.register_blueprint(google_blueprint,url_prefix="/google")
     discord_blueprint = make_discord_blueprint(
         client_id = discord_client_id,
-        client_secret = disocrd_client_secret,
-        scope = ["email"],
+        client_secret = discord_client_secret,
+        scope = ["identify"],
     )
     REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
     api.add_resource(SyncGenerate, "/generate/sync")
