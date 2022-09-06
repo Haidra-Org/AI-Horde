@@ -383,7 +383,6 @@ def register():
                 discord_data = discord.get(discord_info_endpoint).json()
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    logging.info([google_data,discord_data])
     api_key = None
     user = None
     welcome = 'Welcome'
@@ -394,7 +393,6 @@ def register():
         email = google_data["email"]
     if discord_data:
         email = discord_data["email"]
-    logging.info(email)
     if email:
         user = _db.find_user_by_email(email)
         if user:
