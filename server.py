@@ -9,6 +9,7 @@ import logging, requests, random, time, os, oauthlib, secrets
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
+from uuid import uuid4
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
 
 class ServerErrors(Enum):
@@ -372,18 +373,17 @@ This is the server which has generated the most tokens for the horde.
 @REST_API.route('/register', methods=['GET', 'POST'])
 def register():
     google_data = None
-    user_info_endpoint = '/oauth2/v2/userinfo'
-    try:
-        if google.authorized:
-            google_data = google.get(user_info_endpoint).json()
-    except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
-        pass
     discord_data = None
-    if not google_data:
+    user_info_endpoint = '/oauth2/v2/userinfo'
+    if google.authorized:
+        try:
+            google_data = google.get(user_info_endpoint).json()
+        except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+            pass
+    elif discord.authorized:
         discord_info_endpoint = '/api/users/@me'
         try:
-            if discord.authorized:
-                discord_data = discord.get(discord_info_endpoint).json()
+            discord_data = discord.get(discord_info_endpoint).json()
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
     # logging.info([google_data,discord_data])
@@ -395,25 +395,28 @@ def register():
     oauth_id = None
     if google_data:
         oauth_id = f'g_{google_data["id"]}'
-    if discord_data:
+    elif discord_data:
         oauth_id = f'd_{discord_data["id"]}'
     if oauth_id:
         user = _db.find_user_by_oauth_id(oauth_id)
         if user:
             existing_user = True
             username = user.username
-        if request.method == 'POST':
-            api_key = secrets.token_urlsafe(16)
-            if user:
-                username = request.form['username']
-                user.username = request.form['username']
-                user.api_key = api_key
-            else:
-                user = User(_db)
-                user.create(request.form['username'], oauth_id, api_key, request.form['inviter'])
-                username = request.form['username']
+    if request.method == 'POST':
+        api_key = secrets.token_urlsafe(16)
         if user:
-            welcome = f"Welcome back {user.get_unique_alias()}"
+            username = request.form['username']
+            user.username = request.form['username']
+            user.api_key = api_key
+        else:
+            # Triggered when the user created a username without logging in
+            if not oauth_id:
+                oauth_id = str(uuid4())
+            user = User(_db)
+            user.create(request.form['username'], oauth_id, api_key, None)
+            username = request.form['username']
+    if user:
+        welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
                            welcome=welcome,
                            user=user,

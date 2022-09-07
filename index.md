@@ -14,7 +14,9 @@ You can find the source and documentation for [KoboldAI Horde](https://github.co
 
 ## Usage
 
-1. [Register an account](/register) which will generate for you an API key. Store that key somewhere. (Currently only discord is working)
+1. [Register an account](/register) which will generate for you an API key. Store that key somewhere. Be aware:
+    * Currently only discord is working
+    * If you do not want to register , you can use '0000000000' as api_key to connect anonymously
 1. Download KoboldAI following the instruction it its repository. 
     * If on windows, use the update-koboldai.bat to switch to the UNITED branch
     * If on linux, switch your origin to https://github.com/henk717/koboldai and switch to the united branch

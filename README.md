@@ -11,9 +11,13 @@ To use the horde you need to have a registered amount, or use anonymous mode.
 
 To register an account, go to https://koboldai.net/register and login with one of the available services. Once you do you'll be redirected back to the main page, so go back to /register and you'll see a form where you can put a username. Add one in and it will automatically store a user object for you and provide an API key to identify you. 
 Store this API key and use it for your client or bridge.
+By logging in first, you can change your username and API key at any time. 
+Be aware that the account is unique per service, so even if you use the same email for discord and google, your user ID will be different for each!
 We don't store any identifiable information other than the ID string sent by the oauth for your user. We only use this for user uniqueness, and no other purpose.
 
-If you do not want to login even with one of those services, you can use this service anonymously by using '0000000000' as you API key. However your usage and contributions will be not be tracked. Be aware that if this service gets too overloaded, anonymous mode might be turned off!
+If you want, you can also create a pseudonymous account, without logging in with oauth. However *we will not maintain such accounts*. If you lose access to it, you'll have to make a new one. If someone copies your API Key, they can impersonate. You cannot change the username or API key anymore etc. If you don't want these risks, login to one of the available services instead.
+
+If you do not want to login even with a pseudonymous account, you can use this service anonymously by using '0000000000' as you API key. However your usage and contributions will be not be tracked. Be aware that if this service gets too overloaded, anonymous mode might be turned off!
 
 # Generating Prompts
 

@@ -1,6 +1,5 @@
 {% extends "master.html" %}
 {% block content %}
-{% if not oauth_id %}
     <div class="container">
         <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
         <a href="/google" class="google-btn">
@@ -16,13 +15,21 @@
         <p class="btn-text"><b>Sign in with discord</b></p>
         </a>
     </div>   
-{% else %}
-{% if oauth_id is not none %}
    <div class="container">
+        {% if oauth_id is not none %}
         <h1>{{ welcome }}</h1>
         <h2>Set Display Name</h2>
         <p>This is used in statistics</p>
         <p>Note: Changing your username will generate a new API key!</p>
+        {% else %}
+        <h1>Welcome</h1>
+        <h2>Set Display Name</h2>
+        <p>This is used in statistics</p>
+        <p style="background-color:Tomato;">WARNING: You are not logged in!</p>
+        <p>If you submit a username, it will create a new user with a random API key <b>which cannot be maintained by us!</b></p>
+        <p>If you forget/lose this API Key, there's nothing we can do to recover it. You'll have to create a new account.</p>
+        <p>To ensure you avoid this fate, please login using one of the buttons above first!</p>
+        {% endif %}
         <form method="POST" class="main-form">
             <div class="form-group">
                 <label for="username">Display Name *</label>
@@ -32,27 +39,17 @@
                 <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" value="{{ username }}" required>
                 {% endif %}
             </div>
-            {% if existing_user is false %}
-            <div class="form-group">
-                <label for="inviter ID">Inviter</label>
-                <input type="text" class="form-control" id="inviter" name="inviter" placeholder="Enter Display Name">
-            </div>
-            {% endif %}
             <button type="submit" class="btn btn-default">Submit</button>           
         </form>
         {% if api_key is not none %}
         <h2>API Key</h2>
         <p>Your new API Key is below. It will not be displayed again. Submit this form to generate a new one. Use this key in your KoboldAI client and in your bridge to identify your user</p>
         <p><b>Do not share this with anyone!</b></p>
-        <p>{{ api_key }}</p>   
+        <p style="background-color:darkorange;">{{ api_key }}</p>   
         {% endif %}
         <h2>Privacy Policy</h2>
         <p>The only information we store from your account is your unique ID for uniqueness.</p>
         <p>We do not other use your id for any purpose.</p>
    </div> 
-{% else %}
-   <p style="color:#333;">Ooops, something went wrong when receiving your google data</p>
-{% endif %}
-{% endif %}
 <p><a href="/">Back to Main page</a></p>
 {% endblock %}
