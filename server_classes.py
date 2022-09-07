@@ -471,7 +471,7 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['tokens'] > top_contribution:
+            if user.contributions['tokens'] > top_contribution and user != self.anon:
                 top_contributor = user
                 top_contribution = user.contributions['tokens']
         return(top_contributor)
