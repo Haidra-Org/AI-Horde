@@ -10,6 +10,7 @@ from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
 from uuid import uuid4
+from werkzeug.middleware.proxy_fix import ProxyFix
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
 
 class ServerErrors(Enum):
@@ -463,7 +464,7 @@ if __name__ == "__main__":
     discord_client_secret = os.getenv("DISCORD_CLIENT_SECRET")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '0' # Disable this on prod
     google_blueprint = make_google_blueprint(
         client_id = google_client_id,
         client_secret = google_client_secret,
@@ -475,6 +476,7 @@ if __name__ == "__main__":
         client_id = discord_client_id,
         client_secret = discord_client_secret,
         scope = ["identify"],
+        redirect_url='/register',
     )
     REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
     api.add_resource(SyncGenerate, "/generate/sync")
@@ -488,5 +490,5 @@ if __name__ == "__main__":
     api.add_resource(ServerSingle, "/servers/<string:server_id>")
     api.add_resource(Models, "/models")
     from waitress import serve
-    serve(REST_API, host="0.0.0.0", port="5001")
+    serve(REST_API, host="0.0.0.0", port="5001",url_scheme='https')
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
