@@ -5,26 +5,42 @@ It also allows clients other than KAI, such as games and apps, to use KAI-provid
 
 You can find visit [official KoboldAI Horde](https://koboldai.net)
 
+# Registering
+
+To use the horde you need to have a registered amount, or use anonymous mode.
+
+To register an account, go to https://koboldai.net/register and login with one of the available services. Once you do you'll be redirected back to the main page, so go back to /register and you'll see a form where you can put a username. Add one in and it will automatically store a user object for you and provide an API key to identify you. 
+Store this API key and use it for your client or bridge.
+We don't store any identifiable information other than the ID string sent by the oauth for your user. We only use this for user uniqueness, and no other purpose.
+
+If you do not want to login even with one of those services, you can use this service anonymously by using '0000000000' as you API key. However your usage and contributions will be not be tracked. Be aware that if this service gets too overloaded, anonymous mode might be turned off!
+
 # Generating Prompts
 
 To request the generation for a prompt, you need to send a post request like so:
 
+Asynchronously
 ```
-curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "username":"db0", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://horde.dbzer0.com/generate/prompt
+curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "api_jey":"0000000000", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://horde.dbzer0.com/generate/async
+```
+Synchronously
+```
+curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "api_jey":"0000000000", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://horde.dbzer0.com/generate/sync
 ```
 
 The "params" dictionary is the same as the parameters you pass to the KoboldAI API in the `api/latest/generate endpoint`, the only difference is that the "prompt" is outside the "params" dictionary.
 
 With one important difference, the "Gens per action" param `n` can be as high as you want! Each server will only handle 1 at a time, but multiple server will be able to work on your request at the same time.
 
-Pass a username in order to track your usage. Proper authentication will come later.
+Pass an API Keyin order to track your usage.
 
 Pass the desired model names in the "model" arg to allow only KAIs running one of those models to fulfil your request. If you skip the "models" arg, all KAI instances will be able to generate for you, but of course the result will vary per model.
 
 The `max_length` and `max_content_length` params that you pass are your wish. If the KAI server checking your request has a lower limit, they will skip all generation requests with a higher wish
 
-Once run, This request will return a UUID
+In Synchronous mode, this will return a list of prompts. So you can immediately use them. However if you connection is disrupted you will lose your generation, as you won't know your UUID
 
+In Asynchronous mode  This request will return a UUID
 ```
 {"id": "34a9f91a-6db5-4d4c-962f-c4d795739610"}
 ```
@@ -61,15 +77,15 @@ You can also start KAI directly in horde mode by using the command line in the `
 LINUX
 
 ```bash
-USERNAME=Anonymous
-play.sh --path https://koboldai.net --model CLUSTER --apikey ${USERNAME}
+APIKEY=0000000000
+play.sh --path https://koboldai.net --model CLUSTER --apikey ${APIKEY}
 ```
 
 WINDOWS
 
 
 ```bash
-play.bat --path https://koboldai.net --model CLUSTER --apikey Anonymous
+play.bat --path https://koboldai.net --model CLUSTER --apikey 0000000000
 ```
 
 This will use any available model on the cluster. If you want to use only specific models, pass the wanted modules via one or more `req_model` args. Example `--req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"`
@@ -89,7 +105,6 @@ This repository comes with a little bridge script which you can run on your own 
 * Edit the clientData.py file and add your own username and password. The password is stored in plaintext for now, so don't reuse an existing one.
 * Edit the clientData.py file and add your KAI server. If it's a local instance, leave it as it is. If it's a remote instance, fill in the URL and port accordingly.
 * Modify your KAI settings from the GUI so that the "Amount to Generate" and "Typical Sampling" are at the max values your KAI instance can handle. This doesn't mean all requests will use this amount. It just limits which requests your server will choose to fulfil.
-* Softprompts don't hurt, but at this point they are not taken into account, so you will mess with people's expectation on what you generate. I suggest you put softprompt to none for now.
 * Finally, run the script: `python bridge.py`
    * Optionally, provide bridge arguments via command line. The args on the command line will override clientData.py vars, so you can use this to run multiple bridges from the same location. See `python bridge.py -h`
 
@@ -107,8 +122,8 @@ The bridge will automatically enable or disable softprompts at the clients reque
    ```json
    [{"name": "Db0's Awesome Instance", "id": "019e34e3-3109-4ea9-820a-b0c4f6a53c07", "model": "KoboldAI/fairseq-dense-2.7B-Nerys", "max_length": 80, "max_content_length": 1632, "tokens_generated": 30, "requests_fulfilled": 2, "latest_performance": "1.36 tokens per second"}]
 * GET `/servers/<UUID>` To see the information of a specific server by UUID.
-* GET `/usage` to see how much each user has consumed this service.
-* GET `/contributions` to see how much each user has contributed to this service with their own resources.
+* GET `/users` To see the info of all registered users and their statistics
+* GET `/user/id` To see the info of a specific user
 * GET `/models` Which models are currently active and how many servers are running each
 
 ## Other Info
@@ -127,7 +142,7 @@ If you want to both play with KAI AND share resources with the community, you ca
 2. open a terminal window at your KAI installation, and now run `play.(sh|bat)` using a different port in CLUSTER mode. This will start open another KAI window, while leaving your model-loaded KAI intact. Make sure the `req_model` you pass, includes the model loaded in your own KAI instance.
 
 ```bash
-play.bat --port 5002 --path https://horde.dbzer0.com --model CLUSTER --apikey Anonymous --req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"
+play.bat --port 5002 --path https://horde.dbzer0.com --model CLUSTER --apikey 0000000000 --req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"
 ```
 
 Now use the CLUSTER KAI to play. You will see the requests being fulfilled by the model-loaded KAI after you press the button.
