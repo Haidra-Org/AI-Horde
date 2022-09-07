@@ -71,14 +71,17 @@ class SyncGenerate(Resource):
         # Not implemented yet
         parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
         args = parser.parse_args()
-        user = _db.find_user_by_api_key(args['api_key'])
-        if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
+        username = 'Anonymous'
+        if args.api_key:
+            user = _db.find_user_by_api_key(args['api_key'])
+            if not user:
+                return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)         
+            username = user.get_unique_alias()
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
         if wp_count >= 3:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = user.get_unique_alias(), wp_count = wp_count)}",503)
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
@@ -421,13 +424,11 @@ def register():
 
 @REST_API.route('/google')
 def google_login():
-    print(url_for('google.login'))
     return redirect(url_for('google.login'))
 
 
 @REST_API.route('/discord')
 def discord_login():
-    print(url_for('discord.login'))
     return redirect(url_for('discord.login'))
 
 

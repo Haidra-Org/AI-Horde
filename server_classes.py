@@ -316,6 +316,24 @@ class User:
     def __init__(self, db):
         self._db = db
 
+    def create_anon(self):
+        self.username = 'Anonymous'
+        self.email = 'anon'
+        self.api_key = '0000000000'
+        self.kudos = 0
+        self.invite_email = ''
+        self.creation_date = datetime.now()
+        self.last_active = datetime.now()
+        self.id = 0
+        self.contributions = {
+            "tokens": 0,
+            "fulfillments": 0
+        }
+        self.usage = {
+            "tokens": 0,
+            "requests": 0
+        }
+
     def create(self, username, email, api_key, invite_email):
         self.username = username
         self.email = email
@@ -382,6 +400,7 @@ class User:
 class Database:
     def __init__(self, interval = 3):
         self.interval = interval
+        self.ALLOW_ANONYMOUS = True
         # This is used for synchronous generations
         self.SERVERS_FILE = "db/servers.json"
         self.servers = {}
@@ -404,6 +423,11 @@ class Database:
                     self.users[new_user.email] = new_user
                     if new_user.id > self.last_user_id:
                         self.last_user_id = new_user.id
+        self.anon = self.find_user_by_email('anon')
+        if not self.anon:
+            self.anon = User(self)
+            self.anon.create_anon()
+            self.users[self.anon.email] = self.anon
         if os.path.isfile(self.SERVERS_FILE):
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
@@ -506,31 +530,26 @@ class Database:
         logging.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
 
     def find_user_by_email(self,email):
+        if email == 'anon' and not self.ALLOW_ANONYMOUS:
+            return(None)
         return(self.users.get(email))
 
     def find_user_by_username(self, username):
         for user in self.users.values():
             uniq_username = username.split('#')
             if user.username == uniq_username[0] and user.id == uniq_username[1]:
+                if user == self.anon and not self.ALLOW_ANONYMOUS:
+                    return(None)
                 return(user)
         return(None)
 
     def find_user_by_api_key(self,api_key):
         for user in self.users.values():
             if user.api_key == api_key:
+                if user == self.anon and not self.ALLOW_ANONYMOUS:
+                    return(None)
                 return(user)
         return(None)
 
     def find_server_by_name(self,server_name):
         return(self.servers.get(server_name))
-
-    def compile_users(self):
-        user_dict = {}
-        for user in self.users.values():
-            user_dict[user.get_unique_alias()] = {
-                "kudos": user.kudos,
-                "usage": user.usage,
-                "contributions": user.contributions,
-                "creation_date": user.creation_date,
-            }
-        return(user_dict)
