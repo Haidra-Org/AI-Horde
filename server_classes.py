@@ -472,10 +472,9 @@ class Database:
         user = None
         for user in self.users.values():
             if user.contributions['tokens'] > top_contribution:
-                logging.info(f"{user.contributions['tokens']} > {top_contribution}")
                 top_contributor = user
                 top_contribution = user.contributions['tokens']
-        return(user)
+        return(top_contributor)
 
     def get_top_server(self):
         top_server = None
