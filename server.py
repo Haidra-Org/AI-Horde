@@ -369,7 +369,9 @@ This is the server which has generated the most tokens for the horde.
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
-    return(markdown(findex + top_contributors + policies))
+    head = """<head><meta name="google-site-verification" content="5imNnbyz39-i9j6dbAeS0o0ZRIfzpznY9FBa_kMZns0" /></head>
+    """
+    return(head + markdown(findex + top_contributors + policies))
 
 @REST_API.route('/register', methods=['GET', 'POST'])
 def register():
@@ -469,6 +471,7 @@ if __name__ == "__main__":
         client_id = google_client_id,
         client_secret = google_client_secret,
         reprompt_consent = True,
+        redirect_url='/register',
         scope = ["email"],
     )
     REST_API.register_blueprint(google_blueprint,url_prefix="/google")
