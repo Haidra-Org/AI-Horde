@@ -386,18 +386,19 @@ def register():
                 discord_data = discord.get(discord_info_endpoint).json()
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
+    # logging.info([google_data,discord_data])
     api_key = None
     user = None
     welcome = 'Welcome'
     username = ''
     existing_user = False
-    email = None
+    oauth_id = None
     if google_data:
-        email = google_data["email"]
+        oauth_id = f'g_{google_data["id"]}'
     if discord_data:
-        email = discord_data["email"]
-    if email:
-        user = _db.find_user_by_email(email)
+        oauth_id = f'd_{discord_data["id"]}'
+    if oauth_id:
+        user = _db.find_user_by_oauth_id(oauth_id)
         if user:
             existing_user = True
             username = user.username
@@ -409,7 +410,7 @@ def register():
                 user.api_key = api_key
             else:
                 user = User(_db)
-                user.create(request.form['username'], email, api_key, request.form['inviter'])
+                user.create(request.form['username'], oauth_id, api_key, request.form['inviter'])
                 username = request.form['username']
         if user:
             welcome = f"Welcome back {user.get_unique_alias()}"
@@ -419,7 +420,7 @@ def register():
                            api_key=api_key,
                            username=username,
                            existing_user=existing_user,
-                           email=email)
+                           oauth_id=oauth_id)
 
 
 @REST_API.route('/google')

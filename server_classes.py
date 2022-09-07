@@ -246,7 +246,7 @@ class KAIServer:
 
     def serialize(self):
         ret_dict = {
-            "email": self.user.email,
+            "oauth_id": self.user.oauth_id,
             "name": self.name,
             "model": self.model,
             "max_length": self.max_length,
@@ -262,7 +262,7 @@ class KAIServer:
         return(ret_dict)
 
     def deserialize(self, saved_dict):
-        self.user = self._db.find_user_by_email(saved_dict["email"])
+        self.user = self._db.find_user_by_oauth_id(saved_dict["oauth_id"])
         self.name = saved_dict["name"]
         self.model = saved_dict["model"]
         self.max_length = saved_dict["max_length"]
@@ -318,10 +318,10 @@ class User:
 
     def create_anon(self):
         self.username = 'Anonymous'
-        self.email = 'anon'
+        self.oauth_id = 'anon'
         self.api_key = '0000000000'
         self.kudos = 0
-        self.invite_email = ''
+        self.invite_id = ''
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
         self.id = 0
@@ -334,12 +334,12 @@ class User:
             "requests": 0
         }
 
-    def create(self, username, email, api_key, invite_email):
+    def create(self, username, oauth_id, api_key, invite_id):
         self.username = username
-        self.email = email
+        self.oauth_id = oauth_id
         self.api_key = api_key
         self.kudos = 0
-        self.invite_email = invite_email
+        self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
         self.id = self._db.register_new_user(self)
@@ -372,11 +372,11 @@ class User:
     def serialize(self):
         ret_dict = {
             "username": self.username,
-            "email": self.email,
+            "oauth_id": self.oauth_id,
             "api_key": self.api_key,
             "kudos": self.kudos,
             "id": self.id,
-            "invite_email": self.invite_email,
+            "invite_id": self.invite_id,
             "contributions": self.contributions,
             "usage": self.usage,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
@@ -386,11 +386,11 @@ class User:
 
     def deserialize(self, saved_dict):
         self.username = saved_dict["username"]
-        self.email = saved_dict["email"]
+        self.oauth_id = saved_dict["oauth_id"]
         self.api_key = saved_dict["api_key"]
         self.kudos = saved_dict["kudos"]
         self.id = saved_dict["id"]
-        self.invite_email = saved_dict["invite_email"]
+        self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
@@ -420,14 +420,14 @@ class Database:
                 for user_dict in serialized_users:
                     new_user = User(self)
                     new_user.deserialize(user_dict)
-                    self.users[new_user.email] = new_user
+                    self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
                         self.last_user_id = new_user.id
-        self.anon = self.find_user_by_email('anon')
+        self.anon = self.find_user_by_oauth_id('anon')
         if not self.anon:
             self.anon = User(self)
             self.anon.create_anon()
-            self.users[self.anon.email] = self.anon
+            self.users[self.anon.oauth_id] = self.anon
         if os.path.isfile(self.SERVERS_FILE):
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
@@ -521,7 +521,7 @@ class Database:
 
     def register_new_user(self, user):
         self.last_user_id += 1
-        self.users[user.email] = user
+        self.users[user.oauth_id] = user
         logging.info(f'New user created: {user.username}#{self.last_user_id}')
         return(self.last_user_id)
 
@@ -529,10 +529,10 @@ class Database:
         self.servers[server.name] = server
         logging.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
 
-    def find_user_by_email(self,email):
-        if email == 'anon' and not self.ALLOW_ANONYMOUS:
+    def find_user_by_oauth_id(self,oauth_id):
+        if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
             return(None)
-        return(self.users.get(email))
+        return(self.users.get(oauth_id))
 
     def find_user_by_username(self, username):
         for user in self.users.values():

@@ -1,6 +1,6 @@
 {% extends "master.html" %}
 {% block content %}
-{% if not email %}
+{% if not oauth_id %}
     <div class="container">
         <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
         <a href="/google" class="google-btn">
@@ -17,7 +17,7 @@
         </a>
     </div>   
 {% else %}
-{% if email is not none %}
+{% if oauth_id is not none %}
    <div class="container">
         <h1>{{ welcome }}</h1>
         <h2>Set Display Name</h2>
@@ -34,7 +34,7 @@
             </div>
             {% if existing_user is false %}
             <div class="form-group">
-                <label for="inviter">Inviter</label>
+                <label for="inviter ID">Inviter</label>
                 <input type="text" class="form-control" id="inviter" name="inviter" placeholder="Enter Display Name">
             </div>
             {% endif %}
@@ -47,8 +47,8 @@
         <p>{{ api_key }}</p>   
         {% endif %}
         <h2>Privacy Policy</h2>
-        <p>The only information we store from your account is your email address for uniqueness.</p>
-        <p>We do not other use your email for any purpose.</p>
+        <p>The only information we store from your account is your unique ID for uniqueness.</p>
+        <p>We do not other use your id for any purpose.</p>
    </div> 
 {% else %}
    <p style="color:#333;">Ooops, something went wrong when receiving your google data</p>
