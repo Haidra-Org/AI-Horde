@@ -454,7 +454,7 @@ if __name__ == "__main__":
     global _waiting_prompts
     global _processing_generations
 
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.INFO)
     _db = Database()
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
