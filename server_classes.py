@@ -453,6 +453,8 @@ class Database:
             os.mkdir('db')
         server_serialized_list = []
         for server in self.servers.values():
+            # We don't store data for anon servers
+            if server.user == self.anon: continue
             server_serialized_list.append(server.serialize())
         with open(self.SERVERS_FILE, 'w') as db:
             json.dump(server_serialized_list,db)

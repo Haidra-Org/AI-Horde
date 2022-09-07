@@ -160,7 +160,7 @@ class AsyncGenerate(Resource):
 
 
 class PromptPop(Resource):
-    decorators = [limiter.limit("2/second")]
+    decorators = [limiter.limit("45/second")]
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
