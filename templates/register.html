@@ -1,5 +1,6 @@
 {% extends "master.html" %}
 {% block content %}
+    {% if oauth_id is none and pseudonymous is false %}
     <div class="container">
         <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
         <a href="/google" class="google-btn">
@@ -15,6 +16,7 @@
         <p class="btn-text"><b>Sign in with discord</b></p>
         </a>
     </div>
+    {% endif %}
    <div class="container">
         {% if oauth_id is not none and pseudonymous is not true %}
         <h1>{{ welcome }}</h1>
