@@ -18,7 +18,7 @@ except:
             self.kai_name = random.randint(-1000000000000, 1000000000000)
             # The api_key identifies a unique user in the horde
             # Visit https://koboldai.net/register to create one before you can join
-            api_key = "0000000000"
+            self.api_key = "0000000000"
             # Put other users whose prompts you want to prioritize.
             # The owner's username is always included so you don't need to add it here, unless you want it to have lower priority than another user
             self.priority_usernames = []
