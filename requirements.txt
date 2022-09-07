@@ -4,3 +4,6 @@ flask_limiter
 waitress
 requests
 Markdown
+flask-dance[sqla]
+blinker
+python-dotenv

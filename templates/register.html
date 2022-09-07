@@ -1,0 +1,58 @@
+{% extends "master.html" %}
+{% block content %}
+{% if not email %}
+    <div class="container">
+        <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
+        <a href="/google" class="google-btn">
+        <div class="google-icon-wrapper">
+            <img class="google-icon" src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg"/>
+        </div>
+        <p class="btn-text"><b>Sign in with google</b></p>
+        </a>
+        <a href="/discord" class="google-btn">
+        <div class="google-icon-wrapper">
+            <img class="google-icon" src="https://upload.wikimedia.org/wikipedia/en/9/98/Discord_logo.svg"/>
+        </div>
+        <p class="btn-text"><b>Sign in with discord</b></p>
+        </a>
+    </div>   
+{% else %}
+{% if email is not none %}
+   <div class="container">
+        <h1>{{ welcome }}</h1>
+        <h2>Set Display Name</h2>
+        <p>This is used in statistics</p>
+        <p>Note: Changing your username will generate a new API key!</p>
+        <form method="POST" class="main-form">
+            <div class="form-group">
+                <label for="username">Display Name *</label>
+                {% if username is none %}
+                <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" required>
+                {% else %}
+                <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" value="{{ username }}" required>
+                {% endif %}
+            </div>
+            {% if existing_user is false %}
+            <div class="form-group">
+                <label for="inviter">Inviter</label>
+                <input type="text" class="form-control" id="inviter" name="inviter" placeholder="Enter Display Name">
+            </div>
+            {% endif %}
+            <button type="submit" class="btn btn-default">Submit</button>           
+        </form>
+        {% if api_key is not none %}
+        <h2>API Key</h2>
+        <p>Your new API Key is below. It will not be displayed again. Submit this form to generate a new one. Use this key in your KoboldAI client and in your bridge to identify your user</p>
+        <p><b>Do not share this with anyone!</b></p>
+        <p>{{ api_key }}</p>   
+        {% endif %}
+        <h2>Privacy Policy</h2>
+        <p>The only information we store from your account is your email address for uniqueness.</p>
+        <p>We do not other use your email for any purpose.</p>
+   </div> 
+{% else %}
+   <p style="color:#333;">Ooops, something went wrong when receiving your google data</p>
+{% endif %}
+{% endif %}
+<p><a href="/">Back to Main page</a></p>
+{% endblock %}

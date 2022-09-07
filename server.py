@@ -1,20 +1,23 @@
-from flask import Flask
+from flask import Flask, render_template, redirect, url_for, request
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import logging, requests, random, time
+from flask_dance.contrib.google import make_google_blueprint, google
+from flask_dance.contrib.discord import make_discord_blueprint, discord
+from flask_dance.contrib.github import make_github_blueprint, github
+import logging, requests, random, time, os, oauthlib, secrets
 from enum import Enum
 from markdown import markdown
-from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,Database,PromptsIndex,GenerationsIndex
-
+from dotenv import load_dotenv
+from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
     INVALID_PROCGEN = 1
     DUPLICATE_GEN = 2
     TOO_MANY_PROMPTS = 3
-    EMPTY_USERNAME = 4
-    EMPTY_PROMPT = 5
+    EMPTY_PROMPT = 4
+    INVALID_API_KEY = 5
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -24,9 +27,13 @@ limiter = Limiter(
     default_limits=["90 per minute"]
 )
 api = Api(REST_API)
+load_dotenv()
 
 
 def get_error(error, **kwargs):
+    if error == ServerErrors.INVALID_API_KEY:
+        logging.warning(f'Invalid API Key sent.')
+        return(f'No user matching sent API Key. Have you remembered to register at https://koboldai.net/register ?')
     if error == ServerErrors.WRONG_CREDENTIALS:
         logging.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
         return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
@@ -39,9 +46,6 @@ def get_error(error, **kwargs):
     if error == ServerErrors.TOO_MANY_PROMPTS:
         logging.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
         return("Too many parallel requests from same user. Please try again later.")
-    if error == ServerErrors.EMPTY_USERNAME:
-        logging.warning(f'Request sent with an invalid username. Aborting!')
-        return("Please provide a valid username.")
     if error == ServerErrors.EMPTY_PROMPT:
         logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
@@ -54,23 +58,12 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
-
-class Usage(Resource):
-    def get(self):
-        return(_db.usage,200)
-
-
-class Contributions(Resource):
-    def get(self):
-        return(_db.contributions,200)
-
-
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-        parser.add_argument("username", type=str, required=True, help="Username to track usage")
+        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
@@ -78,19 +71,20 @@ class SyncGenerate(Resource):
         # Not implemented yet
         parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
         args = parser.parse_args()
-        if args['username'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
-        wp_count = _waiting_prompts.count_waiting_requests(args.username)
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
+        wp_count = _waiting_prompts.count_waiting_requests(user)
         if wp_count >= 3:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = user.get_unique_alias(), wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
             _processing_generations,
             args["prompt"],
-            args["username"],
+            user,
             args["models"],
             args["params"],
             servers=args["servers"],
@@ -132,25 +126,26 @@ class AsyncGenerate(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-        parser.add_argument("username", type=str, required=True, help="Username to track usage")
+        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
         parser.add_argument("softprompts", action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
         args = parser.parse_args()
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
         wp_count = _waiting_prompts.count_waiting_requests(args.username)
-        if args['username'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_USERNAME)}",400)
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = args['username'])}",400)
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
         if wp_count >= 3:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = args['username'], wp_count = wp_count)}",503)
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = user.get_unique_alias(), wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
             _processing_generations,
             args["prompt"],
-            args["username"],
+            user,
             args["models"],
             args["params"],
             servers=args["servers"],
@@ -165,8 +160,7 @@ class PromptPop(Resource):
     decorators = [limiter.limit("2/second")]
     def post(self):
         parser = reqparse.RequestParser()
-        parser.add_argument("username", type=str, required=True, help="Username to track contributions")
-        parser.add_argument("password", type=str, required=True, help="Password to authenticate with")
+        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
         parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
         parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
@@ -175,17 +169,26 @@ class PromptPop(Resource):
         parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
         args = parser.parse_args()
         skipped = {}
-        server = _db.servers.get(args['name'])
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
+        server = _db.find_server_by_name(args['name'])
         if not server:
-            server = KAIServer(_db, args['username'], args['name'], args['password'], args["softprompts"])
-        if args['password'] != server.password:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = args['username'])}",401)
+            server = KAIServer(_db)
+            server.create(user, args['name'], args["softprompts"])
+        if user != server.user:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
+        priority_users = [user]
         for priority_username in args.priority_usernames:
+            priority_user = _db.find_user_by_username(priority_username)
+            if priority_user:
+                priority_users.append(priority_user)
+        for priority_user in priority_users:
             for wp in _waiting_prompts.get_all():
-                if wp.username == priority_username:
+                if wp.user == priority_user:
                     prioritized_wp.append(wp)
         for wp in _waiting_prompts.get_all():
             if wp not in prioritized_wp:
@@ -219,14 +222,17 @@ class SubmitGeneration(Resource):
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
-        parser.add_argument("password", type=str, required=True, help="The server password")
+        parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
         parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
         args = parser.parse_args()
         procgen = _processing_generations.get_item(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
-        if args['password'] != procgen.server.password:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = procgen.server.name, username = procgen.server.username)}",401)
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)
+        if user != procgen.server.user:
+            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         tokens = procgen.set_generation(args['generation'])
         if tokens == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
@@ -237,32 +243,33 @@ class Models(Resource):
         return(_db.get_available_models(),200)
 
 
-class List(Resource):
+class Servers(Resource):
     def get(self):
         servers_ret = []
-        for s in _db.servers:
-            if _db.servers[s].is_stale():
+        for server in _db.servers.values():
+            if server.is_stale():
                 continue
             sdict = {
-                "name": _db.servers[s].name,
-                "id": _db.servers[s].id,
-                "model": _db.servers[s].model,
-                "max_length": _db.servers[s].max_length,
-                "max_content_length": _db.servers[s].max_content_length,
-                "tokens_generated": _db.servers[s].contributions,
-                "requests_fulfilled": _db.servers[s].fulfilments,
-                "performance": _db.servers[s].get_performance(),
-                "uptime": _db.servers[s].uptime,
+                "name": server.name,
+                "id": server.id,
+                "model": server.model,
+                "max_length": server.max_length,
+                "max_content_length": server.max_content_length,
+                "tokens_generated": server.contributions,
+                "requests_fulfilled": server.fulfilments,
+                "performance": server.get_performance(),
+                "uptime": server.uptime,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
 
-class ListSingle(Resource):
+class ServerSingle(Resource):
     def get(self, server_id):
         server = None
-        for s in _db.servers:
-            if _db.servers[s].id == server_id:
-                server = _db.servers[s]
+        for s in _db.servers.values():
+            if s.id == server_id:
+                server = s
+                break
         if server:
             sdict = {
                 "name": server.name,
@@ -278,6 +285,39 @@ class ListSingle(Resource):
         else:
             return("Not found", 404)
 
+
+
+class Users(Resource):
+    def get(self):
+        user_dict = {}
+        for user in _db.users.values():
+            user_dict[user.get_unique_alias()] = {
+                "id": user.id,
+                "kudos": user.kudos,
+                "usage": user.usage,
+                "contributions": user.contributions,
+            }
+        return(user_dict,200)
+
+
+class UserSingle(Resource):
+    def get(self, user_id):
+        logging.info(user_id)
+        user = None
+        for u in _db.users.values():
+            if str(u.id) == user_id:
+                user = u
+                break
+        if user:
+            udict = {
+                "username": user.get_unique_alias(),
+                "kudos": user.kudos,
+                "usage": user.usage,
+                "contributions": user.contributions,
+            }
+            return(udict,200)
+        else:
+            return("Not found", 404)
 
 
 @REST_API.route('/')
@@ -297,9 +337,9 @@ def index():
 These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most tokens for the horde.
-#### {top_contributor['username']}
-* {top_contributor['tokens']} tokens generated.
-* {top_contributor['requests']} requests fulfilled.
+#### {top_contributor.get_unique_alias()}
+* {top_contributor.contributions['tokens']} tokens generated.
+* {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
 This is the server which has generated the most tokens for the horde.
 #### {top_server.name}
@@ -309,6 +349,12 @@ This is the server which has generated the most tokens for the horde.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
 """
+    policies = """
+## Policies
+
+[Privacy Policy](/privacy)
+
+[Terms of Service](/terms)"""
     totals = _db.get_total_usage()
     findex = index.format(
         kobold_image = align_image, 
@@ -318,27 +364,121 @@ This is the server which has generated the most tokens for the horde.
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
-    return(markdown(findex + top_contributors))
+    return(markdown(findex + top_contributors + policies))
+
+@REST_API.route('/register', methods=['GET', 'POST'])
+def register():
+    google_data = None
+    user_info_endpoint = '/oauth2/v2/userinfo'
+    try:
+        if google.authorized:
+            google_data = google.get(user_info_endpoint).json()
+    except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+        pass
+    discord_data = None
+    if not google_data:
+        discord_info_endpoint = '/api/users/@me'
+        try:
+            if discord.authorized:
+                discord_data = discord.get(discord_info_endpoint).json()
+        except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+            pass
+    api_key = None
+    user = None
+    welcome = 'Welcome'
+    username = ''
+    existing_user = False
+    email = None
+    if google_data:
+        email = google_data["email"]
+    if discord_data:
+        email = discord_data["email"]
+    if email:
+        user = _db.find_user_by_email(email)
+        if user:
+            existing_user = True
+            username = user.username
+        if request.method == 'POST':
+            api_key = secrets.token_urlsafe(16)
+            if user:
+                username = request.form['username']
+                user.username = request.form['username']
+                user.api_key = api_key
+            else:
+                user = User(_db)
+                user.create(request.form['username'], email, api_key, request.form['inviter'])
+                username = request.form['username']
+        if user:
+            welcome = f"Welcome back {user.get_unique_alias()}"
+    return render_template('register.html',
+                           welcome=welcome,
+                           user=user,
+                           api_key=api_key,
+                           username=username,
+                           existing_user=existing_user,
+                           email=email)
+
+
+@REST_API.route('/google')
+def google_login():
+    print(url_for('google.login'))
+    return redirect(url_for('google.login'))
+
+
+@REST_API.route('/discord')
+def discord_login():
+    print(url_for('discord.login'))
+    return redirect(url_for('discord.login'))
+
+
+@REST_API.route('/privacy')
+def privacy():
+    return render_template('privacy_policy.html')
+
+@REST_API.route('/terms')
+def terms():
+    return render_template('terms_of_service.html')
 
 
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
+
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.INFO)
     _db = Database()
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+    google_client_secret = os.getenv("GLOOGLE_CLIENT_SECRET")
+    discord_client_id = os.getenv("DISCORD_CLIENT_ID")
+    discord_client_secret = os.getenv("DISCORD_CLIENT_SECRET")
+    REST_API.secret_key = os.getenv("secret_key")
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+    google_blueprint = make_google_blueprint(
+        client_id = google_client_id,
+        client_secret = google_client_secret,
+        reprompt_consent = True,
+        scope = ["email"],
+    )
+    REST_API.register_blueprint(google_blueprint,url_prefix="/google")
+    discord_blueprint = make_discord_blueprint(
+        client_id = discord_client_id,
+        client_secret = discord_client_secret,
+        scope = ["identify"],
+    )
+    REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
     api.add_resource(PromptPop, "/generate/pop")
     api.add_resource(SubmitGeneration, "/generate/submit")
-    api.add_resource(Usage, "/usage")
-    api.add_resource(Contributions, "/contributions")
-    api.add_resource(List, "/servers")
+    api.add_resource(Users, "/users")
+    api.add_resource(UserSingle, "/users/<string:user_id>")
+    api.add_resource(Servers, "/servers")
+    api.add_resource(ServerSingle, "/servers/<string:server_id>")
     api.add_resource(Models, "/models")
-    api.add_resource(ListSingle, "/servers/<string:server_id>")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001")
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")

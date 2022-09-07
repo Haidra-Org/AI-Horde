@@ -4,21 +4,20 @@ from datetime import datetime
 import threading, time
 import logging
 
-
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
-    def __init__(self, db, wps, pgs, prompt, username, models, params, **kwargs):
+    def __init__(self, db, wps, pgs, prompt, user, models, params, **kwargs):
         self._db = db
         self._waiting_prompts = wps
         self._processing_generations = pgs
         self.prompt = prompt
-        self.username = username
+        self.user = user
         self.models = models
         self.params = params
         self.n = params.get('n', 1)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
-            logging.warning(f"User {self.username} requested {self.n} gens per action. Reducing to 20...")
+            logging.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
         self.tokens = len(prompt.split())
         self.max_length = params.get("max_length", 80)
@@ -43,7 +42,7 @@ class WaitingPrompt:
         # We separate the activation from __init__ as often we want to check if there's a valid server for it
         # Before we add it to the queue
         self._waiting_prompts.add_item(self)
-        logging.info(f"New prompt request by user: {self.username}")
+        logging.info(f"New prompt request by user: {self.user.get_unique_alias()}")
         thread = threading.Thread(target=self.check_for_stale, args=())
         thread.daemon = True
         thread.start()
@@ -97,9 +96,9 @@ class WaitingPrompt:
                 ret_dict["generations"].append(procgen.generation)
         return(ret_dict)
 
-    def record_usage(self):
-        self.total_usage += self.tokens
-        self._db.add_usage(self.username, self.tokens)
+    def record_usage(self, tokens):
+        self.total_usage += tokens
+        self.user.record_usage(tokens)
         self.refresh()
 
     def check_for_stale(self):
@@ -140,7 +139,7 @@ class ProcessingGeneration:
         self.generation = generation
         tokens = len(generation.split())
         self.server.record_contribution(tokens, (datetime.now() - self.start_time).seconds)
-        self.owner.record_usage()
+        self.owner.record_usage(tokens)
         logging.info(f"New Generation delivered by server: {self.server.name}")
         return(tokens)
 
@@ -155,20 +154,19 @@ class ProcessingGeneration:
 
 
 class KAIServer:
-    def __init__(self, db, username = None, name = None, password = None, softprompts = []):
+    def __init__(self, db):
         self._db = db
-        self.username = username
-        self.password = password
+
+    def create(self, user, name, softprompts):
+        self.user = user
         self.name = name
         self.softprompts = softprompts
+        self.id = str(uuid4())
         self.contributions = 0
         self.fulfilments = 0
         self.performances = []
         self.uptime = 0
-        self.id = str(uuid4())
-        if name:
-            self._db.servers[self.name] = self
-            logging.info(f'New server checked-in: {name} by {username}')
+        self._db.register_new_server(self)
 
     def check_in(self, model, max_length, max_content_length, softprompts):
         if not self.is_stale():
@@ -222,7 +220,7 @@ class KAIServer:
 
     def record_contribution(self, tokens, seconds_taken):
         perf = round(tokens / seconds_taken,2)
-        self._db.add_contribution(self.username, tokens)
+        self.user.record_contributions(tokens)
         self._db.record_fulfilment(perf)
         self.contributions += tokens
         self.fulfilments += 1
@@ -248,8 +246,7 @@ class KAIServer:
 
     def serialize(self):
         ret_dict = {
-            "username": self.username,
-            "password": self.password,
+            "email": self.user.email,
             "name": self.name,
             "model": self.model,
             "max_length": self.max_length,
@@ -265,8 +262,7 @@ class KAIServer:
         return(ret_dict)
 
     def deserialize(self, saved_dict):
-        self.username = saved_dict["username"]
-        self.password = saved_dict["password"]
+        self.user = self._db.find_user_by_email(saved_dict["email"])
         self.name = saved_dict["name"]
         self.model = saved_dict["model"]
         self.max_length = saved_dict["max_length"]
@@ -280,6 +276,108 @@ class KAIServer:
         self.uptime = saved_dict.get("uptime",0)
         self._db.servers[self.name] = self
 
+class Index:
+    def __init__(self):
+        self._index = {}
+
+    def add_item(self, item):
+        self._index[item.id] = item
+
+    def get_item(self, uuid):
+        return(self._index.get(uuid))
+
+    def del_item(self, item):
+        del self._index[item.id]
+
+    def get_all(self):
+        return(self._index.values())
+
+
+class PromptsIndex(Index):
+
+    def count_waiting_requests(self, user):
+        count = 0
+        for wp in self._index.values():
+            if wp.user == user and not wp.is_completed():
+                count += 1
+        return(count)
+    
+    def count_total_waiting_generations(self):
+        count = 0
+        for wp in self._index.values():
+            count += wp.n
+        return(count)
+
+
+class GenerationsIndex(Index):
+    pass
+
+class User:
+    def __init__(self, db):
+        self._db = db
+
+    def create(self, username, email, api_key, invite_email):
+        self.username = username
+        self.email = email
+        self.api_key = api_key
+        self.kudos = 0
+        self.invite_email = invite_email
+        self.creation_date = datetime.now()
+        self.last_active = datetime.now()
+        self.id = self._db.register_new_user(self)
+        self.contributions = {
+            "tokens": 0,
+            "fulfillments": 0
+        }
+        self.usage = {
+            "tokens": 0,
+            "requests": 0
+        }
+    
+    # Checks that this user matches the specified API key
+    def check_key(api_key):
+        if self.api_key and self.api_key == api_key:
+            return(True)
+        return(False)
+
+    def get_unique_alias(self):
+        return(f"{self.username}#{self.id}")
+    
+    def record_usage(self, tokens):
+        self.usage["tokens"] += tokens
+        self.usage["requests"] += 1
+    
+    def record_contributions(self, tokens):
+        self.contributions["tokens"] += tokens
+        self.contributions["fulfillments"] += 1
+    
+    def serialize(self):
+        ret_dict = {
+            "username": self.username,
+            "email": self.email,
+            "api_key": self.api_key,
+            "kudos": self.kudos,
+            "id": self.id,
+            "invite_email": self.invite_email,
+            "contributions": self.contributions,
+            "usage": self.usage,
+            "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
+            "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        return(ret_dict)
+
+    def deserialize(self, saved_dict):
+        self.username = saved_dict["username"]
+        self.email = saved_dict["email"]
+        self.api_key = saved_dict["api_key"]
+        self.kudos = saved_dict["kudos"]
+        self.id = saved_dict["id"]
+        self.invite_email = saved_dict["invite_email"]
+        self.contributions = saved_dict["contributions"]
+        self.usage = saved_dict["usage"]
+        self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
+        self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
+
 
 class Database:
     def __init__(self, interval = 3):
@@ -287,17 +385,25 @@ class Database:
         # This is used for synchronous generations
         self.SERVERS_FILE = "db/servers.json"
         self.servers = {}
-        # How many tokens each user has requested
-        self.USAGE_FILE = "db/usage.json"
-        self.usage = {}
-        # How many tokens each user's server has generated
-        self.CONTRIBUTIONS_FILE = "db/contributions.json"
-        self.contributions = {}
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
         self.stats = {
             "fulfilment_times": [],
         }
+        self.USERS_FILE = "db/users.json"
+        self.users = {}
+        # Increments any time a new user is added
+        # Is appended to usernames, to ensure usernames never conflict
+        self.last_user_id = 0
+        if os.path.isfile(self.USERS_FILE):
+            with open(self.USERS_FILE) as db:
+                serialized_users = json.load(db)
+                for user_dict in serialized_users:
+                    new_user = User(self)
+                    new_user.deserialize(user_dict)
+                    self.users[new_user.email] = new_user
+                    if new_user.id > self.last_user_id:
+                        self.last_user_id = new_user.id
         if os.path.isfile(self.SERVERS_FILE):
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
@@ -305,21 +411,15 @@ class Database:
                     new_server = KAIServer(self)
                     new_server.deserialize(server_dict)
                     self.servers[new_server.name] = new_server
-        if os.path.isfile(self.USAGE_FILE):
-            with open(self.USAGE_FILE) as db:
-                self.usage = json.load(db)
-        if os.path.isfile(self.CONTRIBUTIONS_FILE):
-            with open(self.CONTRIBUTIONS_FILE) as db:
-                self.contributions = json.load(db)
         if os.path.isfile(self.STATS_FILE):
             with open(self.STATS_FILE) as db:
                 self.stats = json.load(db)
 
-        thread = threading.Thread(target=self.store_usage, args=())
+        thread = threading.Thread(target=self.write_files, args=())
         thread.daemon = True
         thread.start()
 
-    def store_usage(self):
+    def write_files(self):
         while True:
             self.write_files_to_disk()
             time.sleep(self.interval)
@@ -327,65 +427,28 @@ class Database:
     def write_files_to_disk(self):
         if not os.path.exists('db'):
             os.mkdir('db')
-        serialized_list = []
-        for s in self.servers:
-            serialized_list.append(self.servers[s].serialize())
+        server_serialized_list = []
+        for server in self.servers.values():
+            server_serialized_list.append(server.serialize())
         with open(self.SERVERS_FILE, 'w') as db:
-            json.dump(serialized_list,db)
-        with open(self.USAGE_FILE, 'w') as db:
-            json.dump(self.usage,db)
-        with open(self.CONTRIBUTIONS_FILE, 'w') as db:
-            json.dump(self.contributions,db)
+            json.dump(server_serialized_list,db)
         with open(self.STATS_FILE, 'w') as db:
             json.dump(self.stats,db)
-
-    def _ensure_user_exists(self, username):
-        if username not in self.usage:
-            logging.info(f'New user requested generation: {username}')
-            self.usage[username] =  {
-                "tokens":0, 
-                "requests": 0
-            }
-        # Convert of style entry. Will remove eventually
-        elif type(self.usage[username]) is not dict:
-            old_tokens = self.usage[username]
-            self.usage[username] = {
-                "tokens":old_tokens, 
-                "requests": 0
-            }
-
-    def _ensure_contributor_exists(self, username):
-        if username not in self.contributions:
-            self.contributions[username] =  {
-                "tokens":0, 
-                "requests": 0
-            }
-        # Convert of style entry. Will remove eventually
-        elif type(self.contributions[username]) is not dict:
-            old_tokens = self.contributions[username]
-            self.contributions[username] = {
-                "tokens":old_tokens, 
-                "requests": 0
-            }
-
-    def add_contribution(self,username, tokens):
-        self._ensure_contributor_exists(username)
-        self.contributions[username]['tokens'] += tokens
-        self.contributions[username]['requests'] += 1
-
-    def add_usage(self,username, tokens):
-        self._ensure_user_exists(username)
-        self.usage[username]['tokens'] += tokens
-        self.usage[username]['requests'] += 1
+        user_serialized_list = []
+        for user in self.users.values():
+            user_serialized_list.append(user.serialize())
+        with open(self.USERS_FILE, 'w') as db:
+            json.dump(user_serialized_list,db)
 
     def get_top_contributor(self):
         top_contribution = 0
         top_contributor = None
-        for user in self.contributions:
-            if self.contributions[user]['tokens'] > top_contribution:
-                top_contributor = self.get_contributor_entry(user)
-                top_contribution = self.contributions[user]['tokens']
-        return(top_contributor)
+        user = None
+        for user in self.users.values():
+            if user.contributions['tokens'] > top_contribution:
+                top_contributor = user
+                top_contribution = user.contributions['tokens']
+        return(user)
 
     def get_top_server(self):
         top_server = None
@@ -395,16 +458,7 @@ class Database:
                 top_server = self.servers[server]
                 top_server_contribution = self.servers[server].contributions
         return(top_server)
-
-    def get_contributor_entry(self, username):
-        self._ensure_contributor_exists(username)
-        ret_dict = {
-            "username": username,
-            "tokens": self.contributions[username]["tokens"],
-            "requests": self.contributions[username]["requests"],
-        }
-        return(ret_dict)
-    
+   
     def get_available_models(self):
         models_ret = {}
         for server in self.servers.values():
@@ -441,39 +495,42 @@ class Database:
         avg = sum(self.stats["fulfilment_times"]) / len(self.stats["fulfilment_times"])
         return(round(avg,2))
 
+    def register_new_user(self, user):
+        self.last_user_id += 1
+        self.users[user.email] = user
+        logging.info(f'New user created: {user.username}#{self.last_user_id}')
+        return(self.last_user_id)
 
-class Index:
-    def __init__(self):
-        self._index = {}
+    def register_new_server(self, server):
+        self.servers[server.name] = server
+        logging.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
 
-    def add_item(self, item):
-        self._index[item.id] = item
+    def find_user_by_email(self,email):
+        return(self.users.get(email))
 
-    def get_item(self, uuid):
-        return(self._index.get(uuid))
+    def find_user_by_username(self, username):
+        for user in self.users.values():
+            uniq_username = username.split('#')
+            if user.username == uniq_username[0] and user.id == uniq_username[1]:
+                return(user)
+        return(None)
 
-    def del_item(self, item):
-        del self._index[item.id]
+    def find_user_by_api_key(self,api_key):
+        for user in self.users.values():
+            if user.api_key == api_key:
+                return(user)
+        return(None)
 
-    def get_all(self):
-        return(self._index.values())
+    def find_server_by_name(self,server_name):
+        return(self.servers.get(server_name))
 
-
-class PromptsIndex(Index):
-
-    def count_waiting_requests(self, username):
-        count = 0
-        for wp in self._index.values():
-            if wp.username == username and not wp.is_completed():
-                count += 1
-        return(count)
-    
-    def count_total_waiting_generations(self):
-        count = 0
-        for wp in self._index.values():
-            count += wp.n
-        return(count)
-
-
-class GenerationsIndex(Index):
-    pass
+    def compile_users(self):
+        user_dict = {}
+        for user in self.users.values():
+            user_dict[user.get_unique_alias()] = {
+                "kudos": user.kudos,
+                "usage": user.usage,
+                "contributions": user.contributions,
+                "creation_date": user.creation_date,
+            }
+        return(user_dict)
