@@ -34,7 +34,7 @@ load_dotenv()
 
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_API_KEY:
-        logging.warning(f'Invalid API Key sent.')
+        logging.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
         return(f'No user matching sent API Key. Have you remembered to register at https://koboldai.net/register ?')
     if error == ServerErrors.WRONG_CREDENTIALS:
         logging.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
@@ -77,7 +77,7 @@ class SyncGenerate(Resource):
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
             if not user:
-                return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)         
+                return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)         
             username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
@@ -139,7 +139,7 @@ class AsyncGenerate(Resource):
         args = parser.parse_args()
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)            
         wp_count = _waiting_prompts.count_waiting_requests(args.username)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
@@ -176,7 +176,7 @@ class PromptPop(Resource):
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)            
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)            
         server = _db.find_server_by_name(args['name'])
         if not server:
             server = KAIServer(_db)
@@ -235,7 +235,7 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY)}",401)
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         tokens = procgen.set_generation(args['generation'])
