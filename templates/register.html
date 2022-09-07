@@ -14,9 +14,9 @@
         </div>
         <p class="btn-text"><b>Sign in with discord</b></p>
         </a>
-    </div>   
+    </div>
    <div class="container">
-        {% if oauth_id is not none %}
+        {% if oauth_id is not none and pseudonymous is not true %}
         <h1>{{ welcome }}</h1>
         <h2>Set Display Name</h2>
         <p>This is used in statistics</p>

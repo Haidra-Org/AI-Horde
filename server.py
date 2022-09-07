@@ -393,6 +393,7 @@ def register():
     username = ''
     existing_user = False
     oauth_id = None
+    pseudonymous = False
     if google_data:
         oauth_id = f'g_{google_data["id"]}'
     elif discord_data:
@@ -412,6 +413,7 @@ def register():
             # Triggered when the user created a username without logging in
             if not oauth_id:
                 oauth_id = str(uuid4())
+                pseudonymous = True
             user = User(_db)
             user.create(request.form['username'], oauth_id, api_key, None)
             username = request.form['username']
@@ -423,6 +425,7 @@ def register():
                            api_key=api_key,
                            username=username,
                            existing_user=existing_user,
+                           pseudonymous=pseudonymous,
                            oauth_id=oauth_id)
 
 
@@ -450,7 +453,7 @@ if __name__ == "__main__":
     global _waiting_prompts
     global _processing_generations
 
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.INFO)
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG)
     _db = Database()
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
