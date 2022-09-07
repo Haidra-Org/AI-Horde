@@ -3,20 +3,22 @@ import json, os
 import time
 import argparse
 import logging
+import random
 try:
     import clientData as cd
 except:
     class temp(object):
         def __init__(self):
+            random.seed()
             # The cluster url
             self.cluster_url = "http://koboldai.net"
             # Where can your bridge reach your KAI instance
             self.kai_url = "http://localhost:5000"
             # Give a cool name to your instance
-            self.kai_name = "My Awesome Instance"
-            # The owner's username. Used for assigning contributions
-            self.username = "username"
-            self.password = "password"
+            self.kai_name = random.randint(-1000000000000, 1000000000000)
+            # The api_key identifies a unique user in the horde
+            # Visit https://koboldai.net/register to create one before you can join
+            api_key = "0000000000"
             # Put other users whose prompts you want to prioritize.
             # The owner's username is always included so you don't need to add it here, unless you want it to have lower priority than another user
             self.priority_usernames = []
