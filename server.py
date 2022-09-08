@@ -387,8 +387,7 @@ This is the server which has generated the most chars for the horde.
     """
     return(head + markdown(findex + top_contributors + policies))
 
-@REST_API.route('/register', methods=['GET', 'POST'])
-def register():
+def get_oauth_id():
     google_data = None
     discord_data = None
     github_data = None
@@ -414,23 +413,27 @@ def register():
             authorized = True
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    api_key = None
-    user = None
-    welcome = 'Welcome'
-    username = ''
-    existing_user = False
     oauth_id = None
-    pseudonymous = False
     if google_data:
         oauth_id = f'g_{google_data["id"]}'
     elif discord_data:
         oauth_id = f'd_{discord_data["id"]}'
     elif github_data:
         oauth_id = f'gh_{github_data["id"]}'
+    return(oauth_id)
+
+
+@REST_API.route('/register', methods=['GET', 'POST'])
+def register():
+    api_key = None
+    user = None
+    welcome = 'Welcome'
+    username = ''
+    pseudonymous = False
+    oauth_id = get_oauth_id()
     if oauth_id:
         user = _db.find_user_by_oauth_id(oauth_id)
         if user:
-            existing_user = True
             username = user.username
     if request.method == 'POST':
         api_key = secrets.token_urlsafe(16)
@@ -454,8 +457,34 @@ def register():
                            user=user,
                            api_key=api_key,
                            username=username,
-                           existing_user=existing_user,
                            pseudonymous=pseudonymous,
+                           oauth_id=oauth_id)
+
+
+@REST_API.route('/transfer', methods=['GET', 'POST'])
+def transfer():
+    src_api_key = None
+    src_user = None
+    dest_username = None
+    kudos = None
+    welcome = 'Welcome'
+    oauth_id = get_oauth_id()
+    if oauth_id:
+        src_user = _db.find_user_by_oauth_id(oauth_id)
+        welcome = f"Welcome back {src_user.get_unique_alias()}"
+    if request.method == 'POST':
+        dest_username = request.form['username']
+        amount = request.form['amount']
+        # Triggered when the user submited without logging in
+        if src_user:
+            kudos = _db.transfer_kudos_to_username(src_user,dest_username,amount)
+        else:
+            kudos = _db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,amount)
+    return render_template('register.html',
+                           page_title="Kudos Transfer",
+                           welcome=welcome,
+                           kudos=kudos,
+                           dest_username=dest_username,
                            oauth_id=oauth_id)
 
 

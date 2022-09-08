@@ -209,7 +209,7 @@ class KAIServer:
                 matching_softprompt = True
                 break
             for sp_name in self.softprompts:
-                if sp in sp_name: 
+                if sp in sp_name:
                     matching_softprompt = True
                     break
         if not matching_softprompt:
@@ -300,7 +300,7 @@ class PromptsIndex(Index):
             if wp.user == user and not wp.is_completed():
                 count += 1
         return(count)
-    
+
     def count_total_waiting_generations(self):
         count = 0
         for wp in self._index.values():
@@ -350,7 +350,7 @@ class User:
             "chars": 0,
             "requests": 0
         }
-    
+
     # Checks that this user matches the specified API key
     def check_key(api_key):
         if self.api_key and self.api_key == api_key:
@@ -359,12 +359,12 @@ class User:
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
-    
+
     def record_usage(self, chars):
         self.usage["chars"] += chars
         self.usage["requests"] += 1
         self.kudos -= chars
-    
+
     def record_contributions(self, chars):
         self.contributions["chars"] += chars
         self.contributions["fulfillments"] += 1
@@ -488,7 +488,7 @@ class Database:
                 top_server = self.servers[server]
                 top_server_contribution = self.servers[server].contributions
         return(top_server)
-   
+
     def get_available_models(self):
         models_ret = {}
         for server in self.servers.values():
@@ -518,7 +518,7 @@ class Database:
         if len(self.stats["fulfilment_times"]) >= 10:
             del self.stats["fulfilment_times"][0]
         self.stats["fulfilment_times"].append(token_per_sec)
-    
+
     def get_request_avg(self):
         if len(self.stats["fulfilment_times"]) == 0:
             return(0)
@@ -559,3 +559,24 @@ class Database:
 
     def find_server_by_name(self,server_name):
         return(self.servers.get(server_name))
+
+    def transfer_kudos(self, source_user, dest_user, amount):
+        if amount > source_user.kudos:
+            return(0)
+        source_user.modify_kudos(-amount)
+        dest_user.modify_kudos(amount)
+        return(amount)
+
+    def transfer_kudos_to_username(self, source_user, dest_username, amount):
+        dest_user = self.find_user_by_username(dest_username)
+        if not dest_user:
+            return(0)
+        transfered_amount = self.transfer_kudos(source_user,dest_user, amount)
+        return(transfered_amount)
+
+    def transfer_kudos_from_apikey_to_username(self, source_api_key, dest_username, amount):
+        source_user = self.find_user_by_api_key(source_api_key)
+        if not source_user:
+            return(0)
+        transfered_amount = self.transfer_kudos_to_username(source_user, dest_username, amount)
+        return(transfered_amount)
