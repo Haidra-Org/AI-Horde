@@ -377,19 +377,29 @@ This is the server which has generated the most tokens for the horde.
 def register():
     google_data = None
     discord_data = None
-    user_info_endpoint = '/oauth2/v2/userinfo'
+    github_data = None
+    authorized = False
     if google.authorized:
+        google_user_info_endpoint = '/oauth2/v2/userinfo'
         try:
-            google_data = google.get(user_info_endpoint).json()
+            google_data = google.get(google_user_info_endpoint).json()
+            authorized = True
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    elif discord.authorized:
+    if not authorized and discord.authorized:
         discord_info_endpoint = '/api/users/@me'
         try:
             discord_data = discord.get(discord_info_endpoint).json()
+            authorized = True
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    # logging.info([google_data,discord_data])
+    if not authorized and github.authorized:
+        github_info_endpoint = '/user'
+        try:
+            github_data = github.get(github_info_endpoint).json()
+            authorized = True
+        except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+            pass
     api_key = None
     user = None
     welcome = 'Welcome'
@@ -401,6 +411,8 @@ def register():
         oauth_id = f'g_{google_data["id"]}'
     elif discord_data:
         oauth_id = f'd_{discord_data["id"]}'
+    elif github_data:
+        oauth_id = f'gh_{github_data["id"]}'
     if oauth_id:
         user = _db.find_user_by_oauth_id(oauth_id)
         if user:
@@ -442,6 +454,11 @@ def discord_login():
     return redirect(url_for('discord.login'))
 
 
+@REST_API.route('/github')
+def github_login():
+    return redirect(url_for('github.login'))
+
+
 @REST_API.route('/privacy')
 def privacy():
     return render_template('privacy_policy.html')
@@ -464,9 +481,11 @@ if __name__ == "__main__":
     google_client_secret = os.getenv("GLOOGLE_CLIENT_SECRET")
     discord_client_id = os.getenv("DISCORD_CLIENT_ID")
     discord_client_secret = os.getenv("DISCORD_CLIENT_SECRET")
+    github_client_id = os.getenv("GITHUB_CLIENT_ID")
+    github_client_secret = os.getenv("GITHUB_CLIENT_SECRET")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
-    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '0' # Disable this on prod
+    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
     google_blueprint = make_google_blueprint(
         client_id = google_client_id,
         client_secret = google_client_secret,
@@ -482,6 +501,13 @@ if __name__ == "__main__":
         redirect_url='/register',
     )
     REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
+    github_blueprint = make_github_blueprint(
+        client_id = github_client_id,
+        client_secret = github_client_secret,
+        scope = ["identify"],
+        redirect_url='/register',
+    )
+    REST_API.register_blueprint(github_blueprint,url_prefix="/github")
     api.add_resource(SyncGenerate, "/generate/sync")
     api.add_resource(AsyncGenerate, "/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
