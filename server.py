@@ -59,7 +59,7 @@ def get_error(error, **kwargs):
         return("You cannot specify an empty prompt.")
     if error == ServerErrors.INVALID_MODEL:
         logging.warning(f'Server "{kwargs["name"]}" tried to prompt pop with invalid model: {kwargs["model"]}. Aborting!')
-        return(f"Invalid model for generating: {kwargs["model"]}.")
+        return(f'Invalid model for generating: {kwargs["model"]}.')
 
 
 @REST_API.after_request
@@ -106,10 +106,10 @@ class SyncGenerate(Resource):
 
         )
         server_found = False
-        for s in _db.servers:
-            if len(args.servers) and servers[s].id not in args.servers:
+        for server in _db.servers.values():
+            if len(args.servers) and server.id not in args.servers:
                 continue
-            if _db.servers[s].can_generate(wp)[0]:
+            if server.can_generate(wp)[0]:
                 server_found = True
                 break
         if not server_found:
