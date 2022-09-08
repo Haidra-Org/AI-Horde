@@ -15,7 +15,7 @@ from ballpark import ballpark
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
 # Workaround for ballpark's mistake
 # https://github.com/debrouwere/python-ballpark/issues/14
-import collections 
+import collections
 collections.Iterable = collections.abc.Iterable
 
 class ServerErrors(Enum):
@@ -25,6 +25,7 @@ class ServerErrors(Enum):
     TOO_MANY_PROMPTS = 3
     EMPTY_PROMPT = 4
     INVALID_API_KEY = 5
+    INVALID_MODEL = 6
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -56,6 +57,9 @@ def get_error(error, **kwargs):
     if error == ServerErrors.EMPTY_PROMPT:
         logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
+    if error == ServerErrors.INVALID_MODEL:
+        logging.warning(f'Server "{kwargs["name"]}" tried to prompt pop with invalid model: {kwargs["model"]}. Aborting!')
+        return(f"Invalid model for generating: {kwargs["model"]}.")
 
 
 @REST_API.after_request
@@ -82,7 +86,7 @@ class SyncGenerate(Resource):
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
             if not user:
-                return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)         
+                return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
             username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
@@ -144,7 +148,7 @@ class AsyncGenerate(Resource):
         args = parser.parse_args()
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)            
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
         wp_count = _waiting_prompts.count_waiting_requests(args.username)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
@@ -181,14 +185,16 @@ class PromptPop(Resource):
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)            
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
+        if args['model'] in ['CLUSTER', 'ReadOnly']:
+            return(f"{get_error(ServerErrors.INVALID_MODEL, name = args['name'], model = args['model'])}",400)
         server = _db.find_server_by_name(args['name'])
         if not server:
             server = KAIServer(_db)
             server.create(user, args['name'], args["softprompts"])
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
+        server.check_n(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
@@ -367,9 +373,9 @@ This is the server which has generated the most chars for the horde.
 [Terms of Service](/terms)"""
     totals = _db.get_total_usage()
     findex = index.format(
-        kobold_image = align_image, 
-        avg_performance= _db.get_request_avg(), 
-        total_chars = ballpark(totals["chars"]), 
+        kobold_image = align_image,
+        avg_performance= _db.get_request_avg(),
+        total_chars = ballpark(totals["chars"]),
         total_fulfillments = ballpark(totals["fulfilments"],1),
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
