@@ -218,7 +218,7 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     def record_contribution(self, chars, seconds_taken):
-        perf = round(chars / seconds_taken,2)
+        perf = round(chars / seconds_taken,1)
         self.user.record_contributions(chars)
         self._db.record_fulfilment(perf)
         self.contributions += chars
@@ -229,7 +229,7 @@ class KAIServer:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),2)} chars per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} chars per second'
         else:
             ret_str = f'No requests fulfiled yet'
         return(ret_str)
@@ -518,7 +518,7 @@ class Database:
         if len(self.stats["fulfilment_times"]) == 0:
             return(0)
         avg = sum(self.stats["fulfilment_times"]) / len(self.stats["fulfilment_times"])
-        return(round(avg,2))
+        return(round(avg,1))
 
     def register_new_user(self, user):
         self.last_user_id += 1
