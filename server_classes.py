@@ -19,7 +19,6 @@ class WaitingPrompt:
         if self.n > 20:
             logging.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
-        self.tokens = len(prompt.split())
         self.max_length = params.get("max_length", 80)
         self.max_content_length = params.get("max_content_length", 1024)
         self.total_usage = 0
@@ -96,9 +95,9 @@ class WaitingPrompt:
                 ret_dict["generations"].append(procgen.generation)
         return(ret_dict)
 
-    def record_usage(self, tokens):
-        self.total_usage += tokens
-        self.user.record_usage(tokens)
+    def record_usage(self, chars):
+        self.total_usage += chars
+        self.user.record_usage(chars)
         self.refresh()
 
     def check_for_stale(self):
@@ -137,11 +136,11 @@ class ProcessingGeneration:
         if self.is_completed():
             return(0)
         self.generation = generation
-        tokens = len(generation.split())
-        self.server.record_contribution(tokens, (datetime.now() - self.start_time).seconds)
-        self.owner.record_usage(tokens)
+        chars = len(generation)
+        self.server.record_contribution(chars, (datetime.now() - self.start_time).seconds)
+        self.owner.record_usage(chars)
         logging.info(f"New Generation delivered by server: {self.server.name}")
-        return(tokens)
+        return(chars)
 
     def is_completed(self):
         if self.generation:
@@ -218,11 +217,11 @@ class KAIServer:
             skipped_reason = 'matching_softprompt'
         return([is_matching,skipped_reason])
 
-    def record_contribution(self, tokens, seconds_taken):
-        perf = round(tokens / seconds_taken,2)
-        self.user.record_contributions(tokens)
+    def record_contribution(self, chars, seconds_taken):
+        perf = round(chars / seconds_taken,2)
+        self.user.record_contributions(chars)
         self._db.record_fulfilment(perf)
-        self.contributions += tokens
+        self.contributions += chars
         self.fulfilments += 1
         self.performances.append(perf)
         if len(self.performances) > 20:
@@ -230,7 +229,7 @@ class KAIServer:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),2)} tokens per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),2)} chars per second'
         else:
             ret_str = f'No requests fulfiled yet'
         return(ret_str)
@@ -326,11 +325,11 @@ class User:
         self.last_active = datetime.now()
         self.id = 0
         self.contributions = {
-            "tokens": 0,
+            "chars": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "tokens": 0,
+            "chars": 0,
             "requests": 0
         }
 
@@ -344,11 +343,11 @@ class User:
         self.last_active = datetime.now()
         self.id = self._db.register_new_user(self)
         self.contributions = {
-            "tokens": 0,
+            "chars": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "tokens": 0,
+            "chars": 0,
             "requests": 0
         }
     
@@ -361,12 +360,12 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
     
-    def record_usage(self, tokens):
-        self.usage["tokens"] += tokens
+    def record_usage(self, chars):
+        self.usage["chars"] += chars
         self.usage["requests"] += 1
     
-    def record_contributions(self, tokens):
-        self.contributions["tokens"] += tokens
+    def record_contributions(self, chars):
+        self.contributions["chars"] += chars
         self.contributions["fulfillments"] += 1
     
     def serialize(self):
@@ -471,9 +470,9 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['tokens'] > top_contribution and user != self.anon:
+            if user.contributions['chars'] > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions['tokens']
+                top_contribution = user.contributions['chars']
         return(top_contributor)
 
     def get_top_server(self):
@@ -502,11 +501,11 @@ class Database:
 
     def get_total_usage(self):
         totals = {
-            "tokens": 0,
+            "chars": 0,
             "fulfilments": 0,
         }
         for server in self.servers.values():
-            totals["tokens"] += server.contributions
+            totals["chars"] += server.contributions
             totals["fulfilments"] += server.fulfilments
         return(totals)
 

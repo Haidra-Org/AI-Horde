@@ -11,7 +11,12 @@ from markdown import markdown
 from dotenv import load_dotenv
 from uuid import uuid4
 from werkzeug.middleware.proxy_fix import ProxyFix
+from ballpark import ballpark
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
+# Workaround for ballpark's mistake
+# https://github.com/debrouwere/python-ballpark/issues/14
+import collections 
+collections.Iterable = collections.abc.Iterable
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -238,10 +243,10 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        tokens = procgen.set_generation(args['generation'])
-        if tokens == 0:
+        chars = procgen.set_generation(args['generation'])
+        if chars == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
-        return({"reward": tokens}, 200)
+        return({"reward": chars}, 200)
 
 class Models(Resource):
     def get(self):
@@ -260,7 +265,7 @@ class Servers(Resource):
                 "model": server.model,
                 "max_length": server.max_length,
                 "max_content_length": server.max_content_length,
-                "tokens_generated": server.contributions,
+                "chars_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "performance": server.get_performance(),
                 "uptime": server.uptime,
@@ -282,7 +287,7 @@ class ServerSingle(Resource):
                 "model": server.model,
                 "max_length": server.max_length,
                 "max_content_length": server.max_content_length,
-                "tokens_generated": server.contributions,
+                "chars_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
             }
@@ -341,15 +346,15 @@ def index():
         top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
 ### Users
-This is the person whose server(s) have generated the most tokens for the horde.
+This is the person whose server(s) have generated the most chars for the horde.
 #### {top_contributor.get_unique_alias()}
-* {top_contributor.contributions['tokens']} tokens generated.
-* {top_contributor.contributions['fulfillments']} requests fulfilled.
+* {ballpark(top_contributor.contributions['chars'])} chars generated.
+* {ballpark(top_contributor.contributions['fulfillments'], precision = 1)} requests fulfilled.
 ### Servers
-This is the server which has generated the most tokens for the horde.
+This is the server which has generated the most chars for the horde.
 #### {top_server.name}
-* {top_server.contributions} tokens generated.
-* {top_server.fulfilments} request fulfillments.
+* {ballpark(top_server.contributions)} chars generated.
+* {ballpark(top_server.fulfilments, precision = 1)} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
@@ -364,8 +369,8 @@ This is the server which has generated the most tokens for the horde.
     findex = index.format(
         kobold_image = align_image, 
         avg_performance= _db.get_request_avg(), 
-        total_tokens = totals["tokens"], 
-        total_fulfillments = totals["fulfilments"],
+        total_chars = ballpark(totals["chars"]), 
+        total_fulfillments = ballpark(totals["fulfilments"],1),
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )

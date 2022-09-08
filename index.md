@@ -6,8 +6,8 @@ You can find the source and documentation for [KoboldAI Horde](https://github.co
 
 ## Stats 
 
-* Average Recent Performance: {avg_performance} tokens per second
-* Total tokens generated: {total_tokens}
+* Average Recent Performance: {avg_performance} chars per second
+* Total chars generated: {total_chars}
 * Total requests fulfilled: {total_fulfillments}
 * Active Servers: {active_servers}
 * Current Request Queue: {total_queue}
