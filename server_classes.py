@@ -363,11 +363,16 @@ class User:
     def record_usage(self, chars):
         self.usage["chars"] += chars
         self.usage["requests"] += 1
+        self.kudos -= chars
     
     def record_contributions(self, chars):
         self.contributions["chars"] += chars
         self.contributions["fulfillments"] += 1
-    
+        self.kudos += chars
+
+    def modify_kudos(self, kudos):
+        self.kudos += kudos
+
     def serialize(self):
         ret_dict = {
             "username": self.username,

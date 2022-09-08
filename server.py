@@ -443,6 +443,7 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
+                           page_title="Join the KoboldAI Horde!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
