@@ -543,7 +543,7 @@ class Database:
     def find_user_by_username(self, username):
         for user in self.users.values():
             uniq_username = username.split('#')
-            if user.username == uniq_username[0] and user.id == uniq_username[1]:
+            if user.username == uniq_username[0] and user.id == int(uniq_username[1]):
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
                 return(user)
@@ -562,21 +562,27 @@ class Database:
 
     def transfer_kudos(self, source_user, dest_user, amount):
         if amount > source_user.kudos:
-            return(0)
+            return([0,'Not enough kudos.'])
         source_user.modify_kudos(-amount)
         dest_user.modify_kudos(amount)
-        return(amount)
+        return([amount,'OK'])
 
     def transfer_kudos_to_username(self, source_user, dest_username, amount):
         dest_user = self.find_user_by_username(dest_username)
         if not dest_user:
-            return(0)
-        transfered_amount = self.transfer_kudos(source_user,dest_user, amount)
-        return(transfered_amount)
+            return([0,'Invalid target username.'])
+        if dest_user == self.anon:
+            return([0,'Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.'])
+        if dest_user == source_user:
+            return([0,'Cannot send kudos to yourself, ya monkey!'])
+        kudos = self.transfer_kudos(source_user,dest_user, amount)
+        return(kudos)
 
     def transfer_kudos_from_apikey_to_username(self, source_api_key, dest_username, amount):
         source_user = self.find_user_by_api_key(source_api_key)
         if not source_user:
-            return(0)
-        transfered_amount = self.transfer_kudos_to_username(source_user, dest_username, amount)
-        return(transfered_amount)
+            return([0,'Invalid API Key.'])
+        if source_user == self.anon:
+            return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
+        kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
+        return(kudos)

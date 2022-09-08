@@ -5,7 +5,7 @@ from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
-import logging, requests, random, time, os, oauthlib, secrets
+import logging, requests, random, time, os, oauthlib, secrets, argparse
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
@@ -35,6 +35,7 @@ limiter = Limiter(
     default_limits=["90 per minute"]
 )
 api = Api(REST_API)
+dance_return_to = '/'
 load_dotenv()
 
 
@@ -194,7 +195,7 @@ class PromptPop(Resource):
             server.create(user, args['name'], args["softprompts"])
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        server.check_n(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
+        server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
@@ -467,40 +468,67 @@ def transfer():
     src_user = None
     dest_username = None
     kudos = None
+    error = None
     welcome = 'Welcome'
     oauth_id = get_oauth_id()
     if oauth_id:
         src_user = _db.find_user_by_oauth_id(oauth_id)
-        welcome = f"Welcome back {src_user.get_unique_alias()}"
+        if not src_user:
+            # This probably means the user was deleted
+            oauth_id = None
     if request.method == 'POST':
         dest_username = request.form['username']
         amount = request.form['amount']
+        if not amount.isnumeric():
+            kudos = 0
+            error = "Please enter a number in the kudos field"
         # Triggered when the user submited without logging in
-        if src_user:
-            kudos = _db.transfer_kudos_to_username(src_user,dest_username,amount)
+        elif src_user:
+            ret = _db.transfer_kudos_to_username(src_user,dest_username,int(amount))
+            kudos = ret[0]
+            error = ret[1]
         else:
-            kudos = _db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,amount)
-    return render_template('register.html',
+            ret = _db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
+            kudos = ret[0]
+            error = ret[1]
+    if src_user:
+        welcome = f"Welcome back {src_user.get_unique_alias()}. You have {ballpark(src_user.kudos)} kudos remaining"
+    return render_template('transfer_kudos.html',
                            page_title="Kudos Transfer",
                            welcome=welcome,
                            kudos=kudos,
+                           error=error,
                            dest_username=dest_username,
                            oauth_id=oauth_id)
 
 
-@REST_API.route('/google')
-def google_login():
+@REST_API.route('/google/<return_to>')
+def google_login(return_to):
+    global dance_return_to
+    dance_return_to = '/' + return_to
     return redirect(url_for('google.login'))
 
 
-@REST_API.route('/discord')
-def discord_login():
+@REST_API.route('/discord/<return_to>')
+def discord_login(return_to):
+    global dance_return_to
+    dance_return_to = '/' + return_to
     return redirect(url_for('discord.login'))
 
 
-@REST_API.route('/github')
-def github_login():
+@REST_API.route('/github/<return_to>')
+def github_login(return_to):
+    global dance_return_to
+    dance_return_to = '/' + return_to
     return redirect(url_for('github.login'))
+
+
+@REST_API.route('/finish_dance')
+def finish_dance():
+    global dance_return_to
+    redirect_url = dance_return_to
+    dance_return_to = '/'
+    return redirect(redirect_url)
 
 
 @REST_API.route('/privacy')
@@ -512,11 +540,16 @@ def terms():
     return render_template('terms_of_service.html')
 
 
+arg_parser = argparse.ArgumentParser()
+arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, will use http instead of https (useful for testing)")
+
+
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
 
+    args = arg_parser.parse_args()
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.INFO)
     _db = Database()
     _waiting_prompts = PromptsIndex()
@@ -529,7 +562,10 @@ if __name__ == "__main__":
     github_client_secret = os.getenv("GITHUB_CLIENT_SECRET")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
-    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+    url_scheme = 'https'
+    if args.insecure:
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+        url_scheme = 'http'
     google_blueprint = make_google_blueprint(
         client_id = google_client_id,
         client_secret = google_client_secret,
@@ -542,14 +578,14 @@ if __name__ == "__main__":
         client_id = discord_client_id,
         client_secret = discord_client_secret,
         scope = ["identify"],
-        redirect_url='/register',
+        redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
     github_blueprint = make_github_blueprint(
         client_id = github_client_id,
         client_secret = github_client_secret,
         scope = ["identify"],
-        redirect_url='/register',
+        redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
     api.add_resource(SyncGenerate, "/generate/sync")
@@ -563,5 +599,5 @@ if __name__ == "__main__":
     api.add_resource(ServerSingle, "/servers/<string:server_id>")
     api.add_resource(Models, "/models")
     from waitress import serve
-    serve(REST_API, host="0.0.0.0", port="5001",url_scheme='https')
+    serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
