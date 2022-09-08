@@ -314,12 +314,17 @@ class GenerationsIndex(Index):
 class User:
     def __init__(self, db):
         self._db = db
+        self.kudos = 0
+        self.kudos_details = {
+            "accumulated": 0,
+            "gifted": 0,
+            "received": 0,
+        }
 
     def create_anon(self):
         self.username = 'Anonymous'
         self.oauth_id = 'anon'
         self.api_key = '0000000000'
-        self.kudos = 0
         self.invite_id = ''
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
@@ -337,7 +342,6 @@ class User:
         self.username = username
         self.oauth_id = oauth_id
         self.api_key = api_key
-        self.kudos = 0
         self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
@@ -363,15 +367,17 @@ class User:
     def record_usage(self, chars):
         self.usage["chars"] += chars
         self.usage["requests"] += 1
-        self.kudos -= chars
+        self.kudos['current'] -= chars
 
     def record_contributions(self, chars):
         self.contributions["chars"] += chars
         self.contributions["fulfillments"] += 1
         self.kudos += chars
 
-    def modify_kudos(self, kudos):
+    def modify_kudos(self, kudos, action = 'accumulated'):
         self.kudos += kudos
+        self.kudos_details[action] += abs(kudos)
+
 
     def serialize(self):
         ret_dict = {
@@ -379,6 +385,7 @@ class User:
             "oauth_id": self.oauth_id,
             "api_key": self.api_key,
             "kudos": self.kudos,
+            "kudos_details": self.kudos_details,
             "id": self.id,
             "invite_id": self.invite_id,
             "contributions": self.contributions,
@@ -393,6 +400,7 @@ class User:
         self.oauth_id = saved_dict["oauth_id"]
         self.api_key = saved_dict["api_key"]
         self.kudos = saved_dict["kudos"]
+        self.kudos_details = saved_dict.get("kudos_details", self.kudos_details)
         self.id = saved_dict["id"]
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
@@ -563,8 +571,8 @@ class Database:
     def transfer_kudos(self, source_user, dest_user, amount):
         if amount > source_user.kudos:
             return([0,'Not enough kudos.'])
-        source_user.modify_kudos(-amount)
-        dest_user.modify_kudos(amount)
+        source_user.modify_kudos(-amount, 'gifted')
+        dest_user.modify_kudos(amount, 'received')
         return([amount,'OK'])
 
     def transfer_kudos_to_username(self, source_user, dest_username, amount):

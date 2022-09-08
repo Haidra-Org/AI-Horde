@@ -311,6 +311,7 @@ class Users(Resource):
             user_dict[user.get_unique_alias()] = {
                 "id": user.id,
                 "kudos": user.kudos,
+                "kudos_details": user.kudos_details,
                 "usage": user.usage,
                 "contributions": user.contributions,
             }
