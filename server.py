@@ -369,7 +369,10 @@ This is the server which has generated the most tokens for the horde.
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
-    head = """<head><meta name="google-site-verification" content="5imNnbyz39-i9j6dbAeS0o0ZRIfzpznY9FBa_kMZns0" /></head>
+    head = """<head>
+    <title>KoboldAI Horde</title>
+    <meta name="google-site-verification" content="5imNnbyz39-i9j6dbAeS0o0ZRIfzpznY9FBa_kMZns0" />
+    </head>
     """
     return(head + markdown(findex + top_contributors + policies))
 
