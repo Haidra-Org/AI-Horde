@@ -11,12 +11,7 @@ from markdown import markdown
 from dotenv import load_dotenv
 from uuid import uuid4
 from werkzeug.middleware.proxy_fix import ProxyFix
-from ballpark import ballpark
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
-# Workaround for ballpark's mistake
-# https://github.com/debrouwere/python-ballpark/issues/14
-import collections
-collections.Iterable = collections.abc.Iterable
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -358,13 +353,13 @@ These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most chars for the horde.
 #### {top_contributor.get_unique_alias()}
-* {ballpark(top_contributor.contributions['chars'])} chars generated.
-* {ballpark(top_contributor.contributions['fulfillments'], precision = 1)} requests fulfilled.
+* {top_contributor.contributions['chars']} chars generated.
+* {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
 This is the server which has generated the most chars for the horde.
 #### {top_server.name}
-* {ballpark(top_server.contributions)} chars generated.
-* {ballpark(top_server.fulfilments, precision = 1)} request fulfillments.
+* {top_server.contributions} chars generated.
+* {top_server.fulfilments} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
@@ -379,8 +374,8 @@ This is the server which has generated the most chars for the horde.
     findex = index.format(
         kobold_image = align_image,
         avg_performance= _db.get_request_avg(),
-        total_chars = ballpark(totals["chars"]),
-        total_fulfillments = ballpark(totals["fulfilments"],1),
+        total_chars = totals["chars"],
+        total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
@@ -495,7 +490,7 @@ def transfer():
             kudos = ret[0]
             error = ret[1]
     if src_user:
-        welcome = f"Welcome back {src_user.get_unique_alias()}. You have {ballpark(src_user.kudos)} kudos remaining"
+        welcome = f"Welcome back {src_user.get_unique_alias()}. You have {src_user.kudos} kudos remaining"
     return render_template('transfer_kudos.html',
                            page_title="Kudos Transfer",
                            welcome=welcome,

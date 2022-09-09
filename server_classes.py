@@ -441,10 +441,12 @@ class User:
         self.contributions = saved_dict["contributions"]
         if "tokens" in self.contributions:
             self.contributions["chars"] = self.contributions["tokens"] * 4
+            self.record_contributions(contributions["chars"], contributions["chars"] / 100)
             del self.contributions["tokens"]
         self.usage = saved_dict["usage"]
         if "tokens" in self.usage:
             self.usage["chars"] = self.usage["tokens"] * 4
+            self.record_contributions(usage["chars"], -usage["chars"] / 100)
             del self.usage["tokens"]
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
