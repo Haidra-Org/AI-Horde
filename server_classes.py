@@ -439,15 +439,15 @@ class User:
         self.id = saved_dict["id"]
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
-        if "tokens" in self.contributions:
-            self.contributions["chars"] = self.contributions["tokens"] * 4
-            self.record_contributions(self.contributions["chars"], self.contributions["chars"] / 100)
-            del self.contributions["tokens"]
+        # if "tokens" in self.contributions:
+        #     self.contributions["chars"] = self.contributions["tokens"] * 4
+        #     self.record_contributions(self.contributions["chars"], self.contributions["chars"] / 100)
+        #     del self.contributions["tokens"]
         self.usage = saved_dict["usage"]
-        if "tokens" in self.usage:
-            self.usage["chars"] = self.usage["tokens"] * 4
-            self.record_contributions(self.usage["chars"], -self.usage["chars"] / 100)
-            del self.usage["tokens"]
+        # if "tokens" in self.usage:
+        #     self.usage["chars"] = self.usage["tokens"] * 4
+        #     self.record_contributions(self.usage["chars"], -self.usage["chars"] / 100)
+        #     del self.usage["tokens"]
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
 

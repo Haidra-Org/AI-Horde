@@ -25,6 +25,11 @@ You can find the source and documentation for [KoboldAI Horde](https://github.co
 1. Type the address you're currently at in the url, and your stored api key. When the menu with the models appear, select all, or a specific model (if you know what you're doing)
 1. Enjoy
 
+## Services
+
+* [Register New Account](/register)
+* [Transfer Kudos](/transfer)
+
 ## Community
 
 Join us [on discord](https://koboldai.org/discord)
