@@ -15,7 +15,7 @@ except:
             # Where can your bridge reach your KAI instance
             self.kai_url = "http://localhost:5000"
             # Give a cool name to your instance
-            self.kai_name = random.randint(-1000000000000, 1000000000000)
+            self.kai_name = f"Automated Instance #{random.randint(-100000000, 100000000)}"
             # The api_key identifies a unique user in the horde
             # Visit https://koboldai.net/register to create one before you can join
             self.api_key = "0000000000"
@@ -172,7 +172,7 @@ if __name__ == "__main__":
                     logging.warning(f"The generation we were working on got stale. Aborting!")
                 elif not submit_req.ok:
                     if "already submitted" in submit_req.text:
-                        logging.info(f'Server think this gen already submitted. Continuing')
+                        logging.warning(f'Server think this gen already submitted. Continuing')
                     else:
                         logging.error(submit_req.status_code)
                         logging.warning(f"During gen submit, server {cluster} responded: {submit_req.text}. Waiting for 10 seconds...")
