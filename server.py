@@ -6,6 +6,7 @@ from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
 import logging, requests, random, time, os, oauthlib, secrets, argparse
+import transformers, accelerate
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv

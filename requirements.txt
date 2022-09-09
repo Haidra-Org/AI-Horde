@@ -8,3 +8,5 @@ flask-dance[sqla]
 blinker
 python-dotenv
 ballpark
+transformers
+accelerate

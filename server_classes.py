@@ -95,9 +95,9 @@ class WaitingPrompt:
                 ret_dict["generations"].append(procgen.generation)
         return(ret_dict)
 
-    def record_usage(self, chars):
+    def record_usage(self, chars, kudos):
         self.total_usage += chars
-        self.user.record_usage(chars)
+        self.user.record_usage(chars, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -128,6 +128,8 @@ class ProcessingGeneration:
         self.id = str(uuid4())
         self.owner = owner
         self.server = server
+        # We store the model explicitly, in case the server changed models between generations
+        self.model = server.model
         self.generation = None
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
@@ -137,9 +139,10 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         chars = len(generation)
-        self.server.record_contribution(chars, (datetime.now() - self.start_time).seconds)
-        self.owner.record_usage(chars)
-        logging.info(f"New Generation delivered by server: {self.server.name}")
+        kudos = self.owner._db.convert_chars_to_kudos(chars, self.model)
+        self.server.record_contribution(chars, kudos, (datetime.now() - self.start_time).seconds)
+        self.owner.record_usage(chars, kudos)
+        logging.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
         return(chars)
 
     def is_completed(self):
@@ -163,6 +166,7 @@ class KAIServer:
         self.id = str(uuid4())
         self.contributions = 0
         self.fulfilments = 0
+        self.kudos = 0
         self.performances = []
         self.uptime = 0
         self._db.register_new_server(self)
@@ -217,9 +221,10 @@ class KAIServer:
             skipped_reason = 'matching_softprompt'
         return([is_matching,skipped_reason])
 
-    def record_contribution(self, chars, seconds_taken):
+    def record_contribution(self, chars, kudos, seconds_taken):
         perf = round(chars / seconds_taken,1)
-        self.user.record_contributions(chars)
+        self.user.record_contributions(chars, kudos)
+        self.kudos += kudos
         self._db.record_fulfilment(perf)
         self.contributions += chars
         self.fulfilments += 1
@@ -252,6 +257,7 @@ class KAIServer:
             "max_content_length": self.max_content_length,
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
+            "kudos": self.kudos,
             "performances": self.performances,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
@@ -268,6 +274,7 @@ class KAIServer:
         self.max_content_length = saved_dict["max_content_length"]
         self.contributions = saved_dict["contributions"]
         self.fulfilments = saved_dict["fulfilments"]
+        self.kudos = saved_dict.get("kudos",0)
         self.performances = saved_dict.get("performances",[])
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
@@ -364,15 +371,15 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, chars):
+    def record_usage(self, chars, kudos):
         self.usage["chars"] += chars
         self.usage["requests"] += 1
-        self.kudos['current'] -= chars
+        self.modify_kudos(-kudos,"accumulated")
 
-    def record_contributions(self, chars):
+    def record_contributions(self, chars, kudos):
         self.contributions["chars"] += chars
         self.contributions["fulfillments"] += 1
-        self.kudos += chars
+        self.modify_kudos(kudos,"accumulated")
 
     def modify_kudos(self, kudos, action = 'accumulated'):
         self.kudos += kudos
@@ -420,6 +427,7 @@ class Database:
         self.STATS_FILE = "db/stats.json"
         self.stats = {
             "fulfilment_times": [],
+            "model_mulitpliers": {},
         }
         self.USERS_FILE = "db/users.json"
         self.users = {}
@@ -594,3 +602,25 @@ class Database:
             return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
         kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
         return(kudos)
+
+    def calculate_model_multiplier(self, model_name):
+        # To avoid doing this calculations all the time
+        multiplier = self.stats["model_mulitpliers"].get(model_name)
+        if multiplier:
+            return(multiplier)
+        import transformers, accelerate
+        config = transformers.AutoConfig.from_pretrained(model_name)
+        with accelerate.init_empty_weights():
+            model = transformers.AutoModelForCausalLM.from_config(config)
+        params_sum = sum(v.numel() for v in model.state_dict().values())
+        logging.info(params_sum)
+        multiplier = params_sum / 1000000000
+        self.stats["model_mulitpliers"][model_name] = multiplier
+        return(multiplier)
+
+    def convert_chars_to_kudos(self, chars, model_name):
+        multiplier = self.calculate_model_multiplier(model_name)
+        kudos = round(chars * multiplier / 100,2)
+        logging.info([chars,multiplier,kudos])
+        return(kudos)
+
