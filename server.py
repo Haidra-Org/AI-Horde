@@ -6,7 +6,6 @@ from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
 import logging, requests, random, time, os, oauthlib, secrets, argparse
-import transformers, accelerate
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
@@ -275,6 +274,8 @@ class Servers(Resource):
                 "max_content_length": server.max_content_length,
                 "chars_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
+                "kudos_rewards": server.kudos,
+                "kudos_details": server.kudos_details,
                 "performance": server.get_performance(),
                 "uptime": server.uptime,
             }

@@ -158,6 +158,13 @@ class ProcessingGeneration:
 class KAIServer:
     def __init__(self, db):
         self._db = db
+        self.kudos_details = {
+            "generated": 0,
+            "uptime": 0,
+        }
+        self.last_reward_uptime = 0
+        # Every how many seconds does this server get a kudos reward
+        self.uptime_reward_threshold = 600
 
     def create(self, user, name, softprompts):
         self.user = user
@@ -174,6 +181,18 @@ class KAIServer:
     def check_in(self, model, max_length, max_content_length, softprompts):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
+            # Every 10 minutes of uptime gets kudos rewarded
+            if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
+                # Bigger model uptime gets more kudos
+                kudos = round(self._db.calculate_model_multiplier(model) / 2.75, 2)
+                self.modify_kudos(kudos,'uptime')
+                self.user.record_uptime(kudos)
+                logging.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                self.last_reward_uptime = self.uptime
+        else:
+            # If the server comes back from being stale, we just reset their last_reward_uptime
+            # So that they have to stay up at least 10 mins to get uptime kudos
+            self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
         self.model = model
         self.max_content_length = max_content_length
@@ -224,13 +243,17 @@ class KAIServer:
     def record_contribution(self, chars, kudos, seconds_taken):
         perf = round(chars / seconds_taken,1)
         self.user.record_contributions(chars, kudos)
-        self.kudos += kudos
+        self.modify_kudos(kudos,'generated')
         self._db.record_fulfilment(perf)
         self.contributions += chars
         self.fulfilments += 1
         self.performances.append(perf)
         if len(self.performances) > 20:
             del self.performances[0]
+
+    def modify_kudos(self, kudos, action = 'generated'):
+        self.kudos = round(self.kudos + kudos, 2)
+        self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2) 
 
     def get_performance(self):
         if len(self.performances):
@@ -258,6 +281,7 @@ class KAIServer:
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
             "kudos": self.kudos,
+            "kudos_details": self.kudos_details,
             "performances": self.performances,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
@@ -275,6 +299,7 @@ class KAIServer:
         self.contributions = saved_dict["contributions"]
         self.fulfilments = saved_dict["fulfilments"]
         self.kudos = saved_dict.get("kudos",0)
+        self.kudos_details = saved_dict.get("kudos_details",self.kudos_details)
         self.performances = saved_dict.get("performances",[])
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
@@ -381,9 +406,12 @@ class User:
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
+    def record_uptime(self, kudos):
+        self.modify_kudos(kudos,"accumulated")
+
     def modify_kudos(self, kudos, action = 'accumulated'):
-        self.kudos += kudos
-        self.kudos_details[action] += abs(kudos)
+        self.kudos = round(self.kudos + kudos, 2)
+        self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2)
 
 
     def serialize(self):
