@@ -10,3 +10,4 @@ python-dotenv
 ballpark
 transformers
 accelerate
+pandas
