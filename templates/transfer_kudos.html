@@ -1,0 +1,63 @@
+{% extends "master.html" %}
+{% block content %}
+{% if oauth_id is none %}
+    <div class="container">
+        <p style="color:#333;">You are not logged in. Click one of the below links to sign in.</p>
+        <div class="login-btn">
+            <a href="/google/transfer" class="google-btn">
+            <div class="login-icon-wrapper">
+                <img class="login-icon" src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg"/>
+            </div>
+            <p class="btn-text"><b>Sign in with google</b></p>
+            </a>
+            <a href="/discord/transfer" class="discord-btn">
+            <div class="login-icon-wrapper">
+                <img class="login-icon" src="https://assets-global.website-files.com/6257adef93867e50d84d30e2/62595384e89d1d54d704ece7_3437c10597c1526c3dbd98c737c2bcae.svg"/>
+            </div>
+            <p class="btn-text"><b>Sign in with discord</b></p>
+            </a>
+            <a href="/github/transfer" class="github-btn">
+            <div class="login-icon-wrapper">
+                <img class="login-icon" src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"/>
+            </div>
+            <p class="btn-text"><b>Sign in with github</b></p>
+            </a>
+        </div>
+    </div>
+{% endif %}
+    <div class="container">
+        <h1>Transfer Kudos</h1>
+        <p>In this page you can transfer some of your Kudos to another userid</p>
+        {% if oauth_id is not none %}
+        <h2>{{ welcome }}</h2>
+        {% else %}
+        <h2>Welcome</h2>
+        <p>As anonymous user, you can only transfer by using your API key as the source.</p>
+        {% endif %}
+        <form method="POST" class="main-form">
+            {% if oauth_id is none %}
+            <div class="form-group">
+                <label for="source_api_key">Source API key *</label>
+                <input type="text" class="form-control" id="src_api_key" name="src_api_key" placeholder="Type the API key that belongs to your pseudonymous user" required>
+            </div>
+            {% endif %}
+            <div class="form-group">
+                <label for="user id">Unique User ID *</label>
+                <input type="text" class="form-control" id="username" name="username" placeholder="Example: db0#1" required>
+            </div>
+            <div class="form-group">
+                <label for="amount">Kudos Amount *</label>
+                <input type="text" class="form-control" id="amount" name="amount" placeholder="100" required>
+            </div>
+            <button type="submit" class="btn btn-default">Submit</button>
+        </form>
+   </div>
+   {% if kudos is not none %}
+   {% if kudos > 0 %}
+   <p style="background-color:darkorange;">Transferred {{ kudos }} kudos to {{ dest_username }}</p>
+   {% else %}
+   <p style="background-color:tomato;">{{ error }}</p>
+   {% endif %}
+   {% endif %}
+   <p><a href="/">Back to Main page</a></p>
+{% endblock %}

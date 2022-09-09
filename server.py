@@ -5,13 +5,18 @@ from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
-import logging, requests, random, time, os, oauthlib, secrets
+import logging, requests, random, time, os, oauthlib, secrets, argparse
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
 from uuid import uuid4
 from werkzeug.middleware.proxy_fix import ProxyFix
+from ballpark import ballpark
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
+# Workaround for ballpark's mistake
+# https://github.com/debrouwere/python-ballpark/issues/14
+import collections
+collections.Iterable = collections.abc.Iterable
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -20,6 +25,7 @@ class ServerErrors(Enum):
     TOO_MANY_PROMPTS = 3
     EMPTY_PROMPT = 4
     INVALID_API_KEY = 5
+    INVALID_MODEL = 6
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -29,6 +35,7 @@ limiter = Limiter(
     default_limits=["90 per minute"]
 )
 api = Api(REST_API)
+dance_return_to = '/'
 load_dotenv()
 
 
@@ -51,6 +58,9 @@ def get_error(error, **kwargs):
     if error == ServerErrors.EMPTY_PROMPT:
         logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
+    if error == ServerErrors.INVALID_MODEL:
+        logging.warning(f'Server "{kwargs["name"]}" tried to prompt pop with invalid model: {kwargs["model"]}. Aborting!')
+        return(f'Invalid model for generating: {kwargs["model"]}.')
 
 
 @REST_API.after_request
@@ -77,7 +87,7 @@ class SyncGenerate(Resource):
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
             if not user:
-                return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)         
+                return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
             username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
@@ -97,10 +107,10 @@ class SyncGenerate(Resource):
 
         )
         server_found = False
-        for s in _db.servers:
-            if len(args.servers) and servers[s].id not in args.servers:
+        for server in _db.servers.values():
+            if len(args.servers) and server.id not in args.servers:
                 continue
-            if _db.servers[s].can_generate(wp)[0]:
+            if server.can_generate(wp)[0]:
                 server_found = True
                 break
         if not server_found:
@@ -139,7 +149,7 @@ class AsyncGenerate(Resource):
         args = parser.parse_args()
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)            
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
         wp_count = _waiting_prompts.count_waiting_requests(args.username)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
@@ -176,7 +186,9 @@ class PromptPop(Resource):
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)            
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
+        if args['model'] in ['CLUSTER', 'ReadOnly']:
+            return(f"{get_error(ServerErrors.INVALID_MODEL, name = args['name'], model = args['model'])}",400)
         server = _db.find_server_by_name(args['name'])
         if not server:
             server = KAIServer(_db)
@@ -238,10 +250,10 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        tokens = procgen.set_generation(args['generation'])
-        if tokens == 0:
+        chars = procgen.set_generation(args['generation'])
+        if chars == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
-        return({"reward": tokens}, 200)
+        return({"reward": chars}, 200)
 
 class Models(Resource):
     def get(self):
@@ -260,8 +272,10 @@ class Servers(Resource):
                 "model": server.model,
                 "max_length": server.max_length,
                 "max_content_length": server.max_content_length,
-                "tokens_generated": server.contributions,
+                "chars_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
+                "kudos_rewards": server.kudos,
+                "kudos_details": server.kudos_details,
                 "performance": server.get_performance(),
                 "uptime": server.uptime,
             }
@@ -282,7 +296,7 @@ class ServerSingle(Resource):
                 "model": server.model,
                 "max_length": server.max_length,
                 "max_content_length": server.max_content_length,
-                "tokens_generated": server.contributions,
+                "chars_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
             }
@@ -299,6 +313,7 @@ class Users(Resource):
             user_dict[user.get_unique_alias()] = {
                 "id": user.id,
                 "kudos": user.kudos,
+                "kudos_details": user.kudos_details,
                 "usage": user.usage,
                 "contributions": user.contributions,
             }
@@ -341,15 +356,15 @@ def index():
         top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
 ### Users
-This is the person whose server(s) have generated the most tokens for the horde.
+This is the person whose server(s) have generated the most chars for the horde.
 #### {top_contributor.get_unique_alias()}
-* {top_contributor.contributions['tokens']} tokens generated.
-* {top_contributor.contributions['fulfillments']} requests fulfilled.
+* {ballpark(top_contributor.contributions['chars'])} chars generated.
+* {ballpark(top_contributor.contributions['fulfillments'], precision = 1)} requests fulfilled.
 ### Servers
-This is the server which has generated the most tokens for the horde.
+This is the server which has generated the most chars for the horde.
 #### {top_server.name}
-* {top_server.contributions} tokens generated.
-* {top_server.fulfilments} request fulfillments.
+* {ballpark(top_server.contributions)} chars generated.
+* {ballpark(top_server.fulfilments, precision = 1)} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
 
 <img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
@@ -362,10 +377,10 @@ This is the server which has generated the most tokens for the horde.
 [Terms of Service](/terms)"""
     totals = _db.get_total_usage()
     findex = index.format(
-        kobold_image = align_image, 
-        avg_performance= _db.get_request_avg(), 
-        total_tokens = totals["tokens"], 
-        total_fulfillments = totals["fulfilments"],
+        kobold_image = align_image,
+        avg_performance= _db.get_request_avg(),
+        total_chars = ballpark(totals["chars"]),
+        total_fulfillments = ballpark(totals["fulfilments"],1),
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
@@ -376,8 +391,7 @@ This is the server which has generated the most tokens for the horde.
     """
     return(head + markdown(findex + top_contributors + policies))
 
-@REST_API.route('/register', methods=['GET', 'POST'])
-def register():
+def get_oauth_id():
     google_data = None
     discord_data = None
     github_data = None
@@ -403,23 +417,27 @@ def register():
             authorized = True
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
-    api_key = None
-    user = None
-    welcome = 'Welcome'
-    username = ''
-    existing_user = False
     oauth_id = None
-    pseudonymous = False
     if google_data:
         oauth_id = f'g_{google_data["id"]}'
     elif discord_data:
         oauth_id = f'd_{discord_data["id"]}'
     elif github_data:
         oauth_id = f'gh_{github_data["id"]}'
+    return(oauth_id)
+
+
+@REST_API.route('/register', methods=['GET', 'POST'])
+def register():
+    api_key = None
+    user = None
+    welcome = 'Welcome'
+    username = ''
+    pseudonymous = False
+    oauth_id = get_oauth_id()
     if oauth_id:
         user = _db.find_user_by_oauth_id(oauth_id)
         if user:
-            existing_user = True
             username = user.username
     if request.method == 'POST':
         api_key = secrets.token_urlsafe(16)
@@ -438,28 +456,82 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
+                           page_title="Join the KoboldAI Horde!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
                            username=username,
-                           existing_user=existing_user,
                            pseudonymous=pseudonymous,
                            oauth_id=oauth_id)
 
 
-@REST_API.route('/google')
-def google_login():
+@REST_API.route('/transfer', methods=['GET', 'POST'])
+def transfer():
+    src_api_key = None
+    src_user = None
+    dest_username = None
+    kudos = None
+    error = None
+    welcome = 'Welcome'
+    oauth_id = get_oauth_id()
+    if oauth_id:
+        src_user = _db.find_user_by_oauth_id(oauth_id)
+        if not src_user:
+            # This probably means the user was deleted
+            oauth_id = None
+    if request.method == 'POST':
+        dest_username = request.form['username']
+        amount = request.form['amount']
+        if not amount.isnumeric():
+            kudos = 0
+            error = "Please enter a number in the kudos field"
+        # Triggered when the user submited without logging in
+        elif src_user:
+            ret = _db.transfer_kudos_to_username(src_user,dest_username,int(amount))
+            kudos = ret[0]
+            error = ret[1]
+        else:
+            ret = _db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
+            kudos = ret[0]
+            error = ret[1]
+    if src_user:
+        welcome = f"Welcome back {src_user.get_unique_alias()}. You have {ballpark(src_user.kudos)} kudos remaining"
+    return render_template('transfer_kudos.html',
+                           page_title="Kudos Transfer",
+                           welcome=welcome,
+                           kudos=kudos,
+                           error=error,
+                           dest_username=dest_username,
+                           oauth_id=oauth_id)
+
+
+@REST_API.route('/google/<return_to>')
+def google_login(return_to):
+    global dance_return_to
+    dance_return_to = '/' + return_to
     return redirect(url_for('google.login'))
 
 
-@REST_API.route('/discord')
-def discord_login():
+@REST_API.route('/discord/<return_to>')
+def discord_login(return_to):
+    global dance_return_to
+    dance_return_to = '/' + return_to
     return redirect(url_for('discord.login'))
 
 
-@REST_API.route('/github')
-def github_login():
+@REST_API.route('/github/<return_to>')
+def github_login(return_to):
+    global dance_return_to
+    dance_return_to = '/' + return_to
     return redirect(url_for('github.login'))
+
+
+@REST_API.route('/finish_dance')
+def finish_dance():
+    global dance_return_to
+    redirect_url = dance_return_to
+    dance_return_to = '/'
+    return redirect(redirect_url)
 
 
 @REST_API.route('/privacy')
@@ -471,11 +543,16 @@ def terms():
     return render_template('terms_of_service.html')
 
 
+arg_parser = argparse.ArgumentParser()
+arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, will use http instead of https (useful for testing)")
+
+
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
 
+    args = arg_parser.parse_args()
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.INFO)
     _db = Database()
     _waiting_prompts = PromptsIndex()
@@ -488,7 +565,10 @@ if __name__ == "__main__":
     github_client_secret = os.getenv("GITHUB_CLIENT_SECRET")
     REST_API.secret_key = os.getenv("secret_key")
     os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
-    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+    url_scheme = 'https'
+    if args.insecure:
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+        url_scheme = 'http'
     google_blueprint = make_google_blueprint(
         client_id = google_client_id,
         client_secret = google_client_secret,
@@ -501,14 +581,14 @@ if __name__ == "__main__":
         client_id = discord_client_id,
         client_secret = discord_client_secret,
         scope = ["identify"],
-        redirect_url='/register',
+        redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(discord_blueprint,url_prefix="/discord")
     github_blueprint = make_github_blueprint(
         client_id = github_client_id,
         client_secret = github_client_secret,
         scope = ["identify"],
-        redirect_url='/register',
+        redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
     api.add_resource(SyncGenerate, "/generate/sync")
@@ -522,5 +602,5 @@ if __name__ == "__main__":
     api.add_resource(ServerSingle, "/servers/<string:server_id>")
     api.add_resource(Models, "/models")
     from waitress import serve
-    serve(REST_API, host="0.0.0.0", port="5001",url_scheme='https')
+    serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")

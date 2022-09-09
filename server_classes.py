@@ -19,7 +19,6 @@ class WaitingPrompt:
         if self.n > 20:
             logging.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
-        self.tokens = len(prompt.split())
         self.max_length = params.get("max_length", 80)
         self.max_content_length = params.get("max_content_length", 1024)
         self.total_usage = 0
@@ -96,9 +95,9 @@ class WaitingPrompt:
                 ret_dict["generations"].append(procgen.generation)
         return(ret_dict)
 
-    def record_usage(self, tokens):
-        self.total_usage += tokens
-        self.user.record_usage(tokens)
+    def record_usage(self, chars, kudos):
+        self.total_usage += chars
+        self.user.record_usage(chars, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -129,6 +128,8 @@ class ProcessingGeneration:
         self.id = str(uuid4())
         self.owner = owner
         self.server = server
+        # We store the model explicitly, in case the server changed models between generations
+        self.model = server.model
         self.generation = None
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
@@ -137,11 +138,12 @@ class ProcessingGeneration:
         if self.is_completed():
             return(0)
         self.generation = generation
-        tokens = len(generation.split())
-        self.server.record_contribution(tokens, (datetime.now() - self.start_time).seconds)
-        self.owner.record_usage(tokens)
-        logging.info(f"New Generation delivered by server: {self.server.name}")
-        return(tokens)
+        chars = len(generation)
+        kudos = self.owner._db.convert_chars_to_kudos(chars, self.model)
+        self.server.record_contribution(chars, kudos, (datetime.now() - self.start_time).seconds)
+        self.owner.record_usage(chars, kudos)
+        logging.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
+        return(chars)
 
     def is_completed(self):
         if self.generation:
@@ -156,6 +158,13 @@ class ProcessingGeneration:
 class KAIServer:
     def __init__(self, db):
         self._db = db
+        self.kudos_details = {
+            "generated": 0,
+            "uptime": 0,
+        }
+        self.last_reward_uptime = 0
+        # Every how many seconds does this server get a kudos reward
+        self.uptime_reward_threshold = 600
 
     def create(self, user, name, softprompts):
         self.user = user
@@ -164,6 +173,7 @@ class KAIServer:
         self.id = str(uuid4())
         self.contributions = 0
         self.fulfilments = 0
+        self.kudos = 0
         self.performances = []
         self.uptime = 0
         self._db.register_new_server(self)
@@ -171,6 +181,18 @@ class KAIServer:
     def check_in(self, model, max_length, max_content_length, softprompts):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
+            # Every 10 minutes of uptime gets kudos rewarded
+            if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
+                # Bigger model uptime gets more kudos
+                kudos = round(self._db.calculate_model_multiplier(model) / 2.75, 2)
+                self.modify_kudos(kudos,'uptime')
+                self.user.record_uptime(kudos)
+                logging.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                self.last_reward_uptime = self.uptime
+        else:
+            # If the server comes back from being stale, we just reset their last_reward_uptime
+            # So that they have to stay up at least 10 mins to get uptime kudos
+            self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
         self.model = model
         self.max_content_length = max_content_length
@@ -210,7 +232,7 @@ class KAIServer:
                 matching_softprompt = True
                 break
             for sp_name in self.softprompts:
-                if sp in sp_name: 
+                if sp in sp_name:
                     matching_softprompt = True
                     break
         if not matching_softprompt:
@@ -218,19 +240,24 @@ class KAIServer:
             skipped_reason = 'matching_softprompt'
         return([is_matching,skipped_reason])
 
-    def record_contribution(self, tokens, seconds_taken):
-        perf = round(tokens / seconds_taken,2)
-        self.user.record_contributions(tokens)
+    def record_contribution(self, chars, kudos, seconds_taken):
+        perf = round(chars / seconds_taken,1)
+        self.user.record_contributions(chars, kudos)
+        self.modify_kudos(kudos,'generated')
         self._db.record_fulfilment(perf)
-        self.contributions += tokens
+        self.contributions += chars
         self.fulfilments += 1
         self.performances.append(perf)
         if len(self.performances) > 20:
             del self.performances[0]
 
+    def modify_kudos(self, kudos, action = 'generated'):
+        self.kudos = round(self.kudos + kudos, 2)
+        self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2) 
+
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),2)} tokens per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} chars per second'
         else:
             ret_str = f'No requests fulfiled yet'
         return(ret_str)
@@ -253,6 +280,8 @@ class KAIServer:
             "max_content_length": self.max_content_length,
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
+            "kudos": self.kudos,
+            "kudos_details": self.kudos_details,
             "performances": self.performances,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
@@ -269,6 +298,8 @@ class KAIServer:
         self.max_content_length = saved_dict["max_content_length"]
         self.contributions = saved_dict["contributions"]
         self.fulfilments = saved_dict["fulfilments"]
+        self.kudos = saved_dict.get("kudos",0)
+        self.kudos_details = saved_dict.get("kudos_details",self.kudos_details)
         self.performances = saved_dict.get("performances",[])
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
@@ -301,7 +332,7 @@ class PromptsIndex(Index):
             if wp.user == user and not wp.is_completed():
                 count += 1
         return(count)
-    
+
     def count_total_waiting_generations(self):
         count = 0
         for wp in self._index.values():
@@ -315,22 +346,27 @@ class GenerationsIndex(Index):
 class User:
     def __init__(self, db):
         self._db = db
+        self.kudos = 0
+        self.kudos_details = {
+            "accumulated": 0,
+            "gifted": 0,
+            "received": 0,
+        }
 
     def create_anon(self):
         self.username = 'Anonymous'
         self.oauth_id = 'anon'
         self.api_key = '0000000000'
-        self.kudos = 0
         self.invite_id = ''
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
         self.id = 0
         self.contributions = {
-            "tokens": 0,
+            "chars": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "tokens": 0,
+            "chars": 0,
             "requests": 0
         }
 
@@ -338,20 +374,19 @@ class User:
         self.username = username
         self.oauth_id = oauth_id
         self.api_key = api_key
-        self.kudos = 0
         self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
         self.id = self._db.register_new_user(self)
         self.contributions = {
-            "tokens": 0,
+            "chars": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "tokens": 0,
+            "chars": 0,
             "requests": 0
         }
-    
+
     # Checks that this user matches the specified API key
     def check_key(api_key):
         if self.api_key and self.api_key == api_key:
@@ -360,21 +395,32 @@ class User:
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
-    
-    def record_usage(self, tokens):
-        self.usage["tokens"] += tokens
+
+    def record_usage(self, chars, kudos):
+        self.usage["chars"] += chars
         self.usage["requests"] += 1
-    
-    def record_contributions(self, tokens):
-        self.contributions["tokens"] += tokens
+        self.modify_kudos(-kudos,"accumulated")
+
+    def record_contributions(self, chars, kudos):
+        self.contributions["chars"] += chars
         self.contributions["fulfillments"] += 1
-    
+        self.modify_kudos(kudos,"accumulated")
+
+    def record_uptime(self, kudos):
+        self.modify_kudos(kudos,"accumulated")
+
+    def modify_kudos(self, kudos, action = 'accumulated'):
+        self.kudos = round(self.kudos + kudos, 2)
+        self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2)
+
+
     def serialize(self):
         ret_dict = {
             "username": self.username,
             "oauth_id": self.oauth_id,
             "api_key": self.api_key,
             "kudos": self.kudos,
+            "kudos_details": self.kudos_details,
             "id": self.id,
             "invite_id": self.invite_id,
             "contributions": self.contributions,
@@ -389,6 +435,7 @@ class User:
         self.oauth_id = saved_dict["oauth_id"]
         self.api_key = saved_dict["api_key"]
         self.kudos = saved_dict["kudos"]
+        self.kudos_details = saved_dict.get("kudos_details", self.kudos_details)
         self.id = saved_dict["id"]
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
@@ -408,6 +455,7 @@ class Database:
         self.STATS_FILE = "db/stats.json"
         self.stats = {
             "fulfilment_times": [],
+            "model_mulitpliers": {},
         }
         self.USERS_FILE = "db/users.json"
         self.users = {}
@@ -471,9 +519,9 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['tokens'] > top_contribution and user != self.anon:
+            if user.contributions['chars'] > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions['tokens']
+                top_contribution = user.contributions['chars']
         return(top_contributor)
 
     def get_top_server(self):
@@ -484,7 +532,7 @@ class Database:
                 top_server = self.servers[server]
                 top_server_contribution = self.servers[server].contributions
         return(top_server)
-   
+
     def get_available_models(self):
         models_ret = {}
         for server in self.servers.values():
@@ -502,11 +550,11 @@ class Database:
 
     def get_total_usage(self):
         totals = {
-            "tokens": 0,
+            "chars": 0,
             "fulfilments": 0,
         }
         for server in self.servers.values():
-            totals["tokens"] += server.contributions
+            totals["chars"] += server.contributions
             totals["fulfilments"] += server.fulfilments
         return(totals)
 
@@ -514,12 +562,12 @@ class Database:
         if len(self.stats["fulfilment_times"]) >= 10:
             del self.stats["fulfilment_times"][0]
         self.stats["fulfilment_times"].append(token_per_sec)
-    
+
     def get_request_avg(self):
         if len(self.stats["fulfilment_times"]) == 0:
             return(0)
         avg = sum(self.stats["fulfilment_times"]) / len(self.stats["fulfilment_times"])
-        return(round(avg,2))
+        return(round(avg,1))
 
     def register_new_user(self, user):
         self.last_user_id += 1
@@ -539,7 +587,7 @@ class Database:
     def find_user_by_username(self, username):
         for user in self.users.values():
             uniq_username = username.split('#')
-            if user.username == uniq_username[0] and user.id == uniq_username[1]:
+            if user.username == uniq_username[0] and user.id == int(uniq_username[1]):
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
                 return(user)
@@ -555,3 +603,56 @@ class Database:
 
     def find_server_by_name(self,server_name):
         return(self.servers.get(server_name))
+
+    def transfer_kudos(self, source_user, dest_user, amount):
+        if amount > source_user.kudos:
+            return([0,'Not enough kudos.'])
+        source_user.modify_kudos(-amount, 'gifted')
+        dest_user.modify_kudos(amount, 'received')
+        return([amount,'OK'])
+
+    def transfer_kudos_to_username(self, source_user, dest_username, amount):
+        dest_user = self.find_user_by_username(dest_username)
+        if not dest_user:
+            return([0,'Invalid target username.'])
+        if dest_user == self.anon:
+            return([0,'Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.'])
+        if dest_user == source_user:
+            return([0,'Cannot send kudos to yourself, ya monkey!'])
+        kudos = self.transfer_kudos(source_user,dest_user, amount)
+        return(kudos)
+
+    def transfer_kudos_from_apikey_to_username(self, source_api_key, dest_username, amount):
+        source_user = self.find_user_by_api_key(source_api_key)
+        if not source_user:
+            return([0,'Invalid API Key.'])
+        if source_user == self.anon:
+            return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
+        kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
+        return(kudos)
+
+    def calculate_model_multiplier(self, model_name):
+        # To avoid doing this calculations all the time
+        multiplier = self.stats["model_mulitpliers"].get(model_name)
+        if multiplier:
+            return(multiplier)
+        try:
+            import transformers, accelerate
+            config = transformers.AutoConfig.from_pretrained(model_name)
+            with accelerate.init_empty_weights():
+                model = transformers.AutoModelForCausalLM.from_config(config)
+            params_sum = sum(v.numel() for v in model.state_dict().values())
+            logging.info(params_sum)
+            multiplier = params_sum / 1000000000
+        except OSError:
+            logging.error(f"Model '{model_name}' not found in hugging face. Defaulting to multiplier of 1.")
+            multiplier = 1
+        self.stats["model_mulitpliers"][model_name] = multiplier
+        return(multiplier)
+
+    def convert_chars_to_kudos(self, chars, model_name):
+        multiplier = self.calculate_model_multiplier(model_name)
+        kudos = round(chars * multiplier / 100,2)
+        # logging.info([chars,multiplier,kudos])
+        return(kudos)
+
