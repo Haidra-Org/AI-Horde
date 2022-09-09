@@ -411,7 +411,7 @@ class User:
 
     def modify_kudos(self, kudos, action = 'accumulated'):
         self.kudos = round(self.kudos + kudos, 2)
-        self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2)
+        self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
 
 
     def serialize(self):
