@@ -608,19 +608,23 @@ class Database:
         multiplier = self.stats["model_mulitpliers"].get(model_name)
         if multiplier:
             return(multiplier)
-        import transformers, accelerate
-        config = transformers.AutoConfig.from_pretrained(model_name)
-        with accelerate.init_empty_weights():
-            model = transformers.AutoModelForCausalLM.from_config(config)
-        params_sum = sum(v.numel() for v in model.state_dict().values())
-        logging.info(params_sum)
-        multiplier = params_sum / 1000000000
+        try:
+            import transformers, accelerate
+            config = transformers.AutoConfig.from_pretrained(model_name)
+            with accelerate.init_empty_weights():
+                model = transformers.AutoModelForCausalLM.from_config(config)
+            params_sum = sum(v.numel() for v in model.state_dict().values())
+            logging.info(params_sum)
+            multiplier = params_sum / 1000000000
+        except OSError:
+            logging.error(f"Model '{model_name}' not found in hugging face. Defaulting to multiplier of 1.")
+            multiplier = 1
         self.stats["model_mulitpliers"][model_name] = multiplier
         return(multiplier)
 
     def convert_chars_to_kudos(self, chars, model_name):
         multiplier = self.calculate_model_multiplier(model_name)
         kudos = round(chars * multiplier / 100,2)
-        logging.info([chars,multiplier,kudos])
+        # logging.info([chars,multiplier,kudos])
         return(kudos)
 
