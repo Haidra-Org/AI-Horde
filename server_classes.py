@@ -259,7 +259,7 @@ class KAIServer:
         if len(self.performances):
             ret_str = f'{round(sum(self.performances) / len(self.performances),1)} chars per second'
         else:
-            ret_str = f'No requests fulfiled yet'
+            ret_str = f'No requests fulfilled yet'
         return(ret_str)
 
     def is_stale(self):
