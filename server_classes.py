@@ -339,10 +339,13 @@ class PromptsIndex(Index):
             count += wp.n
         return(count)
 
-    def get_sorted_by_kudos(self):
+    def get_waiting_wp_by_kudos(self):
         sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
-        logging.info(self._index.values(),sorted_wp_list)
-        return(sorted_wp_list)
+        final_wp_list = []
+        for wp in sorted_wp_list:
+            if wp.needs_gen():
+                final_wp_list.append(wp)
+        return(final_wp_list)
 
 
 

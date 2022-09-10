@@ -145,7 +145,7 @@ class AsyncGenerate(Resource):
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
-        wp_count = _waiting_prompts.count_waiting_requests(args.username)
+        wp_count = _waiting_prompts.count_waiting_requests(user)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
         if wp_count >= 3:
@@ -201,17 +201,13 @@ class PromptPop(Resource):
                 priority_users.append(priority_user)
         for priority_user in priority_users:
             for wp in _waiting_prompts.get_all():
-                if wp.user == priority_user:
+                if wp.user == priority_user and wp.needs_gen():
                     prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
-        ## Start prioritize by kudos ##
-        for wp in _waiting_prompts.get_sorted_by_kudos():
+        for wp in _waiting_prompts.get_waiting_wp_by_kudos():
             if wp not in prioritized_wp:
                 prioritized_wp.append(wp)
-        ## End prioritize by kudos ##
         for wp in prioritized_wp:
-            if not wp.needs_gen():
-                continue
             check_gen = server.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]

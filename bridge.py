@@ -136,11 +136,19 @@ if __name__ == "__main__":
                 logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
+            except requests.exceptions.JSONDecodeError():
+                logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
+                time.sleep(10)
+                continue
             if not pop_req.ok:
                 logging.warning(f"During gen pop, server {cluster} responded: {pop_req.text}. Waiting for 10 seconds...")
                 time.sleep(10)
                 continue
             pop = pop_req.json()
+            if not pop:
+                logging.error(f"Something has gone wrong with {cluster}. Please inform its administrator!")
+                time.sleep(interval)
+                continue
             if not pop["id"]:
                 logging.debug(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
                 time.sleep(interval)
