@@ -67,7 +67,7 @@ def after_request(response):
 
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
@@ -124,7 +124,7 @@ class SyncGenerate(Resource):
 
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("30/minute")]
-    def get(self, id):
+    def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
@@ -133,7 +133,7 @@ class AsyncGeneratePrompt(Resource):
 
 class AsyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
@@ -168,7 +168,7 @@ class AsyncGenerate(Resource):
 
 class PromptPop(Resource):
     decorators = [limiter.limit("45/second")]
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
@@ -231,7 +231,7 @@ class PromptPop(Resource):
 
 
 class SubmitGeneration(Resource):
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
         parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
@@ -251,12 +251,12 @@ class SubmitGeneration(Resource):
         return({"reward": chars}, 200)
 
 class Models(Resource):
-    def get(self):
+    def get(self, api_version = None):
         return(_db.get_available_models(),200)
 
 
 class Servers(Resource):
-    def get(self):
+    def get(self, api_version = None):
         servers_ret = []
         for server in _db.servers.values():
             if server.is_stale():
@@ -278,7 +278,7 @@ class Servers(Resource):
         return(servers_ret,200)
 
 class ServerSingle(Resource):
-    def get(self, server_id):
+    def get(self, api_version = None, server_id = ''):
         server = None
         for s in _db.servers.values():
             if s.id == server_id:
@@ -302,7 +302,7 @@ class ServerSingle(Resource):
 
 
 class Users(Resource):
-    def get(self):
+    def get(self, api_version = None):
         user_dict = {}
         for user in _db.users.values():
             user_dict[user.get_unique_alias()] = {
@@ -316,7 +316,7 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
-    def get(self, user_id):
+    def get(self, api_version = None, user_id = ''):
         logging.info(user_id)
         user = None
         for u in _db.users.values():
@@ -586,16 +586,16 @@ if __name__ == "__main__":
         redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
-    api.add_resource(SyncGenerate, "/generate/sync")
-    api.add_resource(AsyncGenerate, "/generate/async")
-    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
-    api.add_resource(PromptPop, "/generate/pop")
-    api.add_resource(SubmitGeneration, "/generate/submit")
-    api.add_resource(Users, "/users")
-    api.add_resource(UserSingle, "/users/<string:user_id>")
-    api.add_resource(Servers, "/servers")
-    api.add_resource(ServerSingle, "/servers/<string:server_id>")
-    api.add_resource(Models, "/models")
+    api.add_resource(SyncGenerate, "/generate/sync","/api/<string:api_version>/generate/sync")
+    api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
+    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/prompt/<string:id>")
+    api.add_resource(PromptPop, "/generate/pop","/api/<string:api_version>/generate/pop")
+    api.add_resource(SubmitGeneration, "/generate/submit","/api/<string:api_version>/generate/submit")
+    api.add_resource(Users, "/users","/api/<string:api_version>/users")
+    api.add_resource(UserSingle, "/users/<string:user_id>","/api/<string:api_version>/users/<string:user_id>")
+    api.add_resource(Servers, "/servers","/api/<string:api_version>/servers")
+    api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
+    api.add_resource(Models, "/models","/api/<string:api_version>/models")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
