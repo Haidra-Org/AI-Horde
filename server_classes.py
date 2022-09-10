@@ -92,7 +92,12 @@ class WaitingPrompt:
         ret_dict["generations"] = []
         for procgen in self.processing_gens:
             if procgen.is_completed():
-                ret_dict["generations"].append(procgen.generation)
+                gen_dict = {
+                    "text": procgen.generation,
+                    "server_id": procgen.server.id,
+                    "server_name": procgen.server.name,
+                }
+                ret_dict["generations"].append(gen_dict)
         return(ret_dict)
 
     def record_usage(self, chars, kudos):

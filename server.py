@@ -119,7 +119,10 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        return(wp.get_status()['generations'], 200)
+        if not api_version:
+            return([gen['text'] for gen in wp.get_status()['generations']], 200)
+        else:
+            return(wp.get_status()['generations'], 200)
 
 
 class AsyncGeneratePrompt(Resource):
