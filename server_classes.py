@@ -92,7 +92,12 @@ class WaitingPrompt:
         ret_dict["generations"] = []
         for procgen in self.processing_gens:
             if procgen.is_completed():
-                ret_dict["generations"].append(procgen.generation)
+                gen_dict = {
+                    "text": procgen.generation,
+                    "server_id": procgen.server.id,
+                    "server_name": procgen.server.name,
+                }
+                ret_dict["generations"].append(gen_dict)
         return(ret_dict)
 
     def record_usage(self, chars, kudos):
@@ -338,6 +343,15 @@ class PromptsIndex(Index):
         for wp in self._index.values():
             count += wp.n
         return(count)
+
+    def get_waiting_wp_by_kudos(self):
+        sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
+        final_wp_list = []
+        for wp in sorted_wp_list:
+            if wp.needs_gen():
+                final_wp_list.append(wp)
+        return(final_wp_list)
+
 
 
 class GenerationsIndex(Index):

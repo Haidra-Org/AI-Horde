@@ -131,8 +131,12 @@ if __name__ == "__main__":
             loop_retry += 1
         else:
             try:
-                pop_req = requests.post(cluster + '/generate/pop', json = gen_dict)
+                pop_req = requests.post(cluster + '/api/v1/generate/pop', json = gen_dict)
             except requests.exceptions.ConnectionError:
+                logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
+                time.sleep(10)
+                continue
+            except requests.exceptions.JSONDecodeError():
                 logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
@@ -141,6 +145,10 @@ if __name__ == "__main__":
                 time.sleep(10)
                 continue
             pop = pop_req.json()
+            if not pop:
+                logging.error(f"Something has gone wrong with {cluster}. Please inform its administrator!")
+                time.sleep(interval)
+                continue
             if not pop["id"]:
                 logging.debug(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
                 time.sleep(interval)
@@ -167,7 +175,7 @@ if __name__ == "__main__":
         }
         while current_id and current_generation:
             try:
-                submit_req = requests.post(cluster + '/generate/submit', json = submit_dict)
+                submit_req = requests.post(cluster + '/api/v1/generate/submit', json = submit_dict)
                 if submit_req.status_code == 404:
                     logging.warning(f"The generation we were working on got stale. Aborting!")
                 elif not submit_req.ok:

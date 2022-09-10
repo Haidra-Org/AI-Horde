@@ -9,4 +9,3 @@ blinker
 python-dotenv
 transformers
 accelerate
-pandas

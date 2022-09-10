@@ -67,7 +67,7 @@ def after_request(response):
 
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
@@ -119,12 +119,15 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        return(wp.get_status()['generations'], 200)
+        if not api_version:
+            return([gen['text'] for gen in wp.get_status()['generations']], 200)
+        else:
+            return(wp.get_status()['generations'], 200)
 
 
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("30/minute")]
-    def get(self, id):
+    def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
@@ -133,7 +136,7 @@ class AsyncGeneratePrompt(Resource):
 
 class AsyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
@@ -145,7 +148,7 @@ class AsyncGenerate(Resource):
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
-        wp_count = _waiting_prompts.count_waiting_requests(args.username)
+        wp_count = _waiting_prompts.count_waiting_requests(user)
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
         if wp_count >= 3:
@@ -168,7 +171,7 @@ class AsyncGenerate(Resource):
 
 class PromptPop(Resource):
     decorators = [limiter.limit("45/second")]
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
@@ -194,20 +197,20 @@ class PromptPop(Resource):
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
+        ## Start prioritize by bridge request ##
         for priority_username in args.priority_usernames:
             priority_user = _db.find_user_by_username(priority_username)
             if priority_user:
                 priority_users.append(priority_user)
         for priority_user in priority_users:
             for wp in _waiting_prompts.get_all():
-                if wp.user == priority_user:
+                if wp.user == priority_user and wp.needs_gen():
                     prioritized_wp.append(wp)
-        for wp in _waiting_prompts.get_all():
+        ## End prioritize by bridge request ##
+        for wp in _waiting_prompts.get_waiting_wp_by_kudos():
             if wp not in prioritized_wp:
                 prioritized_wp.append(wp)
         for wp in prioritized_wp:
-            if not wp.needs_gen():
-                continue
             check_gen = server.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
@@ -231,7 +234,7 @@ class PromptPop(Resource):
 
 
 class SubmitGeneration(Resource):
-    def post(self):
+    def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
         parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
@@ -250,13 +253,30 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
         return({"reward": chars}, 200)
 
+class TransferKudos(Resource):
+    def post(self, api_version = None):
+        parser = reqparse.RequestParser()
+        parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
+        parser.add_argument("api_key", type=str, required=True, help="The sending user's API key")
+        parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer")
+        args = parser.parse_args()
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
+        ret = _db.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
+        kudos = ret[0]
+        error = ret[1]
+        if error != 'OK':
+            return(f"{error}",400)
+        return({"transfered": kudos}, 200)
+
 class Models(Resource):
-    def get(self):
+    def get(self, api_version = None):
         return(_db.get_available_models(),200)
 
 
 class Servers(Resource):
-    def get(self):
+    def get(self, api_version = None):
         servers_ret = []
         for server in _db.servers.values():
             if server.is_stale():
@@ -278,7 +298,7 @@ class Servers(Resource):
         return(servers_ret,200)
 
 class ServerSingle(Resource):
-    def get(self, server_id):
+    def get(self, api_version = None, server_id = ''):
         server = None
         for s in _db.servers.values():
             if s.id == server_id:
@@ -302,7 +322,7 @@ class ServerSingle(Resource):
 
 
 class Users(Resource):
-    def get(self):
+    def get(self, api_version = None):
         user_dict = {}
         for user in _db.users.values():
             user_dict[user.get_unique_alias()] = {
@@ -316,7 +336,7 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
-    def get(self, user_id):
+    def get(self, api_version = None, user_id = ''):
         logging.info(user_id)
         user = None
         for u in _db.users.values():
@@ -586,16 +606,17 @@ if __name__ == "__main__":
         redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
-    api.add_resource(SyncGenerate, "/generate/sync")
-    api.add_resource(AsyncGenerate, "/generate/async")
-    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
-    api.add_resource(PromptPop, "/generate/pop")
-    api.add_resource(SubmitGeneration, "/generate/submit")
-    api.add_resource(Users, "/users")
-    api.add_resource(UserSingle, "/users/<string:user_id>")
-    api.add_resource(Servers, "/servers")
-    api.add_resource(ServerSingle, "/servers/<string:server_id>")
-    api.add_resource(Models, "/models")
+    api.add_resource(SyncGenerate, "/generate/sync","/api/<string:api_version>/generate/sync")
+    api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
+    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/prompt/<string:id>")
+    api.add_resource(PromptPop, "/generate/pop","/api/<string:api_version>/generate/pop")
+    api.add_resource(SubmitGeneration, "/generate/submit","/api/<string:api_version>/generate/submit")
+    api.add_resource(Users, "/users","/api/<string:api_version>/users")
+    api.add_resource(UserSingle, "/users/<string:user_id>","/api/<string:api_version>/users/<string:user_id>")
+    api.add_resource(Servers, "/servers","/api/<string:api_version>/servers")
+    api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
+    api.add_resource(Models, "/models","/api/<string:api_version>/models")
+    api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
