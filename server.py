@@ -341,10 +341,10 @@ def index():
         index = index_file.read()
     top_contributor = _db.get_top_contributor()
     top_server = _db.get_top_server()
-    align_image = random.randint(1, 6)
+    align_image = 0
     big_image = align_image
     while big_image == align_image:
-        big_image = random.randint(1, 6)
+        big_image = random.randint(1, 5)
     if not top_contributor or not top_server:
         top_contributors = f'\n<img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />'
     else:
