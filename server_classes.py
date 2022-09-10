@@ -339,6 +339,12 @@ class PromptsIndex(Index):
             count += wp.n
         return(count)
 
+    def get_sorted_by_kudos(self):
+        sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
+        logging.info(self._index.values(),sorted_wp_list)
+        return(sorted_wp_list)
+
+
 
 class GenerationsIndex(Index):
     pass

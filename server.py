@@ -194,6 +194,7 @@ class PromptPop(Resource):
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
+        ## Start prioritize by bridge request ##
         for priority_username in args.priority_usernames:
             priority_user = _db.find_user_by_username(priority_username)
             if priority_user:
@@ -202,9 +203,12 @@ class PromptPop(Resource):
             for wp in _waiting_prompts.get_all():
                 if wp.user == priority_user:
                     prioritized_wp.append(wp)
-        for wp in _waiting_prompts.get_all():
+        ## End prioritize by bridge request ##
+        ## Start prioritize by kudos ##
+        for wp in _waiting_prompts.get_sorted_by_kudos():
             if wp not in prioritized_wp:
                 prioritized_wp.append(wp)
+        ## End prioritize by kudos ##
         for wp in prioritized_wp:
             if not wp.needs_gen():
                 continue
