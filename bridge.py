@@ -161,11 +161,11 @@ if __name__ == "__main__":
             time.sleep(1) # Wait a second to unload the softprompt
         gen_req = requests.post(kai_url + '/api/latest/generate/', json = current_payload)
         if type(gen_req.json()) is not dict:
-            logging.error(f'KAI instance {kai_instance} API unexpected response on generate: {gen_req}. Sleeping 10 seconds...')
+            logging.error(f'KAI instance {cluster} API unexpected response on generate: {gen_req}. Sleeping 10 seconds...')
             time.sleep(9)
             continue
         if gen_req.status_code == 503:
-            logging.debug(f'KAI instance {kai_instance} Busy (attempt {loop_retry}). Will try again...')
+            logging.debug(f'KAI instance {cluster} Busy (attempt {loop_retry}). Will try again...')
             continue
         current_generation = gen_req.json()["results"][0]["text"]
         submit_dict = {
