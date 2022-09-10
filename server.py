@@ -253,6 +253,23 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
         return({"reward": chars}, 200)
 
+class TransferKudos(Resource):
+    def post(self, api_version = None):
+        parser = reqparse.RequestParser()
+        parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
+        parser.add_argument("api_key", type=str, required=True, help="The sending user's API key")
+        parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer")
+        args = parser.parse_args()
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
+        ret = _db.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
+        kudos = ret[0]
+        error = ret[1]
+        if error != 'OK':
+            return(f"{error}",400)
+        return({"transfered": kudos}, 200)
+
 class Models(Resource):
     def get(self, api_version = None):
         return(_db.get_available_models(),200)
@@ -599,6 +616,7 @@ if __name__ == "__main__":
     api.add_resource(Servers, "/servers","/api/<string:api_version>/servers")
     api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
     api.add_resource(Models, "/models","/api/<string:api_version>/models")
+    api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     from waitress import serve
     serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
