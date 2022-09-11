@@ -48,52 +48,21 @@ def validate_kai(kai):
     global current_softprompt
     try:
         req = requests.get(kai + '/api/latest/model')
-        if type(req.json()) is not dict:
-            logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
-            return(False)
         model = req.json()["result"]
+        req = requests.get(kai + '/api/latest/config/max_context_length')
+        max_content_length = req.json()["value"]
+        req = requests.get(kai + '/api/latest/config/max_length')
+        max_length = req.json()["value"]
+        if model not in softprompts:
+                req = requests.get(kai + '/api/latest/config/soft_prompts_list')
+                softprompts[model] = [sp['value'] for sp in req.json()["values"]]
+        req = requests.get(kai + '/api/latest/config/soft_prompt')
+        current_softprompt = req.json()["value"]
     except requests.exceptions.JSONDecodeError:
         logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
     except requests.exceptions.ConnectionError:
         logging.error(f"Server {kai} is not reachable. Are you sure it's running?")
-        return(False)
-    try:
-        req = requests.get(kai + '/api/latest/config/max_context_length')
-        if type(req.json()) is not dict:
-            logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
-            return(False)
-        max_content_length = req.json()["value"]
-    except requests.exceptions.JSONDecodeError:
-        logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
-        return(False)
-    try:
-        req = requests.get(kai + '/api/latest/config/max_length')
-        if type(req.json()) is not dict:
-            logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
-            return(False)
-        max_length = req.json()["value"]
-    except requests.exceptions.JSONDecodeError:
-        logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
-        return(False)
-    if model not in softprompts:
-        try:
-            req = requests.get(kai + '/api/latest/config/soft_prompts_list')
-            if type(req.json()) is not dict:
-                logging.warn(f"Server {kai} is up but does not appear to be running the latest KoboldAI server. Are you sure it's running the UNITED branch?")
-                return(True)
-            softprompts[model] = [sp['value'] for sp in req.json()["values"]]
-        except requests.exceptions.JSONDecodeError:
-            logging.warn(f"Server {kai} is up but does not appear to be running the latest version of KoboldAI server. Are you sure it's running the UNITED branch?")
-            return(True)
-    try:
-        req = requests.get(kai + '/api/latest/config/soft_prompt')
-        if type(req.json()) is not dict:
-            logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
-            return(False)
-        current_softprompt = req.json()["value"]
-    except requests.exceptions.JSONDecodeError:
-        logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
     return(True)
 
@@ -155,6 +124,8 @@ if __name__ == "__main__":
                 continue
             current_id = pop['id']
             current_payload = pop['payload']
+            # By default, we don't want to be annoucing the prompt send from the Horde to the terminal
+            current_payload['quiet'] = True
             requested_softprompt = pop['softprompt']
         if requested_softprompt != current_softprompt:
             req = requests.put(kai_url + '/api/latest/config/soft_prompt/', json = {"value": requested_softprompt})
