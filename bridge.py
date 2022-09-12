@@ -1,8 +1,18 @@
-import requests
-import json, os
-import time
-import argparse
-import logging
+import requests, json, os, time, argparse, logging, sys
+from logger import logger
+
+# logger.generation("This is a generation message\nIt is typically multiline".replace('\n', '\n' + ' '*35))
+# logger.prompt("This is a prompt message")
+# logger.debug("Debug Message")
+# logger.info("Info Message")
+# logger.error("Error Message")
+# logger.critical("Critical Message")
+# logger.init("This is an init message", status="Starting")
+# logger.init_ok("This is an init message", status="OK")
+# logger.init_warn("This is an init message", status="Warning")
+# logger.init_err("This is an init message", status="Error")
+# logger.message("This is user message")
+# sys.exit()
 import random
 try:
     import clientData as cd
