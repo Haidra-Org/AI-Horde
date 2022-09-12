@@ -5,13 +5,14 @@ from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
-import logging, requests, random, time, os, oauthlib, secrets, argparse
+import requests, random, time, os, oauthlib, secrets, argparse, logging
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
 from uuid import uuid4
 from werkzeug.middleware.proxy_fix import ProxyFix
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
+from logger import logger, set_logger_verbosity, quiesce_logger
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -36,25 +37,25 @@ load_dotenv()
 
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_API_KEY:
-        logging.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
+        logger.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
         return(f'No user matching sent API Key. Have you remembered to register at https://koboldai.net/register ?')
     if error == ServerErrors.WRONG_CREDENTIALS:
-        logging.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
+        logger.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
         return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
     if error == ServerErrors.INVALID_PROCGEN:
-        logging.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
+        logger.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
         return(f'Processing Generation with ID {kwargs["id"]} does not exist')
     if error == ServerErrors.DUPLICATE_GEN:
-        logging.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
+        logger.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
         return(f'Processing Generation with ID {kwargs["id"]} already submitted')
     if error == ServerErrors.TOO_MANY_PROMPTS:
-        logging.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
+        logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
         return("Too many parallel requests from same user. Please try again later.")
     if error == ServerErrors.EMPTY_PROMPT:
-        logging.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
+        logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
     if error == ServerErrors.INVALID_MODEL:
-        logging.warning(f'Server "{kwargs["name"]}" tried to prompt pop with invalid model: {kwargs["model"]}. Aborting!')
+        logger.warning(f'Server "{kwargs["name"]}" tried to prompt pop with invalid model: {kwargs["model"]}. Aborting!')
         return(f'Invalid model for generating: {kwargs["model"]}.')
 
 
@@ -222,7 +223,7 @@ class PromptPop(Resource):
                 if sp == '':
                     matching_softprompt = sp
                 for sp_name in args['softprompts']:
-                    # logging.info([sp_name,sp,sp in sp_name])
+                    # logger.info([sp_name,sp,sp in sp_name])
                     if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
                         matching_softprompt = sp_name
                         break
@@ -337,7 +338,7 @@ class Users(Resource):
 
 class UserSingle(Resource):
     def get(self, api_version = None, user_id = ''):
-        logging.info(user_id)
+        logger.debug(user_id)
         user = None
         for u in _db.users.values():
             if str(u.id) == user_id:
@@ -560,7 +561,8 @@ def terms():
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, will use http instead of https (useful for testing)")
-
+arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
+arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 
 if __name__ == "__main__":
     global _db
@@ -568,7 +570,10 @@ if __name__ == "__main__":
     global _processing_generations
 
     args = arg_parser.parse_args()
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.INFO)
+    set_logger_verbosity(args.verbosity)
+    quiesce_logger(args.quiet)    
+    # Only setting this for the WSGI logs
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.ERROR)
     _db = Database()
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
@@ -618,5 +623,7 @@ if __name__ == "__main__":
     api.add_resource(Models, "/models","/api/<string:api_version>/models")
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     from waitress import serve
+    logger.init("WSGI Server", status="Starting")
     serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
+    logger.init("WSGI Server", status="Stopped")

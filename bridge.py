@@ -1,8 +1,6 @@
-import requests
-import json, os
-import time
-import argparse
-import logging
+import requests, json, os, time, argparse
+from logger import logger, set_logger_verbosity, quiesce_logger, test_logger
+
 import random
 try:
     import clientData as cd
@@ -33,6 +31,8 @@ arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=
 arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
 arg_parser.add_argument('--debug', action="store_true", default=False, help="Show debugging messages.")
 arg_parser.add_argument('--priority_usernames',type=str, action='append', required=False, help="Usernames which get priority use in this server. The owner's username is always in this list.")
+arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
+arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 
 model = ''
 max_content_length = 1024
@@ -40,6 +40,7 @@ max_length = 80
 current_softprompt = None
 softprompts = {}
 
+@logger.catch
 def validate_kai(kai):
     global model
     global max_content_length
@@ -59,32 +60,21 @@ def validate_kai(kai):
         req = requests.get(kai + '/api/latest/config/soft_prompt')
         current_softprompt = req.json()["value"]
     except requests.exceptions.JSONDecodeError:
-        logging.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
+        logger.error(f"Server {kai} is up but does not appear to be a KoboldAI server. Are you sure it's running the UNITED branch?")
         return(False)
     except requests.exceptions.ConnectionError:
-        logging.error(f"Server {kai} is not reachable. Are you sure it's running?")
+        logger.error(f"Server {kai} is not reachable. Are you sure it's running?")
         return(False)
     return(True)
 
 
-if __name__ == "__main__":
-    #logging.basicConfig(filename='server.log', encoding='utf-8', level=logging.DEBUG)
-    args = arg_parser.parse_args()
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.DEBUG if args.debug else logging.INFO)
-    global interval
-    interval = args.interval
+def bridge(interval, api_key, kai_name, kai_url, cluster, priority_usernames):
     current_id = None
     current_payload = None
     loop_retry = 0
-    api_key = args.api_key if args.api_key else cd.api_key
-    kai_name = args.kai_name if args.kai_name else cd.kai_name
-    kai_url = args.kai_url if args.kai_url else cd.kai_url
-    cluster = args.cluster_url if args.cluster_url else cd.cluster_url
-    priority_usernames = args.priority_usernames if args.priority_usernames else cd.priority_usernames
-    logging.info(f"Starting {kai_name} instance")
     while True:
         if not validate_kai(kai_url):
-            logging.warning(f"Waiting 10 seconds...")
+            logger.warning(f"Waiting 10 seconds...")
             time.sleep(10)
             continue
         gen_dict = {
@@ -102,24 +92,24 @@ if __name__ == "__main__":
             try:
                 pop_req = requests.post(cluster + '/api/v1/generate/pop', json = gen_dict)
             except requests.exceptions.ConnectionError:
-                logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
+                logger.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
             except requests.exceptions.JSONDecodeError():
-                logging.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
+                logger.warning(f"Server {cluster} unavailable during pop. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
             if not pop_req.ok:
-                logging.warning(f"During gen pop, server {cluster} responded: {pop_req.text}. Waiting for 10 seconds...")
+                logger.warning(f"During gen pop, server {cluster} responded: {pop_req.text}. Waiting for 10 seconds...")
                 time.sleep(10)
                 continue
             pop = pop_req.json()
             if not pop:
-                logging.error(f"Something has gone wrong with {cluster}. Please inform its administrator!")
+                logger.error(f"Something has gone wrong with {cluster}. Please inform its administrator!")
                 time.sleep(interval)
                 continue
             if not pop["id"]:
-                logging.debug(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
+                logger.debug(f"Server {cluster} has no valid generations to do for us. Skipped Info: {pop['skipped']}.")
                 time.sleep(interval)
                 continue
             current_id = pop['id']
@@ -132,11 +122,11 @@ if __name__ == "__main__":
             time.sleep(1) # Wait a second to unload the softprompt
         gen_req = requests.post(kai_url + '/api/latest/generate/', json = current_payload)
         if type(gen_req.json()) is not dict:
-            logging.error(f'KAI instance {kai_url} API unexpected response on generate: {gen_req}. Sleeping 10 seconds...')
+            logger.error(f'KAI instance {kai_url} API unexpected response on generate: {gen_req}. Sleeping 10 seconds...')
             time.sleep(9)
             continue
         if gen_req.status_code == 503:
-            logging.debug(f'KAI instance {kai_url} Busy (attempt {loop_retry}). Will try again...')
+            logger.debug(f'KAI instance {kai_url} Busy (attempt {loop_retry}). Will try again...')
             continue
         current_generation = gen_req.json()["results"][0]["text"]
         submit_dict = {
@@ -148,22 +138,41 @@ if __name__ == "__main__":
             try:
                 submit_req = requests.post(cluster + '/api/v1/generate/submit', json = submit_dict)
                 if submit_req.status_code == 404:
-                    logging.warning(f"The generation we were working on got stale. Aborting!")
+                    logger.warning(f"The generation we were working on got stale. Aborting!")
                 elif not submit_req.ok:
                     if "already submitted" in submit_req.text:
-                        logging.warning(f'Server think this gen already submitted. Continuing')
+                        logger.warning(f'Server think this gen already submitted. Continuing')
                     else:
-                        logging.error(submit_req.status_code)
-                        logging.warning(f"During gen submit, server {cluster} responded: {submit_req.text}. Waiting for 10 seconds...")
+                        logger.error(submit_req.status_code)
+                        logger.warning(f"During gen submit, server {cluster} responded: {submit_req.text}. Waiting for 10 seconds...")
                         time.sleep(10)
                         continue
                 else:
-                    logging.info(f'Submitted generation with id {current_id} and contributed for {submit_req.json()["reward"]}')
+                    logger.info(f'Submitted generation with id {current_id} and contributed for {submit_req.json()["reward"]}')
                 current_id = None
                 current_payload = None
                 current_generation = None
             except requests.exceptions.ConnectionError:
-                logging.warning(f"Server {cluster} unavailable during submit. Waiting 10 seconds...")
+                logger.warning(f"Server {cluster} unavailable during submit. Waiting 10 seconds...")
                 time.sleep(10)
                 continue
         time.sleep(interval)
+
+
+if __name__ == "__main__":
+    args = arg_parser.parse_args()
+    set_logger_verbosity(args.verbosity)
+    quiesce_logger(args.quiet)
+    # test_logger()
+    api_key = args.api_key if args.api_key else cd.api_key
+    kai_name = args.kai_name if args.kai_name else cd.kai_name
+    kai_url = args.kai_url if args.kai_url else cd.kai_url
+    cluster = args.cluster_url if args.cluster_url else cd.cluster_url
+    priority_usernames = args.priority_usernames if args.priority_usernames else cd.priority_usernames
+    logger.init(f"{kai_name} Instance", status="Starting")
+    try:
+        bridge(args.interval, api_key, kai_name, kai_url, cluster, priority_usernames)
+    except KeyboardInterrupt:
+        logger.info(f"Keyboard Interrupt Received. Ending Process")
+    logger.init(f"{kai_name} Instance", status="Stopping")
+

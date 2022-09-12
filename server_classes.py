@@ -2,7 +2,7 @@ import json, os
 from uuid import uuid4
 from datetime import datetime
 import threading, time
-import logging
+from logger import logger
 
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
@@ -17,7 +17,7 @@ class WaitingPrompt:
         self.n = params.get('n', 1)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
-            logging.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
+            logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
         self.max_length = params.get("max_length", 80)
         self.max_content_length = params.get("max_content_length", 1024)
@@ -41,7 +41,7 @@ class WaitingPrompt:
         # We separate the activation from __init__ as often we want to check if there's a valid server for it
         # Before we add it to the queue
         self._waiting_prompts.add_item(self)
-        logging.info(f"New prompt request by user: {self.user.get_unique_alias()}")
+        logger.info(f"New prompt request by user: {self.user.get_unique_alias()}")
         thread = threading.Thread(target=self.check_for_stale, args=())
         thread.daemon = True
         thread.start()
@@ -147,7 +147,7 @@ class ProcessingGeneration:
         kudos = self.owner._db.convert_chars_to_kudos(chars, self.model)
         self.server.record_contribution(chars, kudos, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage(chars, kudos)
-        logging.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
+        logger.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
         return(chars)
 
     def is_completed(self):
@@ -192,7 +192,7 @@ class KAIServer:
                 kudos = round(self._db.calculate_model_multiplier(model) / 2.75, 2)
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
-                logging.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                logger.info(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
             # If the server comes back from being stale, we just reset their last_reward_uptime
@@ -594,12 +594,12 @@ class Database:
     def register_new_user(self, user):
         self.last_user_id += 1
         self.users[user.oauth_id] = user
-        logging.info(f'New user created: {user.username}#{self.last_user_id}')
+        logger.info(f'New user created: {user.username}#{self.last_user_id}')
         return(self.last_user_id)
 
     def register_new_server(self, server):
         self.servers[server.name] = server
-        logging.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
+        logger.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
 
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
@@ -664,10 +664,10 @@ class Database:
             with accelerate.init_empty_weights():
                 model = transformers.AutoModelForCausalLM.from_config(config)
             params_sum = sum(v.numel() for v in model.state_dict().values())
-            logging.info(params_sum)
+            logger.info(params_sum)
             multiplier = params_sum / 1000000000
         except OSError:
-            logging.error(f"Model '{model_name}' not found in hugging face. Defaulting to multiplier of 1.")
+            logger.error(f"Model '{model_name}' not found in hugging face. Defaulting to multiplier of 1.")
             multiplier = 1
         self.stats["model_mulitpliers"][model_name] = multiplier
         return(multiplier)
@@ -675,6 +675,6 @@ class Database:
     def convert_chars_to_kudos(self, chars, model_name):
         multiplier = self.calculate_model_multiplier(model_name)
         kudos = round(chars * multiplier / 100,2)
-        # logging.info([chars,multiplier,kudos])
+        # logger.info([chars,multiplier,kudos])
         return(kudos)
 
