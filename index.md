@@ -9,7 +9,7 @@ You can find the source and documentation for [KoboldAI Horde](https://github.co
 * Average Recent Performance: {avg_performance} chars per second
 * Total chars generated: {total_chars}
 * Total requests fulfilled: {total_fulfillments}
-* Active Servers: {active_servers}
+* Active [Servers](/api/v1/servers): {active_servers}
 * Current Request Queue: {total_queue}
 
 ## Usage
