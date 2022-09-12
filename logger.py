@@ -27,7 +27,7 @@ def is_stderr_log(record):
     return(False)
 
 logfmt = "<level>{level: <10}</level> | <green>{name}</green>:<green>{function}</green>:<green>{line}</green> - <level>{message}</level>"
-genfmt = "<level>{level: <10}</level> @ <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>".ljust(50)
+genfmt = "<level>{level: <10}</level> @ <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>"
 initfmt = "<magenta>INIT      </magenta> | <level>{extra[status]: <10}</level> | <magenta>{message}</magenta>"
 msgfmt = "<level>{level: <10}</level> | <level>{message}</level>"
 
@@ -37,7 +37,7 @@ logger.level("INIT", no=31, color="<white>")
 logger.level("INIT_OK", no=31, color="<green>")
 logger.level("INIT_WARN", no=31, color="<yellow>")
 logger.level("INIT_ERR", no=31, color="<red>")
-logger.level("MESSAGE", no=20, color="<green>")
+logger.level("MESSAGE", no=51, color="<green>")
 
 logger.__class__.generation = partialmethod(logger.__class__.log, "GENERATION")
 logger.__class__.prompt = partialmethod(logger.__class__.log, "PROMPT")
