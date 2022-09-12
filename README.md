@@ -23,16 +23,16 @@ If you do not want to login even with a pseudonymous account, you can use this s
 
 To request the generation for a prompt, you need to send a post request like so:
 
-Asynchronously
-```
-curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "api_jey":"0000000000", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://horde.dbzer0.com/generate/async
-```
 Synchronously
 ```
-curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "api_jey":"0000000000", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://horde.dbzer0.com/generate/sync
+curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "api_jey":"0000000000", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://koboldai.net/api/latest/generate/sync
+```
+Asynchronously
+```
+curl -H "Content-Type: application/json" -d '{"prompt":"I entered into an argument with a clown", "params":{"max_length":16, "frmttriminc": true, "n":2}, "api_jey":"0000000000", "models":["KoboldAI/fairseq-dense-13B-Nerys-v2"]}' https://koboldai.net/api/latest/generate/async
 ```
 
-The "params" dictionary is the same as the parameters you pass to the KoboldAI API in the `api/latest/generate endpoint`, the only difference is that the "prompt" is outside the "params" dictionary.
+The "params" dictionary is the same as the parameters you pass to the KoboldAI API in the `api/latest/generate` endpoint, the only difference is that the "prompt" is outside the "params" dictionary.
 
 With one important difference, the "Gens per action" param `n` can be as high as you want! Each server will only handle 1 at a time, but multiple server will be able to work on your request at the same time.
 
@@ -52,7 +52,7 @@ In Asynchronous mode  This request will return a UUID
 You can now request the status of this prompt using this UUID from the server
 
 ```
-curl https://horde.dbzer0.com/generate/prompt/2a72f411-a4c3-49e1-aad4-41005e1ff769
+curl https://koboldai.net/api/latest/generate/prompt/2a72f411-a4c3-49e1-aad4-41005e1ff769
 {"finished": 1, "processing": 0, "waiting": 1, "done": false, "generations": [" as he stood before me."]}
 ```
 
@@ -76,7 +76,7 @@ The United branch of KoboldAI now supports using the bridge directly from its in
 
 ![](gui_select.png)
 
-You can also start KAI directly in horde mode by using the command line in the `play.(sh|bat)` file. Pass the arguments to start a KAI instance in cluster mode like so (Change "Anonynous" to your own username of course)
+You can also start KAI directly in horde mode by using the command line in the `play.(sh|bat)` file. Pass the arguments to start a KAI instance in cluster mode like so (Change "0000000000" to your own API KEY, if you have one.)
 
 LINUX
 
@@ -122,13 +122,14 @@ The bridge will automatically enable or disable softprompts at the clients reque
 
 # Other endpoints
 
-* GET `/servers` To see the info of all currently active servers and their statistics.
+* GET `/api/latest/servers` To see the info of all currently active servers and their statistics.
    ```json
    [{"name": "Db0's Awesome Instance", "id": "019e34e3-3109-4ea9-820a-b0c4f6a53c07", "model": "KoboldAI/fairseq-dense-2.7B-Nerys", "max_length": 80, "max_content_length": 1632, "tokens_generated": 30, "requests_fulfilled": 2, "latest_performance": "1.36 tokens per second"}]
-* GET `/servers/<UUID>` To see the information of a specific server by UUID.
-* GET `/users` To see the info of all registered users and their statistics
-* GET `/user/id` To see the info of a specific user
-* GET `/models` Which models are currently active and how many servers are running each
+* GET `/api/latest/servers/<UUID>` To see the information of a specific server by UUID.
+* GET `/api/latest/users` To see the info of all registered users and their statistics
+* GET `/api/latest/user/<ID>` To see the info of a specific user. ID is the integer at the end of their name.
+* GET `/api/latest/models` Which models are currently active and how many servers are running each
+* GET `/api/latest/kudos/transfer` Transfer Kudos to another user
 
 ## Other Info
 
@@ -146,7 +147,7 @@ If you want to both play with KAI AND share resources with the community, you ca
 2. open a terminal window at your KAI installation, and now run `play.(sh|bat)` using a different port in CLUSTER mode. This will start open another KAI window, while leaving your model-loaded KAI intact. Make sure the `req_model` you pass, includes the model loaded in your own KAI instance.
 
 ```bash
-play.bat --port 5002 --path https://horde.dbzer0.com --model CLUSTER --apikey 0000000000 --req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"
+play.bat --port 5002 --path https://koboldai.net --model CLUSTER --apikey 0000000000 --req_model "KoboldAI/fairseq-dense-13B-Nerys-v2" --req_model "KoboldAI/fairseq-dense-2.7B-Nerys"
 ```
 
 Now use the CLUSTER KAI to play. You will see the requests being fulfilled by the model-loaded KAI after you press the button.
