@@ -192,7 +192,7 @@ class KAIServer:
                 kudos = round(self._db.calculate_model_multiplier(model) / 2.75, 2)
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
-                logger.info(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                logger.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
             # If the server comes back from being stale, we just reset their last_reward_uptime
