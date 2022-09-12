@@ -2,7 +2,7 @@ Flask
 flask_restful
 flask_limiter
 waitress
-requests
+requests >= 2.27
 Markdown
 flask-dance[sqla]
 blinker
