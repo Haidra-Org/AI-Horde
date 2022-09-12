@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from uuid import uuid4
 from werkzeug.middleware.proxy_fix import ProxyFix
 from server_classes import WaitingPrompt,ProcessingGeneration,KAIServer,PromptsIndex,GenerationsIndex,User,Database
-from logger import logger
+from logger import logger, set_logger_verbosity, quiesce_logger
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -561,7 +561,8 @@ def terms():
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, will use http instead of https (useful for testing)")
-
+arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
+arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 
 if __name__ == "__main__":
     global _db
@@ -569,6 +570,8 @@ if __name__ == "__main__":
     global _processing_generations
 
     args = arg_parser.parse_args()
+    set_logger_verbosity(args.verbosity)
+    quiesce_logger(args.quiet)    
     # Only setting this for the WSGI logs
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.ERROR)
     _db = Database()

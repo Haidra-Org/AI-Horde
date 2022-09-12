@@ -1,18 +1,6 @@
-import requests, json, os, time, argparse, sys
-from logger import logger
+import requests, json, os, time, argparse
+from logger import logger, set_logger_verbosity, quiesce_logger, test_logger
 
-# logger.generation("This is a generation message\nIt is typically multiline\nThee Lines".encode("unicode_escape").decode("utf-8"))
-# logger.prompt("This is a prompt message")
-# logger.debug("Debug Message")
-# logger.info("Info Message")
-# logger.error("Error Message")
-# logger.critical("Critical Message")
-# logger.init("This is an init message", status="Starting")
-# logger.init_ok("This is an init message", status="OK")
-# logger.init_warn("This is an init message", status="Warning")
-# logger.init_err("This is an init message", status="Error")
-# logger.message("This is user message")
-# sys.exit()
 import random
 try:
     import clientData as cd
@@ -43,6 +31,8 @@ arg_parser.add_argument('-k', '--kai_url', action="store", required=False, type=
 arg_parser.add_argument('-c', '--cluster_url', action="store", required=False, type=str, help="The KoboldAI Cluster URL. Where the bridge will pickup prompts and send the finished generations.")
 arg_parser.add_argument('--debug', action="store_true", default=False, help="Show debugging messages.")
 arg_parser.add_argument('--priority_usernames',type=str, action='append', required=False, help="Usernames which get priority use in this server. The owner's username is always in this list.")
+arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
+arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 
 model = ''
 max_content_length = 1024
@@ -171,6 +161,9 @@ def bridge(interval, api_key, kai_name, kai_url, cluster, priority_usernames):
 
 if __name__ == "__main__":
     args = arg_parser.parse_args()
+    set_logger_verbosity(args.verbosity)
+    quiesce_logger(args.quiet)
+    # test_logger()
     api_key = args.api_key if args.api_key else cd.api_key
     kai_name = args.kai_name if args.kai_name else cd.kai_name
     kai_url = args.kai_url if args.kai_url else cd.kai_url
