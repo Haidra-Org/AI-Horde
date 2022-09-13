@@ -72,12 +72,8 @@ class SyncGenerate(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-        parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
-        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
+        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-        parser.add_argument("softprompts", type=str, action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
-        # Not implemented yet
-        parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
         args = parser.parse_args()
         username = 'Anonymous'
         if args.api_key:
@@ -141,10 +137,8 @@ class AsyncGenerate(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-        parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
-        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
+        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-        parser.add_argument("softprompts", action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
         args = parser.parse_args()
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -176,11 +170,8 @@ class PromptPop(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
-        parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
-        parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
-        parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
+        parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
         parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
-        parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
         args = parser.parse_args()
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
@@ -217,18 +208,6 @@ class PromptPop(Resource):
                 skipped_reason = check_gen[1]
                 skipped[skipped_reason] = skipped.get(skipped_reason,0) + 1
                 continue
-            matching_softprompt = False
-            for sp in wp.softprompts:
-                # If a None softprompts has been provided, we always match, since we can always remove the softprompt
-                if sp == '':
-                    matching_softprompt = sp
-                for sp_name in args['softprompts']:
-                    # logger.info([sp_name,sp,sp in sp_name])
-                    if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
-                        matching_softprompt = sp_name
-                        break
-                if matching_softprompt:
-                    break
             ret = wp.start_generation(server, matching_softprompt)
             return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
@@ -239,7 +218,7 @@ class SubmitGeneration(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
         parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
-        parser.add_argument("generation", type=str, required=False, default=[], help="The generated text")
+        parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image")
         args = parser.parse_args()
         procgen = _processing_generations.get_item(args['id'])
         if not procgen:
@@ -249,10 +228,10 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        chars = procgen.set_generation(args['generation'])
-        if chars == 0:
+        pixels = procgen.set_generation(args['generation'])
+        if pixels == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
-        return({"reward": chars}, 200)
+        return({"reward": pixels}, 200)
 
 class TransferKudos(Resource):
     def post(self, api_version = None):
@@ -286,9 +265,8 @@ class Servers(Resource):
                 "name": server.name,
                 "id": server.id,
                 "model": server.model,
-                "max_length": server.max_length,
-                "max_content_length": server.max_content_length,
-                "chars_generated": server.contributions,
+                "max_pixels": server.max_pixels,
+                "pixels_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "kudos_rewards": server.kudos,
                 "kudos_details": server.kudos_details,
@@ -310,9 +288,8 @@ class ServerSingle(Resource):
                 "name": server.name,
                 "id": server.id,
                 "model": server.model,
-                "max_length": server.max_length,
-                "max_content_length": server.max_content_length,
-                "chars_generated": server.contributions,
+                "max_pixels": server.max_pixels,
+                "pixels_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
             }
@@ -355,7 +332,7 @@ class UserSingle(Resource):
         else:
             return("Not found", 404)
 
-
+@logger.catch
 @REST_API.route('/')
 def index():
     with open('index.md') as index_file:
@@ -372,18 +349,16 @@ def index():
         top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
 ### Users
-This is the person whose server(s) have generated the most chars for the horde.
+This is the person whose server(s) have generated the most pixels for the horde.
 #### {top_contributor.get_unique_alias()}
-* {top_contributor.contributions['chars']} chars generated.
+* {top_contributor.contributions['pixels']} pixels generated.
 * {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
-This is the server which has generated the most chars for the horde.
+This is the server which has generated the most pixels for the horde.
 #### {top_server.name}
-* {top_server.contributions} chars generated.
+* {top_server.contributions} pixels generated.
 * {top_server.fulfilments} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
-
-<img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />
 """
     policies = """
 ## Policies
@@ -395,7 +370,7 @@ This is the server which has generated the most chars for the horde.
     findex = index.format(
         kobold_image = align_image,
         avg_performance= _db.get_request_avg(),
-        total_chars = totals["chars"],
+        total_pixels = totals["pixels"],
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
@@ -407,6 +382,7 @@ This is the server which has generated the most chars for the horde.
     """
     return(head + markdown(findex + top_contributors + policies))
 
+@logger.catch
 def get_oauth_id():
     google_data = None
     discord_data = None
@@ -443,6 +419,7 @@ def get_oauth_id():
     return(oauth_id)
 
 
+@logger.catch
 @REST_API.route('/register', methods=['GET', 'POST'])
 def register():
     api_key = None
@@ -481,6 +458,7 @@ def register():
                            oauth_id=oauth_id)
 
 
+@logger.catch
 @REST_API.route('/transfer', methods=['GET', 'POST'])
 def transfer():
     src_api_key = None
@@ -624,6 +602,6 @@ if __name__ == "__main__":
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port="5001",url_scheme=url_scheme)
+    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")

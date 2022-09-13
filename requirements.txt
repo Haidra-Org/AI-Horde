@@ -7,6 +7,4 @@ Markdown
 flask-dance[sqla]
 blinker
 python-dotenv
-transformers
-accelerate
 loguru
