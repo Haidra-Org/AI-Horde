@@ -34,7 +34,7 @@ api = Api(REST_API)
 dance_return_to = '/'
 load_dotenv()
 
-
+@logger.catch
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_API_KEY:
         logger.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
@@ -54,9 +54,6 @@ def get_error(error, **kwargs):
     if error == ServerErrors.EMPTY_PROMPT:
         logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
-    if error == ServerErrors.INVALID_MODEL:
-        logger.warning(f'Server "{kwargs["name"]}" tried to prompt pop with invalid model: {kwargs["model"]}. Aborting!')
-        return(f'Invalid model for generating: {kwargs["model"]}.')
 
 
 @REST_API.after_request
@@ -68,6 +65,7 @@ def after_request(response):
 
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
+    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
@@ -92,11 +90,8 @@ class SyncGenerate(Resource):
             _processing_generations,
             args["prompt"],
             user,
-            args["models"],
             args["params"],
             servers=args["servers"],
-            softprompts=args["softprompts"],
-
         )
         server_found = False
         for server in _db.servers.values():
@@ -124,6 +119,7 @@ class SyncGenerate(Resource):
 
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("30/minute")]
+    @logger.catch
     def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
@@ -133,6 +129,7 @@ class AsyncGeneratePrompt(Resource):
 
 class AsyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
+    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
@@ -157,8 +154,6 @@ class AsyncGenerate(Resource):
             args["models"],
             args["params"],
             servers=args["servers"],
-            softprompts=args["softprompts"],
-
         )
         wp.activate()
         return({"id":wp.id}, 200)
@@ -166,6 +161,7 @@ class AsyncGenerate(Resource):
 
 class PromptPop(Resource):
     decorators = [limiter.limit("45/second")]
+    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
@@ -177,15 +173,13 @@ class PromptPop(Resource):
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
-        if args['model'] in ['CLUSTER', 'ReadOnly']:
-            return(f"{get_error(ServerErrors.INVALID_MODEL, name = args['name'], model = args['model'])}",400)
         server = _db.find_server_by_name(args['name'])
         if not server:
             server = KAIServer(_db)
-            server.create(user, args['name'], args["softprompts"])
+            server.create(user, args['name'])
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        server.check_in(args['model'], args['max_length'], args['max_content_length'], args["softprompts"])
+        server.check_in(args['max_pixels'])
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
@@ -208,12 +202,13 @@ class PromptPop(Resource):
                 skipped_reason = check_gen[1]
                 skipped[skipped_reason] = skipped.get(skipped_reason,0) + 1
                 continue
-            ret = wp.start_generation(server, matching_softprompt)
+            ret = wp.start_generation(server)
             return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
 
 
 class SubmitGeneration(Resource):
+    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
@@ -234,6 +229,7 @@ class SubmitGeneration(Resource):
         return({"reward": pixels}, 200)
 
 class TransferKudos(Resource):
+    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
@@ -256,6 +252,7 @@ class Models(Resource):
 
 
 class Servers(Resource):
+    @logger.catch
     def get(self, api_version = None):
         servers_ret = []
         for server in _db.servers.values():
@@ -277,6 +274,7 @@ class Servers(Resource):
         return(servers_ret,200)
 
 class ServerSingle(Resource):
+    @logger.catch
     def get(self, api_version = None, server_id = ''):
         server = None
         for s in _db.servers.values():
@@ -300,6 +298,7 @@ class ServerSingle(Resource):
 
 
 class Users(Resource):
+    @logger.catch
     def get(self, api_version = None):
         user_dict = {}
         for user in _db.users.values():
@@ -314,6 +313,7 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
+    @logger.catch
     def get(self, api_version = None, user_id = ''):
         logger.debug(user_id)
         user = None

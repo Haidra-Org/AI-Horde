@@ -4,6 +4,7 @@ from datetime import datetime
 import threading, time
 from logger import logger
 
+
 class WaitingPrompt:
     # Every 10 secs we store usage data to disk
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -13,25 +14,25 @@ class WaitingPrompt:
         self.prompt = prompt
         self.user = user
         self.params = params
-        self.n = params.get('n', 1)
+        self.n = params.pop('n', 1)
+        self.steps = params.pop('steps', 50)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
             logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
-        self.max_length = params.get("max_length", 80)
-        self.max_content_length = params.get("max_content_length", 1024)
+        self.max_pixels = params.get("max_pixels", 262144)
         self.total_usage = 0
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = params
         self.gen_payload["prompt"] = prompt
         # We always send only 1 iteration to KoboldAI
-        self.gen_payload["n"] = 1
+        self.gen_payload["batch_size"] = 1
+        self.gen_payload["ddim_steps"] = self.steps
         # The generations that have been created already
         self.processing_gens = []
         self.last_process_time = datetime.now()
         self.servers = kwargs.get("servers", [])
-        self.softprompts = kwargs.get("softprompts", [''])
         # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
         self.stale_time = 600
 
@@ -50,7 +51,7 @@ class WaitingPrompt:
             return(True)
         return(False)
 
-    def start_generation(self, server, matching_softprompt):
+    def start_generation(self, server):
         if self.n <= 0:
             return
         new_gen = ProcessingGeneration(self, self._processing_generations, server)
@@ -59,7 +60,6 @@ class WaitingPrompt:
         self.refresh()
         prompt_payload = {
             "payload": self.gen_payload,
-            "softprompt": matching_softprompt,
             "id": new_gen.id,
         }
         return(prompt_payload)
@@ -141,7 +141,7 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         pixels = len(generation)
-        kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.steps)
+        kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.owner.steps)
         self.server.record_contribution(pixels, kudos, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage(pixels, kudos)
         logger.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
@@ -168,10 +168,9 @@ class KAIServer:
         # Every how many seconds does this server get a kudos reward
         self.uptime_reward_threshold = 600
 
-    def create(self, user, name, softprompts):
+    def create(self, user, name):
         self.user = user
         self.name = name
-        self.softprompts = softprompts
         self.id = str(uuid4())
         self.contributions = 0
         self.fulfilments = 0
@@ -196,6 +195,7 @@ class KAIServer:
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
         self.max_pixels = max_pixels
+        logger.debug(f"Server {self.name} checked-in")
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -214,25 +214,9 @@ class KAIServer:
         if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
             skipped_reason = 'server_id'
-        if self.max_content_length < waiting_prompt.max_content_length:
+        if self.max_pixels < waiting_prompt.max_pixels:
             is_matching = False
-            skipped_reason = 'max_content_length'
-        if self.max_length < waiting_prompt.max_length:
-            is_matching = False
-            skipped_reason = 'max_length'
-        matching_softprompt = False
-        for sp in waiting_prompt.softprompts:
-            # If a None softprompts has been provided, we always match, since we can always remove the softprompt
-            if sp == '':
-                matching_softprompt = True
-                break
-            for sp_name in self.softprompts:
-                if sp in sp_name:
-                    matching_softprompt = True
-                    break
-        if not matching_softprompt:
-            is_matching = False
-            skipped_reason = 'matching_softprompt'
+            skipped_reason = 'max_pixels'
         return([is_matching,skipped_reason])
 
     def record_contribution(self, pixels, kudos, seconds_taken):
@@ -278,7 +262,6 @@ class KAIServer:
             "performances": self.performances,
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
-            "softprompts": self.softprompts,
             "uptime": self.uptime,
         }
         return(ret_dict)
@@ -294,9 +277,9 @@ class KAIServer:
         self.performances = saved_dict.get("performances",[])
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
-        self.softprompts = saved_dict.get("softprompts",[])
         self.uptime = saved_dict.get("uptime",0)
         self._db.servers[self.name] = self
+
 
 class Index:
     def __init__(self):
@@ -342,6 +325,7 @@ class PromptsIndex(Index):
 
 class GenerationsIndex(Index):
     pass
+
 
 class User:
     def __init__(self, db):
