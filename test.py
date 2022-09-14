@@ -7,8 +7,8 @@ from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
 
 imgen_params = {
     "n":1,
-    "height": 400,
-    "width": 600,
+    "height": 64*6,
+    "width": 64*8,
 }
 
 submit_dict = {
@@ -27,5 +27,7 @@ def test():
         img_bytes = base64.b64decode(base64_bytes)
         img = Image.frombytes('RGB', (imgen_params["width"],imgen_params["height"]), img_bytes, "raw")
         img.save("test.png")
+    else:
+        print(submit_req.text)
 
 test()

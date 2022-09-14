@@ -20,7 +20,8 @@ class WaitingPrompt:
         if self.n > 20:
             logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
-        self.max_pixels = params.get("max_pixels", 262144)
+        self.width = params.get("width", 512)
+        self.height = params.get("height", 512)
         self.total_usage = 0
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
@@ -142,7 +143,7 @@ class ProcessingGeneration:
         if self.is_completed():
             return(0)
         self.generation = generation
-        pixels = len(generation)
+        pixels = self.owner.width * self.owner.height
         kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.owner.steps)
         self.server.record_contribution(pixels, kudos, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage(pixels, kudos)
@@ -216,7 +217,7 @@ class KAIServer:
         if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
             skipped_reason = 'server_id'
-        if self.max_pixels < waiting_prompt.max_pixels:
+        if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
             is_matching = False
             skipped_reason = 'max_pixels'
         return([is_matching,skipped_reason])
@@ -619,7 +620,8 @@ class Database:
 
     def convert_pixels_to_kudos(self, pixels, steps):
         multiplier = steps
-        kudos = round(pixels * multiplier / 100,2)
+        # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
+        kudos = round(pixels * multiplier / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])
         return(kudos)
 
