@@ -1,6 +1,8 @@
 import requests, json, os, time, argparse, base64
 from logger import logger, set_logger_verbosity, quiesce_logger, test_logger
 from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
+from io import BytesIO
+
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-n', '--amount', action="store", required=False, type=int, help="The amount of images to generate with this prompt")
 arg_parser.add_argument('-p','--prompt', action="store", required=False, type=str, help="The prompt with which to generate images")
@@ -46,7 +48,7 @@ def generate():
             b64img = results[iter]["img"]
             base64_bytes = b64img.encode('utf-8')
             img_bytes = base64.b64decode(base64_bytes)
-            img = Image.frombytes('RGB', (final_imgen_params["width"],final_imgen_params["height"]), img_bytes, "raw")
+            img = Image.open(BytesIO(img_bytes))
             if len(results) > 1:
                 final_filename = f"{iter}_{filename}"
             img.save(final_filename)
