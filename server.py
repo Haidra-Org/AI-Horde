@@ -111,7 +111,7 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        ret_dict = [gen['img'] for gen in wp.get_status()['generations']]
+        ret_dict = wp.get_status()['generations']
         # We delete it from memory immediately to ensure we don't run out
         wp.delete()
         return(ret_dict, 200)
