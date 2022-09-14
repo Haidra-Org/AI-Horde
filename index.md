@@ -2,10 +2,12 @@
 
 <img style="float:right" src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{kobold_image}.jpg?raw=true" width="300" /> This is a crowdsourced distributed cluster of [Stable Diffusion generators](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
 
+Also check our sister project: [KoboldAI Horde](https://koboldai.net)
+
 ## Stats 
 
-* Average Recent Performance: {avg_performance} pixels per second
-* Total pixels generated: {total_pixels}
+* Average Recent Performance: {avg_performance} Kilopixels per second
+* Total pixels generated: {total_pixels} Megapixels
 * Total requests fulfilled: {total_fulfillments}
 * Active [Servers](/api/v1/servers): {active_servers}
 * Current Request Queue: {total_queue}

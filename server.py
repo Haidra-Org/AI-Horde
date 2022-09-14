@@ -253,11 +253,6 @@ class TransferKudos(Resource):
             return(f"{error}",400)
         return({"transfered": kudos}, 200)
 
-class Models(Resource):
-    def get(self, api_version = None):
-        return(_db.get_available_models(),200)
-
-
 class Servers(Resource):
     @logger.catch
     def get(self, api_version = None):
@@ -268,7 +263,6 @@ class Servers(Resource):
             sdict = {
                 "name": server.name,
                 "id": server.id,
-                "model": server.model,
                 "max_pixels": server.max_pixels,
                 "pixels_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
@@ -358,12 +352,12 @@ These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most pixels for the horde.
 #### {top_contributor.get_unique_alias()}
-* {top_contributor.contributions['pixels']} pixels generated.
+* {round(top_contributor.contributions['pixels'] / 1000000,2)} Megapixels generated.
 * {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
 This is the server which has generated the most pixels for the horde.
 #### {top_server.name}
-* {top_server.contributions} pixels generated.
+* {round(top_server.contributions/1000000,2)} Megapixels generated.
 * {top_server.fulfilments} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
 """
@@ -376,8 +370,8 @@ This is the server which has generated the most pixels for the horde.
     totals = _db.get_total_usage()
     findex = index.format(
         kobold_image = align_image,
-        avg_performance= _db.get_request_avg(),
-        total_pixels = totals["pixels"],
+        avg_performance= round(_db.get_request_avg() / 1000,2),
+        total_pixels = round(totals["pixels"] / 1000000,2),
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
@@ -606,7 +600,6 @@ if __name__ == "__main__":
     api.add_resource(UserSingle, "/users/<string:user_id>","/api/<string:api_version>/users/<string:user_id>")
     api.add_resource(Servers, "/servers","/api/<string:api_version>/servers")
     api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
-    api.add_resource(Models, "/models","/api/<string:api_version>/models")
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
