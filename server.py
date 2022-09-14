@@ -370,7 +370,7 @@ This is the server which has generated the most pixels for the horde.
     totals = _db.get_total_usage()
     findex = index.format(
         stable_image = align_image,
-        avg_performance= round(_db.get_request_avg(),2),
+        avg_performance= round(_db.get_request_avg() / 1000,2),
         total_pixels = round(totals["pixels"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
