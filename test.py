@@ -7,7 +7,7 @@ from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
 
 imgen_params = {
     "n":1,
-    "height": 64*6,
+    "height": 64*8,
     "width": 64*8,
 }
 
