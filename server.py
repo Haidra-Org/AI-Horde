@@ -345,7 +345,7 @@ def index():
     while big_image == align_image:
         big_image = random.randint(1, 5)
     if not top_contributor or not top_server:
-        top_contributors = f'\n<img src="https://github.com/db0/KoboldAI-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />'
+        top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />'
     else:
         top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
