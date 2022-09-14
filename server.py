@@ -38,7 +38,7 @@ load_dotenv()
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_API_KEY:
         logger.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
-        return(f'No user matching sent API Key. Have you remembered to register at https://koboldai.net/register ?')
+        return(f'No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?')
     if error == ServerErrors.WRONG_CREDENTIALS:
         logger.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
         return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
@@ -345,7 +345,7 @@ def index():
     while big_image == align_image:
         big_image = random.randint(1, 5)
     if not top_contributor or not top_server:
-        top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.jpg?raw=true" width="800" />'
+        top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.png?raw=true" width="800" />'
     else:
         top_contributors = f"""\n## Top Contributors
 These are the people and servers who have contributed most to this horde.
@@ -369,7 +369,7 @@ This is the server which has generated the most pixels for the horde.
 [Terms of Service](/terms)"""
     totals = _db.get_total_usage()
     findex = index.format(
-        kobold_image = align_image,
+        stable_image = align_image,
         avg_performance= round(_db.get_request_avg() / 1000,2),
         total_pixels = round(totals["pixels"] / 1000000,2),
         total_fulfillments = totals["fulfilments"],
@@ -450,7 +450,7 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
-                           page_title="Join the KoboldAI Horde!",
+                           page_title="Join the Stable Horde!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
