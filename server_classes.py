@@ -33,8 +33,10 @@ class WaitingPrompt:
         self.processing_gens = []
         self.last_process_time = datetime.now()
         self.servers = kwargs.get("servers", [])
-        # Prompt requests are removed after 10 mins of inactivity, to prevent memory usage
-        self.stale_time = 600
+        # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
+        self.stale_time = 60 * self.n
+        if self.stale_time > 300:
+            self.stale_time = 300
 
 
     def activate(self):
@@ -92,7 +94,7 @@ class WaitingPrompt:
         for procgen in self.processing_gens:
             if procgen.is_completed():
                 gen_dict = {
-                    "text": procgen.generation,
+                    "img": procgen.generation,
                     "server_id": procgen.server.id,
                     "server_name": procgen.server.name,
                 }

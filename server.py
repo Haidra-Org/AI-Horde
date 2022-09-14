@@ -111,10 +111,10 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        if not api_version:
-            return([gen['text'] for gen in wp.get_status()['generations']], 200)
-        else:
-            return(wp.get_status()['generations'], 200)
+        ret_dict = [gen['img'] for gen in wp.get_status()['generations']]
+        # We delete it from memory immediately to ensure we don't run out
+        wp.delete()
+        return(ret_dict, 200)
 
 
 class AsyncGeneratePrompt(Resource):
@@ -590,7 +590,8 @@ if __name__ == "__main__":
     )
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
     api.add_resource(SyncGenerate, "/generate/sync","/api/<string:api_version>/generate/sync")
-    api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
+    # Async is disabled due to the memory requirements of keeping images in running memory
+    # api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/prompt/<string:id>")
     api.add_resource(PromptPop, "/generate/pop","/api/<string:api_version>/generate/pop")
     api.add_resource(SubmitGeneration, "/generate/submit","/api/<string:api_version>/generate/submit")
