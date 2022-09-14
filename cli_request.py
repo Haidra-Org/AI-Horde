@@ -37,14 +37,14 @@ def generate():
         "api_key": args.api_key if args.api_key else imgen_params.get('api_key',"0000000000"),
         "params": final_imgen_params,
     }    
-    submit_req = requests.post('https://stablehorde.net/api/v1/generate/sync', json = submit_dict)
+    submit_req = requests.post('https://stablehorde.net/api/v1/generate/sync', json = final_submit_dict)
     if submit_req.ok:
         results = submit_req.json()
         for iter in range(len(results)):
             b64img = results[iter]["img"]
             base64_bytes = b64img.encode('utf-8')
             img_bytes = base64.b64decode(base64_bytes)
-            img = Image.frombytes('RGB', (imgen_params["width"],imgen_params["height"]), img_bytes, "raw")
+            img = Image.frombytes('RGB', (final_imgen_params["width"],final_imgen_params["height"]), img_bytes, "raw")
             if len(results) > 1:
                 final_filename = f"{iter}_{filename}"
             img.save(final_filename)
