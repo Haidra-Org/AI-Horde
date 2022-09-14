@@ -376,7 +376,7 @@ This is the server which has generated the most pixels for the horde.
         total_queue = _waiting_prompts.count_total_waiting_generations(),
     )
     head = """<head>
-    <title>KoboldAI Horde</title>
+    <title>Stable Horde</title>
     <meta name="google-site-verification" content="5imNnbyz39-i9j6dbAeS0o0ZRIfzpznY9FBa_kMZns0" />
     </head>
     """
