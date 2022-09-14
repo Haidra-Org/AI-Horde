@@ -395,7 +395,7 @@ class User:
         self.modify_kudos(-kudos,"accumulated")
 
     def record_contributions(self, pixels, kudos):
-        self.contributions["pixels"] += pixels
+        self.contributions["pixels"] += int(pixels/1000)
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
