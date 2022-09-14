@@ -13,28 +13,33 @@ arg_parser.add_argument('-f', '--filename', type=str, action='store', required=F
 args = arg_parser.parse_args()
 
 
-filename = args.filename if args.filename else "horde_generation.png"
-
+filename = "horde_generation.png"
+# You can fill these in to avoid putting them as args all the time
 imgen_params = {
-    "n": args.amount if args.amount else 1,
-    "width": args.width if args.width else 64*8,
-    "height": args.height if args.height else 64*8,
-    "steps": args.steps if args.steps else 50,
-    # You can put extra params here if you wish
+    # You can put extra SD webui params here if you wish
 }
-
 submit_dict = {
-    "prompt": args.prompt if args.prompt else "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
-    "api_key": args.api_key if args.api_key else "0000000000",
-    "params": imgen_params,
 }
 
 @logger.catch
 def generate():
+    final_filename = args.filename if args.filename else filename
+    final_imgen_params = {
+        "n": args.amount if args.amount else imgen_params.get('n',1),
+        "width": args.width if args.width else imgen_params.get('width',512),
+        "height": args.height if args.height else imgen_params.get('height',512),
+        "steps": args.steps if args.steps else imgen_params.get('steps',50),
+        # You can put extra params here if you wish
+    }
+
+    final_submit_dict = {
+        "prompt": args.prompt if args.prompt else imgen_params.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
+        "api_key": args.api_key if args.api_key else imgen_params.get('api_key',"0000000000"),
+        "params": final_imgen_params,
+    }    
     submit_req = requests.post('https://stablehorde.net/api/v1/generate/sync', json = submit_dict)
     if submit_req.ok:
         results = submit_req.json()
-        final_filename = filename
         for iter in range(len(results)):
             b64img = results[iter]["img"]
             base64_bytes = b64img.encode('utf-8')
