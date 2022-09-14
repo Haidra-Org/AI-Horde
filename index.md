@@ -1,6 +1,6 @@
 # Stable Horde
 
-<img style="float:right" src="https://github.com/db0/Stable-Horde/blob/master/img/{kobold_image}.png?raw=true" width="300" /> This is a crowdsourced distributed cluster of [Stable Diffusion generators](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
+<img style="float:right" src="https://github.com/db0/Stable-Horde/blob/master/img/{stable_image}.jpg?raw=true" width="300" /> This is a crowdsourced distributed cluster of [Stable Diffusion generators](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
 
 Also check our sister project: [KoboldAI Horde](https://koboldai.net)
 
