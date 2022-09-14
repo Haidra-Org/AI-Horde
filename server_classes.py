@@ -303,7 +303,7 @@ class Index:
         return(self._index.values())
 
     def is_deleted(self,item):
-        if item.id in _index:
+        if item.id in self._index:
             return(False)
         return(True)
 
