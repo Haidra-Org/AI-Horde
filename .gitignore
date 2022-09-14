@@ -130,4 +130,4 @@ dmypy.json
 
 
 db/*
-clientData.py
+cliRequestsData.py
