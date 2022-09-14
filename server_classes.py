@@ -109,6 +109,8 @@ class WaitingPrompt:
 
     def check_for_stale(self):
         while True:
+            if self._waiting_prompts.is_deleted(self):
+                break
             if self.is_stale():
                 self.delete()
                 break
@@ -300,6 +302,10 @@ class Index:
     def get_all(self):
         return(self._index.values())
 
+    def is_deleted(self,item):
+        if uuid in _index:
+            return(False)
+        return(True)
 
 class PromptsIndex(Index):
 
