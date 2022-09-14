@@ -187,9 +187,9 @@ class KAIServer:
     def check_in(self, max_pixels):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
-            # Every 10 minutes of uptime gets kudos rewarded
+            # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                kudos = 10
+                kudos = 100
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
                 logger.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
