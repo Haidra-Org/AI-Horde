@@ -21,7 +21,7 @@ class ServerErrors(Enum):
     TOO_MANY_PROMPTS = 3
     EMPTY_PROMPT = 4
     INVALID_API_KEY = 5
-    INVALID_MODEL = 6
+    INVALID_SIZE = 6
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -54,6 +54,9 @@ def get_error(error, **kwargs):
     if error == ServerErrors.EMPTY_PROMPT:
         logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
+    if error == ServerErrors.INVALID_SIZE:
+        logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
+        return("Invalid size. The image dimentions have to be multiples of 64.")
 
 
 @REST_API.after_request
@@ -84,6 +87,10 @@ class SyncGenerate(Resource):
         wp_count = _waiting_prompts.count_waiting_requests(user)
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
+        if args["params"].get("length",512)%64:
+            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+        if args["params"].get("width",512)%64:
+            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,

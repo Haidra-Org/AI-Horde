@@ -7,8 +7,8 @@ from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
 
 imgen_params = {
     "n":1,
-    "height": 450,
-    "width": 450,
+    "height": 400,
+    "width": 600,
 }
 
 submit_dict = {
