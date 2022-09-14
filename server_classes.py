@@ -103,7 +103,7 @@ class WaitingPrompt:
         return(ret_dict)
 
     def record_usage(self, pixels, kudos):
-        self.total_usage += pixels
+        self.total_usage += pixels/1000
         self.user.record_usage(pixels, kudos)
         self.refresh()
 
@@ -229,7 +229,7 @@ class KAIServer:
         self.user.record_contributions(pixels, kudos)
         self.modify_kudos(kudos,'generated')
         self._db.record_fulfilment(perf)
-        self.contributions += pixels
+        self.contributions += int(pixels/1000)
         self.fulfilments += 1
         self.performances.append(perf)
         if len(self.performances) > 20:
@@ -390,7 +390,7 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, pixels, kudos):
-        self.usage["pixels"] += pixels
+        self.usage["pixels"] += int(pixels/1000)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
@@ -432,15 +432,7 @@ class User:
         self.id = saved_dict["id"]
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
-        # if "tokens" in self.contributions:
-        #     self.contributions["pixels"] = self.contributions["tokens"] * 4
-        #     self.record_contributions(self.contributions["pixels"], self.contributions["pixels"] / 100)
-        #     del self.contributions["tokens"]
         self.usage = saved_dict["usage"]
-        # if "tokens" in self.usage:
-        #     self.usage["pixels"] = self.usage["tokens"] * 4
-        #     self.record_contributions(self.usage["pixels"], -self.usage["pixels"] / 100)
-        #     del self.usage["tokens"]
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
 
