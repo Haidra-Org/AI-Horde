@@ -378,7 +378,7 @@ This is the server which has generated the most pixels for the horde.
     )
     head = """<head>
     <title>Stable Horde</title>
-    <meta name="google-site-verification" content="5imNnbyz39-i9j6dbAeS0o0ZRIfzpznY9FBa_kMZns0" />
+    <meta name="google-site-verification" content="pmLKyCEPKM5csKT9mW1ZbGLu2TX_wD0S5FCxWlmg_iI" />
     </head>
     """
     return(head + markdown(findex + top_contributors + policies))
