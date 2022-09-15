@@ -35,7 +35,7 @@ class WaitingPrompt:
         self.last_process_time = datetime.now()
         self.servers = kwargs.get("servers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
-        self.stale_time = 60 * self.n
+        self.stale_time = 180 * self.n
         if self.stale_time > 300:
             self.stale_time = 300
 
