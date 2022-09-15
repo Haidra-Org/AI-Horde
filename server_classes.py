@@ -22,6 +22,7 @@ class WaitingPrompt:
             self.n = 20
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
+        logger.debug(f"New Prompt - width: {self.width} * height: {self.height} = {self.width * self.height} pixels")
         self.total_usage = 0
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
