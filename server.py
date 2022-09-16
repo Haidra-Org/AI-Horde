@@ -231,6 +231,7 @@ class SubmitGeneration(Resource):
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
         parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
         parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image")
+        parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
         args = parser.parse_args()
         procgen = _processing_generations.get_item(args['id'])
         if not procgen:
@@ -240,7 +241,7 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        kudos = procgen.set_generation(args['generation'])
+        kudos = procgen.set_generation(args['generation'], args['seed'])
         if kudos == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
         return({"reward": kudos}, 200)

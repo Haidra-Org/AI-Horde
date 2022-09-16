@@ -97,6 +97,7 @@ class WaitingPrompt:
             if procgen.is_completed():
                 gen_dict = {
                     "img": procgen.generation,
+                    "seed": procgen.seed,
                     "server_id": procgen.server.id,
                     "server_name": procgen.server.name,
                 }
@@ -139,15 +140,18 @@ class ProcessingGeneration:
         self.owner = owner
         self.server = server
         self.generation = None
+        self.seed = None
+        self.kudos = 0
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
 
-    def set_generation(self, generation):
+    def set_generation(self, generation, seed):
         if self.is_completed():
             return(0)
         self.generation = generation
+        self.seed = seed
         pixels = self.owner.width * self.owner.height
-        kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.owner.steps)
+        self.kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.owner.steps)
         self.server.record_contribution(pixels, kudos, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage(pixels, kudos)
         logger.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
