@@ -152,10 +152,10 @@ class ProcessingGeneration:
         self.seed = seed
         pixels = self.owner.width * self.owner.height
         self.kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.owner.steps)
-        self.server.record_contribution(pixels, kudos, (datetime.now() - self.start_time).seconds)
-        self.owner.record_usage(pixels, kudos)
-        logger.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
-        return(kudos)
+        self.server.record_contribution(pixels, self.kudos, (datetime.now() - self.start_time).seconds)
+        self.owner.record_usage(pixels, self.kudos)
+        logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
+        return(self.kudos)
 
     def is_completed(self):
         if self.generation:
