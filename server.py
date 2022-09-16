@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, request
+from flask import Flask, render_template, redirect, url_for, request, abort
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -57,6 +57,15 @@ def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_SIZE:
         logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
         return("Invalid size. The image dimentions have to be multiples of 64.")
+    if error == ServerErrors.NO_PROXY:
+        logger.warning(f'Attempt to access outside reverse proxy')
+        return(f'Access allowed only through https')
+
+@REST_API.before_request
+def limit_remote_addr():
+    if request.remote_addr != '127.0.0.1':
+        error_msg = get_error(ServerErrors.NO_PROXY)
+        abort(403, error_msg)
 
 
 @REST_API.after_request
