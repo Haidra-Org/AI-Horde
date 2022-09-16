@@ -22,6 +22,7 @@ class ServerErrors(Enum):
     EMPTY_PROMPT = 4
     INVALID_API_KEY = 5
     INVALID_SIZE = 6
+    NO_PROXY = 7
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
