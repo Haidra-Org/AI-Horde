@@ -151,7 +151,7 @@ class ProcessingGeneration:
         self.server.record_contribution(pixels, kudos, (datetime.now() - self.start_time).seconds)
         self.owner.record_usage(pixels, kudos)
         logger.info(f"New Generation worth {kudos} kudos, delivered by server: {self.server.name}")
-        return(pixels)
+        return(kudos)
 
     def is_completed(self):
         if self.generation:

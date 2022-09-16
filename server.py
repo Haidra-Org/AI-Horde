@@ -240,10 +240,10 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        pixels = procgen.set_generation(args['generation'])
-        if pixels == 0:
+        kudos = procgen.set_generation(args['generation'])
+        if kudos == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
-        return({"reward": pixels}, 200)
+        return({"reward": kudos}, 200)
 
 class TransferKudos(Resource):
     @logger.catch
