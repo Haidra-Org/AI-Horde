@@ -2,7 +2,7 @@
 
 <img style="float:right" src="https://raw.githubusercontent.com/db0/Stable-Horde/main/img/{stable_image}.jpg" width="300" /> This is a crowdsourced distributed cluster of [Stable Diffusion generators](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
 
-Also check our sister project: [KoboldAI Horde](https://koboldai.net)
+Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
 
 ## Stats 
 
@@ -19,6 +19,11 @@ First [Register an account](/register) which will generate for you an API key. S
    * if you do not want to register, you can use '0000000000' as api_key to connect anonymously. However anonymous accounts have the lowest priority when there's too many concurrent requests!
    * To increase your priority you will need a unique API key and then to increase your Kudos. [Read how Kudos are working](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/).
 
+### GUI
+
+We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
+<img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
+
 ### Command Line
 1. Git clone [this repository](https://github.com/db0/Stable-Horde)
 1. Make sure you have python3 installed
@@ -30,9 +35,9 @@ You can use `./cli_requests.py -h` to see the command line arguments to use
 
 You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
 
-### GUI
+### Tools
 
-Coming Soon
+We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
 
 ## Services
 
@@ -41,7 +46,7 @@ Coming Soon
 
 ## Community
 
-TBD 
+Join us on [Discord](https://discord.gg/3DxrhksKzn)
 
 ## Credits
 
