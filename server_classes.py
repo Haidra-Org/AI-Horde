@@ -230,7 +230,10 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     def record_contribution(self, pixels, kudos, seconds_taken):
-        perf = round(pixels / seconds_taken,1)
+        if seconds_taken == 0:
+            perf = 1
+        else:
+            perf = round(pixels / seconds_taken,1)
         self.user.record_contributions(pixels, kudos)
         self.modify_kudos(kudos,'generated')
         self._db.record_fulfilment(perf)
