@@ -5,7 +5,7 @@ from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
-import requests, random, time, os, oauthlib, secrets, argparse, logging, werkzeug
+import requests, random, time, os, oauthlib, secrets, argparse, logging
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
@@ -78,17 +78,14 @@ def after_request(response):
 
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    @logger.catch
+    # @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-        try:
-            args = parser.parse_args()
-        except werkzeug.exceptions.BadRequest:
-            pass
+        args = parser.parse_args()
         username = 'Anonymous'
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
