@@ -411,6 +411,7 @@ class User:
         self.modify_kudos(kudos,"accumulated")
 
     def modify_kudos(self, kudos, action = 'accumulated'):
+        logger.debug(f"modifying kudos of {self.get_unique_alias} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
 
