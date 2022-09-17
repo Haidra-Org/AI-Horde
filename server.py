@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, request, abort
+from flask import Flask, render_template, redirect, url_for, request, abort, werkzeug
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -85,7 +85,10 @@ class SyncGenerate(Resource):
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-        args = parser.parse_args()
+        try:
+            args = parser.parse_args()
+        except werkzeug.exceptions.BadRequest:
+            pass
         username = 'Anonymous'
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
