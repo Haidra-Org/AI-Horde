@@ -1,11 +1,11 @@
-from flask import Flask, render_template, redirect, url_for, request, abort, werkzeug
+from flask import Flask, render_template, redirect, url_for, request, abort
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
-import requests, random, time, os, oauthlib, secrets, argparse, logging
+import requests, random, time, os, oauthlib, secrets, argparse, logging, werkzeug
 from enum import Enum
 from markdown import markdown
 from dotenv import load_dotenv
