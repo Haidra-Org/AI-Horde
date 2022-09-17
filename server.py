@@ -78,7 +78,6 @@ def after_request(response):
 
 class SyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    # @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
@@ -136,7 +135,6 @@ class SyncGenerate(Resource):
 
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("30/minute")]
-    @logger.catch
     def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
@@ -146,7 +144,6 @@ class AsyncGeneratePrompt(Resource):
 
 class AsyncGenerate(Resource):
     decorators = [limiter.limit("10/minute")]
-    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
@@ -178,7 +175,6 @@ class AsyncGenerate(Resource):
 
 class PromptPop(Resource):
     decorators = [limiter.limit("45/second")]
-    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
@@ -225,7 +221,6 @@ class PromptPop(Resource):
 
 
 class SubmitGeneration(Resource):
-    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
@@ -247,7 +242,6 @@ class SubmitGeneration(Resource):
         return({"reward": kudos}, 200)
 
 class TransferKudos(Resource):
-    @logger.catch
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
