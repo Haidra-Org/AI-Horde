@@ -358,7 +358,7 @@ These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most pixels for the horde.
 #### {top_contributor.get_unique_alias()}
-* {round(top_contributor.contributions['pixelsteps'] / 1000,2)} Gigapixelsteps generated.
+* {round(top_contributor.contributions['megapixelsteps'] / 1000,2)} Gigapixelsteps generated.
 * {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
 This is the server which has generated the most pixels for the horde.
@@ -377,7 +377,7 @@ This is the server which has generated the most pixels for the horde.
     findex = index.format(
         stable_image = align_image,
         avg_performance= round(_db.get_request_avg() / 1000000,2),
-        total_pixels = round(totals["pixelsteps"] / 1000,2),
+        total_pixels = round(totals["megapixelsteps"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
