@@ -94,7 +94,7 @@ class SyncGenerate(Resource):
         username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
-        wp_count = _waiting_prompts.count_waiting_requests( )
+        wp_count = _waiting_prompts.count_waiting_requests(user)
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
