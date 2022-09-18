@@ -270,7 +270,7 @@ class Servers(Resource):
                 "name": server.name,
                 "id": server.id,
                 "max_pixels": server.max_pixels,
-                "pixelsteps_generated": server.contributions,
+                "megapixelsteps_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "kudos_rewards": server.kudos,
                 "kudos_details": server.kudos_details,
@@ -294,7 +294,7 @@ class ServerSingle(Resource):
                 "id": server.id,
                 "model": server.model,
                 "max_pixels": server.max_pixels,
-                "pixelsteps_generated": server.contributions,
+                "megapixelsteps_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
             }
@@ -548,6 +548,7 @@ arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, will use http instead of https (useful for testing)")
 arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
+arg_parser.add_argument('-c', '--convert_flag', action='store', default=None, required=False, type=str, help="A special flag to convert from previous DB entries to newer and exit")
 
 if __name__ == "__main__":
     global _db
@@ -559,7 +560,7 @@ if __name__ == "__main__":
     quiesce_logger(args.quiet)    
     # Only setting this for the WSGI logs
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.ERROR)
-    _db = Database()
+    _db = Database(convert_flag=args.convert_flag)
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
     google_client_id = os.getenv("GOOGLE_CLIENT_ID")

@@ -1,4 +1,4 @@
-import json, os
+import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time
@@ -229,6 +229,7 @@ class KAIServer:
             skipped_reason = 'max_pixels'
         return([is_matching,skipped_reason])
 
+    @logger.catch
     def record_contribution(self, pixelsteps, kudos, seconds_taken):
         if seconds_taken == 0:
             perf = 1
@@ -263,6 +264,7 @@ class KAIServer:
             return(True)
         return(False)
 
+    @logger.catch
     def serialize(self):
         ret_dict = {
             "oauth_id": self.user.oauth_id,
@@ -279,11 +281,14 @@ class KAIServer:
         }
         return(ret_dict)
 
-    def deserialize(self, saved_dict):
+    @logger.catch
+    def deserialize(self, saved_dict, convert_flag = None):
         self.user = self._db.find_user_by_oauth_id(saved_dict["oauth_id"])
         self.name = saved_dict["name"]
         self.max_pixels = saved_dict["max_pixels"]
         self.contributions = saved_dict["contributions"]
+        if convert_flag == 'pixelsteps':
+            self.contributions = round(self.contributions / 50,2)
         self.fulfilments = saved_dict["fulfilments"]
         self.kudos = saved_dict.get("kudos",0)
         self.kudos_details = saved_dict.get("kudos_details",self.kudos_details)
@@ -363,11 +368,11 @@ class User:
         self.last_active = datetime.now()
         self.id = 0
         self.contributions = {
-            "pixelsteps": 0,
+            "megapixelsteps": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "pixelsteps": 0,
+            "megapixelsteps": 0,
             "requests": 0
         }
 
@@ -380,11 +385,11 @@ class User:
         self.last_active = datetime.now()
         self.id = self._db.register_new_user(self)
         self.contributions = {
-            "pixelsteps": 0,
+            "megapixelsteps": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "pixelsteps": 0,
+            "megapixelsteps": 0,
             "requests": 0
         }
 
@@ -398,12 +403,12 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, pixelsteps, kudos):
-        self.usage["pixelsteps"] += round(pixelsteps/1000000,2)
+        self.usage["megapixelsteps"] += round(pixelsteps/1000000,2)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
     def record_contributions(self, pixelsteps, kudos):
-        self.contributions["pixelsteps"] += round(pixelsteps/1000000,2)
+        self.contributions["megapixelsteps"] += round(pixelsteps/1000000,2)
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
@@ -416,6 +421,7 @@ class User:
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
 
 
+    @logger.catch
     def serialize(self):
         ret_dict = {
             "username": self.username,
@@ -432,7 +438,8 @@ class User:
         }
         return(ret_dict)
 
-    def deserialize(self, saved_dict):
+    @logger.catch
+    def deserialize(self, saved_dict, convert_flag = None):
         self.username = saved_dict["username"]
         self.oauth_id = saved_dict["oauth_id"]
         self.api_key = saved_dict["api_key"]
@@ -442,12 +449,18 @@ class User:
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
+        if convert_flag == 'pixelsteps':
+            # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
+            self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
+            del self.contributions['pixels']
+            self.usage['megapixelsteps'] = round(self.usage['pixels'] / 50,2)
+            del self.usage['pixels']
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
 
 
 class Database:
-    def __init__(self, interval = 3):
+    def __init__(self, convert_flag = None, interval = 3):
         self.interval = interval
         self.ALLOW_ANONYMOUS = True
         # This is used for synchronous generations
@@ -464,12 +477,15 @@ class Database:
         # Increments any time a new user is added
         # Is appended to usernames, to ensure usernames never conflict
         self.last_user_id = 0
+        logger.init(f"Database Load", status="Starting")
+        if convert_flag:
+            logger.init_warn(f"Convert Flag '{convert_flag}' received.", status="Converting")
         if os.path.isfile(self.USERS_FILE):
             with open(self.USERS_FILE) as db:
                 serialized_users = json.load(db)
                 for user_dict in serialized_users:
                     new_user = User(self)
-                    new_user.deserialize(user_dict)
+                    new_user.deserialize(user_dict,convert_flag)
                     self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
                         self.last_user_id = new_user.id
@@ -483,15 +499,20 @@ class Database:
                 serialized_servers = json.load(db)
                 for server_dict in serialized_servers:
                     new_server = KAIServer(self)
-                    new_server.deserialize(server_dict)
+                    new_server.deserialize(server_dict,convert_flag)
                     self.servers[new_server.name] = new_server
         if os.path.isfile(self.STATS_FILE):
             with open(self.STATS_FILE) as db:
                 self.stats = json.load(db)
 
+        if convert_flag:
+            self.write_files_to_disk()
+            logger.init_ok(f"Convertion complete.", status="Exiting")
+            sys.exit()
         thread = threading.Thread(target=self.write_files, args=())
         thread.daemon = True
         thread.start()
+        logger.init_ok(f"Database Load", status="Completed")
 
     def write_files(self):
         while True:
