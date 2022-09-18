@@ -565,11 +565,11 @@ class Database:
 
     def get_total_usage(self):
         totals = {
-            "pixelsteps": 0,
+            "megapixelsteps": 0,
             "fulfilments": 0,
         }
         for server in self.servers.values():
-            totals["pixelsteps"] += server.contributions
+            totals["megapixelsteps"] += server.contributions
             totals["fulfilments"] += server.fulfilments
         return(totals)
 
@@ -646,7 +646,7 @@ class Database:
         kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
         return(kudos)
 
-    def convert_pixelsteps_to_kudos(self, pixelsteps, steps):
+    def convert_pixelsteps_to_kudos(self, pixelsteps):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
         kudos = round(pixelsteps / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])
