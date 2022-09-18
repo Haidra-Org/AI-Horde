@@ -131,3 +131,4 @@ dmypy.json
 
 db/*
 cliRequestsData.py
+*horde_generation*.png
