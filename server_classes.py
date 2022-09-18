@@ -104,9 +104,9 @@ class WaitingPrompt:
                 ret_dict["generations"].append(gen_dict)
         return(ret_dict)
 
-    def record_usage(self, pixels, kudos):
-        self.total_usage += pixels/1000
-        self.user.record_usage(pixels, kudos)
+    def record_usage(self, pixelsteps, kudos):
+        self.total_usage += round(pixelsteps/1000000,2)
+        self.user.record_usage(pixelsteps, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -150,10 +150,10 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         self.seed = seed
-        pixels = self.owner.width * self.owner.height
-        self.kudos = self.owner._db.convert_pixels_to_kudos(pixels, self.owner.steps)
-        self.server.record_contribution(pixels, self.kudos, (datetime.now() - self.start_time).seconds)
-        self.owner.record_usage(pixels, self.kudos)
+        pixelsteps = self.owner.width * self.owner.height * self.owner.steps
+        self.kudos = self.owner._db.convert_pixelsteps_to_kudos(pixelsteps)
+        self.server.record_contribution(pixelsteps, self.kudos, (datetime.now() - self.start_time).seconds)
+        self.owner.record_usage(pixelsteps, self.kudos)
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
         return(self.kudos)
 
@@ -229,15 +229,15 @@ class KAIServer:
             skipped_reason = 'max_pixels'
         return([is_matching,skipped_reason])
 
-    def record_contribution(self, pixels, kudos, seconds_taken):
+    def record_contribution(self, pixelsteps, kudos, seconds_taken):
         if seconds_taken == 0:
             perf = 1
         else:
-            perf = round(pixels / seconds_taken,1)
-        self.user.record_contributions(pixels, kudos)
+            perf = round(pixelsteps / seconds_taken,1)
+        self.user.record_contributions(pixelsteps, kudos)
         self.modify_kudos(kudos,'generated')
         self._db.record_fulfilment(perf)
-        self.contributions += int(pixels/1000)
+        self.contributions += round(pixelsteps/1000000,2) # We store them as Megapixelsteps
         self.fulfilments += 1
         self.performances.append(perf)
         if len(self.performances) > 20:
@@ -249,7 +249,7 @@ class KAIServer:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} pixels per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} pixelsteps per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
@@ -363,11 +363,11 @@ class User:
         self.last_active = datetime.now()
         self.id = 0
         self.contributions = {
-            "pixels": 0,
+            "pixelsteps": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "pixels": 0,
+            "pixelsteps": 0,
             "requests": 0
         }
 
@@ -380,11 +380,11 @@ class User:
         self.last_active = datetime.now()
         self.id = self._db.register_new_user(self)
         self.contributions = {
-            "pixels": 0,
+            "pixelsteps": 0,
             "fulfillments": 0
         }
         self.usage = {
-            "pixels": 0,
+            "pixelsteps": 0,
             "requests": 0
         }
 
@@ -397,13 +397,13 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, pixels, kudos):
-        self.usage["pixels"] += int(pixels/1000)
+    def record_usage(self, pixelsteps, kudos):
+        self.usage["pixelsteps"] += round(pixelsteps/1000000,2)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
-    def record_contributions(self, pixels, kudos):
-        self.contributions["pixels"] += int(pixels/1000)
+    def record_contributions(self, pixelsteps, kudos):
+        self.contributions["pixelsteps"] += round(pixelsteps/1000000,2)
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
@@ -521,9 +521,9 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['pixels'] > top_contribution and user != self.anon:
+            if user.contributions['pixelsteps'] > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions['pixels']
+                top_contribution = user.contributions['pixelsteps']
         return(top_contributor)
 
     def get_top_server(self):
@@ -544,11 +544,11 @@ class Database:
 
     def get_total_usage(self):
         totals = {
-            "pixels": 0,
+            "pixelsteps": 0,
             "fulfilments": 0,
         }
         for server in self.servers.values():
-            totals["pixels"] += server.contributions
+            totals["pixelsteps"] += server.contributions
             totals["fulfilments"] += server.fulfilments
         return(totals)
 
@@ -625,10 +625,9 @@ class Database:
         kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
         return(kudos)
 
-    def convert_pixels_to_kudos(self, pixels, steps):
-        multiplier = steps
+    def convert_pixelsteps_to_kudos(self, pixelsteps, steps):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
-        kudos = round(pixels * multiplier / (512*512*5),2)
+        kudos = round(pixelsteps / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])
         return(kudos)
 

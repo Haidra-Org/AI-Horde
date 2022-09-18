@@ -270,7 +270,7 @@ class Servers(Resource):
                 "name": server.name,
                 "id": server.id,
                 "max_pixels": server.max_pixels,
-                "pixels_generated": server.contributions,
+                "pixelsteps_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "kudos_rewards": server.kudos,
                 "kudos_details": server.kudos_details,
@@ -294,7 +294,7 @@ class ServerSingle(Resource):
                 "id": server.id,
                 "model": server.model,
                 "max_pixels": server.max_pixels,
-                "pixels_generated": server.contributions,
+                "pixelsteps_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
             }
@@ -358,12 +358,12 @@ These are the people and servers who have contributed most to this horde.
 ### Users
 This is the person whose server(s) have generated the most pixels for the horde.
 #### {top_contributor.get_unique_alias()}
-* {round(top_contributor.contributions['pixels'] / 1000,2)} Megapixels generated.
+* {round(top_contributor.contributions['pixelsteps'] / 1000,2)} Gigapixelsteps generated.
 * {top_contributor.contributions['fulfillments']} requests fulfilled.
 ### Servers
 This is the server which has generated the most pixels for the horde.
 #### {top_server.name}
-* {round(top_server.contributions/1000,2)} Megapixels generated.
+* {round(top_server.contributions/1000,2)} Gigapixelsteps generated.
 * {top_server.fulfilments} request fulfillments.
 * {top_server.get_human_readable_uptime()} uptime.
 """
@@ -376,8 +376,8 @@ This is the server which has generated the most pixels for the horde.
     totals = _db.get_total_usage()
     findex = index.format(
         stable_image = align_image,
-        avg_performance= round(_db.get_request_avg() / 1000,2),
-        total_pixels = round(totals["pixels"] / 1000,2),
+        avg_performance= round(_db.get_request_avg() / 1000000,2),
+        total_pixels = round(totals["pixelsteps"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
