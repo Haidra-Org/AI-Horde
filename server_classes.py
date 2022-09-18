@@ -542,9 +542,9 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['pixelsteps'] > top_contribution and user != self.anon:
+            if user.contributions['megapixelsteps'] > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions['pixelsteps']
+                top_contribution = user.contributions['megapixelsteps']
         return(top_contributor)
 
     def get_top_server(self):
