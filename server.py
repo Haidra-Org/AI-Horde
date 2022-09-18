@@ -86,14 +86,15 @@ class SyncGenerate(Resource):
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
         args = parser.parse_args()
         username = 'Anonymous'
+        user = None
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
-            if not user:
-                return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
-            username = user.get_unique_alias()
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
+        username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
-        wp_count = _waiting_prompts.count_waiting_requests(user)
+        wp_count = _waiting_prompts.count_waiting_requests( )
         if wp_count >= 3:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
