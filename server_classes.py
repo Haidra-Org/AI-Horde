@@ -22,6 +22,8 @@ class WaitingPrompt:
             self.n = 20
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
+        # To avoid unnecessary calculations, we do it once here.
+        self.pixelsteps = self.width * self.height * self.steps
         logger.debug(f"New Prompt - width: {self.width} * height: {self.height} = {self.width * self.height} pixels")
         self.total_usage = 0
         self.id = str(uuid4())
@@ -150,11 +152,10 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         self.seed = seed
-        pixelsteps = self.owner.width * self.owner.height * self.owner.steps
-        self.kudos = self.owner._db.convert_pixelsteps_to_kudos(pixelsteps)
-        self.server.record_contribution(pixelsteps, self.kudos)
-        self.owner.record_usage(pixelsteps, self.kudos)
-        self._db.record_fulfilment(pixelsteps, self.start_time)
+        pixelsteps_per_sec = self.owner._db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
+        self.kudos = self.owner._db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
+        self.server.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
+        self.owner.record_usage(self.owner.pixelsteps, self.kudos)
         
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
         return(self.kudos)
@@ -232,12 +233,12 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     @logger.catch
-    def record_contribution(self, pixelsteps, kudos):
+    def record_contribution(self, pixelsteps, kudos, pixelsteps_per_sec):
         self.user.record_contributions(pixelsteps, kudos)
         self.modify_kudos(kudos,'generated')
         self.contributions = round(self.contributions + pixelsteps/1000000,2) # We store them as Megapixelsteps
         self.fulfilments += 1
-        self.performances.append(perf)
+        self.performances.append(pixelsteps_per_sec)
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -331,6 +332,20 @@ class PromptsIndex(Index):
         for wp in self._index.values():
             count += wp.n
         return(count)
+
+    def count_totals(self):
+        ret_dict = {
+            "queued_requests": 0,
+            # mps == Megapixelsteps
+            "queued_mps": 0,
+        }
+        for wp in self._index.values():
+            ret_dict["queued_requests"] += wp.n
+            if wp.n > 0:
+                ret_dict["queued_mps"] += wp.pixelsteps / 1000000
+        # We round the end result to avoid to many decimals
+        ret_dict["queued_mps"] = round(ret_dict["queued_mps"],2)
+        return(ret_dict)
 
     def get_waiting_wp_by_kudos(self):
         sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
@@ -461,23 +476,11 @@ class Stats:
         self.db = db
         self.server_performances = []
         self.fulfillments = []
-
-        thread = threading.Thread(target=self.prune_fulfillments, args=())
-        thread.daemon = True
-        thread.start()
-
-    # Deletes all fulfilment entries older than 1 minute
-    def prune_fulfillments(self):
-        logger.init_ok("Pruning Thread", status="Started")
-        while True:
-            for iter in range(len(self.fulfillments)):
-                fulfillment = self.fulfillments[iter]
-                if (fulfillment["deliver_time"] - datetime.now()).seconds > 60:
-                    del self.fulfillments[iter]
-            time.sleep(self.interval)
+        self.interval = interval
+        self.last_pruning = datetime.now()
 
     def record_fulfilment(self, pixelsteps, starting_time):
-        seconds_taken = (datetime.now() - self.start_time).seconds
+        seconds_taken = (datetime.now() - starting_time).seconds
         if seconds_taken == 0:
             pixelsteps_per_sec = 1
         else:
@@ -491,15 +494,21 @@ class Stats:
             "deliver_time": datetime.now(),
         }
         self.fulfillments.append(fulfillment_dict)
+        return(pixelsteps_per_sec)
 
-    def get_pixelsteps_per_min(self):
+    def get_megapixelsteps_per_min(self):
         total_pixelsteps = 0
+        pruned_array = []
         for fulfillment in self.fulfillments:
-            if (fulfillment["deliver_time"] - datetime.now()).seconds > 60:
-                continue
-            total_pixelsteps += fulfillment["pixelsteps"]
-        pixelsteps_per_min = round(total_pixelsteps / 60,2)
-        return(pixelsteps_per_min)
+            if (datetime.now() - fulfillment["deliver_time"]).seconds <= 60:
+                pruned_array.append(fulfillment)
+                total_pixelsteps += fulfillment["pixelsteps"]
+        if (datetime.now() - self.last_pruning).seconds > self.interval:
+            self.last_pruning = datetime.now()
+            self.fulfillments = pruned_array
+            logger.debug("Pruned fulfillments")
+        megapixelsteps_per_min = round(total_pixelsteps / 1000000,2)
+        return(megapixelsteps_per_min)
 
     def get_request_avg(self):
         if len(self.server_performances) == 0:
@@ -512,9 +521,9 @@ class Stats:
         serialized_fulfillments = []
         for fulfillment in self.fulfillments:
             json_fulfillment = {
-                "pixelsteps": class_dict["pixelsteps"],
-                "start_time": class_dict["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
-                "deliver_time": class_dict["deliver_time"].strftime("%Y-%m-%d %H:%M:%S"),
+                "pixelsteps": fulfillment["pixelsteps"],
+                "start_time": fulfillment["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
+                "deliver_time": fulfillment["deliver_time"].strftime("%Y-%m-%d %H:%M:%S"),
             }
             serialized_fulfillments.append(json_fulfillment)
         ret_dict = {
@@ -534,9 +543,9 @@ class Stats:
         deserialized_fulfillments = []
         for fulfillment in saved_dict.get("fulfillments", []):
             class_fulfillment = {
-                "pixelsteps": file_dict["pixelsteps"],
-                "start_time": datetime.strptime(file_dict["start_time"]),
-                "deliver_time":datetime.strptime( file_dict["deliver_time"]),
+                "pixelsteps": fulfillment["pixelsteps"],
+                "start_time": datetime.strptime(fulfillment["start_time"],"%Y-%m-%d %H:%M:%S"),
+                "deliver_time":datetime.strptime(fulfillment["deliver_time"],"%Y-%m-%d %H:%M:%S"),
             }
             deserialized_fulfillments.append(class_fulfillment)
         self.model_mulitpliers = saved_dict["model_mulitpliers"]

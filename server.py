@@ -319,18 +319,6 @@ class Users(Resource):
         return(user_dict,200)
 
 
-class SystemLoad(Resource):
-    @logger.catch
-    def get(self, api_version = None):
-        load_dict = {
-            "queued_megapixelsteps": 0,
-            "queued_requests": 0,
-            "mpss": 0 #Megapixelsteps per second
-
-        }
-        return(load_dict,200)
-
-
 class UserSingle(Resource):
     @logger.catch
     def get(self, api_version = None, user_id = ''):
@@ -350,6 +338,15 @@ class UserSingle(Resource):
             return(udict,200)
         else:
             return("Not found", 404)
+
+
+class HordeLoad(Resource):
+    @logger.catch
+    def get(self, api_version = None):
+        load_dict = _waiting_prompts.count_totals()
+        load_dict["mpss"] = _db.stats.get_megapixelsteps_per_min()
+        return(load_dict,200)
+
 
 @logger.catch
 @REST_API.route('/')
@@ -388,7 +385,7 @@ This is the server which has generated the most pixels for the horde.
     totals = _db.get_total_usage()
     findex = index.format(
         stable_image = align_image,
-        avg_performance= round(_db.get_request_avg() / 1000000,2),
+        avg_performance= round(_db.stats.get_request_avg() / 1000000,2),
         total_pixels = round(totals["megapixelsteps"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
@@ -620,6 +617,7 @@ if __name__ == "__main__":
     api.add_resource(Servers, "/servers","/api/<string:api_version>/servers")
     api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
+    api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
     serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme)
