@@ -238,7 +238,7 @@ class KAIServer:
         self.user.record_contributions(pixelsteps, kudos)
         self.modify_kudos(kudos,'generated')
         self._db.record_fulfilment(perf)
-        self.contributions += round(pixelsteps/1000000,2) # We store them as Megapixelsteps
+        self.contributions = round(self.contributions + pixelsteps/1000000,2) # We store them as Megapixelsteps
         self.fulfilments += 1
         self.performances.append(perf)
         if len(self.performances) > 20:
@@ -403,12 +403,12 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, pixelsteps, kudos):
-        self.usage["megapixelsteps"] += round(pixelsteps/1000000,2)
+        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + pixelsteps/1000000,2)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
     def record_contributions(self, pixelsteps, kudos):
-        self.contributions["megapixelsteps"] += round(pixelsteps/1000000,2)
+        self.contributions["megapixelsteps"] = round(self.contributions["megapixelsteps"] + pixelsteps/1000000,2)
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
