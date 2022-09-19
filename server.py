@@ -60,7 +60,7 @@ def get_error(error, **kwargs):
         logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
         return("Invalid size. The image dimentions have to be multiples of 64.")
     if error == ServerErrors.TOO_MANY_STEPS:
-        logger.warning(f'User "{kwargs["username"]}" sent too many steps {kwargs["steps"]}. Aborting!')
+        logger.warning(f'User "{kwargs["username"]}" sent too many steps ({kwargs["steps"]}). Aborting!')
         return("Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps.")
     if error == ServerErrors.NO_PROXY:
         logger.warning(f'Attempt to access outside reverse proxy')
@@ -379,6 +379,7 @@ class HordeLoad(Resource):
     def get(self, api_version = None):
         load_dict = _waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
+        load_dict["server_count"] = _db.count_active_servers()
         return(load_dict,200)
 
 
