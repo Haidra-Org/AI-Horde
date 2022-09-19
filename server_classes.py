@@ -106,6 +106,12 @@ class WaitingPrompt:
                 ret_dict["generations"].append(gen_dict)
         return(ret_dict)
 
+    # Same as status, but without the images to avoid unnecessary size
+    def get_light_status(self):
+        ret_dict = self.get_status()
+        del ret_dict["generations"]
+        return(ret_dict)
+
     def record_usage(self, pixelsteps, kudos):
         self.total_usage += round(pixelsteps/1000000,2)
         self.user.record_usage(pixelsteps, kudos)
@@ -337,14 +343,14 @@ class PromptsIndex(Index):
         ret_dict = {
             "queued_requests": 0,
             # mps == Megapixelsteps
-            "queued_mps": 0,
+            "queued_megapixelsteps": 0,
         }
         for wp in self._index.values():
             ret_dict["queued_requests"] += wp.n
             if wp.n > 0:
-                ret_dict["queued_mps"] += wp.pixelsteps / 1000000
+                ret_dict["queued_megapixelsteps"] += wp.pixelsteps / 1000000
         # We round the end result to avoid to many decimals
-        ret_dict["queued_mps"] = round(ret_dict["queued_mps"],2)
+        ret_dict["queued_megapixelsteps"] = round(ret_dict["queued_megapixelsteps"],2)
         return(ret_dict)
 
     def get_waiting_wp_by_kudos(self):
