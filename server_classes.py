@@ -271,8 +271,8 @@ class KAIServer:
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
             "kudos": self.kudos,
-            "kudos_details": self.kudos_details,
-            "performances": self.performances,
+            "kudos_details": self.kudos_details.copy(),
+            "performances": self.performances.copy(),
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
             "uptime": self.uptime,
@@ -440,11 +440,11 @@ class User:
             "oauth_id": self.oauth_id,
             "api_key": self.api_key,
             "kudos": self.kudos,
-            "kudos_details": self.kudos_details,
+            "kudos_details": self.kudos_details.copy(),
             "id": self.id,
             "invite_id": self.invite_id,
-            "contributions": self.contributions,
-            "usage": self.usage,
+            "contributions": self.contributions.copy(),
+            "usage": self.usage.copy(),
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -519,7 +519,7 @@ class Stats:
     @logger.catch
     def serialize(self):
         serialized_fulfillments = []
-        for fulfillment in self.fulfillments:
+        for fulfillment in self.fulfillments.copy():
             json_fulfillment = {
                 "pixelsteps": fulfillment["pixelsteps"],
                 "start_time": fulfillment["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
@@ -552,7 +552,7 @@ class Stats:
         self.fulfillments = deserialized_fulfillments
        
 class Database:
-    def __init__(self, convert_flag = None, interval = 3):
+    def __init__(self, convert_flag = None, interval = 60):
         self.interval = interval
         self.ALLOW_ANONYMOUS = True
         # This is used for synchronous generations
@@ -613,7 +613,7 @@ class Database:
         if not os.path.exists('db'):
             os.mkdir('db')
         server_serialized_list = []
-        for server in self.servers.values():
+        for server in self.servers.copy().values():
             # We don't store data for anon servers
             if server.user == self.anon: continue
             server_serialized_list.append(server.serialize())
@@ -622,7 +622,7 @@ class Database:
         with open(self.STATS_FILE, 'w') as db:
             json.dump(self.stats.serialize(),db)
         user_serialized_list = []
-        for user in self.users.values():
+        for user in self.users.copy().values():
             user_serialized_list.append(user.serialize())
         with open(self.USERS_FILE, 'w') as db:
             json.dump(user_serialized_list,db)
