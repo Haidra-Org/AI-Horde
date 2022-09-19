@@ -77,7 +77,6 @@ def after_request(response):
     return response
 
 class SyncGenerate(Resource):
-    decorators = [limiter.limit("10/minute")]
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
@@ -135,7 +134,8 @@ class SyncGenerate(Resource):
 
 
 class AsyncGeneratePrompt(Resource):
-    decorators = [limiter.limit("30/minute")]
+    decorators = [limiter.limit("3/minute")]
+    @logger.catch
     def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
@@ -143,8 +143,16 @@ class AsyncGeneratePrompt(Resource):
         return(wp.get_status(), 200)
 
 
+class AsyncCheck(Resource):
+    @logger.catch
+    def get(self, api_version = None, id = ''):
+        wp = _waiting_prompts.get_item(id)
+        if not wp:
+            return("ID not found", 404)
+        return(wp.get_light_status(), 200)
+
+
 class AsyncGenerate(Resource):
-    decorators = [limiter.limit("10/minute")]
     def post(self, api_version = None):
         parser = reqparse.RequestParser()
         parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
@@ -152,24 +160,42 @@ class AsyncGenerate(Resource):
         parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
         parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
         args = parser.parse_args()
-        user = _db.find_user_by_api_key(args['api_key'])
+        username = 'Anonymous'
+        user = None
+        if args.api_key:
+            user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
-        wp_count = _waiting_prompts.count_waiting_requests(user)
+        username = user.get_unique_alias()
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = user.get_unique_alias())}",400)
+            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
+        wp_count = _waiting_prompts.count_waiting_requests(user)
         if wp_count >= 3:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = user.get_unique_alias(), wp_count = wp_count)}",503)
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
+        if args["params"].get("length",512)%64:
+            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+        if args["params"].get("width",512)%64:
+            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
             _processing_generations,
             args["prompt"],
             user,
-            args["models"],
             args["params"],
             servers=args["servers"],
         )
+        server_found = False
+        for server in _db.servers.values():
+            if len(args.servers) and server.id not in args.servers:
+                continue
+            if server.can_generate(wp)[0]:
+                server_found = True
+                break
+        if not server_found:
+            del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
+            return("No active server found to fulfill this request. Please Try again later...", 503)
+        # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
         wp.activate()
         return({"id":wp.id}, 200)
 
@@ -608,8 +634,9 @@ if __name__ == "__main__":
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
     api.add_resource(SyncGenerate, "/generate/sync","/api/<string:api_version>/generate/sync")
     # Async is disabled due to the memory requirements of keeping images in running memory
-    # api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
+    api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
     api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/prompt/<string:id>")
+    api.add_resource(AsyncCheck, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/check/<string:id>")
     api.add_resource(PromptPop, "/generate/pop","/api/<string:api_version>/generate/pop")
     api.add_resource(SubmitGeneration, "/generate/submit","/api/<string:api_version>/generate/submit")
     api.add_resource(Users, "/users","/api/<string:api_version>/users")

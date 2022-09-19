@@ -106,6 +106,12 @@ class WaitingPrompt:
                 ret_dict["generations"].append(gen_dict)
         return(ret_dict)
 
+    # Same as status, but without the images to avoid unnecessary size
+    def get_light_status(self):
+        ret_dict = self.get_status()
+        del ret_dict["generations"]
+        return(ret_dict)
+
     def record_usage(self, pixelsteps, kudos):
         self.total_usage += round(pixelsteps/1000000,2)
         self.user.record_usage(pixelsteps, kudos)
