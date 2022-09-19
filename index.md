@@ -7,7 +7,7 @@ Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
 ## Stats 
 
 * Average Recent Performance: {avg_performance} Megapixelsteps per second
-* Total pixels generated: {total_pixels} Gigapixelsteps
+* Total GP⋅s generated: {total_pixels} Gigapixelsteps
 * Total requests fulfilled: {total_fulfillments}
 * Active [Servers](/api/v1/servers): {active_servers}
 * Current Request Queue: {total_queue}

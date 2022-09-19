@@ -152,8 +152,10 @@ class ProcessingGeneration:
         self.seed = seed
         pixelsteps = self.owner.width * self.owner.height * self.owner.steps
         self.kudos = self.owner._db.convert_pixelsteps_to_kudos(pixelsteps)
-        self.server.record_contribution(pixelsteps, self.kudos, (datetime.now() - self.start_time).seconds)
+        self.server.record_contribution(pixelsteps, self.kudos)
         self.owner.record_usage(pixelsteps, self.kudos)
+        self._db.record_fulfilment(pixelsteps, self.start_time)
+        
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
         return(self.kudos)
 
@@ -230,14 +232,9 @@ class KAIServer:
         return([is_matching,skipped_reason])
 
     @logger.catch
-    def record_contribution(self, pixelsteps, kudos, seconds_taken):
-        if seconds_taken == 0:
-            perf = 1
-        else:
-            perf = round(pixelsteps / seconds_taken,1)
+    def record_contribution(self, pixelsteps, kudos):
         self.user.record_contributions(pixelsteps, kudos)
         self.modify_kudos(kudos,'generated')
-        self._db.record_fulfilment(perf)
         self.contributions = round(self.contributions + pixelsteps/1000000,2) # We store them as Megapixelsteps
         self.fulfilments += 1
         self.performances.append(perf)
@@ -459,6 +456,57 @@ class User:
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
 
 
+class Stats:
+    def __init__(self, db, convert_flag = None, interval = 60):
+        self.db = db
+        self.server_performances = []
+        self.model_mulitpliers = {}
+        self.fulfillments = []
+
+
+    def prune_fulfillments(self):
+        while True:
+            for fulfillment in self.fulfillments:
+                pass
+            time.sleep(self.interval)
+
+    def record_fulfilment(self, pixelsteps, starting_time):
+        seconds_taken = (datetime.now() - self.start_time).seconds
+        if seconds_taken == 0:
+            pixelsteps_per_sec = 1
+        else:
+            pixelsteps_per_sec = round(pixelsteps / seconds_taken,1)
+        if len(self.server_performances) >= 10:
+            del self.server_performances[0]
+        self.server_performances.append(pixelsteps_per_sec)
+        fulfillment_dict = {
+            "pixelsteps": pixelsteps,
+            "start_time": starting_time,
+            "deliver_time": datetime.now(),
+        }
+        self.fulfillments.append(fulfillment_dict)
+
+    def get_request_avg(self):
+        if len(self.server_performances) == 0:
+            return(0)
+        avg = sum(self.server_performances) / len(self.server_performances)
+        return(round(avg,1))
+
+    @logger.catch
+    def serialize(self):
+        ret_dict = {
+            "server_performances": self.server_performances,
+            "model_mulitpliers": self.model_mulitpliers,
+            "fulfillments": self.fulfillments,
+        }
+        return(ret_dict)
+
+    @logger.catch
+    def deserialize(self, saved_dict, convert_flag = None):
+        self.server_performances = saved_dict["server_performances"]
+        self.model_mulitpliers = saved_dict["model_mulitpliers"]
+        self.fulfillments = saved_dict["fulfillments"]
+
 class Database:
     def __init__(self, convert_flag = None, interval = 3):
         self.interval = interval
@@ -468,10 +516,7 @@ class Database:
         self.servers = {}
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
-        self.stats = {
-            "fulfilment_times": [],
-            "model_mulitpliers": {},
-        }
+        self.stats = Stats(self)
         self.USERS_FILE = "db/users.json"
         self.users = {}
         # Increments any time a new user is added
@@ -502,8 +547,8 @@ class Database:
                     new_server.deserialize(server_dict,convert_flag)
                     self.servers[new_server.name] = new_server
         if os.path.isfile(self.STATS_FILE):
-            with open(self.STATS_FILE) as db:
-                self.stats = json.load(db)
+            with open(self.STATS_FILE) as stats_db:
+                self.stats.deserialize(json.load(stats_db),convert_flag)
 
         if convert_flag:
             self.write_files_to_disk()
@@ -530,7 +575,7 @@ class Database:
         with open(self.SERVERS_FILE, 'w') as db:
             json.dump(server_serialized_list,db)
         with open(self.STATS_FILE, 'w') as db:
-            json.dump(self.stats,db)
+            json.dump(self.stats.serialize(),db)
         user_serialized_list = []
         for user in self.users.values():
             user_serialized_list.append(user.serialize())
@@ -573,16 +618,6 @@ class Database:
             totals["fulfilments"] += server.fulfilments
         return(totals)
 
-    def record_fulfilment(self, token_per_sec):
-        if len(self.stats["fulfilment_times"]) >= 10:
-            del self.stats["fulfilment_times"][0]
-        self.stats["fulfilment_times"].append(token_per_sec)
-
-    def get_request_avg(self):
-        if len(self.stats["fulfilment_times"]) == 0:
-            return(0)
-        avg = sum(self.stats["fulfilment_times"]) / len(self.stats["fulfilment_times"])
-        return(round(avg,1))
 
     def register_new_user(self, user):
         self.last_user_id += 1
@@ -651,4 +686,3 @@ class Database:
         kudos = round(pixelsteps / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])
         return(kudos)
-

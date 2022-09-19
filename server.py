@@ -319,6 +319,18 @@ class Users(Resource):
         return(user_dict,200)
 
 
+class SystemLoad(Resource):
+    @logger.catch
+    def get(self, api_version = None):
+        load_dict = {
+            "queued_megapixelsteps": 0,
+            "queued_requests": 0,
+            "mpss": 0 #Megapixelsteps per second
+
+        }
+        return(load_dict,200)
+
+
 class UserSingle(Resource):
     @logger.catch
     def get(self, api_version = None, user_id = ''):
