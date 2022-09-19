@@ -337,7 +337,7 @@ class PromptsIndex(Index):
         ret_dict = {
             "queued_requests": 0,
             # mps == Megapixelsteps
-            "queued_mps": 0,
+            "queued_megapixelsteps": 0,
         }
         for wp in self._index.values():
             ret_dict["queued_requests"] += wp.n

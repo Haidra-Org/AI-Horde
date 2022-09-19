@@ -344,7 +344,7 @@ class HordeLoad(Resource):
     @logger.catch
     def get(self, api_version = None):
         load_dict = _waiting_prompts.count_totals()
-        load_dict["mpss"] = _db.stats.get_megapixelsteps_per_min()
+        load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
         return(load_dict,200)
 
 
