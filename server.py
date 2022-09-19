@@ -146,7 +146,11 @@ class AsyncGeneratePrompt(Resource):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
-        return(wp.get_status(), 200)
+        wp_status = wp.get_status()
+        # If the status is retrieved after the wp is done we clear it to free the ram
+        if wp_status["done"]:
+            wp.delete()
+        return(wp_status, 200)
 
 
 class AsyncCheck(Resource):
