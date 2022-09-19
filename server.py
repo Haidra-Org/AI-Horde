@@ -23,6 +23,7 @@ class ServerErrors(Enum):
     INVALID_API_KEY = 5
     INVALID_SIZE = 6
     NO_PROXY = 7
+    TOO_MANY_STEPS = 8
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -58,6 +59,9 @@ def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_SIZE:
         logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
         return("Invalid size. The image dimentions have to be multiples of 64.")
+    if error == ServerErrors.TOO_MANY_STEPS:
+        logger.warning(f'User "{kwargs["username"]}" sent too many steps {kwargs["steps"]}. Aborting!')
+        return("Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps.")
     if error == ServerErrors.NO_PROXY:
         logger.warning(f'Attempt to access outside reverse proxy')
         return(f'Access allowed only through https')
@@ -100,6 +104,8 @@ class SyncGenerate(Resource):
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         if args["params"].get("width",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+        if args["params"].get("steps",50) > 100:
+            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
@@ -176,6 +182,8 @@ class AsyncGenerate(Resource):
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         if args["params"].get("width",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+        if args["params"].get("steps",50) > 100:
+            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
         wp = WaitingPrompt(
             _db,
             _waiting_prompts,
