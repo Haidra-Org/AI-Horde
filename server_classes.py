@@ -460,14 +460,20 @@ class Stats:
     def __init__(self, db, convert_flag = None, interval = 60):
         self.db = db
         self.server_performances = []
-        self.model_mulitpliers = {}
         self.fulfillments = []
 
+        thread = threading.Thread(target=self.prune_fulfillments, args=())
+        thread.daemon = True
+        thread.start()
 
+    # Deletes all fulfilment entries older than 1 minute
     def prune_fulfillments(self):
+        logger.init_ok("Pruning Thread", status="Started")
         while True:
-            for fulfillment in self.fulfillments:
-                pass
+            for iter in range(len(self.fulfillments)):
+                fulfillment = self.fulfillments[iter]
+                if (fulfillment["deliver_time"] - datetime.now()).seconds > 60:
+                    del self.fulfillments[iter]
             time.sleep(self.interval)
 
     def record_fulfilment(self, pixelsteps, starting_time):
@@ -486,6 +492,15 @@ class Stats:
         }
         self.fulfillments.append(fulfillment_dict)
 
+    def get_pixelsteps_per_min(self):
+        total_pixelsteps = 0
+        for fulfillment in self.fulfillments:
+            if (fulfillment["deliver_time"] - datetime.now()).seconds > 60:
+                continue
+            total_pixelsteps += fulfillment["pixelsteps"]
+        pixelsteps_per_min = round(total_pixelsteps / 60,2)
+        return(pixelsteps_per_min)
+
     def get_request_avg(self):
         if len(self.server_performances) == 0:
             return(0)
@@ -494,19 +509,39 @@ class Stats:
 
     @logger.catch
     def serialize(self):
+        serialized_fulfillments = []
+        for fulfillment in self.fulfillments:
+            json_fulfillment = {
+                "pixelsteps": class_dict["pixelsteps"],
+                "start_time": class_dict["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
+                "deliver_time": class_dict["deliver_time"].strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            serialized_fulfillments.append(json_fulfillment)
         ret_dict = {
             "server_performances": self.server_performances,
             "model_mulitpliers": self.model_mulitpliers,
-            "fulfillments": self.fulfillments,
+            "fulfillments": serialized_fulfillments,
         }
         return(ret_dict)
 
     @logger.catch
     def deserialize(self, saved_dict, convert_flag = None):
-        self.server_performances = saved_dict["server_performances"]
+        # Convert old key
+        if "fulfilment_times" in saved_dict:
+            self.server_performances = saved_dict["fulfilment_times"]
+        else:
+            self.server_performances = saved_dict["server_performances"]
+        deserialized_fulfillments = []
+        for fulfillment in saved_dict.get("fulfillments", []):
+            class_fulfillment = {
+                "pixelsteps": file_dict["pixelsteps"],
+                "start_time": datetime.strptime(file_dict["start_time"]),
+                "deliver_time":datetime.strptime( file_dict["deliver_time"]),
+            }
+            deserialized_fulfillments.append(class_fulfillment)
         self.model_mulitpliers = saved_dict["model_mulitpliers"]
-        self.fulfillments = saved_dict["fulfillments"]
-
+        self.fulfillments = deserialized_fulfillments
+       
 class Database:
     def __init__(self, convert_flag = None, interval = 3):
         self.interval = interval
@@ -560,6 +595,7 @@ class Database:
         logger.init_ok(f"Database Load", status="Completed")
 
     def write_files(self):
+        logger.init_ok("Database Store Thread", status="Started")
         while True:
             self.write_files_to_disk()
             time.sleep(self.interval)
