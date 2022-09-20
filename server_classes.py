@@ -103,7 +103,7 @@ class WaitingPrompt:
             # We increment the priority by 1, because it starts at 0
             # And that makes no sense in a queue context
             ret_dict["queue_position"] = queue_pos + 1
-            active_servers = self.db.count_active_servers()
+            active_servers = self._db.count_active_servers()
             if n < active_servers:
                 active_servers = n
             mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
