@@ -660,6 +660,6 @@ if __name__ == "__main__":
     api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme)
+    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme, threads=50)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")
