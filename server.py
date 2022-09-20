@@ -159,7 +159,7 @@ class AsyncCheck(Resource):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
-        return(wp.get_light_status(), 200)
+        return(wp.get_lite_status(), 200)
 
 
 class AsyncGenerate(Resource):
