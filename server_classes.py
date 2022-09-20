@@ -396,6 +396,7 @@ class PromptsIndex(Index):
     # Also returns the amount of different gens queued
     def get_wp_queue_stats(self, wp):
         mps_ahead_in_queue = 0
+        n_ahead_in_queue = 0
         priority_sorted_list = self.get_waiting_wp_by_kudos()
         for iter in range(len(priority_sorted_list)):
             mps_ahead_in_queue += priority_sorted_list[iter].get_queued_megapixelsteps()
