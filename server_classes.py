@@ -48,9 +48,9 @@ class WaitingPrompt:
         # Before we add it to the queue
         self._waiting_prompts.add_item(self)
         logger.info(f"New prompt request by user: {self.user.get_unique_alias()}")
-        thread = threading.Thread(target=self.check_for_stale, args=())
-        thread.daemon = True
-        thread.start()
+        # thread = threading.Thread(target=self.check_for_stale, args=())
+        # thread.daemon = True
+        # thread.start()
 
     def needs_gen(self):
         if self.n > 0:
