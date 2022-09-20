@@ -421,6 +421,7 @@ class User:
             "gifted": 0,
             "received": 0,
         }
+        self.max_concurrent_wps = 2
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -438,6 +439,9 @@ class User:
             "megapixelsteps": 0,
             "requests": 0
         }
+        # We allow anonymous users more leeway for the max amount of concurrent requests
+        # This is balanced by their lower priority
+        self.max_concurrent_wps = 30
 
     def create(self, username, oauth_id, api_key, invite_id):
         self.username = username
@@ -496,6 +500,7 @@ class User:
             "invite_id": self.invite_id,
             "contributions": self.contributions.copy(),
             "usage": self.usage.copy(),
+            "max_concurrent_wps": self.max_concurrent_wps,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -512,6 +517,9 @@ class User:
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
+        self.max_concurrent_wps = saved_dict.get("max_concurrent_wps", 2)
+        if self.api_key == '0000000000':
+            self.max_concurrent_wps = 30
         if convert_flag == 'pixelsteps':
             # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
             self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
