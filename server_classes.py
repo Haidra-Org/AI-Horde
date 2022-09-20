@@ -104,8 +104,8 @@ class WaitingPrompt:
             # And that makes no sense in a queue context
             ret_dict["queue_position"] = queue_pos + 1
             active_servers = self._db.count_active_servers()
-            if n < active_servers:
-                active_servers = n
+            if self.n < active_servers:
+                active_servers = self.n
             mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
             # Avoid Div/0
             if mpss > 0:
