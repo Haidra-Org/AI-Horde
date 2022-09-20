@@ -607,7 +607,7 @@ if __name__ == "__main__":
     set_logger_verbosity(args.verbosity)
     quiesce_logger(args.quiet)    
     # Only setting this for the WSGI logs
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.ERROR)
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.WARNING)
     _db = Database(convert_flag=args.convert_flag)
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
