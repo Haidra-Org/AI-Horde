@@ -98,14 +98,16 @@ class WaitingPrompt:
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         ret_dict["done"] = self.is_completed()
-        queue_pos, queued_mps = self.get_own_queue_stats()
+        queue_pos, queued_mps, queued_n = self.get_own_queue_stats()
         if queue_pos >= 0:
             # We increment the priority by 1, because it starts at 0
             # And that makes no sense in a queue context
             ret_dict["queue_position"] = queue_pos + 1
             active_servers = self._db.count_active_servers()
-            if self.n < active_servers:
-                active_servers = self.n
+            # If there's less requests than the number of active servers
+            # Then we need to adjust the parallelization accordingly
+            if queued_n < active_servers:
+                active_servers = queued_n
             mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
             # Avoid Div/0
             if mpss > 0:
@@ -136,7 +138,7 @@ class WaitingPrompt:
     def get_own_queue_stats(self):
         if self.needs_gen():
             return(self._waiting_prompts.get_wp_queue_stats(self))
-        return(-1,-1)
+        return(-1,-1,-1)
 
     # Record that we received a requested generation and how much kudos it costs us
     def record_usage(self, pixelsteps, kudos):
@@ -391,16 +393,18 @@ class PromptsIndex(Index):
 
     # Returns the queue position of the provided WP based on kudos
     # Also returns the amount of mps until the wp is generated
+    # Also returns the amount of different gens queued
     def get_wp_queue_stats(self, wp):
         mps_ahead_in_queue = 0
         priority_sorted_list = self.get_waiting_wp_by_kudos()
         for iter in range(len(priority_sorted_list)):
             mps_ahead_in_queue += priority_sorted_list[iter].get_queued_megapixelsteps()
+            n_ahead_in_queue += priority_sorted_list[iter].n
             if priority_sorted_list[iter] == wp:
                 mps_ahead_in_queue = round(mps_ahead_in_queue,2)
-                return(iter, mps_ahead_in_queue)
+                return(iter, mps_ahead_in_queue, n_ahead_in_queue)
         # -1 means the WP is done and not in the queue
-        return(-1,-1)
+        return(-1,-1,-1)
                 
 
 class GenerationsIndex(Index):
