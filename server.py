@@ -98,7 +98,7 @@ class SyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count >= 3:
+        if wp_count >= user.max_concurrent_wps:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
@@ -159,7 +159,7 @@ class AsyncCheck(Resource):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
-        return(wp.get_light_status(), 200)
+        return(wp.get_lite_status(), 200)
 
 
 class AsyncGenerate(Resource):
@@ -180,7 +180,7 @@ class AsyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count >= 3:
+        if wp_count > user.max_concurrent_wps:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)

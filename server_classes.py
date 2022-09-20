@@ -6,7 +6,6 @@ from logger import logger
 
 
 class WaitingPrompt:
-    # Every 10 secs we store usage data to disk
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
         self._db = db
         self._waiting_prompts = wps
@@ -24,8 +23,8 @@ class WaitingPrompt:
         self.height = params.get("height", 512)
         # To avoid unnecessary calculations, we do it once here.
         self.pixelsteps = self.width * self.height * self.steps
-        logger.debug(f"New Prompt - width: {self.width} * height: {self.height} = {self.width * self.height} pixels")
-        self.total_usage = 0
+        self.total_usage = round(self.pixelsteps * self.n/1000000,2)
+        # The total amount of to pixelsteps requested.
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = params
@@ -47,10 +46,15 @@ class WaitingPrompt:
         # We separate the activation from __init__ as often we want to check if there's a valid server for it
         # Before we add it to the queue
         self._waiting_prompts.add_item(self)
-        logger.info(f"New prompt request by user: {self.user.get_unique_alias()}")
+        logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
+        # Remove the threading, because I can't figure out the race conditions
         # thread = threading.Thread(target=self.check_for_stale, args=())
         # thread.daemon = True
         # thread.start()
+
+    # The mps still queued to be generated for this WP
+    def get_queued_megapixelsteps(self):
+        return(round(self.pixelsteps * self.n/1000000,2))
 
     def needs_gen(self):
         if self.n > 0:
@@ -90,30 +94,54 @@ class WaitingPrompt:
                 ret_dict["processing"] += 1
         return(ret_dict)
 
-    def get_status(self):
+    def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         ret_dict["done"] = self.is_completed()
-        ret_dict["generations"] = []
-        for procgen in self.processing_gens:
-            if procgen.is_completed():
-                gen_dict = {
-                    "img": procgen.generation,
-                    "seed": procgen.seed,
-                    "server_id": procgen.server.id,
-                    "server_name": procgen.server.name,
-                }
-                ret_dict["generations"].append(gen_dict)
+        queue_pos, queued_mps, queued_n = self.get_own_queue_stats()
+        if queue_pos >= 0:
+            # We increment the priority by 1, because it starts at 0
+            # And that makes no sense in a queue context
+            ret_dict["queue_position"] = queue_pos + 1
+            active_servers = self._db.count_active_servers()
+            # If there's less requests than the number of active servers
+            # Then we need to adjust the parallelization accordingly
+            if queued_n < active_servers:
+                active_servers = queued_n
+            mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
+            # Avoid Div/0
+            if mpss > 0:
+                ret_dict["wait_time"] = int(queued_mps / mpss)
+            else:
+                ret_dict["wait_time"] = "Unknown"
+        # Lite mode does not include the generations, to spare me download size
+        if not lite:
+            ret_dict["generations"] = []
+            for procgen in self.processing_gens:
+                if procgen.is_completed():
+                    gen_dict = {
+                        "img": procgen.generation,
+                        "seed": procgen.seed,
+                        "server_id": procgen.server.id,
+                        "server_name": procgen.server.name,
+                    }
+                    ret_dict["generations"].append(gen_dict)
         return(ret_dict)
 
     # Same as status, but without the images to avoid unnecessary size
-    def get_light_status(self):
-        ret_dict = self.get_status()
-        del ret_dict["generations"]
+    def get_lite_status(self):
+        ret_dict = self.get_status(True)
         return(ret_dict)
 
+    # Get out position in the working prompts queue sorted by kudos
+    # If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
+    def get_own_queue_stats(self):
+        if self.needs_gen():
+            return(self._waiting_prompts.get_wp_queue_stats(self))
+        return(-1,-1,-1)
+
+    # Record that we received a requested generation and how much kudos it costs us
     def record_usage(self, pixelsteps, kudos):
-        self.total_usage += round(pixelsteps/1000000,2)
         self.user.record_usage(pixelsteps, kudos)
         self.refresh()
 
@@ -308,12 +336,14 @@ class Index:
         self._index = {}
 
     def add_item(self, item):
+        logger.debug(item)
         self._index[item.id] = item
 
     def get_item(self, uuid):
         return(self._index.get(uuid))
 
     def del_item(self, item):
+        logger.debug(item)
         del self._index[item.id]
 
     def get_all(self):
@@ -361,7 +391,22 @@ class PromptsIndex(Index):
                 final_wp_list.append(wp)
         return(final_wp_list)
 
-
+    # Returns the queue position of the provided WP based on kudos
+    # Also returns the amount of mps until the wp is generated
+    # Also returns the amount of different gens queued
+    def get_wp_queue_stats(self, wp):
+        mps_ahead_in_queue = 0
+        n_ahead_in_queue = 0
+        priority_sorted_list = self.get_waiting_wp_by_kudos()
+        for iter in range(len(priority_sorted_list)):
+            mps_ahead_in_queue += priority_sorted_list[iter].get_queued_megapixelsteps()
+            n_ahead_in_queue += priority_sorted_list[iter].n
+            if priority_sorted_list[iter] == wp:
+                mps_ahead_in_queue = round(mps_ahead_in_queue,2)
+                return(iter, mps_ahead_in_queue, n_ahead_in_queue)
+        # -1 means the WP is done and not in the queue
+        return(-1,-1,-1)
+                
 
 class GenerationsIndex(Index):
     pass
@@ -376,6 +421,7 @@ class User:
             "gifted": 0,
             "received": 0,
         }
+        self.max_concurrent_wps = 2
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -393,6 +439,9 @@ class User:
             "megapixelsteps": 0,
             "requests": 0
         }
+        # We allow anonymous users more leeway for the max amount of concurrent requests
+        # This is balanced by their lower priority
+        self.max_concurrent_wps = 30
 
     def create(self, username, oauth_id, api_key, invite_id):
         self.username = username
@@ -451,6 +500,7 @@ class User:
             "invite_id": self.invite_id,
             "contributions": self.contributions.copy(),
             "usage": self.usage.copy(),
+            "max_concurrent_wps": self.max_concurrent_wps,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -467,6 +517,9 @@ class User:
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
+        self.max_concurrent_wps = saved_dict.get("max_concurrent_wps", 2)
+        if self.api_key == '0000000000':
+            self.max_concurrent_wps = 30
         if convert_flag == 'pixelsteps':
             # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
             self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
@@ -619,6 +672,7 @@ class Database:
         if not os.path.exists('db'):
             os.mkdir('db')
         server_serialized_list = []
+        logger.debug("Saving DB")
         for server in self.servers.copy().values():
             # We don't store data for anon servers
             if server.user == self.anon: continue
