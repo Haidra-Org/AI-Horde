@@ -23,7 +23,7 @@ class WaitingPrompt:
         self.height = params.get("height", 512)
         # To avoid unnecessary calculations, we do it once here.
         self.pixelsteps = self.width * self.height * self.steps
-        self.total_usage = round(self.pixelsteps * self.n/1000000,2)
+        self.total_usage = round(self.pixelsteps * self.n / 1000000,2)
         # The total amount of to pixelsteps requested.
         self.id = str(uuid4())
         # This is what we send to KoboldAI to the /generate/ API
@@ -109,11 +109,16 @@ class WaitingPrompt:
             if queued_n < active_servers:
                 active_servers = queued_n
             mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
-            # Avoid Div/0
-            if mpss > 0:
-                ret_dict["wait_time"] = int(queued_mps / mpss)
-            else:
-                ret_dict["wait_time"] = "Unknown"
+            # Is this is 0, it means one of two things:
+            # 1. This horde hasn't had any requests yet. So we'll initiate it to 1mpss
+            # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
+            if mpss == 0:
+                mpss = 1
+            wait_time = queued_mps / mpss
+            # We add the expected running time of our processing gens
+            for procgen in self.processing_gens:
+                wait_time += procgen.get_expected_time_left()
+            ret_dict["wait_time"] = round(wait_time)
         # Lite mode does not include the generations, to spare me download size
         if not lite:
             ret_dict["generations"] = []
@@ -203,6 +208,18 @@ class ProcessingGeneration:
         self._processing_generations.del_item(self)
         del self
 
+    def get_expected_time_left(self):
+        if self.is_completed():
+            return(0)
+        seconds_needed = self.owner.pixelsteps / self.server.get_performance_average()
+        seconds_elapsed = (datetime.now() - self.start_time).seconds
+        expected_time = seconds_needed - seconds_elapsed
+        # In case we run into a slow request
+        if expected_time < 0:
+            expected_time = 0
+        return(expected_time)
+
+
 
 class KAIServer:
     def __init__(self, db):
@@ -279,6 +296,14 @@ class KAIServer:
     def modify_kudos(self, kudos, action = 'generated'):
         self.kudos = round(self.kudos + kudos, 2)
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2) 
+
+    def get_performance_average(self):
+        if len(self.performances):
+            ret_num = sum(self.performances) / len(self.performances)
+        else:
+            # Always sending at least 1 pixelstep per second, to avoid divisions by zero
+            ret_num = 1
+        return(ret_num)
 
     def get_performance(self):
         if len(self.performances):
