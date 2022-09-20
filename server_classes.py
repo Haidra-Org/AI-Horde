@@ -103,10 +103,10 @@ class WaitingPrompt:
             # We increment the priority by 1, because it starts at 0
             # And that makes no sense in a queue context
             ret_dict["queue_position"] = queue_pos + 1
-            mpsm = self._db.stats.get_megapixelsteps_per_min()
+            mpss = self._db.stats.get_request_avg()
             # Avoid Div/0
-            if mpsm > 0:
-                ret_dict["wait_time"] = int(queued_mps / (self._db.stats.get_megapixelsteps_per_min() / 60))
+            if mpss > 0:
+                ret_dict["wait_time"] = int(queued_mps / mpss)
             else:
                 ret_dict["wait_time"] = "Unknown"
         # Lite mode does not include the generations, to spare me download size
