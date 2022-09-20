@@ -106,7 +106,7 @@ class WaitingPrompt:
             mpsm = self._db.stats.get_megapixelsteps_per_min()
             # Avoid Div/0
             if mpsm > 0:
-                ret_dict["wait_time"] = queued_mps / (self._db.stats.get_megapixelsteps_per_min() * 60)
+                ret_dict["wait_time"] = queued_mps / (self._db.stats.get_megapixelsteps_per_min() / 60)
             else:
                 ret_dict["wait_time"] = "Unknown"
         # Lite mode does not include the generations, to spare me download size
