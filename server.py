@@ -607,7 +607,7 @@ if __name__ == "__main__":
     set_logger_verbosity(args.verbosity)
     quiesce_logger(args.quiet)    
     # Only setting this for the WSGI logs
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.ERROR)
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.WARNING)
     _db = Database(convert_flag=args.convert_flag)
     _waiting_prompts = PromptsIndex()
     _processing_generations = GenerationsIndex()
@@ -660,6 +660,6 @@ if __name__ == "__main__":
     api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme)
+    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme, threads=50, connection_limit=4096)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")
