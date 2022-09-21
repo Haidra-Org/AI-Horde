@@ -38,8 +38,8 @@ class WaitingPrompt:
         self.servers = kwargs.get("servers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 180 * self.n
-        if self.stale_time > 300:
-            self.stale_time = 300
+        if self.stale_time > 600:
+            self.stale_time = 600
 
 
     def activate(self):
@@ -47,10 +47,9 @@ class WaitingPrompt:
         # Before we add it to the queue
         self._waiting_prompts.add_item(self)
         logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
-        # Remove the threading, because I can't figure out the race conditions
-        # thread = threading.Thread(target=self.check_for_stale, args=())
-        # thread.daemon = True
-        # thread.start()
+        thread = threading.Thread(target=self.check_for_stale, args=())
+        thread.daemon = True
+        thread.start()
 
     # The mps still queued to be generated for this WP
     def get_queued_megapixelsteps(self):
@@ -156,7 +155,7 @@ class WaitingPrompt:
             if self.is_stale():
                 self.delete()
                 break
-            time.sleep(10)
+            time.sleep(600)
 
     def delete(self):
         for gen in self.processing_gens:
