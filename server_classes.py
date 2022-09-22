@@ -342,6 +342,8 @@ class KAIServer:
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
             "uptime": self.uptime,
+            "paused": self.paused,
+            "maintenance": self.maintenance,
         }
         return(ret_dict)
 
@@ -360,6 +362,8 @@ class KAIServer:
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
         self.uptime = saved_dict.get("uptime",0)
+        self.maintenance = saved_dict.get("maintenance",False)
+        self.paused = saved_dict.get("paused",False)
         self._db.servers[self.name] = self
 
 
