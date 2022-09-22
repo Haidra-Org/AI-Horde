@@ -83,6 +83,7 @@ def get_error(error, **kwargs):
 
 @REST_API.before_request
 def limit_remote_addr():
+    logger.debug(request.remote_addr)
     if not allow_direct_connections and request.remote_addr != '127.0.0.1':
         error_msg = get_error(ServerErrors.NO_PROXY)
         abort(403, error_msg)
