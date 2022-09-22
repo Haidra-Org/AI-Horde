@@ -398,7 +398,7 @@ class PromptsIndex(Index):
     def count_total_waiting_generations(self):
         count = 0
         for wp in self._index.values():
-            count += wp.n
+            count += wp.n + wp.count_processing_gens()
         return(count)
 
     def count_totals(self):
