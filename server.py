@@ -29,12 +29,12 @@ class ServerErrors(Enum):
     MAINTENANCE_MODE = 10
 
 REST_API = Flask(__name__)
-# REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
+REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
 # Very basic DOS prevention
 limiter = Limiter(
     REST_API,
     key_func=get_remote_address,
-    storage_uri="redis://localhost:6379",
+    storage_uri="redis://:default@localhost:6379/1",
     storage_options={"connect_timeout": 30},
     strategy="fixed-window", # or "moving-window"
     default_limits=["90 per minute"]
