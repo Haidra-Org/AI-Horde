@@ -31,14 +31,23 @@ class ServerErrors(Enum):
 REST_API = Flask(__name__)
 REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
 # Very basic DOS prevention
-limiter = Limiter(
-    REST_API,
-    key_func=get_remote_address,
-    storage_uri="redis://localhost:6379/1",
-    # storage_options={"connect_timeout": 30},
-    strategy="fixed-window", # or "moving-window"
-    default_limits=["90 per minute"]
-)
+try:
+    limiter = Limiter(
+        REST_API,
+        key_func=get_remote_address,
+        storage_uri="redis://localhost:6379/1",
+        # storage_options={"connect_timeout": 30},
+        strategy="fixed-window", # or "moving-window"
+        default_limits=["90 per minute"]
+    )
+# Allow local workatation run
+except:
+    limiter = Limiter(
+        REST_API,
+        key_func=get_remote_address,
+        default_limits=["90 per minute"]
+    )
+
 api = Api(REST_API)
 dance_return_to = '/'
 maintenance_mode = False
@@ -60,8 +69,8 @@ def get_error(error, **kwargs):
         logger.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
         return(f'Processing Generation with ID {kwargs["id"]} already submitted')
     if error == ServerErrors.TOO_MANY_PROMPTS:
-        logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
-        return("Too many parallel requests from same user. Please try again later.")
+        logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel requests ({kwargs["wp_count"]}). Aborting!')
+        return(f"Parallel requests exceeded user limit ({kwargs['wp_count']}). Please try again later or request to increase your concurrency.")
     if error == ServerErrors.EMPTY_PROMPT:
         logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
@@ -84,9 +93,9 @@ def get_error(error, **kwargs):
 @REST_API.before_request
 def limit_remote_addr():
     logger.debug(request.remote_addr)
-    # if not allow_direct_connections and request.remote_addr != '127.0.0.1':
-    #     error_msg = get_error(ServerErrors.NO_PROXY)
-    #     abort(403, error_msg)
+    if not allow_direct_connections and request.remote_addr != '127.0.0.1':
+        error_msg = get_error(ServerErrors.NO_PROXY)
+        abort(403, error_msg)
 
 
 @REST_API.after_request
@@ -116,8 +125,8 @@ class SyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count > user.max_concurrent_wps:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count + 1)}",503)
+        if wp_count >= user.concurrency:
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         if args["params"].get("width",512)%64:
@@ -202,8 +211,8 @@ class AsyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count > user.max_concurrent_wps:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count + 1)}",503)
+        if wp_count >= user.concurrency:
+            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         if args["params"].get("width",512)%64:
@@ -320,19 +329,49 @@ class TransferKudos(Resource):
         return({"transfered": kudos}, 200)
 
 class AdminMaintenanceMode(Resource):
+    decorators = [limiter.limit("30/minute")]
     def put(self, api_version = None):
         global maintenance_mode
         parser = reqparse.RequestParser()
         parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
         parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
         args = parser.parse_args()
-        user = _db.find_user_by_api_key(args['api_key'])
-        if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
-        if not os.getenv("ADMINS") or user.get_unique_alias() not in os.getenv("ADMINS"):
-            return(f"{get_error(ServerErrors.NOT_ADMIN, username = user.get_unique_alias(), endpoint = '/admin/maintenance')}",401)
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminMaintenanceMode')}",401)
         maintenance_mode = args['active']
         return({"maintenance_mode": maintenance_mode}, 200)
+
+class AdminModifyUser(Resource):
+    decorators = [limiter.limit("30/minute")]
+    def put(self, api_version = None):
+        global maintenance_mode
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
+        parser.add_argument("username", type=str, required=True, help="The user to modify")
+        parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)")
+        parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
+        args = parser.parse_args()
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminMaintenanceMode')}",401)
+        ret_dict = {}
+        user = _db.find_user_by_username(args['username'])
+        if not user:
+            return(f"Invalid username: {args['username']}",400)        
+        if args.kudos:
+            user.modify_kudos(args.kudos, 'admin')
+            ret_dict["new_kudos"] = user.kudos
+        if args.concurrency:
+            user.concurrency = args.concurrency
+            ret_dict["concurrency"] = user.concurrency
+        if not len(ret_dict):
+            return("No usermod operations selected!", 400)
+        return(ret_dict, 200)
 
 class Servers(Resource):
     @logger.catch
@@ -698,6 +737,7 @@ if __name__ == "__main__":
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
     api.add_resource(AdminMaintenanceMode, "/api/<string:api_version>/admin/maintenance")
+    api.add_resource(AdminModifyUser, "/api/<string:api_version>/admin/usermod")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
     serve(REST_API, host="0.0.0.0", port=args.port, url_scheme=url_scheme, threads=100, connection_limit=4096)

@@ -383,7 +383,7 @@ class PromptsIndex(Index):
         count = 0
         for wp in self._index.values():
             if wp.user == user and not wp.is_completed():
-                count += 1
+                count += wp.n
         return(count)
 
     def count_total_waiting_generations(self):
@@ -442,9 +442,10 @@ class User:
         self.kudos_details = {
             "accumulated": 0,
             "gifted": 0,
+            "admin": 0,
             "received": 0,
         }
-        self.max_concurrent_wps = 2
+        self.concurrency = 30
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -464,7 +465,7 @@ class User:
         }
         # We allow anonymous users more leeway for the max amount of concurrent requests
         # This is balanced by their lower priority
-        self.max_concurrent_wps = 30
+        self.concurrency = 200
 
     def create(self, username, oauth_id, api_key, invite_id):
         self.username = username
@@ -523,7 +524,7 @@ class User:
             "invite_id": self.invite_id,
             "contributions": self.contributions.copy(),
             "usage": self.usage.copy(),
-            "max_concurrent_wps": self.max_concurrent_wps,
+            "concurrency": self.concurrency,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -540,9 +541,9 @@ class User:
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
-        self.max_concurrent_wps = saved_dict.get("max_concurrent_wps", 2)
+        self.concurrency = saved_dict.get("concurrency", 30)
         if self.api_key == '0000000000':
-            self.max_concurrent_wps = 30
+            self.concurrency = 200
         if convert_flag == 'pixelsteps':
             # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
             self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
@@ -770,8 +771,9 @@ class Database:
 
     def find_user_by_username(self, username):
         for user in self.users.values():
-            uniq_username = username.split('#')
-            if user.username == uniq_username[0] and user.id == int(uniq_username[1]):
+            ulist = username.split('#')
+            # This approach handles someone cheekily putting # in their username
+            if user.username == "#".join(ulist[:-1]) and user.id == int(ulist[-1]):
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
                 return(user)
