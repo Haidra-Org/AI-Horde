@@ -229,6 +229,11 @@ class KAIServer:
         self.last_reward_uptime = 0
         # Every how many seconds does this server get a kudos reward
         self.uptime_reward_threshold = 600
+        # Maintenance can be requested by the owner of the server (to allow them to not pick up more requests)
+        self.maintenance = False
+        # Paused is set by the admins to prevent that server from seeing any more requests
+        # This can be used for stopping servers who misbhevave for example, without informing their owners
+        self.paused = False
 
     def create(self, user, name):
         self.user = user
@@ -273,6 +278,10 @@ class KAIServer:
         # takes as an argument a WaitingPrompt class and checks if this server is valid for generating it
         is_matching = True
         skipped_reason = None
+        # if thes server is paused, we return OK, but skip everything
+        if self.paused:
+            is_matching = False
+            skipped_reason = 'server_id'
         if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
             skipped_reason = 'server_id'
@@ -772,11 +781,20 @@ class Database:
             return(None)
         return(self.users.get(oauth_id))
 
-    def find_user_by_username(self, username):
+    def find_user_by_username(self, id):
         for user in self.users.values():
             ulist = username.split('#')
             # This approach handles someone cheekily putting # in their username
             if user.username == "#".join(ulist[:-1]) and user.id == int(ulist[-1]):
+                if user == self.anon and not self.ALLOW_ANONYMOUS:
+                    return(None)
+                return(user)
+        return(None)
+
+    def find_user_by_id(self, user_id):
+        for user in self.users.values():
+            # The arguments passed to the URL are always strings
+            if str(user.id) == user_id:
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
                 return(user)
@@ -792,6 +810,12 @@ class Database:
 
     def find_server_by_name(self,server_name):
         return(self.servers.get(server_name))
+
+    def find_server_by_id(self,server_id):
+        for server in self.servers.values():
+            if server.id == server_id:
+                return(server)
+        return(None)
 
     def transfer_kudos(self, source_user, dest_user, amount):
         if amount > source_user.kudos:
