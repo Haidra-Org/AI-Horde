@@ -172,7 +172,7 @@ class AsyncGeneratePrompt(Resource):
 
 class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
-    decorators = [limiter.limit("2000/second")]
+    decorators = [limiter.limit("10/second")]
     @logger.catch
     def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
