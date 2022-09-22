@@ -632,6 +632,7 @@ arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, w
 arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 arg_parser.add_argument('-c', '--convert_flag', action='store', default=None, required=False, type=str, help="A special flag to convert from previous DB entries to newer and exit")
+arg_parser.add_argument('-p', '--port', action='store', default=7001, required=False, type=int, help="Provide a different port to start with")
 
 if __name__ == "__main__":
     global _db
@@ -696,6 +697,6 @@ if __name__ == "__main__":
     api.add_resource(AdminMaintenanceMode, "/api/<string:api_version>/admin/maintenance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme, threads=100, connection_limit=4096)
+    serve(REST_API, host="0.0.0.0", port=args.port, url_scheme=url_scheme, threads=100, connection_limit=4096)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")
