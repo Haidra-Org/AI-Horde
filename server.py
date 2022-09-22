@@ -269,6 +269,8 @@ class PromptPop(Resource):
         server.check_in(args['max_pixels'])
         if server.maintenance:
             return(f"Server has been put into maintenance mode by the owner",403)
+        if server.paused:
+            return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
