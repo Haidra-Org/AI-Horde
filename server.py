@@ -42,6 +42,7 @@ limiter = Limiter(
 api = Api(REST_API)
 dance_return_to = '/'
 maintenance_mode = False
+allow_direct_connections = False
 load_dotenv()
 
 @logger.catch
@@ -82,7 +83,7 @@ def get_error(error, **kwargs):
 
 @REST_API.before_request
 def limit_remote_addr():
-    if request.remote_addr != '127.0.0.1':
+    if not allow_direct_connections and request.remote_addr != '127.0.0.1':
         error_msg = get_error(ServerErrors.NO_PROXY)
         abort(403, error_msg)
 
@@ -633,13 +634,14 @@ arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="Th
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 arg_parser.add_argument('-c', '--convert_flag', action='store', default=None, required=False, type=str, help="A special flag to convert from previous DB entries to newer and exit")
 arg_parser.add_argument('-p', '--port', action='store', default=7001, required=False, type=int, help="Provide a different port to start with")
+arg_parser.add_argument('--allow_direct_connections', action="store_true", required=False, default=False, help="If set, will allow connections outside the reverse proxy (useful for testing)")
 
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
-
     args = arg_parser.parse_args()
+    allow_direct_connections = args.allow_direct_connections
     set_logger_verbosity(args.verbosity)
     quiesce_logger(args.quiet)    
     # Only setting this for the WSGI logs
