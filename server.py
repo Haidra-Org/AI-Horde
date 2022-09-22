@@ -353,6 +353,7 @@ class AdminModifyUser(Resource):
         parser.add_argument("username", type=str, required=True, help="The user to modify")
         parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)")
         parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
+        parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption")
         args = parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
@@ -369,6 +370,9 @@ class AdminModifyUser(Resource):
         if args.concurrency:
             user.concurrency = args.concurrency
             ret_dict["concurrency"] = user.concurrency
+        if args.usage_multiplier:
+            user.usage_multiplier = args.usage_multiplier
+            ret_dict["usage_multiplier"] = user.usage_multiplier
         if not len(ret_dict):
             return("No usermod operations selected!", 400)
         return(ret_dict, 200)
@@ -429,6 +433,7 @@ class Users(Resource):
                 "kudos_details": user.kudos_details,
                 "usage": user.usage,
                 "contributions": user.contributions,
+                "concurrency": user.concurrency,
             }
         return(user_dict,200)
 
@@ -448,6 +453,7 @@ class UserSingle(Resource):
                 "kudos": user.kudos,
                 "usage": user.usage,
                 "contributions": user.contributions,
+                "concurrency": user.concurrency,
             }
             return(udict,200)
         else:

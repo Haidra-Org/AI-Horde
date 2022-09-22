@@ -446,6 +446,7 @@ class User:
             "received": 0,
         }
         self.concurrency = 30
+        self.usage_multiplier = 1.0
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -494,7 +495,7 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, pixelsteps, kudos):
-        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + pixelsteps/1000000,2)
+        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + (pixelsteps * self.usage_multiplier / 1000000),2)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
@@ -524,6 +525,7 @@ class User:
             "invite_id": self.invite_id,
             "contributions": self.contributions.copy(),
             "usage": self.usage.copy(),
+            "usage_multiplier": self.usage_multiplier,
             "concurrency": self.concurrency,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
@@ -542,6 +544,7 @@ class User:
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
         self.concurrency = saved_dict.get("concurrency", 30)
+        self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         if self.api_key == '0000000000':
             self.concurrency = 200
         if convert_flag == 'pixelsteps':
