@@ -269,8 +269,8 @@ class PromptPop(Resource):
     parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
     parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
 
-    @limiter.limit("45/second")
     @api.expect(parser)
+    @limiter.limit("45/second")
     def post(self):
         args = self.parser.parse_args()
         skipped = {}
