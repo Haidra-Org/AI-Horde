@@ -382,7 +382,6 @@ class ServerSingle(Resource):
             sdict = {
                 "name": server.name,
                 "id": server.id,
-                "model": server.model,
                 "max_pixels": server.max_pixels,
                 "megapixelsteps_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
@@ -439,7 +438,6 @@ class ServerSingle(Resource):
         sdict = {
             "name": server.name,
             "id": server.id,
-            "model": server.model,
             "max_pixels": server.max_pixels,
             "megapixelsteps_generated": server.contributions,
             "requests_fulfilled": server.fulfilments,
