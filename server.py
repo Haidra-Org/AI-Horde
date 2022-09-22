@@ -29,7 +29,7 @@ class ServerErrors(Enum):
     MAINTENANCE_MODE = 10
 
 REST_API = Flask(__name__)
-REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
+# REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
 # Very basic DOS prevention
 limiter = Limiter(
     REST_API,
