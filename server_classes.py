@@ -654,6 +654,7 @@ class Database:
         if os.path.isfile(self.USERS_FILE):
             with open(self.USERS_FILE) as db:
                 serialized_users = json.load(db)
+                logger.info(serialized_users)
                 for user_dict in serialized_users:
                     new_user = User(self)
                     new_user.deserialize(user_dict,convert_flag)
