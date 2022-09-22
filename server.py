@@ -369,6 +369,7 @@ class Servers(Resource):
                 "kudos_details": server.kudos_details,
                 "performance": server.get_performance(),
                 "uptime": server.uptime,
+                "maintenance_mode": server.maintenance,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -423,6 +424,32 @@ class ServerSingle(Resource):
             return("No server modification selected!", 400)
         return(ret_dict, 200)
 
+    # post shows also hidden server info
+    decorators = [limiter.limit("30/minute")]
+    def post(self, api_version = None, server_id = ''):
+        server = _db.find_server_by_id(server_id)
+        if not server:
+            return("Invalid Server ID", 404)
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
+        args = parser.parse_args()
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
+        sdict = {
+            "name": server.name,
+            "id": server.id,
+            "model": server.model,
+            "max_pixels": server.max_pixels,
+            "megapixelsteps_generated": server.contributions,
+            "requests_fulfilled": server.fulfilments,
+            "latest_performance": server.get_performance(),
+            "maintenance": server.maintenance,
+            "paused": server.paused,
+            "owner": server.user.get_unique_alias(),
+        }
+        return(sdict,200)
+
 
 class Users(Resource):
     @logger.catch
@@ -436,7 +463,6 @@ class Users(Resource):
                 "usage": user.usage,
                 "contributions": user.contributions,
                 "concurrency": user.concurrency,
-                "maintenance_mode": server.maintenance,
             }
         return(user_dict,200)
 
@@ -487,6 +513,7 @@ class UserSingle(Resource):
         if not len(ret_dict):
             return("No usermod operations selected!", 400)
         return(ret_dict, 200)
+
 
 class HordeLoad(Resource):
     @logger.catch
