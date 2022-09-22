@@ -47,6 +47,8 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 ## REST API
 
+[Full Documentation](https://stablehorde.net/api/v1)
+
 You can also use the REST API directly. Be aware that this will return a base64 encoded image, so it will flood your output. This is not recommended unless you know what you're doing!
 
 ```
@@ -56,18 +58,6 @@ curl -H "Content-Type: application/json" -d '{"prompt":"A horde of stable robots
 The "params" dictionary is the same as use by the Stable API Webui. Documentation will be forthcoming.
 
 Pass an API Keyin order to track your usage.
-
-### Other API endpoints
-
-Full configuration on the API page coming soon
-
-API root: `/api/latest`
-
-* `/status/performance`: Performance of the Stable Horde as a whole
-* `/servers`: All active servers and their stats
-* `/servers/<id>`: Specific Server.
-* `/users`: All active users and their stats
-* `/users/<id>`: Specific User.
 
 ## Specifying servers
 
