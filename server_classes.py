@@ -655,7 +655,9 @@ class Database:
             with open(self.USERS_FILE) as db:
                 serialized_users = json.load(db)
                 for user_dict in serialized_users:
-                    logger.info(user_dict)
+                    if not user_dict:
+                        logger.error("Found null user on db load. Bypassing")
+                        continue
                     new_user = User(self)
                     new_user.deserialize(user_dict,convert_flag)
                     self.users[new_user.oauth_id] = new_user
@@ -670,6 +672,9 @@ class Database:
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
                 for server_dict in serialized_servers:
+                    if not server_dict:
+                        logger.error("Found null server on db load. Bypassing")
+                        continue
                     new_server = KAIServer(self)
                     new_server.deserialize(server_dict,convert_flag)
                     self.servers[new_server.name] = new_server
