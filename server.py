@@ -2,6 +2,7 @@ from flask import Flask, render_template, redirect, url_for, request, abort
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
@@ -28,10 +29,14 @@ class ServerErrors(Enum):
     MAINTENANCE_MODE = 10
 
 REST_API = Flask(__name__)
+REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
 # Very basic DOS prevention
 limiter = Limiter(
     REST_API,
     key_func=get_remote_address,
+    storage_uri="redis://localhost:6379",
+    storage_options={"connect_timeout": 30},
+    strategy="fixed-window", # or "moving-window"
     default_limits=["90 per minute"]
 )
 api = Api(REST_API)
@@ -187,7 +192,6 @@ class AsyncGenerate(Resource):
         user = None
         if maintenance_mode:
             return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'AsyncGenerate')}",503)
-        logger.info(maintenance_mode)
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
