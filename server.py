@@ -1,5 +1,5 @@
-from flask import Flask, render_template, redirect, url_for, request, abort
-from flask_restful import Resource, reqparse, Api
+from flask import Flask, render_template, redirect, url_for, request, abort, Blueprint
+from flask_restx import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -31,6 +31,18 @@ class ServerErrors(Enum):
 
 REST_API = Flask(__name__)
 REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
+blueprint = Blueprint('api', __name__, url_prefix='/api/v1')
+api = Api(blueprint,
+    version='1.0', 
+    title='Stable Horde',
+    description='The API documentation for the Stable Horde',
+    contact_email="mail@dbzer0.com",
+    default="v1",
+    default_label="Latest Version",
+    ordered=True,
+)
+REST_API.register_blueprint(blueprint)
+
 # Very basic DOS prevention
 try:
     limiter = Limiter(
@@ -49,7 +61,6 @@ except:
         default_limits=["90 per minute"]
     )
 
-api = Api(REST_API)
 dance_return_to = '/'
 maintenance_mode = False
 allow_direct_connections = False
@@ -109,14 +120,16 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
+
 class SyncGenerate(Resource):
-    def post(self, api_version = None):
-        parser = reqparse.RequestParser()
-        parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
-        parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-        args = parser.parse_args()
+    parser = reqparse.RequestParser()
+    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
+    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
+    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
+    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+    @api.expect(parser)
+    def post(self):
+        args = self.parser.parse_args()
         username = 'Anonymous'
         user = None
         if maintenance_mode:
@@ -173,7 +186,7 @@ class SyncGenerate(Resource):
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("3/minute")]
     @logger.catch
-    def get(self, api_version = None, id = ''):
+    def get(self, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
@@ -188,7 +201,7 @@ class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
     decorators = [limiter.limit("10/second")]
     @logger.catch
-    def get(self, api_version = None, id = ''):
+    def get(self, id = ''):
         wp = _waiting_prompts.get_item(id)
         if not wp:
             return("ID not found", 404)
@@ -196,13 +209,15 @@ class AsyncCheck(Resource):
 
 
 class AsyncGenerate(Resource):
-    def post(self, api_version = None):
-        parser = reqparse.RequestParser()
-        parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-        parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
-        parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-        args = parser.parse_args()
+    parser = reqparse.RequestParser()
+    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
+    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
+    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
+    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+
+    @api.expect(parser)
+    def post(self):
+        args = self.parser.parse_args()
         username = 'Anonymous'
         user = None
         if maintenance_mode:
@@ -248,14 +263,16 @@ class AsyncGenerate(Resource):
 
 
 class PromptPop(Resource):
+    parser = reqparse.RequestParser()
+    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
+    parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
+    parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
+    parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
+
     decorators = [limiter.limit("45/second")]
-    def post(self, api_version = None):
-        parser = reqparse.RequestParser()
-        parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-        parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
-        parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
-        parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
-        args = parser.parse_args()
+    @api.expect(parser)
+    def post(self):
+        args = self.parser.parse_args()
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -299,13 +316,15 @@ class PromptPop(Resource):
 
 
 class SubmitGeneration(Resource):
-    def post(self, api_version = None):
-        parser = reqparse.RequestParser()
-        parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
-        parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
-        parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image")
-        parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
-        args = parser.parse_args()
+    parser = reqparse.RequestParser()
+    parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
+    parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
+    parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image")
+    parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
+
+    @api.expect(parser)
+    def post(self):
+        args = self.parser.parse_args()
         procgen = _processing_generations.get_item(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
@@ -320,12 +339,14 @@ class SubmitGeneration(Resource):
         return({"reward": kudos}, 200)
 
 class TransferKudos(Resource):
-    def post(self, api_version = None):
-        parser = reqparse.RequestParser()
-        parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
-        parser.add_argument("api_key", type=str, required=True, help="The sending user's API key")
-        parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer")
-        args = parser.parse_args()
+    parser = reqparse.RequestParser()
+    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
+    parser.add_argument("api_key", type=str, required=True, help="The sending user's API key")
+    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer")
+
+    @api.expect(parser)
+    def post(self):
+        args = self.parser.parse_args()
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
@@ -337,13 +358,15 @@ class TransferKudos(Resource):
         return({"transfered": kudos}, 200)
 
 class AdminMaintenanceMode(Resource):
+    parser = reqparse.RequestParser()
+    parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
+    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
+
     decorators = [limiter.limit("30/minute")]
-    def put(self, api_version = None):
+    @api.expect(parser)
+    def put(self):
         global maintenance_mode
-        parser = reqparse.RequestParser()
-        parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
-        parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
-        args = parser.parse_args()
+        args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
@@ -354,7 +377,7 @@ class AdminMaintenanceMode(Resource):
 
 class Servers(Resource):
     @logger.catch
-    def get(self, api_version = None):
+    def get(self):
         servers_ret = []
         for server in _db.servers.values():
             if server.is_stale():
@@ -376,7 +399,7 @@ class Servers(Resource):
 
 class ServerSingle(Resource):
     @logger.catch
-    def get(self, api_version = None, server_id = ''):
+    def get(self, server_id = ''):
         server = _db.find_server_by_id(server_id)
         if server:
             sdict = {
@@ -392,16 +415,18 @@ class ServerSingle(Resource):
         else:
             return("Not found", 404)
 
+    parser = reqparse.RequestParser()
+    parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
+    parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.")
+    parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.")
+
     decorators = [limiter.limit("30/minute")]
-    def put(self, api_version = None, server_id = ''):
+    @api.expect(parser)
+    def put(self, server_id = ''):
         server = _db.find_server_by_id(server_id)
         if not server:
             return("Invalid Server ID", 404)
-        parser = reqparse.RequestParser()
-        parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
-        parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.")
-        parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.")
-        args = parser.parse_args()
+        args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
@@ -423,15 +448,16 @@ class ServerSingle(Resource):
             return("No server modification selected!", 400)
         return(ret_dict, 200)
 
+    parser = reqparse.RequestParser()
+    parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
+
     # post shows also hidden server info
     decorators = [limiter.limit("30/minute")]
-    def post(self, api_version = None, server_id = ''):
+    def post(self, server_id = ''):
         server = _db.find_server_by_id(server_id)
         if not server:
             return("Invalid Server ID", 404)
-        parser = reqparse.RequestParser()
-        parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
-        args = parser.parse_args()
+        args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
@@ -451,7 +477,7 @@ class ServerSingle(Resource):
 
 class Users(Resource):
     @logger.catch
-    def get(self, api_version = None):
+    def get(self):
         user_dict = {}
         for user in _db.users.values():
             user_dict[user.get_unique_alias()] = {
@@ -467,7 +493,7 @@ class Users(Resource):
 
 class UserSingle(Resource):
     @logger.catch
-    def get(self, api_version = None, user_id = ''):
+    def get(self, user_id = ''):
         logger.debug(user_id)
         user = _db.find_user_by_id(user_id)
         if user:
@@ -482,17 +508,19 @@ class UserSingle(Resource):
         else:
             return("Not found", 404)
 
+    parser = reqparse.RequestParser()
+    parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
+    parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)")
+    parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
+    parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption")
+
     decorators = [limiter.limit("30/minute")]
-    def put(self, api_version = None, user_id = ''):
+    @api.expect(parser)
+    def put(self, user_id = ''):
         user = user = _db.find_user_by_id(user_id)
         if not user:
             return(f"Invalid user_id: {user_id}",400)        
-        parser = reqparse.RequestParser()
-        parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
-        parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)")
-        parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
-        parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption")
-        args = parser.parse_args()
+        args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'PUT UserSingle')}",401)
@@ -515,14 +543,15 @@ class UserSingle(Resource):
 
 class HordeLoad(Resource):
     @logger.catch
-    def get(self, api_version = None):
+    def get(self):
         load_dict = _waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
         load_dict["server_count"] = _db.count_active_servers()
         load_dict["maintenance_mode"] = maintenance_mode
         return(load_dict,200)
 
-
+# Had to put this before the API definition, as otherwise it takes over /
+# https://stackoverflow.com/questions/43632686/how-to-indicate-base-url-in-flask-restplus-documentation
 @logger.catch
 @REST_API.route('/')
 def index():
@@ -573,6 +602,7 @@ This is the server which has generated the most pixels for the horde.
     </head>
     """
     return(head + markdown(findex + top_contributors + policies))
+
 
 @logger.catch
 def get_oauth_id():
@@ -784,22 +814,22 @@ if __name__ == "__main__":
         redirect_url='/finish_dance',
     )
     REST_API.register_blueprint(github_blueprint,url_prefix="/github")
-    api.add_resource(SyncGenerate, "/generate/sync","/api/<string:api_version>/generate/sync")
+    api.add_resource(SyncGenerate, "/generate/sync")
     # Async is disabled due to the memory requirements of keeping images in running memory
-    api.add_resource(AsyncGenerate, "/generate/async","/api/<string:api_version>/generate/async")
-    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/prompt/<string:id>")
-    api.add_resource(AsyncCheck, "/generate/prompt/<string:id>","/api/<string:api_version>/generate/check/<string:id>")
-    api.add_resource(PromptPop, "/generate/pop","/api/<string:api_version>/generate/pop")
-    api.add_resource(SubmitGeneration, "/generate/submit","/api/<string:api_version>/generate/submit")
-    api.add_resource(Users, "/users","/api/<string:api_version>/users")
-    api.add_resource(UserSingle, "/users/<string:user_id>","/api/<string:api_version>/users/<string:user_id>")
-    api.add_resource(Servers, "/servers","/api/<string:api_version>/servers")
-    api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
-    api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
-    api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
-    api.add_resource(AdminMaintenanceMode, "/api/<string:api_version>/admin/maintenance")
+    api.add_resource(AsyncGenerate, "/generate/async")
+    api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
+    api.add_resource(AsyncCheck, "/generate/check/<string:id>")
+    api.add_resource(PromptPop, "/generate/pop")
+    api.add_resource(SubmitGeneration, "/generate/submit")
+    api.add_resource(Users, "/users")
+    api.add_resource(UserSingle, "/users/<string:user_id>")
+    api.add_resource(Servers, "/servers")
+    api.add_resource(ServerSingle, "/<string:server_id>")
+    api.add_resource(TransferKudos, "/kudos/transfer")
+    api.add_resource(HordeLoad, "/status/performance")
+    api.add_resource(AdminMaintenanceMode, "/admin/maintenance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port=args.port, url_scheme=url_scheme, threads=100, connection_limit=4096)
+    serve(REST_API, host="127.0.0.1", port=args.port, url_scheme=url_scheme, threads=100, connection_limit=4096)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")
