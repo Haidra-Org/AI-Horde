@@ -2,6 +2,7 @@ from flask import Flask, render_template, redirect, url_for, request, abort
 from flask_restful import Resource, reqparse, Api
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
@@ -24,16 +25,34 @@ class ServerErrors(Enum):
     INVALID_SIZE = 6
     NO_PROXY = 7
     TOO_MANY_STEPS = 8
+    NOT_ADMIN = 9
+    MAINTENANCE_MODE = 10
+    NOT_OWNER = 11
 
 REST_API = Flask(__name__)
+REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
 # Very basic DOS prevention
-limiter = Limiter(
-    REST_API,
-    key_func=get_remote_address,
-    default_limits=["90 per minute"]
-)
+try:
+    limiter = Limiter(
+        REST_API,
+        key_func=get_remote_address,
+        storage_uri="redis://localhost:6379/1",
+        # storage_options={"connect_timeout": 30},
+        strategy="fixed-window", # or "moving-window"
+        default_limits=["90 per minute"]
+    )
+# Allow local workatation run
+except:
+    limiter = Limiter(
+        REST_API,
+        key_func=get_remote_address,
+        default_limits=["90 per minute"]
+    )
+
 api = Api(REST_API)
 dance_return_to = '/'
+maintenance_mode = False
+allow_direct_connections = False
 load_dotenv()
 
 @logger.catch
@@ -51,8 +70,8 @@ def get_error(error, **kwargs):
         logger.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
         return(f'Processing Generation with ID {kwargs["id"]} already submitted')
     if error == ServerErrors.TOO_MANY_PROMPTS:
-        logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel prompts ({kwargs["wp_count"]}). Aborting!')
-        return("Too many parallel requests from same user. Please try again later.")
+        logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel requests ({kwargs["wp_count"]}). Aborting!')
+        return(f"Parallel requests exceeded user limit ({kwargs['wp_count']}). Please try again later or request to increase your concurrency.")
     if error == ServerErrors.EMPTY_PROMPT:
         logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
         return("You cannot specify an empty prompt.")
@@ -65,12 +84,22 @@ def get_error(error, **kwargs):
     if error == ServerErrors.NO_PROXY:
         logger.warning(f'Attempt to access outside reverse proxy')
         return(f'Access allowed only through https')
+    if error == ServerErrors.NOT_ADMIN:
+        logger.warning(f'Non-admin user "{kwargs["username"]}" tried to use admin endpoint: "{kwargs["endpoint"]}". Aborting!')
+        return("You're not an admin. Sod off!")
+    if error == ServerErrors.MAINTENANCE_MODE:
+        logger.info(f'Rejecting endpoint "{kwargs["endpoint"]}" because server in maintenance mode.')
+        return("Server has enterred maintenance mode. Please try again later.")
+    if error == ServerErrors.NOT_OWNER:
+        logger.warning(f'User "{kwargs["username"]}" tried to modify server they do not own: "{kwargs["server_name"]}". Aborting!')
+        return("You're not the owner of this server!")
 
 @REST_API.before_request
 def limit_remote_addr():
-    if request.remote_addr != '127.0.0.1':
-        error_msg = get_error(ServerErrors.NO_PROXY)
-        abort(403, error_msg)
+    logger.debug(request.remote_addr)
+    # if not allow_direct_connections and request.remote_addr != '127.0.0.1':
+    #     error_msg = get_error(ServerErrors.NO_PROXY)
+    #     abort(403, error_msg)
 
 
 @REST_API.after_request
@@ -90,6 +119,8 @@ class SyncGenerate(Resource):
         args = parser.parse_args()
         username = 'Anonymous'
         user = None
+        if maintenance_mode:
+            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'SyncGenerate')}",503)
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -98,7 +129,7 @@ class SyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.max_concurrent_wps:
+        if wp_count >= user.concurrency:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
@@ -154,6 +185,8 @@ class AsyncGeneratePrompt(Resource):
 
 
 class AsyncCheck(Resource):
+    # Increasing this until I can figure out how to pass original IP from reverse proxy
+    decorators = [limiter.limit("10/second")]
     @logger.catch
     def get(self, api_version = None, id = ''):
         wp = _waiting_prompts.get_item(id)
@@ -172,6 +205,8 @@ class AsyncGenerate(Resource):
         args = parser.parse_args()
         username = 'Anonymous'
         user = None
+        if maintenance_mode:
+            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'AsyncGenerate')}",503)
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -180,7 +215,7 @@ class AsyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count > user.max_concurrent_wps:
+        if wp_count >= user.concurrency:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
@@ -232,6 +267,10 @@ class PromptPop(Resource):
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         server.check_in(args['max_pixels'])
+        if server.maintenance:
+            return(f"Server has been put into maintenance mode by the owner",403)
+        if server.paused:
+            return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
@@ -297,6 +336,22 @@ class TransferKudos(Resource):
             return(f"{error}",400)
         return({"transfered": kudos}, 200)
 
+class AdminMaintenanceMode(Resource):
+    decorators = [limiter.limit("30/minute")]
+    def put(self, api_version = None):
+        global maintenance_mode
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
+        parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
+        args = parser.parse_args()
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminMaintenanceMode')}",401)
+        maintenance_mode = args['active']
+        return({"maintenance_mode": maintenance_mode}, 200)
+
 class Servers(Resource):
     @logger.catch
     def get(self, api_version = None):
@@ -314,6 +369,7 @@ class Servers(Resource):
                 "kudos_details": server.kudos_details,
                 "performance": server.get_performance(),
                 "uptime": server.uptime,
+                "maintenance_mode": server.maintenance,
             }
             servers_ret.append(sdict)
         return(servers_ret,200)
@@ -321,25 +377,76 @@ class Servers(Resource):
 class ServerSingle(Resource):
     @logger.catch
     def get(self, api_version = None, server_id = ''):
-        server = None
-        for s in _db.servers.values():
-            if s.id == server_id:
-                server = s
-                break
+        server = _db.find_server_by_id(server_id)
         if server:
             sdict = {
                 "name": server.name,
                 "id": server.id,
-                "model": server.model,
                 "max_pixels": server.max_pixels,
                 "megapixelsteps_generated": server.contributions,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
+                "maintenance_mode": server.maintenance,
             }
             return(sdict,200)
         else:
             return("Not found", 404)
 
+    decorators = [limiter.limit("30/minute")]
+    def put(self, api_version = None, server_id = ''):
+        server = _db.find_server_by_id(server_id)
+        if not server:
+            return("Invalid Server ID", 404)
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
+        parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.")
+        parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.")
+        args = parser.parse_args()
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
+        ret_dict = {}
+        # Both admins and owners can set the server to maintenance
+        if args.maintenance != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+                if admin != server.user:
+                    return(f"{get_error(ServerErrors.NOT_OWNER, username = admin.get_unique_alias(), server_name = server.name)}",401)
+            server.maintenance = args.maintenance
+            ret_dict["maintenance"] = server.maintenance
+        # Only admins can set a server as paused
+        if args.paused != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+                return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyServer')}",401)
+            server.paused = args.paused
+            ret_dict["paused"] = server.paused
+        if not len(ret_dict):
+            return("No server modification selected!", 400)
+        return(ret_dict, 200)
+
+    # post shows also hidden server info
+    decorators = [limiter.limit("30/minute")]
+    def post(self, api_version = None, server_id = ''):
+        server = _db.find_server_by_id(server_id)
+        if not server:
+            return("Invalid Server ID", 404)
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
+        args = parser.parse_args()
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
+        sdict = {
+            "name": server.name,
+            "id": server.id,
+            "max_pixels": server.max_pixels,
+            "megapixelsteps_generated": server.contributions,
+            "requests_fulfilled": server.fulfilments,
+            "latest_performance": server.get_performance(),
+            "maintenance": server.maintenance,
+            "paused": server.paused,
+            "owner": server.user.get_unique_alias(),
+        }
+        return(sdict,200)
 
 
 class Users(Resource):
@@ -353,6 +460,7 @@ class Users(Resource):
                 "kudos_details": user.kudos_details,
                 "usage": user.usage,
                 "contributions": user.contributions,
+                "concurrency": user.concurrency,
             }
         return(user_dict,200)
 
@@ -361,21 +469,48 @@ class UserSingle(Resource):
     @logger.catch
     def get(self, api_version = None, user_id = ''):
         logger.debug(user_id)
-        user = None
-        for u in _db.users.values():
-            if str(u.id) == user_id:
-                user = u
-                break
+        user = _db.find_user_by_id(user_id)
         if user:
             udict = {
                 "username": user.get_unique_alias(),
                 "kudos": user.kudos,
                 "usage": user.usage,
                 "contributions": user.contributions,
+                "concurrency": user.concurrency,
             }
             return(udict,200)
         else:
             return("Not found", 404)
+
+    decorators = [limiter.limit("30/minute")]
+    def put(self, api_version = None, user_id = ''):
+        user = user = _db.find_user_by_id(user_id)
+        if not user:
+            return(f"Invalid user_id: {user_id}",400)        
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
+        parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)")
+        parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
+        parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption")
+        args = parser.parse_args()
+        admin = _db.find_user_by_api_key(args['api_key'])
+        if not admin:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'PUT UserSingle')}",401)
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyUser')}",401)
+        ret_dict = {}
+        if args.kudos:
+            user.modify_kudos(args.kudos, 'admin')
+            ret_dict["new_kudos"] = user.kudos
+        if args.concurrency:
+            user.concurrency = args.concurrency
+            ret_dict["concurrency"] = user.concurrency
+        if args.usage_multiplier:
+            user.usage_multiplier = args.usage_multiplier
+            ret_dict["usage_multiplier"] = user.usage_multiplier
+        if not len(ret_dict):
+            return("No usermod operations selected!", 400)
+        return(ret_dict, 200)
 
 
 class HordeLoad(Resource):
@@ -384,6 +519,7 @@ class HordeLoad(Resource):
         load_dict = _waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
         load_dict["server_count"] = _db.count_active_servers()
+        load_dict["maintenance_mode"] = maintenance_mode
         return(load_dict,200)
 
 
@@ -429,6 +565,7 @@ This is the server which has generated the most pixels for the horde.
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
+        maintenance_mode = maintenance_mode,
     )
     head = """<head>
     <title>Stable Horde</title>
@@ -597,13 +734,15 @@ arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, w
 arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 arg_parser.add_argument('-c', '--convert_flag', action='store', default=None, required=False, type=str, help="A special flag to convert from previous DB entries to newer and exit")
+arg_parser.add_argument('-p', '--port', action='store', default=7001, required=False, type=int, help="Provide a different port to start with")
+arg_parser.add_argument('--allow_direct_connections', action="store_true", required=False, default=False, help="If set, will allow connections outside the reverse proxy (useful for testing)")
 
 if __name__ == "__main__":
     global _db
     global _waiting_prompts
     global _processing_generations
-
     args = arg_parser.parse_args()
+    allow_direct_connections = args.allow_direct_connections
     set_logger_verbosity(args.verbosity)
     quiesce_logger(args.quiet)    
     # Only setting this for the WSGI logs
@@ -658,8 +797,9 @@ if __name__ == "__main__":
     api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
+    api.add_resource(AdminMaintenanceMode, "/api/<string:api_version>/admin/maintenance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme, threads=50, connection_limit=4096)
+    serve(REST_API, host="0.0.0.0", port=args.port, url_scheme=url_scheme, threads=100, connection_limit=4096)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")

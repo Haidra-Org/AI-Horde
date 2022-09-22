@@ -229,6 +229,11 @@ class KAIServer:
         self.last_reward_uptime = 0
         # Every how many seconds does this server get a kudos reward
         self.uptime_reward_threshold = 600
+        # Maintenance can be requested by the owner of the server (to allow them to not pick up more requests)
+        self.maintenance = False
+        # Paused is set by the admins to prevent that server from seeing any more requests
+        # This can be used for stopping servers who misbhevave for example, without informing their owners
+        self.paused = False
 
     def create(self, user, name):
         self.user = user
@@ -273,6 +278,7 @@ class KAIServer:
         # takes as an argument a WaitingPrompt class and checks if this server is valid for generating it
         is_matching = True
         skipped_reason = None
+        # if thes server is paused, we return OK, but skip everything
         if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
             skipped_reason = 'server_id'
@@ -333,6 +339,8 @@ class KAIServer:
             "last_check_in": self.last_check_in.strftime("%Y-%m-%d %H:%M:%S"),
             "id": self.id,
             "uptime": self.uptime,
+            "paused": self.paused,
+            "maintenance": self.maintenance,
         }
         return(ret_dict)
 
@@ -351,6 +359,8 @@ class KAIServer:
         self.last_check_in = datetime.strptime(saved_dict["last_check_in"],"%Y-%m-%d %H:%M:%S")
         self.id = saved_dict["id"]
         self.uptime = saved_dict.get("uptime",0)
+        self.maintenance = saved_dict.get("maintenance",False)
+        self.paused = saved_dict.get("paused",False)
         self._db.servers[self.name] = self
 
 
@@ -383,13 +393,13 @@ class PromptsIndex(Index):
         count = 0
         for wp in self._index.values():
             if wp.user == user and not wp.is_completed():
-                count += 1
+                count += wp.n
         return(count)
 
     def count_total_waiting_generations(self):
         count = 0
         for wp in self._index.values():
-            count += wp.n
+            count += wp.n + wp.count_processing_gens()["processing"]
         return(count)
 
     def count_totals(self):
@@ -442,9 +452,11 @@ class User:
         self.kudos_details = {
             "accumulated": 0,
             "gifted": 0,
+            "admin": 0,
             "received": 0,
         }
-        self.max_concurrent_wps = 2
+        self.concurrency = 30
+        self.usage_multiplier = 1.0
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -464,7 +476,7 @@ class User:
         }
         # We allow anonymous users more leeway for the max amount of concurrent requests
         # This is balanced by their lower priority
-        self.max_concurrent_wps = 30
+        self.concurrency = 200
 
     def create(self, username, oauth_id, api_key, invite_id):
         self.username = username
@@ -493,7 +505,7 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, pixelsteps, kudos):
-        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + pixelsteps/1000000,2)
+        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + (pixelsteps * self.usage_multiplier / 1000000),2)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
@@ -523,7 +535,8 @@ class User:
             "invite_id": self.invite_id,
             "contributions": self.contributions.copy(),
             "usage": self.usage.copy(),
-            "max_concurrent_wps": self.max_concurrent_wps,
+            "usage_multiplier": self.usage_multiplier,
+            "concurrency": self.concurrency,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -540,9 +553,10 @@ class User:
         self.invite_id = saved_dict["invite_id"]
         self.contributions = saved_dict["contributions"]
         self.usage = saved_dict["usage"]
-        self.max_concurrent_wps = saved_dict.get("max_concurrent_wps", 2)
+        self.concurrency = saved_dict.get("concurrency", 30)
+        self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         if self.api_key == '0000000000':
-            self.max_concurrent_wps = 30
+            self.concurrency = 200
         if convert_flag == 'pixelsteps':
             # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
             self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
@@ -655,6 +669,9 @@ class Database:
             with open(self.USERS_FILE) as db:
                 serialized_users = json.load(db)
                 for user_dict in serialized_users:
+                    if not user_dict:
+                        logger.error("Found null user on db load. Bypassing")
+                        continue
                     new_user = User(self)
                     new_user.deserialize(user_dict,convert_flag)
                     self.users[new_user.oauth_id] = new_user
@@ -669,6 +686,9 @@ class Database:
             with open(self.SERVERS_FILE) as db:
                 serialized_servers = json.load(db)
                 for server_dict in serialized_servers:
+                    if not server_dict:
+                        logger.error("Found null server on db load. Bypassing")
+                        continue
                     new_server = KAIServer(self)
                     new_server.deserialize(server_dict,convert_flag)
                     self.servers[new_server.name] = new_server
@@ -762,10 +782,20 @@ class Database:
             return(None)
         return(self.users.get(oauth_id))
 
-    def find_user_by_username(self, username):
+    def find_user_by_username(self, id):
         for user in self.users.values():
-            uniq_username = username.split('#')
-            if user.username == uniq_username[0] and user.id == int(uniq_username[1]):
+            ulist = username.split('#')
+            # This approach handles someone cheekily putting # in their username
+            if user.username == "#".join(ulist[:-1]) and user.id == int(ulist[-1]):
+                if user == self.anon and not self.ALLOW_ANONYMOUS:
+                    return(None)
+                return(user)
+        return(None)
+
+    def find_user_by_id(self, user_id):
+        for user in self.users.values():
+            # The arguments passed to the URL are always strings
+            if str(user.id) == user_id:
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
                 return(user)
@@ -781,6 +811,12 @@ class Database:
 
     def find_server_by_name(self,server_name):
         return(self.servers.get(server_name))
+
+    def find_server_by_id(self,server_id):
+        for server in self.servers.values():
+            if server.id == server_id:
+                return(server)
+        return(None)
 
     def transfer_kudos(self, source_user, dest_user, amount):
         if amount > source_user.kudos:
