@@ -34,9 +34,9 @@ REST_API.wsgi_app = ProxyFix(REST_API.wsgi_app, x_for=1)
 limiter = Limiter(
     REST_API,
     key_func=get_remote_address,
-    # storage_uri="redis://:default@localhost:6379/1",
+    storage_uri="redis://:default@localhost:6379/1",
     # storage_options={"connect_timeout": 30},
-    # strategy="fixed-window", # or "moving-window"
+    strategy="fixed-window", # or "moving-window"
     default_limits=["90 per minute"]
 )
 api = Api(REST_API)
