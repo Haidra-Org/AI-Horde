@@ -23,6 +23,13 @@ The point of registering is to track your usage and your contributions. The more
 # Generating Prompts
 
 
+### GUI
+
+We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
+
+<img src="screenshot.png" width="500" />
+
+
 ## Command Line
 
 I have provided a small python script with which you can use to call the horde.
@@ -37,10 +44,6 @@ You can use `./cli_requests.py -h` to see the command line arguments to use
 
 You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
 
-## GUI
-
-Coming Soon
-
 
 ## REST API
 
@@ -54,6 +57,17 @@ The "params" dictionary is the same as use by the Stable API Webui. Documentatio
 
 Pass an API Keyin order to track your usage.
 
+### Other API endpoints
+
+Full configuration on the API page coming soon
+
+API root: `/api/latest`
+
+* `/status/performance`: Performance of the Stable Horde as a whole
+* `/servers`: All active servers and their stats
+* `/servers/<id>`: Specific Server.
+* `/users`: All active users and their stats
+* `/users/<id>`: Specific User.
 
 ## Specifying servers
 
