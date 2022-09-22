@@ -24,6 +24,8 @@ class ServerErrors(Enum):
     INVALID_SIZE = 6
     NO_PROXY = 7
     TOO_MANY_STEPS = 8
+    NOT_ADMIN = 9
+    MAINTENANCE_MODE = 10
 
 REST_API = Flask(__name__)
 # Very basic DOS prevention
@@ -34,6 +36,7 @@ limiter = Limiter(
 )
 api = Api(REST_API)
 dance_return_to = '/'
+maintenance_mode = False
 load_dotenv()
 
 @logger.catch
@@ -65,6 +68,12 @@ def get_error(error, **kwargs):
     if error == ServerErrors.NO_PROXY:
         logger.warning(f'Attempt to access outside reverse proxy')
         return(f'Access allowed only through https')
+    if error == ServerErrors.NOT_ADMIN:
+        logger.warning(f'Non-admin user "{kwargs["username"]}" tried to use admin endpoint: "{kwargs["endpoint"]}". Aborting!')
+        return("You're not an admin. Sod off!")
+    if error == ServerErrors.MAINTENANCE_MODE:
+        logger.info(f'Rejecting endpoint "{kwargs["endpoint"]}" because server in maintenance mode.')
+        return("Server has enterred maintenance mode. Please try again later.")
 
 @REST_API.before_request
 def limit_remote_addr():
@@ -90,6 +99,8 @@ class SyncGenerate(Resource):
         args = parser.parse_args()
         username = 'Anonymous'
         user = None
+        if maintenance_mode:
+            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'SyncGenerate')}",503)
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -98,7 +109,7 @@ class SyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = _waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.max_concurrent_wps:
+        if wp_count > user.max_concurrent_wps:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("length",512)%64:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
@@ -172,6 +183,9 @@ class AsyncGenerate(Resource):
         args = parser.parse_args()
         username = 'Anonymous'
         user = None
+        if maintenance_mode:
+            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'AsyncGenerate')}",503)
+        logger.info(maintenance_mode)
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -296,6 +310,21 @@ class TransferKudos(Resource):
         if error != 'OK':
             return(f"{error}",400)
         return({"transfered": kudos}, 200)
+
+class AdminMaintenanceMode(Resource):
+    def put(self, api_version = None):
+        global maintenance_mode
+        parser = reqparse.RequestParser()
+        parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
+        parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
+        args = parser.parse_args()
+        user = _db.find_user_by_api_key(args['api_key'])
+        if not user:
+            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
+        if not os.getenv("ADMINS") or user.get_unique_alias() not in os.getenv("ADMINS"):
+            return(f"{get_error(ServerErrors.NOT_ADMIN, username = user.get_unique_alias(), endpoint = '/admin/maintenance')}",401)
+        maintenance_mode = args['active']
+        return({"maintenance_mode": maintenance_mode}, 200)
 
 class Servers(Resource):
     @logger.catch
@@ -658,8 +687,9 @@ if __name__ == "__main__":
     api.add_resource(ServerSingle, "/servers/<string:server_id>","/api/<string:api_version>/servers/<string:server_id>")
     api.add_resource(TransferKudos, "/api/<string:api_version>/kudos/transfer")
     api.add_resource(HordeLoad, "/api/<string:api_version>/status/performance")
+    api.add_resource(AdminMaintenanceMode, "/api/<string:api_version>/admin/maintenance")
     from waitress import serve
     logger.init("WSGI Server", status="Starting")
-    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme, threads=50, connection_limit=4096)
+    serve(REST_API, host="0.0.0.0", port="7001",url_scheme=url_scheme, threads=100, connection_limit=4096)
     # REST_API.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")
