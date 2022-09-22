@@ -1,5 +1,5 @@
-from flask import Flask, render_template, redirect, url_for, request, abort, Blueprint
-from flask_restx import Resource, reqparse, Api
+from flask import Flask, render_template, redirect, url_for, request, Blueprint
+from flask_restx import Resource, reqparse, fields, Api, abort
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -120,14 +120,42 @@ def after_request(response):
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization"
     return response
 
+response_model_generation = api.model('Generation', {
+'img': fields.String,
+'seed': fields.String,
+'server_id': fields.String,
+'server_name': fields.String,
+})
+response_model_wp_status_lite = api.model('RequestStatusCheck', {
+'finished': fields.Integer,
+'processing': fields.Integer,
+'waiting': fields.Integer,
+'done': fields.Boolean,
+'wait_time': fields.Integer,
+})
+response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
+'generations': fields.List(fields.Nested(response_model_generation)),
+})
+
+response_model_error_too_many_prompts = api.model('TooManyPrompts', {
+'finished': fields.Integer,
+})
 
 class SyncGenerate(Resource):
+    # model_generation = api.model('Successful Sync Generation', {
+    # 'generations': fields.List(fields.String),
+    # })
     parser = reqparse.RequestParser()
     parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
     parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
     parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
     @api.expect(parser)
+    @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
+    @api.response(200, 'Success', response_model_wp_status_full)
+    @api.response(400, 'Validation Error')
+    @api.response(400, 'Validation Error')
+    @api.response(400, 'Validation Error')
     def post(self):
         args = self.parser.parse_args()
         username = 'Anonymous'
@@ -177,7 +205,7 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        ret_dict = wp.get_status()['generations']
+        ret_dict = wp.get_status()
         # We delete it from memory immediately to ensure we don't run out
         wp.delete()
         return(ret_dict, 200)
