@@ -52,7 +52,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 You can also use the REST API directly. Be aware that this will return a base64 encoded image, so it will flood your output. This is not recommended unless you know what you're doing!
 
 ```
-curl -H "Content-Type: application/json" -d '{"prompt":"A horde of stable robots", "params":{"n":1, "width": 256, "height": 256}, "api_key":"0000000000"}' https://stablehorde.net/api/latest/generate/sync
+curl -H "Content-Type: application/json" -d '{"prompt":"A horde of stable robots", "params":{"n":1, "width": 256, "height": 256}, "api_key":"0000000000"}' https://stablehorde.net/api/v1/generate/sync
 ```
 
 The "params" dictionary is the same as use by the Stable API Webui. Documentation will be forthcoming.
