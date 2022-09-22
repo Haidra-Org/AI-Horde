@@ -184,7 +184,7 @@ class SyncGenerate(Resource):
 
 
 class AsyncGeneratePrompt(Resource):
-    decorators = [limiter.limit("3/minute")]
+    @limiter.limit("3/minute")
     @logger.catch
     def get(self, id = ''):
         wp = _waiting_prompts.get_item(id)
@@ -199,7 +199,7 @@ class AsyncGeneratePrompt(Resource):
 
 class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
-    decorators = [limiter.limit("10/second")]
+    @limiter.limit("10/second")
     @logger.catch
     def get(self, id = ''):
         wp = _waiting_prompts.get_item(id)
@@ -269,7 +269,7 @@ class PromptPop(Resource):
     parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
     parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
 
-    decorators = [limiter.limit("45/second")]
+    @limiter.limit("45/second")
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
@@ -362,7 +362,7 @@ class AdminMaintenanceMode(Resource):
     parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
     parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
 
-    decorators = [limiter.limit("30/minute")]
+    @limiter.limit("30/minute")
     @api.expect(parser)
     def put(self):
         global maintenance_mode
@@ -420,7 +420,7 @@ class ServerSingle(Resource):
     parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.")
     parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.")
 
-    decorators = [limiter.limit("30/minute")]
+    @limiter.limit("30/minute")
     @api.expect(parser)
     def put(self, server_id = ''):
         server = _db.find_server_by_id(server_id)
@@ -452,7 +452,7 @@ class ServerSingle(Resource):
     parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
 
     # post shows also hidden server info
-    decorators = [limiter.limit("30/minute")]
+    @limiter.limit("30/minute")
     def post(self, server_id = ''):
         server = _db.find_server_by_id(server_id)
         if not server:
@@ -514,7 +514,7 @@ class UserSingle(Resource):
     parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption")
 
-    decorators = [limiter.limit("30/minute")]
+    @limiter.limit("30/minute")
     @api.expect(parser)
     def put(self, user_id = ''):
         user = user = _db.find_user_by_id(user_id)
@@ -553,6 +553,7 @@ class HordeLoad(Resource):
 # Had to put this before the API definition, as otherwise it takes over /
 # https://stackoverflow.com/questions/43632686/how-to-indicate-base-url-in-flask-restplus-documentation
 @logger.catch
+@limiter.limit("30/minute")
 @REST_API.route('/')
 def index():
     with open('index.md') as index_file:
