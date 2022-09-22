@@ -492,6 +492,7 @@ class HordeLoad(Resource):
         load_dict = _waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
         load_dict["server_count"] = _db.count_active_servers()
+        load_dict["maintenance_mode"] = maintenance_mode
         return(load_dict,200)
 
 
@@ -537,6 +538,7 @@ This is the server which has generated the most pixels for the horde.
         total_fulfillments = totals["fulfilments"],
         active_servers = _db.count_active_servers(),
         total_queue = _waiting_prompts.count_total_waiting_generations(),
+        maintenance_mode = maintenance_mode,
     )
     head = """<head>
     <title>Stable Horde</title>
