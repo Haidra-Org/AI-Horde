@@ -410,13 +410,13 @@ class ServerSingle(Resource):
                 if admin != server.user:
                     return(f"{get_error(ServerErrors.NOT_OWNER, username = admin.get_unique_alias(), server_name = server.name)}",401)
             server.maintenance = args.maintenance
-            ret_dict["maintenance"] = args.maintenance
+            ret_dict["maintenance"] = server.maintenance
         # Only admins can set a server as paused
         if args.paused != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
                 return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyServer')}",401)
             server.paused = args.paused
-            ret_dict["paused"] = args.paused
+            ret_dict["paused"] = server.paused
         if not len(ret_dict):
             return("No server modification selected!", 400)
         return(ret_dict, 200)

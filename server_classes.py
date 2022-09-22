@@ -279,9 +279,8 @@ class KAIServer:
         is_matching = True
         skipped_reason = None
         # if thes server is paused, we return OK, but skip everything
-        if self.paused:
-            is_matching = False
-            skipped_reason = 'server_id'
+        if self.paused == True:
+            return([0,{}])
         if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
             skipped_reason = 'server_id'
