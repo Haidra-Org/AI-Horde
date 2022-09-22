@@ -40,6 +40,10 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
 
+## REST API
+
+[Full Documentation](/api/v1)
+
 ## Services
 
 * [Register New Account](/register)
