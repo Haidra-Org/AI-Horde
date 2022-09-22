@@ -825,7 +825,7 @@ if __name__ == "__main__":
     api.add_resource(Users, "/users")
     api.add_resource(UserSingle, "/users/<string:user_id>")
     api.add_resource(Servers, "/servers")
-    api.add_resource(ServerSingle, "/<string:server_id>")
+    api.add_resource(ServerSingle, "servers/<string:server_id>")
     api.add_resource(TransferKudos, "/kudos/transfer")
     api.add_resource(HordeLoad, "/status/performance")
     api.add_resource(AdminMaintenanceMode, "/admin/maintenance")
