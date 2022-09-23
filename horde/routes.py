@@ -6,7 +6,7 @@ from flask_dance.contrib.github import github
 from markdown import markdown
 from . import logger, maintenance, HORDE
 from .classes import db as _db
-from .classes import waiting_prompts
+from .classes import waiting_prompts,User
 
 dance_return_to = '/'
 
