@@ -417,31 +417,31 @@ class ServerSingle(Resource):
             return("No server modification selected!", 400)
         return(ret_dict, 200)
 
-    parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
+    # parser = reqparse.RequestParser()
+    # parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
 
-    # post shows also hidden server info
-    decorators = [limiter.limit("30/minute")]
-    def post(self, server_id = ''):
-        server = _db.find_server_by_id(server_id)
-        if not server:
-            return("Invalid Server ID", 404)
-        args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
-        if not admin:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
-        sdict = {
-            "name": server.name,
-            "id": server.id,
-            "max_pixels": server.max_pixels,
-            "megapixelsteps_generated": server.contributions,
-            "requests_fulfilled": server.fulfilments,
-            "latest_performance": server.get_performance(),
-            "maintenance": server.maintenance,
-            "paused": server.paused,
-            "owner": server.user.get_unique_alias(),
-        }
-        return(sdict,200)
+    # # post shows also hidden server info
+    # decorators = [limiter.limit("30/minute")]
+    # def post(self, server_id = ''):
+    #     server = _db.find_server_by_id(server_id)
+    #     if not server:
+    #         return("Invalid Server ID", 404)
+    #     args = self.parser.parse_args()
+    #     admin = _db.find_user_by_api_key(args['api_key'])
+    #     if not admin:
+    #         return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
+    #     sdict = {
+    #         "name": server.name,
+    #         "id": server.id,
+    #         "max_pixels": server.max_pixels,
+    #         "megapixelsteps_generated": server.contributions,
+    #         "requests_fulfilled": server.fulfilments,
+    #         "latest_performance": server.get_performance(),
+    #         "maintenance": server.maintenance,
+    #         "paused": server.paused,
+    #         "owner": server.user.get_unique_alias(),
+    #     }
+    #     return(sdict,200)
 
 
 class Users(Resource):

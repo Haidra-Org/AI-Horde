@@ -30,7 +30,7 @@ response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_s
 response_model_async = api.model('RequestAsync', {
     'id': fields.String,
 })
-response_model_generation_payload = api.model('Model Payload', {
+response_model_generation_payload = api.model('ModelPayload', {
     'prompt': fields.String,
     'ddim_steps': fields.Integer(example=50), 
     'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
@@ -47,19 +47,50 @@ response_model_generation_payload = api.model('Model Payload', {
     'variant_amount': fields.Float, 
     'variant_seed': fields.Integer
 })
-response_model_generations_skipped = api.model('No Valid Request Found', {
+response_model_generations_skipped = api.model('NoValidRequestFound', {
     'server_id': fields.Integer,
     'max_pixels': fields.Integer,
 })
 
-response_model_generation_pop = api.model('Generation Payload', {
+response_model_generation_pop = api.model('GenerationPayload', {
     'payload': fields.Nested(response_model_generation_payload),
     'id': fields.String,
     'skipped': fields.Nested(response_model_generations_skipped)
 })
 
-response_model_generation_submit = api.model('Generation Submitted', {
+response_model_generation_submit = api.model('GenerationSubmitted', {
 'reward': fields.Float(example=10.0),
+})
+
+response_model_kudos_transfer = api.model('KudosTransferred', {
+'transferred': fields.Integer(example=100),
+})
+
+response_model_admin_maintenance = api.model('MaintenanceModeSet', {
+'maintenance_mode': fields.Boolean(example=True),
+})
+
+response_model_worker_kudos_details = api.model('WorkerKudosDetails', {
+'generated': fields.Float,
+'uptime': fields.Integer,
+})
+
+response_model_worker_details = api.model('WorkerDetails', {
+    "name": fields.String,
+    "id": fields.String,
+    "max_pixels": fields.Integer(example=262144),
+    "megapixelsteps_generated": fields.Float,
+    "requests_fulfilled": fields.Integer,
+    "kudos_rewards": fields.Float,
+    "kudos_details": fields.Nested(response_model_worker_kudos_details),
+    "performance": fields.String,
+    "uptime": fields.Integer,
+    "maintenance_mode": fields.Boolean,
+})
+
+response_model_worker_modify = api.model('ModifyWorker', {
+    "maintenance": fields.Boolean,
+    "paused": fields.Boolean,
 })
 
 response_model_error = api.model('RequestError', {
@@ -67,13 +98,17 @@ response_model_error = api.model('RequestError', {
 })
 
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
+handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
 handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
+handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
+handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
+handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
 handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
 handle_no_valid_servers = api.errorhandler(e.NotValidServers)(e.handle_bad_requests)
@@ -311,15 +346,15 @@ class SubmitGeneration(Resource):
         args = self.parser.parse_args()
         procgen = processing_generations.get_item(args['id'])
         if not procgen:
-            return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
+            raise e.InvalidProcGen(procgen.server.name, args['id'])
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
+            raise e.InvalidAPIKey('server submit:' + args['name'])
         if user != procgen.server.user:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
+            raise e.WrongCredentials(user.get_unique_alias(), args['name'])
         kudos = procgen.set_generation(args['generation'], args['seed'])
         if kudos == 0:
-            return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
+            raise e.DuplicateGen(procgen.server.name, args['id'])
         return({"reward": kudos}, 200)
 
 class TransferKudos(Resource):
@@ -329,16 +364,19 @@ class TransferKudos(Resource):
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer")
 
     @api.expect(parser)
+    @api.marshal_with(response_model_kudos_transfer, code=200, description='Generation Submitted')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
     def post(self):
         args = self.parser.parse_args()
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
+            raise e.InvalidAPIKey('kudos transfer to: ' + args['username'])
         ret = _db.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
-            return(f"{error}",400)
+            raise e.KudosValidationError(user.get_unique_alias(), error)
         return({"transfered": kudos}, 200)
 
 class AdminMaintenanceMode(Resource):
@@ -348,18 +386,22 @@ class AdminMaintenanceMode(Resource):
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
+    @api.marshal_with(response_model_admin_maintenance, code=200, description='Maintenance Mode Set')
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(402, 'Access Denied', response_model_error)
     def put(self):
         args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
+            raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-            return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminMaintenanceMode')}",401)
+            raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
         maintenance.toggle(args['active'])
         return({"maintenance_mode": maintenance.active}, 200)
 
 class Servers(Resource):
     @logger.catch
+    @api.marshal_with(response_model_worker_details, code=200, description='Worker List', as_list=True)
     def get(self):
         servers_ret = []
         for server in _db.servers.values():
@@ -382,8 +424,10 @@ class Servers(Resource):
 
 class ServerSingle(Resource):
     @logger.catch
-    def get(self, server_id = ''):
-        server = _db.find_server_by_id(server_id)
+    @api.marshal_with(response_model_worker_details, code=200, description='Worker List')
+    @api.response(404, 'Worker Not Found', response_model_error)
+    def get(self, worker_id = ''):
+        server = _db.find_server_by_id(worker_id)
         if server:
             sdict = {
                 "name": server.name,
@@ -396,7 +440,7 @@ class ServerSingle(Resource):
             }
             return(sdict,200)
         else:
-            return("Not found", 404)
+            raise e.WorkerNotFound(worker_id)
 
     parser = reqparse.RequestParser()
     parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
@@ -405,58 +449,36 @@ class ServerSingle(Resource):
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
-    def put(self, server_id = ''):
-        server = _db.find_server_by_id(server_id)
+    @api.marshal_with(response_model_worker_modify, code=200, description='Worker List')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(402, 'Access Denied', response_model_error)
+    @api.response(404, 'Worker Not Found', response_model_error)
+    def put(self, worker_id = ''):
+        server = _db.find_server_by_id(worker_id)
         if not server:
-            return("Invalid Server ID", 404)
+            raise e.WorkerNotFound(worker_id)
         args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
+            raise e.InvalidAPIKey('User action: ' + 'PUT ServerSingle')
         ret_dict = {}
         # Both admins and owners can set the server to maintenance
         if args.maintenance != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
                 if admin != server.user:
-                    return(f"{get_error(ServerErrors.NOT_OWNER, username = admin.get_unique_alias(), server_name = server.name)}",401)
+                    raise e.NotOwner(admin.get_unique_alias(), server.name)
             server.maintenance = args.maintenance
             ret_dict["maintenance"] = server.maintenance
         # Only admins can set a server as paused
         if args.paused != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-                return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyServer')}",401)
+                raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyServer')
             server.paused = args.paused
             ret_dict["paused"] = server.paused
         if not len(ret_dict):
-            return("No server modification selected!", 400)
+            raise e.NoValidActions("No worker modification selected!")
         return(ret_dict, 200)
-
-    parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
-
-    # post shows also hidden server info
-    decorators = [limiter.limit("30/minute")]
-    def post(self, server_id = ''):
-        server = _db.find_server_by_id(server_id)
-        if not server:
-            return("Invalid Server ID", 404)
-        args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
-        if not admin:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
-        sdict = {
-            "name": server.name,
-            "id": server.id,
-            "max_pixels": server.max_pixels,
-            "megapixelsteps_generated": server.contributions,
-            "requests_fulfilled": server.fulfilments,
-            "latest_performance": server.get_performance(),
-            "maintenance": server.maintenance,
-            "paused": server.paused,
-            "owner": server.user.get_unique_alias(),
-        }
-        return(sdict,200)
-
 
 class Users(Resource):
     @logger.catch

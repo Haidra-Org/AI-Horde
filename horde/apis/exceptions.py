@@ -6,6 +6,16 @@ class MissingPrompt(wze.BadRequest):
         self.specific = "You cannot specify an empty prompt."
         self.log = f"User '{username}' sent an empty prompt. Aborting!"
 
+class KudosValidationError(wze.BadRequest):
+    def __init__(self, username, error_message):
+        self.specific = error_message
+        self.log = f"User '{username}' Failed to transfer Kudos."
+
+class NoValidActions(wze.BadRequest):
+    def __init__(self, error_message):
+        self.specific = error_message
+        self.log = None
+
 class InvalidSize(wze.BadRequest):
     def __init__(self, username):
         self.specific = "Invalid size. The image dimentions have to be multiples of 64."
@@ -50,6 +60,11 @@ class RequestNotFound(wze.NotFound):
     def __init__(self, wp_id):
         self.specific = f"Request with ID '{wp_id}' not found."
         self.log = f"Status of WP with ID '{wp_id}' does not exist"
+
+class WorkerNotFound(wze.NotFound):
+    def __init__(self, worker_id):
+        self.specific = f"Worker with ID '{worker_id}' not found."
+        self.log = f"Attempted to retrieve worker with non-existent ID '{worker_id}'"
 
 class DuplicateGen(wze.NotFound):
     def __init__(self, worker, gen_id):
