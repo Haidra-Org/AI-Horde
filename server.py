@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os, logging
-from horde import logger, args, REST_API
+from horde import logger, args, HORDE
 
 
 
@@ -15,6 +15,6 @@ if __name__ == "__main__":
     if args.insecure:
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
         url_scheme = 'http'
-    serve(REST_API, host="127.0.0.1", port=args.port, url_scheme=url_scheme, threads=4)
-    # REST_API.run(debug=True,host="0.0.0.0",port="5001")
+    serve(HORDE, host="127.0.0.1", port=args.port, url_scheme=url_scheme, threads=4)
+    # HORDE.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")

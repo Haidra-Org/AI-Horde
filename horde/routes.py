@@ -4,14 +4,14 @@ from flask_dance.contrib.google import google
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from markdown import markdown
-from . import logger, maintenance, REST_API
+from . import logger, maintenance, HORDE
 from .classes import db as _db
 from .classes import waiting_prompts
 
 dance_return_to = '/'
 
 @logger.catch
-@REST_API.route('/')
+@HORDE.route('/')
 def index():
     with open('index.md') as index_file:
         index = index_file.read()
@@ -100,7 +100,7 @@ def get_oauth_id():
 
 
 @logger.catch
-@REST_API.route('/register', methods=['GET', 'POST'])
+@HORDE.route('/register', methods=['GET', 'POST'])
 def register():
     api_key = None
     user = None
@@ -139,7 +139,7 @@ def register():
 
 
 @logger.catch
-@REST_API.route('/transfer', methods=['GET', 'POST'])
+@HORDE.route('/transfer', methods=['GET', 'POST'])
 def transfer():
     src_api_key = None
     src_user = None
@@ -179,28 +179,28 @@ def transfer():
                            oauth_id=oauth_id)
 
 
-@REST_API.route('/google/<return_to>')
+@HORDE.route('/google/<return_to>')
 def google_login(return_to):
     global dance_return_to
     dance_return_to = '/' + return_to
     return redirect(url_for('google.login'))
 
 
-@REST_API.route('/discord/<return_to>')
+@HORDE.route('/discord/<return_to>')
 def discord_login(return_to):
     global dance_return_to
     dance_return_to = '/' + return_to
     return redirect(url_for('discord.login'))
 
 
-@REST_API.route('/github/<return_to>')
+@HORDE.route('/github/<return_to>')
 def github_login(return_to):
     global dance_return_to
     dance_return_to = '/' + return_to
     return redirect(url_for('github.login'))
 
 
-@REST_API.route('/finish_dance')
+@HORDE.route('/finish_dance')
 def finish_dance():
     global dance_return_to
     redirect_url = dance_return_to
@@ -208,10 +208,10 @@ def finish_dance():
     return redirect(redirect_url)
 
 
-@REST_API.route('/privacy')
+@HORDE.route('/privacy')
 def privacy():
     return render_template('privacy_policy.html')
 
-@REST_API.route('/terms')
+@HORDE.route('/terms')
 def terms():
     return render_template('terms_of_service.html')

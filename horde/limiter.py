@@ -1,11 +1,11 @@
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from .flask import REST_API
+from .flask import HORDE
 
 # Very basic DOS prevention
 try:
     limiter = Limiter(
-        REST_API,
+        HORDE,
         key_func=get_remote_address,
         storage_uri="redis://localhost:6379/1",
         # storage_options={"connect_timeout": 30},
@@ -15,7 +15,7 @@ try:
 # Allow local workatation run
 except:
     limiter = Limiter(
-        REST_API,
+        HORDE,
         key_func=get_remote_address,
         default_limits=["90 per minute"]
     )
