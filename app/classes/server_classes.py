@@ -2,8 +2,7 @@ import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time
-from logger import logger
-
+from . import logger
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -624,7 +623,6 @@ class Stats:
             serialized_fulfillments.append(json_fulfillment)
         ret_dict = {
             "server_performances": self.server_performances,
-            "model_mulitpliers": self.model_mulitpliers,
             "fulfillments": serialized_fulfillments,
         }
         return(ret_dict)
@@ -644,7 +642,6 @@ class Stats:
                 "deliver_time":datetime.strptime(fulfillment["deliver_time"],"%Y-%m-%d %H:%M:%S"),
             }
             deserialized_fulfillments.append(class_fulfillment)
-        self.model_mulitpliers = saved_dict["model_mulitpliers"]
         self.fulfillments = deserialized_fulfillments
        
 class Database:
@@ -782,7 +779,7 @@ class Database:
             return(None)
         return(self.users.get(oauth_id))
 
-    def find_user_by_username(self, id):
+    def find_user_by_username(self, username):
         for user in self.users.values():
             ulist = username.split('#')
             # This approach handles someone cheekily putting # in their username

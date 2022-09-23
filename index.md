@@ -42,7 +42,7 @@ We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Ad
 
 ## REST API
 
-[Full Documentation](/api/v1)
+[Full Documentation](/api)
 
 ## Services
 
