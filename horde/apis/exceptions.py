@@ -66,6 +66,11 @@ class WorkerNotFound(wze.NotFound):
         self.specific = f"Worker with ID '{worker_id}' not found."
         self.log = f"Attempted to retrieve worker with non-existent ID '{worker_id}'"
 
+class UserNotFound(wze.NotFound):
+    def __init__(self, user_id):
+        self.specific = f"User with ID '{user_id}' not found."
+        self.log = f"Attempted to retrieve user with non-existent ID '{user_id}'"
+
 class DuplicateGen(wze.NotFound):
     def __init__(self, worker, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} already submitted."

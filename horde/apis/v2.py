@@ -93,6 +93,45 @@ response_model_worker_modify = api.model('ModifyWorker', {
     "paused": fields.Boolean,
 })
 
+response_model_user_kudos_details = api.model('UserKudosDetails', {
+    "accumulated": fields.Float,
+    "gifted": fields.Float,
+    "admin": fields.Float,
+    "received": fields.Float,
+})
+
+response_model_use_contrib_details = api.model('UsageAndContribDetails', {
+    "megapixelsteps": fields.Float,
+    "fulfillments": fields.Integer
+})
+
+response_model_user_details = api.model('UserDetails', {
+    "id": fields.Integer,
+    "kudos": fields.Float,
+    "kudos_details": fields.Nested(response_model_user_kudos_details),
+    "usage": fields.Nested(response_model_use_contrib_details),
+    "contributions": fields.Nested(response_model_use_contrib_details),
+    "concurrency": fields.Integer,    
+})
+
+response_model_user_modify = api.model('ModifyUser', {
+    "new_kudos": fields.Float,
+    "concurrency": fields.Integer,
+    "usage_multiplier": fields.Float,
+})
+
+response_model_horde_performance = api.model('HordePerformance', {
+    "queued_requests": fields.Integer,
+    "queued_megapixelsteps": fields.Float,
+    "megapixelsteps_per_min": fields.Float,
+    "server_count": fields.Integer,
+    "usage_multiplier": fields.Float,
+})
+
+response_model_horde_maintenance_mode = api.model('HordeMaintenanceMode', {
+    "maintenance_mode": fields.Boolean,
+})
+
 response_model_error = api.model('RequestError', {
 'message': fields.String,
 })
@@ -109,6 +148,7 @@ handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_r
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
+handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
 handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
 handle_no_valid_servers = api.errorhandler(e.NotValidServers)(e.handle_bad_requests)
@@ -401,7 +441,7 @@ class AdminMaintenanceMode(Resource):
 
 class Servers(Resource):
     @logger.catch
-    @api.marshal_with(response_model_worker_details, code=200, description='Worker List', as_list=True)
+    @api.marshal_with(response_model_worker_details, code=200, description='Workers List', as_list=True)
     def get(self):
         servers_ret = []
         for server in _db.servers.values():
@@ -424,7 +464,7 @@ class Servers(Resource):
 
 class ServerSingle(Resource):
     @logger.catch
-    @api.marshal_with(response_model_worker_details, code=200, description='Worker List')
+    @api.marshal_with(response_model_worker_details, code=200, description='Worker Details')
     @api.response(404, 'Worker Not Found', response_model_error)
     def get(self, worker_id = ''):
         server = _db.find_server_by_id(worker_id)
@@ -449,7 +489,7 @@ class ServerSingle(Resource):
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
-    @api.marshal_with(response_model_worker_modify, code=200, description='Worker List')
+    @api.marshal_with(response_model_worker_modify, code=200, description='Modify Worker')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(402, 'Access Denied', response_model_error)
@@ -482,6 +522,7 @@ class ServerSingle(Resource):
 
 class Users(Resource):
     @logger.catch
+    @api.marshal_with(response_model_user_details, code=200, description='Users List', as_list=True)
     def get(self):
         user_dict = {}
         for user in _db.users.values():
@@ -498,6 +539,8 @@ class Users(Resource):
 
 class UserSingle(Resource):
     @logger.catch
+    @api.marshal_with(response_model_user_details, code=200, description='User Details')
+    @api.response(404, 'User Not Found', response_model_error)
     def get(self, user_id = ''):
         logger.debug(user_id)
         user = _db.find_user_by_id(user_id)
@@ -511,7 +554,7 @@ class UserSingle(Resource):
             }
             return(udict,200)
         else:
-            return("Not found", 404)
+            raise e.UserNotFound(user_id)
 
     parser = reqparse.RequestParser()
     parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
@@ -521,16 +564,21 @@ class UserSingle(Resource):
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
+    @api.marshal_with(response_model_user_modify, code=200, description='Modify User')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(402, 'Access Denied', response_model_error)
+    @api.response(404, 'Worker Not Found', response_model_error)
     def put(self, user_id = ''):
         user = user = _db.find_user_by_id(user_id)
         if not user:
-            return(f"Invalid user_id: {user_id}",400)        
+            raise e.UserNotFound(user_id)
         args = self.parser.parse_args()
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'PUT UserSingle')}",401)
+            raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-            return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyUser')}",401)
+            raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyUser')
         ret_dict = {}
         if args.kudos:
             user.modify_kudos(args.kudos, 'admin')
@@ -542,18 +590,27 @@ class UserSingle(Resource):
             user.usage_multiplier = args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
         if not len(ret_dict):
-            return("No usermod operations selected!", 400)
+            raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)
 
 
 class HordeLoad(Resource):
     @logger.catch
+    @api.marshal_with(response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
         load_dict = waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
         load_dict["server_count"] = _db.count_active_servers()
-        load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)
+
+class HordeMaintenance(Resource):
+    @logger.catch
+    @api.marshal_with(response_model_horde_maintenance_mode, code=200, description='Horde Maintenance')
+    def get(self):
+        ret_dict = {
+            "maintenance_mode": maintenance.active
+        }
+        return(ret_dict,200)
 
 api.add_resource(SyncGenerate, "/generate/sync")
 # Async is disabled due to the memory requirements of keeping images in running memory
@@ -568,4 +625,5 @@ api.add_resource(Servers, "/servers")
 api.add_resource(ServerSingle, "/servers/<string:server_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeLoad, "/status/performance")
+api.add_resource(HordeMaintenance, "/status/maintenance")
 api.add_resource(AdminMaintenanceMode, "/admin/maintenance")
