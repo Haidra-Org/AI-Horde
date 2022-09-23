@@ -1,14 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from flask import Flask, render_template, redirect, url_for, request, Blueprint
-from flask_restx import Resource, reqparse, fields, Api, abort
-from werkzeug.middleware.proxy_fix import ProxyFix
-import requests, random, time, os, oauthlib, secrets, logging
-from app import logger, args, REST_API
-# from uuid import uuid4
-# from app import REST_API, limiter, args
-# from app.classes import db as _db
+import os, logging
+from horde import logger, args, REST_API
 
 
 

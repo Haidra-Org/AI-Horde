@@ -1,4 +1,4 @@
-from app.logger import logger, set_logger_verbosity, quiesce_logger
+from .logger import logger, set_logger_verbosity, quiesce_logger
 from .argparser import args
 
 set_logger_verbosity(args.verbosity)
