@@ -11,21 +11,51 @@ import os, time
 
 api = Namespace('v2', 'API Version 2' )
 
-response_model_generation = api.model('Generation', {
-'img': fields.String,
-'seed': fields.String,
-'server_id': fields.String,
-'server_name': fields.String,
+response_model_generation_result = api.model('Generation', {
+    'img': fields.String,
+    'seed': fields.String,
+    'server_id': fields.String,
+    'server_name': fields.String,
 })
 response_model_wp_status_lite = api.model('RequestStatusCheck', {
-'finished': fields.Integer,
-'processing': fields.Integer,
-'waiting': fields.Integer,
-'done': fields.Boolean,
-'wait_time': fields.Integer,
+    'finished': fields.Integer,
+    'processing': fields.Integer,
+    'waiting': fields.Integer,
+    'done': fields.Boolean,
+    'wait_time': fields.Integer,
 })
 response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
-'generations': fields.List(fields.Nested(response_model_generation)),
+    'generations': fields.List(fields.Nested(response_model_generation_result)),
+})
+response_model_async = api.model('RequestAsync', {
+    'id': fields.String,
+})
+response_model_generation_payload = api.model('Model Payload', {
+    'prompt': fields.String,
+    'ddim_steps': fields.Integer(example=50), 
+    'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
+    'toggles': fields.List(fields.Integer,example=[1,4]), 
+    'realesrgan_model_name': fields.String,
+    'ddim_eta': fields.Float, 
+    'n_iter': fields.Integer(example=1), 
+    'batch_size': fields.Integer(example=1), 
+    'cfg_scale': fields.Float(example=5.0), 
+    'seed': fields.String,
+    'height': fields.Integer(example=512), 
+    'width': fields.Integer(example=512), 
+    'fp': fields.Integer(example=512), 
+    'variant_amount': fields.Float, 
+    'variant_seed': fields.Integer
+})
+response_model_generations_skipped = api.model('No Valid Request Found', {
+    'server_id': fields.Integer,
+    'max_pixels': fields.Integer,
+})
+
+response_model_generation_pop = api.model('Generation Payload', {
+    'payload': fields.Nested(response_model_generation_payload),
+    'id': fields.String,
+    'skipped': fields.Nested(response_model_generations_skipped)
 })
 
 response_model_error = api.model('RequestError', {
@@ -119,6 +149,7 @@ class SyncGenerate(Resource):
 class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("3/minute")]
     @logger.catch
+    @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
         if not wp:
@@ -134,6 +165,7 @@ class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
     decorators = [limiter.limit("10/second")]
     @logger.catch
+    @api.marshal_with(response_model_wp_status_lite, code=200, description='Async Request Status Check')
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
         if not wp:
@@ -149,28 +181,33 @@ class AsyncGenerate(Resource):
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
 
     @api.expect(parser)
+    @api.marshal_with(response_model_async, code=200, description='Generation Queued')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(503, 'Maintenance Mode', response_model_error)
+    @api.response(429, 'Too Many Prompts', response_model_error)
     def post(self):
         args = self.parser.parse_args()
         username = 'Anonymous'
         user = None
         if maintenance.active:
-            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'AsyncGenerate')}",503)
+            raise e.MaintenanceMode('SyncGenerate')
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
+            raise e.InvalidAPIKey('prompt generation')
         username = user.get_unique_alias()
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
+            raise e.MissingPrompt(username)
         wp_count = waiting_prompts.count_waiting_requests(user)
         if wp_count >= user.concurrency:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
+            raise e.TooManyPrompts(username, wp_count)
         if args["params"].get("length",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+            raise e.InvalidSize(username)
         if args["params"].get("width",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+            raise e.InvalidSize(username)
         if args["params"].get("steps",50) > 100:
-            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
+            raise e.TooManySteps(username, args['params']['steps'])
         wp = WaitingPrompt(
             _db,
             waiting_prompts,
@@ -189,7 +226,7 @@ class AsyncGenerate(Resource):
                 break
         if not server_found:
             del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
-            return("No active server found to fulfill this request. Please Try again later...", 503)
+            raise e.NotValidServers(username)
         # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
         wp.activate()
         return({"id":wp.id}, 200)
@@ -204,6 +241,10 @@ class PromptPop(Resource):
 
     decorators = [limiter.limit("45/second")]
     @api.expect(parser)
+    @api.marshal_with(response_model_generation_pop, code=200, description='Generation Popped')
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(403, 'Access Denied', response_model_error)
+    @api.response(503, 'Maintenance Mode', response_model_error)
     def post(self):
         args = self.parser.parse_args()
         skipped = {}

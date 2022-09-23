@@ -21,17 +21,17 @@ class InvalidAPIKey(wze.Unauthorized):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
         self.log = f"Invalid API Key sent for {subject}"
 
-class WrongCredentials(wze.Unauthorized):
+class WrongCredentials(wze.Forbidden):
     def __init__(self, username, worker):
         self.specific = "You cannot specify an empty prompt."
         self.log = f"User '{username}' sent wrong credentials for utilizing worker {worker}"
 
-class NotAdmin(wze.Unauthorized):
+class NotAdmin(wze.Forbidden):
     def __init__(self, username, endpoint):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"Non-admin user '{username}' tried to use admin endpoint: '{endpoint}. Aborting!"
 
-class NotOwner(wze.Unauthorized):
+class NotOwner(wze.Forbidden):
     def __init__(self, username, server_name):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"User '{username}'' tried to modify server they do not own '{server_name}'. Aborting!"
