@@ -46,10 +46,21 @@ class DuplicateGen(wze.NotFound):
         self.specific = f"Processing Generation with ID {gen_id} already submitted."
         self.log = f"Worker '{worker}' attempted to provide duplicate generation for {gen_id}"
 
+class RequestExpired(wze.Gone):
+    def __init__(self, username):
+        self.specific = f"Prompt Request Expired"
+        self.log = f"Request from '{username}' took too long to complete and has been cancelled."
+
 class TooManyPrompts(wze.TooManyRequests):
     def __init__(self, username, count):
         self.specific = f"Parallel requests exceeded user limit ({count}). Please try again later or request to increase your concurrency."
         self.log = f"User '{username}' has already requested too many parallel requests ({count}). Aborting!"
+
+class NotValidServers(wze.ServiceUnavailable):
+    retry_after = 600
+    def __init__(self, username):
+        self.specific = f"No active server found to fulfill this request. Please Try again later..."
+        self.log = f"No active server found to match the request from '{username}'. Aborting!"
 
 class MaintenanceMode(wze.ServiceUnavailable):
     retry_after = 60

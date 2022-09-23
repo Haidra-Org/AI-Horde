@@ -42,58 +42,8 @@ handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
 handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
+handle_no_valid_servers = api.errorhandler(e.NotValidServers)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
-
-class ServerErrors(Enum):
-    WRONG_CREDENTIALS = 0
-    INVALID_PROCGEN = 1
-    DUPLICATE_GEN = 2
-    TOO_MANY_PROMPTS = 3
-    EMPTY_PROMPT = 4
-    INVALID_API_KEY = 5
-    INVALID_SIZE = 6
-    NO_PROXY = 7
-    TOO_MANY_STEPS = 8
-    NOT_ADMIN = 9
-    MAINTENANCE_MODE = 10
-    NOT_OWNER = 11
-
-@logger.catch
-def get_error(error, **kwargs):
-    if error == ServerErrors.INVALID_API_KEY:
-        logger.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
-        return(f'No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?')
-    if error == ServerErrors.WRONG_CREDENTIALS:
-        logger.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
-        return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
-    if error == ServerErrors.INVALID_PROCGEN:
-        logger.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
-        return(f'Processing Generation with ID {kwargs["id"]} does not exist')
-    if error == ServerErrors.DUPLICATE_GEN:
-        logger.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
-        return(f'Processing Generation with ID {kwargs["id"]} already submitted')
-    if error == ServerErrors.TOO_MANY_PROMPTS:
-        logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel requests ({kwargs["wp_count"]}). Aborting!')
-        return(f"Parallel requests exceeded user limit ({kwargs['wp_count']}). Please try again later or request to increase your concurrency.")
-    if error == ServerErrors.INVALID_SIZE:
-        logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
-        return("Invalid size. The image dimentions have to be multiples of 64.")
-    if error == ServerErrors.TOO_MANY_STEPS:
-        logger.warning(f'User "{kwargs["username"]}" sent too many steps ({kwargs["steps"]}). Aborting!')
-        return("Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps.")
-    if error == ServerErrors.NO_PROXY:
-        logger.warning(f'Attempt to access outside reverse proxy')
-        return(f'Access allowed only through https')
-    if error == ServerErrors.NOT_ADMIN:
-        logger.warning(f'Non-admin user "{kwargs["username"]}" tried to use admin endpoint: "{kwargs["endpoint"]}". Aborting!')
-        return("You're not an admin. Sod off!")
-    if error == ServerErrors.MAINTENANCE_MODE:
-        logger.info(f'Rejecting endpoint "{kwargs["endpoint"]}" because server in maintenance mode.')
-        return("Server has enterred maintenance mode. Please try again later.")
-    if error == ServerErrors.NOT_OWNER:
-        logger.warning(f'User "{kwargs["username"]}" tried to modify server they do not own: "{kwargs["server_name"]}". Aborting!')
-        return("You're not the owner of this server!")
-
 
 
 class SyncGenerate(Resource):
@@ -116,23 +66,23 @@ class SyncGenerate(Resource):
         username = 'Anonymous'
         user = None
         if maintenance.active:
-            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'SyncGenerate')}",503)
+            raise e.MaintenanceMode(SyncGenerate)
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
+            raise e.InvalidAPIKey('prompt generation')
         username = user.get_unique_alias()
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
+            raise e.MissingPrompt(username)
         wp_count = waiting_prompts.count_waiting_requests(user)
         if wp_count >= user.concurrency:
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
+            raise e.TooManyPrompts(username, wp_count)
         if args["params"].get("length",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+            raise e.InvalidSize(username)
         if args["params"].get("width",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+            raise e.InvalidSize(username)
         if args["params"].get("steps",50) > 100:
-            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
+            raise e.TooManySteps(username, args['params']['steps'])
         wp = WaitingPrompt(
             _db,
             waiting_prompts,
@@ -151,13 +101,13 @@ class SyncGenerate(Resource):
                 break
         if not server_found:
             del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
-            return("No active server found to fulfill this request. Please Try again later...", 503)
+            raise e.NotValidServers(username)
         # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
         wp.activate()
         while True:
             time.sleep(1)
             if wp.is_stale():
-                return("Prompt Request Expired", 500)
+                raise e.RequestExpired(username)
             if wp.is_completed():
                 break
         ret_dict = wp.get_status()
@@ -349,7 +299,6 @@ class AdminMaintenanceMode(Resource):
     @api.expect(parser)
     def put(self):
         args = self.parser.parse_args()
-        raise e.MissingPrompt('oeo')
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
