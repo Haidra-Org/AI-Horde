@@ -4,6 +4,7 @@ from flask_dance.contrib.google import google
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from markdown import markdown
+from uuid import uuid4
 from . import logger, maintenance, HORDE
 from .classes import db as _db
 from .classes import waiting_prompts,User
