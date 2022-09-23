@@ -98,9 +98,7 @@ class SyncGenerate(Resource):
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
     @api.expect(parser)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
-    @api.response(200, 'Success', response_model_wp_status_full)
-    @api.response(400, 'Validation Error')
-    @api.response(400, 'Validation Error')
+    # @api.response(200, 'Success', response_model_wp_status_full)
     @api.response(400, 'Validation Error')
     def post(self):
         args = self.parser.parse_args()
@@ -151,7 +149,7 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        ret_dict = wp.get_status()
+        ret_dict = wp.get_status()['generations']
         # We delete it from memory immediately to ensure we don't run out
         wp.delete()
         return(ret_dict, 200)
