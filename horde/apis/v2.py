@@ -5,7 +5,7 @@ from ..classes import db as _db
 from ..classes import processing_generations,waiting_prompts,KAIServer,User,WaitingPrompt
 from .. import maintenance
 from enum import Enum
-import os
+import os, time
 
 
 api = Namespace('v2', 'API Version 2' )
