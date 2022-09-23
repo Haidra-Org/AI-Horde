@@ -36,10 +36,20 @@ class NotOwner(wze.Forbidden):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"User '{username}'' tried to modify server they do not own '{server_name}'. Aborting!"
 
+class WorkerMaintenance(wze.Forbidden):
+    def __init__(self):
+        self.specific = "This server has been put into maintenance by its owner"
+        self.log = None
+
 class InvalidProcGen(wze.NotFound):
     def __init__(self, worker, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} does not exist."
         self.log = f"Worker '{worker}'attempted to provide generation for {gen_id} but it did not exist"
+
+class RequestNotFound(wze.NotFound):
+    def __init__(self, wp_id):
+        self.specific = f"Request with ID '{wp_id}' not found."
+        self.log = f"Status of WP with ID '{wp_id}' does not exist"
 
 class DuplicateGen(wze.NotFound):
     def __init__(self, worker, gen_id):
@@ -68,7 +78,9 @@ class MaintenanceMode(wze.ServiceUnavailable):
         self.specific = f"Server has enterred maintenance mode. Please try again later."
         self.log = f"Rejecting endpoint '{endpoint}' because server in maintenance mode."
 
+
 def handle_bad_requests(error):
     '''Namespace error handler'''
-    logger.warning(error.log)
+    if error.log:
+        logger.warning(error.log)
     return({'message': error.specific}, error.code)

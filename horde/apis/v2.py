@@ -58,6 +58,10 @@ response_model_generation_pop = api.model('Generation Payload', {
     'skipped': fields.Nested(response_model_generations_skipped)
 })
 
+response_model_generation_submit = api.model('Generation Submitted', {
+'reward': fields.Float(example=10.0),
+})
+
 response_model_error = api.model('RequestError', {
 'message': fields.String,
 })
@@ -100,7 +104,7 @@ class SyncGenerate(Resource):
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            raise e.InvalidAPIKey('prompt generation')
+            raise e.InvalidAPIKey('sync generation')
         username = user.get_unique_alias()
         if args['prompt'] == '':
             raise e.MissingPrompt(username)
@@ -150,10 +154,11 @@ class AsyncGeneratePrompt(Resource):
     decorators = [limiter.limit("3/minute")]
     @logger.catch
     @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.response(404, 'Request Not found', response_model_error)
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
         if not wp:
-            return("ID not found", 404)
+            raise e.RequestNotFound(id)
         wp_status = wp.get_status()
         # If the status is retrieved after the wp is done we clear it to free the ram
         if wp_status["done"]:
@@ -166,10 +171,11 @@ class AsyncCheck(Resource):
     decorators = [limiter.limit("10/second")]
     @logger.catch
     @api.marshal_with(response_model_wp_status_lite, code=200, description='Async Request Status Check')
+    @api.response(404, 'Request Not found', response_model_error)
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
         if not wp:
-            return("ID not found", 404)
+            raise e.RequestNotFound(id)
         return(wp.get_lite_status(), 200)
 
 
@@ -181,7 +187,7 @@ class AsyncGenerate(Resource):
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
 
     @api.expect(parser)
-    @api.marshal_with(response_model_async, code=200, description='Generation Queued')
+    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(503, 'Maintenance Mode', response_model_error)
@@ -195,7 +201,7 @@ class AsyncGenerate(Resource):
         if args.api_key:
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            raise e.InvalidAPIKey('prompt generation')
+            raise e.InvalidAPIKey('async generation')
         username = user.get_unique_alias()
         if args['prompt'] == '':
             raise e.MissingPrompt(username)
@@ -229,7 +235,7 @@ class AsyncGenerate(Resource):
             raise e.NotValidServers(username)
         # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
         wp.activate()
-        return({"id":wp.id}, 200)
+        return({"id":wp.id}, 202)
 
 
 class PromptPop(Resource):
@@ -244,22 +250,21 @@ class PromptPop(Resource):
     @api.marshal_with(response_model_generation_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(403, 'Access Denied', response_model_error)
-    @api.response(503, 'Maintenance Mode', response_model_error)
     def post(self):
         args = self.parser.parse_args()
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
+            raise e.InvalidAPIKey('prompt pop')
         server = _db.find_server_by_name(args['name'])
         if not server:
             server = KAIServer(_db)
             server.create(user, args['name'])
         if user != server.user:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
+            raise e.WrongCredentials(user.get_unique_alias(), args['name'])
         server.check_in(args['max_pixels'])
         if server.maintenance:
-            return(f"Server has been put into maintenance mode by the owner",403)
+            raise e.WorkerMaintenance()
         if server.paused:
             return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
@@ -297,6 +302,11 @@ class SubmitGeneration(Resource):
     parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
 
     @api.expect(parser)
+    @api.marshal_with(response_model_generation_submit, code=200, description='Generation Submitted')
+    @api.response(400, 'Generation Already Submitted', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(402, 'Access Denied', response_model_error)
+    @api.response(404, 'Request Not Found', response_model_error)
     def post(self):
         args = self.parser.parse_args()
         procgen = processing_generations.get_item(args['id'])
