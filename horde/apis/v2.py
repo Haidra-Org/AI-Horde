@@ -71,6 +71,7 @@ class SyncGenerate(Resource):
             user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             raise e.InvalidAPIKey('prompt generation')
+            abort(401)
         username = user.get_unique_alias()
         if args['prompt'] == '':
             raise e.MissingPrompt(username)
