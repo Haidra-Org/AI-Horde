@@ -18,7 +18,7 @@ class TooManySteps(wze.BadRequest):
 
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
-        self.specific = "You cannot specify an empty prompt."
+        self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
         self.log = f"Invalid API Key sent for {subject}"
 
 class WrongCredentials(wze.Unauthorized):
