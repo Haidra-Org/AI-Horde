@@ -12,9 +12,9 @@ import os, time
 api = Namespace('v2', 'API Version 2' )
 
 response_model_generation_result = api.model('Generation', {
-    'img': fields.String,
+    'img': fields.String(description="The generated image as a Base64-encoded .webp file"),
     'seed': fields.String,
-    'server_id': fields.String,
+    'worker_id': fields.String,
     'server_name': fields.String,
 })
 response_model_wp_status_lite = api.model('RequestStatusCheck', {
@@ -48,7 +48,7 @@ response_model_generation_payload = api.model('ModelPayload', {
     'variant_seed': fields.Integer
 })
 response_model_generations_skipped = api.model('NoValidRequestFound', {
-    'server_id': fields.Integer,
+    'worker_id': fields.Integer,
     'max_pixels': fields.Integer,
 })
 
@@ -133,8 +133,9 @@ response_model_horde_maintenance_mode = api.model('HordeMaintenanceMode', {
 })
 
 response_model_error = api.model('RequestError', {
-'message': fields.String,
+    'message': fields.String,
 })
+
 
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
@@ -443,7 +444,12 @@ class Servers(Resource):
         return(servers_ret,200)
 
 class ServerSingle(Resource):
-    @logger.catch
+
+    parser = reqparse.RequestParser()
+    parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
+    parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.", location="json")
+    parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.", location="json")
+
     @api.marshal_with(response_model_worker_details, code=200, description='Worker Details')
     @api.response(404, 'Worker Not Found', response_model_error)
     def get(self, worker_id = ''):
@@ -458,17 +464,24 @@ class ServerSingle(Resource):
                 "latest_performance": server.get_performance(),
                 "maintenance_mode": server.maintenance,
             }
+            ## Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
+            # args = self.parser.parse_args()
+            # logger.error(apikey)
+            # if args.apikey:
+            #     logger.error('hehehe')
+            #     admin = _db.find_user_by_api_key(args['apikey'])
+            #     if not admin:
+            #         raise e.InvalidAPIKey('admin worker details')
+            #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            #         raise e.NotAdmin(admin.get_unique_alias(), 'AdminServerDetails')
+            #     logger.error('hehehehe')
+            #     sdict['paused'] = server.paused
             return(sdict,200)
         else:
             raise e.WorkerNotFound(worker_id)
 
-    parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The Admin or server owner API key", location='headers')
-    parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.", location="json")
-    parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.", location="json")
-
     decorators = [limiter.limit("30/minute")]
-    @api.expect(parser)
+    # @api.expect(parser)
     @api.marshal_with(response_model_worker_modify, code=200, description='Modify Worker')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
@@ -623,7 +636,7 @@ api.add_resource(SubmitGeneration, "/generate/submit")
 api.add_resource(Users, "/users")
 api.add_resource(UserSingle, "/users/<string:user_id>")
 api.add_resource(Servers, "/servers")
-api.add_resource(ServerSingle, "/servers/<string:server_id>")
+api.add_resource(ServerSingle, "/servers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(HordeMaintenance, "/status/maintenance")
