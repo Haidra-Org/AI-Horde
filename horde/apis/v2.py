@@ -160,10 +160,10 @@ class SyncGenerate(Resource):
     # 'generations': fields.List(fields.String),
     # })
     parser = reqparse.RequestParser()
-    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
-    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
+    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server", location="json")
+    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt", location="json")
     @api.expect(parser)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     @api.response(400, 'Validation Error', response_model_error)
@@ -256,10 +256,10 @@ class AsyncCheck(Resource):
 
 class AsyncGenerate(Resource):
     parser = reqparse.RequestParser()
-    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
-    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
-    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+    parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
+    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server", location="json")
+    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt", location="json")
 
     @api.expect(parser)
     @api.marshal_with(response_model_async, code=202, description='Generation Queued')
@@ -273,8 +273,8 @@ class AsyncGenerate(Resource):
         user = None
         if maintenance.active:
             raise e.MaintenanceMode('SyncGenerate')
-        if args.api_key:
-            user = _db.find_user_by_api_key(args['api_key'])
+        if args.apikey:
+            user = _db.find_user_by_api_key(args['apikey'])
         if not user:
             raise e.InvalidAPIKey('async generation')
         username = user.get_unique_alias()
@@ -315,10 +315,10 @@ class AsyncGenerate(Resource):
 
 class PromptPop(Resource):
     parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-    parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
-    parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
-    parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
+    parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+    parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions", location="json")
+    parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate", location="json")
+    parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server", location="json")
 
     decorators = [limiter.limit("45/second")]
     @api.expect(parser)
@@ -328,7 +328,7 @@ class PromptPop(Resource):
     def post(self):
         args = self.parser.parse_args()
         skipped = {}
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = _db.find_user_by_api_key(args['apikey'])
         if not user:
             raise e.InvalidAPIKey('prompt pop')
         server = _db.find_server_by_name(args['name'])
@@ -371,10 +371,10 @@ class PromptPop(Resource):
 
 class SubmitGeneration(Resource):
     parser = reqparse.RequestParser()
-    parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
-    parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
-    parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image")
-    parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
+    parser.add_argument("apikey", type=str, required=True, help="The server's owner API key", location='headers')
+    parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
+    parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image", location="json")
+    parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image", location="json")
 
     @api.expect(parser)
     @api.marshal_with(response_model_generation_submit, code=200, description='Generation Submitted')
@@ -387,7 +387,7 @@ class SubmitGeneration(Resource):
         procgen = processing_generations.get_item(args['id'])
         if not procgen:
             raise e.InvalidProcGen(procgen.server.name, args['id'])
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = _db.find_user_by_api_key(args['apikey'])
         if not user:
             raise e.InvalidAPIKey('server submit:' + args['name'])
         if user != procgen.server.user:
@@ -399,9 +399,9 @@ class SubmitGeneration(Resource):
 
 class TransferKudos(Resource):
     parser = reqparse.RequestParser()
-    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos")
-    parser.add_argument("api_key", type=str, required=True, help="The sending user's API key")
-    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer")
+    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key", location='headers')
+    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
+    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
     @api.expect(parser)
     @api.marshal_with(response_model_kudos_transfer, code=200, description='Generation Submitted')
@@ -409,35 +409,15 @@ class TransferKudos(Resource):
     @api.response(401, 'Invalid API Key', response_model_error)
     def post(self):
         args = self.parser.parse_args()
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = _db.find_user_by_api_key(args['apikey'])
         if not user:
             raise e.InvalidAPIKey('kudos transfer to: ' + args['username'])
-        ret = _db.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
+        ret = _db.transfer_kudos_from_apikey_to_username(args['apikey'],args['username'],args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
             raise e.KudosValidationError(user.get_unique_alias(), error)
         return({"transfered": kudos}, 200)
-
-class AdminMaintenanceMode(Resource):
-    parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
-    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode")
-
-    decorators = [limiter.limit("30/minute")]
-    @api.expect(parser)
-    @api.marshal_with(response_model_admin_maintenance, code=200, description='Maintenance Mode Set')
-    @api.response(401, 'Invalid API Key', response_model_error)
-    @api.response(402, 'Access Denied', response_model_error)
-    def put(self):
-        args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
-        if not admin:
-            raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-            raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
-        maintenance.toggle(args['active'])
-        return({"maintenance_mode": maintenance.active}, 200)
 
 class Servers(Resource):
     @logger.catch
@@ -483,9 +463,9 @@ class ServerSingle(Resource):
             raise e.WorkerNotFound(worker_id)
 
     parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
-    parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.")
-    parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.")
+    parser.add_argument("apikey", type=str, required=True, help="The Admin or server owner API key", location='headers')
+    parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this server into maintenance.", location="json")
+    parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this server.", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -499,7 +479,7 @@ class ServerSingle(Resource):
         if not server:
             raise e.WorkerNotFound(worker_id)
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = _db.find_user_by_api_key(args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT ServerSingle')
         ret_dict = {}
@@ -557,10 +537,10 @@ class UserSingle(Resource):
             raise e.UserNotFound(user_id)
 
     parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The Admin API key")
-    parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)")
-    parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have")
-    parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption")
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
+    parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)", location="json")
+    parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
+    parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -574,7 +554,7 @@ class UserSingle(Resource):
         if not user:
             raise e.UserNotFound(user_id)
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = _db.find_user_by_api_key(args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
@@ -612,6 +592,27 @@ class HordeMaintenance(Resource):
         }
         return(ret_dict,200)
 
+    parser = reqparse.RequestParser()
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="json")
+    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode", location="json")
+
+    decorators = [limiter.limit("30/minute")]
+    @api.expect(parser)
+    @api.marshal_with(response_model_admin_maintenance, code=200, description='Maintenance Mode Set')
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(402, 'Access Denied', response_model_error)
+    def put(self):
+        args = self.parser.parse_args()
+        admin = _db.find_user_by_api_key(args['apikey'])
+        if not admin:
+            raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
+        maintenance.toggle(args['active'])
+        return({"maintenance_mode": maintenance.active}, 200)
+
+
+
 api.add_resource(SyncGenerate, "/generate/sync")
 # Async is disabled due to the memory requirements of keeping images in running memory
 api.add_resource(AsyncGenerate, "/generate/async")
@@ -626,4 +627,3 @@ api.add_resource(ServerSingle, "/servers/<string:server_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(HordeMaintenance, "/status/maintenance")
-api.add_resource(AdminMaintenanceMode, "/admin/maintenance")

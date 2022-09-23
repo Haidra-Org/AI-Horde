@@ -368,14 +368,12 @@ class Index:
         self._index = {}
 
     def add_item(self, item):
-        logger.debug(item)
         self._index[item.id] = item
 
     def get_item(self, uuid):
         return(self._index.get(uuid))
 
     def del_item(self, item):
-        logger.debug(item)
         del self._index[item.id]
 
     def get_all(self):
