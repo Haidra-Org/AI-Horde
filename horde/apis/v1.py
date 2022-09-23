@@ -27,9 +27,6 @@ response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_s
 'generations': fields.List(fields.Nested(response_model_generation)),
 })
 
-response_model_error_too_many_prompts = api.model('TooManyPrompts', {
-'finished': fields.Integer,
-})
 
 
 class ServerErrors(Enum):
@@ -97,8 +94,8 @@ class SyncGenerate(Resource):
     parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
     @api.expect(parser)
-    # @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
-    @api.response(200, 'Success')
+    @api.marshal_with(response_model_generation, code=200, description='Images Generated', as_list=True)
+    @api.response(200, 'Success', response_model_generation)
     @api.response(400, 'Validation Error')
     def post(self):
         args = self.parser.parse_args()

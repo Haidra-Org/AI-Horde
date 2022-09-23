@@ -5,6 +5,7 @@ from ..classes import db as _db
 from ..classes import processing_generations,waiting_prompts,KAIServer,User,WaitingPrompt
 from .. import maintenance
 from enum import Enum
+from . import exceptions as e
 import os, time
 
 
@@ -27,10 +28,21 @@ response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_s
 'generations': fields.List(fields.Nested(response_model_generation)),
 })
 
-response_model_error_too_many_prompts = api.model('TooManyPrompts', {
-'finished': fields.Integer,
+response_model_error = api.model('RequestError', {
+'message': fields.String,
 })
 
+handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
+handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
+handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
+handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
+handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
+handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
+handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
+handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
+handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
+handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
+handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -63,9 +75,6 @@ def get_error(error, **kwargs):
     if error == ServerErrors.TOO_MANY_PROMPTS:
         logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel requests ({kwargs["wp_count"]}). Aborting!')
         return(f"Parallel requests exceeded user limit ({kwargs['wp_count']}). Please try again later or request to increase your concurrency.")
-    if error == ServerErrors.EMPTY_PROMPT:
-        logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
-        return("You cannot specify an empty prompt.")
     if error == ServerErrors.INVALID_SIZE:
         logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
         return("Invalid size. The image dimentions have to be multiples of 64.")
@@ -98,10 +107,10 @@ class SyncGenerate(Resource):
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
     @api.expect(parser)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
-    @api.response(200, 'Success', response_model_wp_status_full)
-    @api.response(400, 'Validation Error')
-    @api.response(400, 'Validation Error')
-    @api.response(400, 'Validation Error')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(503, 'Maintenance Mode', response_model_error)
+    @api.response(429, 'Too Many Prompts', response_model_error)
     def post(self):
         args = self.parser.parse_args()
         username = 'Anonymous'
@@ -340,6 +349,7 @@ class AdminMaintenanceMode(Resource):
     @api.expect(parser)
     def put(self):
         args = self.parser.parse_args()
+        raise e.MissingPrompt('oeo')
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
