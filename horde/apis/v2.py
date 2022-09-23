@@ -12,128 +12,128 @@ import os, time
 api = Namespace('v2', 'API Version 2' )
 
 response_model_generation_result = api.model('Generation', {
-    'img': fields.String(description="The generated image as a Base64-encoded .webp file"),
-    'seed': fields.String,
-    'worker_id': fields.String,
-    'server_name': fields.String,
+    'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file"),
+    'seed': fields.String(title="Generation Seed", description="The seed which generated this image"),
+    'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
+    'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
 })
 response_model_wp_status_lite = api.model('RequestStatusCheck', {
-    'finished': fields.Integer,
-    'processing': fields.Integer,
-    'waiting': fields.Integer,
-    'done': fields.Boolean,
-    'wait_time': fields.Integer,
+    'finished': fields.Integer(description="The amount of finished images in this request"),
+    'processing': fields.Integer(description="The amount of still processing images in this request"),
+    'waiting': fields.Integer(description="The amount of images waiting to be picked up by a worker"),
+    'done': fields.Boolean(description="True when all images in this request are done. Else False."),
+    'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all images in this request"),
+    'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
 })
 response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
     'generations': fields.List(fields.Nested(response_model_generation_result)),
 })
 response_model_async = api.model('RequestAsync', {
-    'id': fields.String,
+    'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
 })
 response_model_generation_payload = api.model('ModelPayload', {
-    'prompt': fields.String,
+    'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
     'ddim_steps': fields.Integer(example=50), 
     'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
-    'toggles': fields.List(fields.Integer,example=[1,4]), 
+    'toggles': fields.List(fields.Integer,example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
     'realesrgan_model_name': fields.String,
     'ddim_eta': fields.Float, 
-    'n_iter': fields.Integer(example=1), 
+    'n_iter': fields.Integer(example=1, description="The amount of images to generate"), 
     'batch_size': fields.Integer(example=1), 
     'cfg_scale': fields.Float(example=5.0), 
-    'seed': fields.String,
-    'height': fields.Integer(example=512), 
-    'width': fields.Integer(example=512), 
+    'seed': fields.String(description="The seed to use to generete this request"),
+    'height': fields.Integer(example=512,description="The height of the image to generate"), 
+    'width': fields.Integer(example=512,description="The width of the image to generate"), 
     'fp': fields.Integer(example=512), 
     'variant_amount': fields.Float, 
     'variant_seed': fields.Integer
 })
 response_model_generations_skipped = api.model('NoValidRequestFound', {
-    'worker_id': fields.Integer,
-    'max_pixels': fields.Integer,
+    'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
+    'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
 })
 
 response_model_generation_pop = api.model('GenerationPayload', {
     'payload': fields.Nested(response_model_generation_payload),
-    'id': fields.String,
+    'id': fields.String(description="The UUID for this image generation"),
     'skipped': fields.Nested(response_model_generations_skipped)
 })
 
 response_model_generation_submit = api.model('GenerationSubmitted', {
-'reward': fields.Float(example=10.0),
+'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),
 })
 
 response_model_kudos_transfer = api.model('KudosTransferred', {
-'transferred': fields.Integer(example=100),
+'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred"),
 })
 
 response_model_admin_maintenance = api.model('MaintenanceModeSet', {
-'maintenance_mode': fields.Boolean(example=True),
+'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode"),
 })
 
 response_model_worker_kudos_details = api.model('WorkerKudosDetails', {
-'generated': fields.Float,
-'uptime': fields.Integer,
+    'generated': fields.Float(description="How much Kudos this worker has received for generating images"),
+    'uptime': fields.Integer(description="How much Kudos this worker has received for staying online longer"),
 })
 
 response_model_worker_details = api.model('WorkerDetails', {
-    "name": fields.String,
-    "id": fields.String,
-    "max_pixels": fields.Integer(example=262144),
-    "megapixelsteps_generated": fields.Float,
-    "requests_fulfilled": fields.Integer,
-    "kudos_rewards": fields.Float,
+    "name": fields.String(description="The Name given to this worker"),
+    "id": fields.String(description="The UUID of this worker"),
+    "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),
+    "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
+    "requests_fulfilled": fields.Integer(description="How many images this worker has generated"),
+    "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total"),
     "kudos_details": fields.Nested(response_model_worker_kudos_details),
-    "performance": fields.String,
-    "uptime": fields.Integer,
-    "maintenance_mode": fields.Boolean,
+    "performance": fields.String(description="The average performance of this worker in human readable form"),
+    "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde"),
+    "maintenance_mode": fields.Boolean(description="When True, this worker will not pick up any new requests"),
 })
 
 response_model_worker_modify = api.model('ModifyWorker', {
-    "maintenance": fields.Boolean,
-    "paused": fields.Boolean,
+    "maintenance": fields.Boolean(description="The new state of the 'maintenance' var for this server. When True, this worker will not pick up any new requests"),
+    "paused": fields.Boolean(description="The new state of the 'paused' var for this server. When True, this worker will not be given any new requests"),
 })
 
 response_model_user_kudos_details = api.model('UserKudosDetails', {
-    "accumulated": fields.Float,
-    "gifted": fields.Float,
-    "admin": fields.Float,
-    "received": fields.Float,
+    "accumulated": fields.Float(description="The ammount of Kudos accumulated or used for generating images."),
+    "gifted": fields.Float(description="The amount of Kudos this user has given to other users"),
+    "admin": fields.Float(description="The amount of Kudos this user has been given by the Horde admins"),
+    "received": fields.Float(description="The amount of Kudos this user has been given by other users"),
 })
 
 response_model_use_contrib_details = api.model('UsageAndContribDetails', {
-    "megapixelsteps": fields.Float,
-    "fulfillments": fields.Integer
+    "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated or requested"),
+    "fulfillments": fields.Integer(description="How many images this user has generated or requested")
 })
 
 response_model_user_details = api.model('UserDetails', {
-    "id": fields.Integer,
-    "kudos": fields.Float,
+    "id": fields.Integer(description="The user unique ID. It is always an integer."),
+    "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
     "kudos_details": fields.Nested(response_model_user_kudos_details),
     "usage": fields.Nested(response_model_use_contrib_details),
     "contributions": fields.Nested(response_model_use_contrib_details),
-    "concurrency": fields.Integer,    
+    "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
 })
 
 response_model_user_modify = api.model('ModifyUser', {
-    "new_kudos": fields.Float,
-    "concurrency": fields.Integer,
-    "usage_multiplier": fields.Float,
+    "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
+    "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
+    "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
 })
 
 response_model_horde_performance = api.model('HordePerformance', {
-    "queued_requests": fields.Integer,
-    "queued_megapixelsteps": fields.Float,
-    "megapixelsteps_per_min": fields.Float,
-    "server_count": fields.Integer,
-    "usage_multiplier": fields.Float,
+    "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
+    "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
+    "megapixelsteps_per_min": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
+    "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
 })
 
 response_model_horde_maintenance_mode = api.model('HordeMaintenanceMode', {
-    "maintenance_mode": fields.Boolean,
+    "maintenance_mode": fields.Boolean(description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue."),
 })
 
 response_model_error = api.model('RequestError', {
-    'message': fields.String,
+    'message': fields.String(description="The error message for this status code."),
 })
 
 
@@ -161,7 +161,7 @@ class SyncGenerate(Resource):
     # 'generations': fields.List(fields.String),
     # })
     parser = reqparse.RequestParser()
-    parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+    parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
     parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
     parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server", location="json")
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt", location="json")
@@ -178,7 +178,7 @@ class SyncGenerate(Resource):
         if maintenance.active:
             raise e.MaintenanceMode('SyncGenerate')
         if args.api_key:
-            user = _db.find_user_by_api_key(args['api_key'])
+            user = _db.find_user_by_api_key(args['apikey'])
         if not user:
             raise e.InvalidAPIKey('sync generation')
         username = user.get_unique_alias()
