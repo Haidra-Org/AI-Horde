@@ -625,9 +625,9 @@ class Stats:
     def deserialize(self, saved_dict, convert_flag = None):
         # Convert old key
         if "fulfilment_times" in saved_dict:
-            self.worker_performances = saved_dict["fulfilment_times"]
+            self.worker_performances = saved_dict["fulfillment_times"]
         elif "server_performances" in saved_dict:
-            self.worker_performances = saved_dict["fulfilment_times"]
+            self.worker_performances = saved_dict["fulfillment_times"]
         else:
             self.worker_performances = saved_dict["worker_performances"]
         deserialized_fulfillments = []
