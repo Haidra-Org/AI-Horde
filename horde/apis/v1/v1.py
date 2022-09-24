@@ -1,4 +1,5 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
+from flask import request
 from ... import limiter
 from ...logger import logger
 from ...classes import db as _db
@@ -31,7 +32,7 @@ response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_s
 # Used to for the flas limiter, to limit requests per url paths
 def get_request_path():
     return(request.path)
-    
+
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
     INVALID_PROCGEN = 1
