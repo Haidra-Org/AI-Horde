@@ -73,7 +73,7 @@ class ProcessingGeneration(ProcessingGeneration):
         self.generation = generation
         self.seed = seed
         pixelsteps_per_sec = self.owner.db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
-        self.kudos = self.owner.db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
+        self.kudos = self.owner.db.convert_thing_to_kudos(self.owner.pixelsteps)
         self.worker.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
         self.owner.record_usage(self.owner.pixelsteps, self.kudos)
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
