@@ -15,7 +15,7 @@ response_model_generation = api.model('Generation', {
 'img': fields.String,
 'seed': fields.String,
 'server_id': fields.String(attribute='worker_id'),
-'server_name': fields.String,
+'server_name': fields.String(attribute='worker_name'),
 })
 response_model_wp_status_lite = api.model('RequestStatusCheck', {
 'finished': fields.Integer,
