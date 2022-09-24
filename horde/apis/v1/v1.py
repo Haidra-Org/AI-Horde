@@ -28,7 +28,10 @@ response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_s
 })
 
 
-
+# Used to for the flas limiter, to limit requests per url paths
+def get_request_path():
+    return(request.path)
+    
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
     INVALID_PROCGEN = 1
@@ -153,7 +156,7 @@ class SyncGenerate(Resource):
 
 
 class AsyncStatus(Resource):
-    decorators = [limiter.limit("2/minute")]
+    decorators = [limiter.limit("2/minute", key_func = get_request_path)]
     @logger.catch
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
