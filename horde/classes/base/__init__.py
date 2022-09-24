@@ -18,7 +18,7 @@ class WaitingPrompt:
         # The generations that have been created already
         self.processing_gens = []
         self.last_process_time = datetime.now()
-        self.servers = kwargs.get("servers", [])
+        self.workers = kwargs.get("workers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 180 * self.n
         if self.stale_time > 600:
@@ -34,7 +34,7 @@ class WaitingPrompt:
         self.gen_payload = initial_dict
 
     def activate(self):
-        '''We separate the activation from __init__ as often we want to check if there's a valid server for it
+        '''We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         '''
         self._waiting_prompts.add_item(self)
@@ -47,10 +47,10 @@ class WaitingPrompt:
             return(True)
         return(False)
 
-    def start_generation(self, server):
+    def start_generation(self, worker):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(self, self._processing_generations, server)
+        new_gen = ProcessingGeneration(self, self._processing_generations, worker)
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
@@ -138,11 +138,11 @@ class WaitingPrompt:
 
 
 class ProcessingGeneration:
-    def __init__(self, owner, pgs, server):
+    def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
         self.id = str(uuid4())
         self.owner = owner
-        self.server = server
+        self.worker = worker
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
 
@@ -182,8 +182,8 @@ class ProcessingGeneration:
         '''Returns a dictionary with details about this processing generation'''
         ret_dict = {
             "gen": procgen.generation,
-            "server_id": procgen.server.id,
-            "server_name": procgen.server.name,
+            "worker_id": procgen.worker.id,
+            "worker_name": procgen.worker.name,
         }
         return(ret_dict)
 
@@ -195,12 +195,12 @@ class Worker:
             "uptime": 0,
         }
         self.last_reward_uptime = 0
-        # Every how many seconds does this server get a kudos reward
+        # Every how many seconds does this worker get a kudos reward
         self.uptime_reward_threshold = 600
-        # Maintenance can be requested by the owner of the server (to allow them to not pick up more requests)
+        # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
         self.maintenance = False
-        # Paused is set by the admins to prevent that server from seeing any more requests
-        # This can be used for stopping servers who misbhevave for example, without informing their owners
+        # Paused is set by the admins to prevent that worker from seeing any more requests
+        # This can be used for stopping workers who misbhevave for example, without informing their owners
         self.paused = False
 
     def create(self, user, name):
@@ -212,7 +212,7 @@ class Worker:
         self.kudos = 0
         self.performances = []
         self.uptime = 0
-        self.db.register_new_server(self)
+        self.db.register_new_worker(self)
 
     def check_in(self, max_pixels):
         if not self.is_stale():
@@ -222,15 +222,15 @@ class Worker:
                 kudos = 100
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
-                logger.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
-            # If the server comes back from being stale, we just reset their last_reward_uptime
+            # If the worker comes back from being stale, we just reset their last_reward_uptime
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
         self.max_pixels = max_pixels
-        logger.debug(f"Server {self.name} checked-in")
+        logger.debug(f"Worker {self.name} checked-in")
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -243,16 +243,16 @@ class Worker:
             return(f"{round(self.uptime/60/60/24,2)} days")
 
     def can_generate(self, waiting_prompt):
-        # takes as an argument a WaitingPrompt class and checks if this server is valid for generating it
+        # takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it
         is_matching = True
         skipped_reason = None
         if self.is_stale():
-            # We don't consider stale servers in the request, so we don't need to report a reason
+            # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
-        # if thes server is paused, we return OK, but skip everything
-        if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
+        # if thes worker is paused, we return OK, but skip everything
+        if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
-            skipped_reason = 'server_id'
+            skipped_reason = 'worker_id'
         if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
             is_matching = False
             skipped_reason = 'max_pixels'
@@ -291,7 +291,7 @@ class Worker:
         try:
             if (datetime.now() - self.last_check_in).seconds > 300:
                 return(True)
-        # If the last_check_in isn't set, it's a new server, so it's stale by default
+        # If the last_check_in isn't set, it's a new worker, so it's stale by default
         except AttributeError:
             return(True)
         return(False)
@@ -350,7 +350,7 @@ class Worker:
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
-        self.db.servers[self.name] = self
+        self.db.workers[self.name] = self
 
 
 class Index:
@@ -568,7 +568,7 @@ class User:
 class Stats:
     def __init__(self, db, convert_flag = None, interval = 60):
         self.db = db
-        self.server_performances = []
+        self.worker_performances = []
         self.fulfillments = []
         self.interval = interval
         self.last_pruning = datetime.now()
@@ -579,9 +579,9 @@ class Stats:
             pixelsteps_per_sec = 1
         else:
             pixelsteps_per_sec = round(pixelsteps / seconds_taken,1)
-        if len(self.server_performances) >= 10:
-            del self.server_performances[0]
-        self.server_performances.append(pixelsteps_per_sec)
+        if len(self.worker_performances) >= 10:
+            del self.worker_performances[0]
+        self.worker_performances.append(pixelsteps_per_sec)
         fulfillment_dict = {
             "pixelsteps": pixelsteps,
             "start_time": starting_time,
@@ -605,9 +605,9 @@ class Stats:
         return(megapixelsteps_per_min)
 
     def get_request_avg(self):
-        if len(self.server_performances) == 0:
+        if len(self.worker_performances) == 0:
             return(0)
-        avg = sum(self.server_performances) / len(self.server_performances)
+        avg = sum(self.worker_performances) / len(self.worker_performances)
         return(round(avg,1))
 
     @logger.catch
@@ -621,7 +621,7 @@ class Stats:
             }
             serialized_fulfillments.append(json_fulfillment)
         ret_dict = {
-            "server_performances": self.server_performances,
+            "worker_performances": self.worker_performances,
             "fulfillments": serialized_fulfillments,
         }
         return(ret_dict)
@@ -630,9 +630,11 @@ class Stats:
     def deserialize(self, saved_dict, convert_flag = None):
         # Convert old key
         if "fulfilment_times" in saved_dict:
-            self.server_performances = saved_dict["fulfilment_times"]
+            self.worker_performances = saved_dict["fulfilment_times"]
+        elif "server_performances" in saved_dict:
+            self.worker_performances = saved_dict["fulfilment_times"]
         else:
-            self.server_performances = saved_dict["server_performances"]
+            self.worker_performances = saved_dict["worker_performances"]
         deserialized_fulfillments = []
         for fulfillment in saved_dict.get("fulfillments", []):
             class_fulfillment = {
@@ -648,8 +650,8 @@ class Database:
         self.interval = interval
         self.ALLOW_ANONYMOUS = True
         # This is used for synchronous generations
-        self.SERVERS_FILE = "db/servers.json"
-        self.servers = {}
+        self.WORKERS_FILE = "db/workers.json"
+        self.workers = {}
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
         self.stats = Stats(self)
@@ -678,16 +680,16 @@ class Database:
             self.anon = User(self)
             self.anon.create_anon()
             self.users[self.anon.oauth_id] = self.anon
-        if os.path.isfile(self.SERVERS_FILE):
-            with open(self.SERVERS_FILE) as db:
-                serialized_servers = json.load(db)
-                for server_dict in serialized_servers:
-                    if not server_dict:
-                        logger.error("Found null server on db load. Bypassing")
+        if os.path.isfile(self.WORKERS_FILE):
+            with open(self.WORKERS_FILE) as db:
+                serialized_workers = json.load(db)
+                for worker_dict in serialized_workers:
+                    if not worker_dict:
+                        logger.error("Found null worker on db load. Bypassing")
                         continue
-                    new_server = Worker(self)
-                    new_server.deserialize(server_dict,convert_flag)
-                    self.servers[new_server.name] = new_server
+                    new_worker = Worker(self)
+                    new_worker.deserialize(worker_dict,convert_flag)
+                    self.workers[new_worker.name] = new_worker
         if os.path.isfile(self.STATS_FILE):
             with open(self.STATS_FILE) as stats_db:
                 self.stats.deserialize(json.load(stats_db),convert_flag)
@@ -710,14 +712,14 @@ class Database:
     def write_files_to_disk(self):
         if not os.path.exists('db'):
             os.mkdir('db')
-        server_serialized_list = []
+        worker_serialized_list = []
         logger.debug("Saving DB")
-        for server in self.servers.copy().values():
-            # We don't store data for anon servers
-            if server.user == self.anon: continue
-            server_serialized_list.append(server.serialize())
-        with open(self.SERVERS_FILE, 'w') as db:
-            json.dump(server_serialized_list,db)
+        for worker in self.workers.copy().values():
+            # We don't store data for anon workers
+            if worker.user == self.anon: continue
+            worker_serialized_list.append(worker.serialize())
+        with open(self.WORKERS_FILE, 'w') as db:
+            json.dump(worker_serialized_list,db)
         with open(self.STATS_FILE, 'w') as db:
             json.dump(self.stats.serialize(),db)
         user_serialized_list = []
@@ -736,19 +738,19 @@ class Database:
                 top_contribution = user.contributions['megapixelsteps']
         return(top_contributor)
 
-    def get_top_server(self):
-        top_server = None
-        top_server_contribution = 0
-        for server in self.servers:
-            if self.servers[server].contributions > top_server_contribution:
-                top_server = self.servers[server]
-                top_server_contribution = self.servers[server].contributions
-        return(top_server)
+    def get_top_worker(self):
+        top_worker = None
+        top_worker_contribution = 0
+        for worker in self.workers:
+            if self.workers[worker].contributions > top_worker_contribution:
+                top_worker = self.workers[worker]
+                top_worker_contribution = self.workers[worker].contributions
+        return(top_worker)
 
-    def count_active_servers(self):
+    def count_active_workers(self):
         count = 0
-        for server in self.servers.values():
-            if not server.is_stale():
+        for worker in self.workers.values():
+            if not worker.is_stale():
                 count += 1
         return(count)
 
@@ -757,9 +759,9 @@ class Database:
             "megapixelsteps": 0,
             "fulfilments": 0,
         }
-        for server in self.servers.values():
-            totals["megapixelsteps"] += server.contributions
-            totals["fulfilments"] += server.fulfilments
+        for worker in self.workers.values():
+            totals["megapixelsteps"] += worker.contributions
+            totals["fulfilments"] += worker.fulfilments
         return(totals)
 
 
@@ -769,9 +771,9 @@ class Database:
         logger.info(f'New user created: {user.username}#{self.last_user_id}')
         return(self.last_user_id)
 
-    def register_new_server(self, server):
-        self.servers[server.name] = server
-        logger.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
+    def register_new_worker(self, worker):
+        self.workers[worker.name] = worker
+        logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
 
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
@@ -805,13 +807,13 @@ class Database:
                 return(user)
         return(None)
 
-    def find_server_by_name(self,server_name):
-        return(self.servers.get(server_name))
+    def find_worker_by_name(self,worker_name):
+        return(self.workers.get(worker_name))
 
-    def find_server_by_id(self,server_id):
-        for server in self.servers.values():
-            if server.id == server_id:
-                return(server)
+    def find_worker_by_id(self,worker_id):
+        for worker in self.workers.values():
+            if worker.id == worker_id:
+                return(worker)
         return(None)
 
     def transfer_kudos(self, source_user, dest_user, amount):

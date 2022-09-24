@@ -27,7 +27,7 @@ class WaitingPrompt(WaitingPrompt):
         self.gen_payload["ddim_steps"] = self.steps
 
     def activate(self):
-        # We separate the activation from __init__ as often we want to check if there's a valid server for it
+        # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
         logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
@@ -42,12 +42,12 @@ class WaitingPrompt(WaitingPrompt):
         # We increment the priority by 1, because it starts at 0
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        active_servers = self.db.count_active_servers()
-        # If there's less requests than the number of active servers
+        active_workers = self.db.count_active_workers()
+        # If there's less requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
-        if queued_n < active_servers:
-            active_servers = queued_n
-        mpss = (self.db.stats.get_request_avg() / 1000000) * active_servers
+        if queued_n < active_workers:
+            active_workers = queued_n
+        mpss = (self.db.stats.get_request_avg() / 1000000) * active_workers
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1mpss
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
@@ -69,21 +69,21 @@ class ProcessingGeneration(WaitingPrompt):
         self.seed = seed
         pixelsteps_per_sec = self.owner.db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
         self.kudos = self.owner.db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
-        self.server.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
+        self.worker.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
         self.owner.record_usage(self.owner.pixelsteps, self.kudos)
-        logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
+        logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
         return(self.kudos)
 
     def get_seconds_needed(self):
-        return(self.owner.pixelsteps / self.server.get_performance_average())
+        return(self.owner.pixelsteps / self.worker.get_performance_average())
 
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''
         ret_dict = {
             "img": procgen.generation,
             "seed": procgen.seed,
-            "server_id": procgen.server.id,
-            "server_name": procgen.server.name,
+            "worker_id": procgen.worker.id,
+            "worker_name": procgen.worker.name,
         }
         return(ret_dict)
 

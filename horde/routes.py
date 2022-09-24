@@ -17,7 +17,7 @@ def index():
     with open('index.md') as index_file:
         index = index_file.read()
     top_contributor = _db.get_top_contributor()
-    top_server = _db.get_top_server()
+    top_server = _db.get_top_worker()
     align_image = 0
     big_image = align_image
     while big_image == align_image:
@@ -26,14 +26,14 @@ def index():
         top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.png?raw=true" width="800" />'
     else:
         top_contributors = f"""\n## Top Contributors
-These are the people and servers who have contributed most to this horde.
+These are the people and workers who have contributed most to this horde.
 ### Users
-This is the person whose server(s) have generated the most pixels for the horde.
+This is the person whose worker(s) have generated the most pixels for the horde.
 #### {top_contributor.get_unique_alias()}
 * {round(top_contributor.contributions['megapixelsteps'] / 1000,2)} Gigapixelsteps generated.
 * {top_contributor.contributions['fulfillments']} requests fulfilled.
-### Servers
-This is the server which has generated the most pixels for the horde.
+### Workers
+This is the worker which has generated the most pixels for the horde.
 #### {top_server.name}
 * {round(top_server.contributions/1000,2)} Gigapixelsteps generated.
 * {top_server.fulfilments} request fulfillments.
@@ -51,7 +51,7 @@ This is the server which has generated the most pixels for the horde.
         avg_performance= round(_db.stats.get_request_avg() / 1000000,2),
         total_pixels = round(totals["megapixelsteps"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
-        active_servers = _db.count_active_servers(),
+        active_servers = _db.count_active_workers(),
         total_queue = waiting_prompts.count_total_waiting_generations(),
         maintenance_mode = maintenance.active,
     )

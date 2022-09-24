@@ -246,7 +246,7 @@ class PromptPop(Resource):
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
-        server = _db.find_server_by_name(args['name'])
+        server = _db.find_worker_by_name(args['name'])
         if not server:
             server = Worker(_db)
             server.create(user, args['name'])
@@ -369,7 +369,7 @@ class Servers(Resource):
 class ServerSingle(Resource):
     @logger.catch
     def get(self, server_id = ''):
-        server = _db.find_server_by_id(server_id)
+        server = _db.find_worker_by_id(server_id)
         if server:
             sdict = {
                 "name": server.name,
@@ -392,7 +392,7 @@ class ServerSingle(Resource):
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
     def put(self, server_id = ''):
-        server = _db.find_server_by_id(server_id)
+        server = _db.find_worker_by_id(server_id)
         if not server:
             return("Invalid Server ID", 404)
         args = self.parser.parse_args()
@@ -423,7 +423,7 @@ class ServerSingle(Resource):
     # # post shows also hidden server info
     # decorators = [limiter.limit("30/minute")]
     # def post(self, server_id = ''):
-    #     server = _db.find_server_by_id(server_id)
+    #     server = _db.find_worker_by_id(server_id)
     #     if not server:
     #         return("Invalid Server ID", 404)
     #     args = self.parser.parse_args()
@@ -515,7 +515,7 @@ class HordeLoad(Resource):
     def get(self):
         load_dict = waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
-        load_dict["server_count"] = _db.count_active_servers()
+        load_dict["server_count"] = _db.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)
 

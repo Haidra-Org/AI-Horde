@@ -122,7 +122,7 @@ class HordeLoad(HordeLoadTemplate):
         '''
         load_dict = waiting_prompts.count_totals()
         load_dict["past_minute_megapixelsteps"] = db.stats.get_megapixelsteps_per_min()
-        load_dict["worker_count"] = db.count_active_servers()
+        load_dict["worker_count"] = db.count_active_workers()
         return(load_dict,200)
 
 

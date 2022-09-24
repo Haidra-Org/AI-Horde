@@ -161,7 +161,7 @@ class GenerateTemplate(Resource):
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
-        for worker in db.servers.values():
+        for worker in db.workers.values():
             if len(self.args.workers) and worker.id not in self.args.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
@@ -193,7 +193,7 @@ class GenerateTemplate(Resource):
             self.args["prompt"],
             self.user,
             self.args["params"],
-            servers=self.args["workers"],
+            workers=self.args["workers"],
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -246,7 +246,7 @@ class SyncGenerateTemplate(GenerateTemplate):
     # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue
     def activate_waiting_prompt(self):
         # We don't want to keep synchronous requests up unless there's someone who can fulfill them
-        for worker in db.servers.values():
+        for worker in db.workers.values():
             if len(self.args.workers) and worker.id not in self.args.workers:
                 continue
             logger.error([worker.name, worker.can_generate(self.wp)])
@@ -315,7 +315,7 @@ class JobPopTemplate(Resource):
         self.args = pop_parser.parse_args()
         self.validate()
         self.check_in()
-        # Paused server return silently
+        # Paused worker return silently
         if self.worker.paused:
             return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
@@ -350,7 +350,7 @@ class JobPopTemplate(Resource):
         self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
-        self.worker = db.find_server_by_name(args['name'])
+        self.worker = db.find_worker_by_name(args['name'])
         if not self.worker:
             self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
@@ -388,15 +388,15 @@ class JobSubmitTemplate(Resource):
     def validate(self):
         self.procgen = processing_generations.get_item(args['id'])
         if not self.procgen:
-            raise e.InvalidProcGen(procgen.server.name, args['id'])
+            raise e.InvalidProcGen(procgen.worker.name, args['id'])
         self.user = db.find_user_by_api_key(args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + args['name'])
-        if self.user != self.procgen.server.user:
+        if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(user.get_unique_alias(), args['name'])
         self.kudos = self.procgen.set_generation(args['generation'], args['seed'])
         if kudos == 0:
-            raise e.DuplicateGen(procgen.server.name, args['id'])
+            raise e.DuplicateGen(procgen.worker.name, args['id'])
 
 
 class TransferKudos(Resource):
@@ -431,7 +431,7 @@ class Workers(Resource):
         '''
         workers_ret = []
         # I could do this with a comprehension, but this is clearer to understand
-        for worker in db.servers.values():
+        for worker in db.workers.values():
             if worker.is_stale():
                 continue
             workers_ret.append(worker.get_details())
@@ -451,7 +451,7 @@ class WorkerSingle(Resource):
         Can retrieve the details of a worker even if inactive
         (A worker is considered inactive if it has not checked in for 5 minutes)
         '''
-        worker = db.find_server_by_id(worker_id)
+        worker = db.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
         is_privileged = False
@@ -482,7 +482,7 @@ class WorkerSingle(Resource):
         Paused can be set only by the admins of this Horde.
         When in paused mode, the worker will not be given any requests to generate.
         '''
-        worker = db.find_server_by_id(worker_id)
+        worker = db.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
         args = self.parser.parse_args()
@@ -581,7 +581,7 @@ class HordeLoadTemplate(Resource):
         '''Details about the current performance of this Horde
         '''
         load_dict = waiting_prompts.count_totals()
-        load_dict["worker_count"] = db.count_active_servers()
+        load_dict["worker_count"] = db.count_active_workers()
         return(load_dict,200)
 
 class HordeMaintenance(Resource):
