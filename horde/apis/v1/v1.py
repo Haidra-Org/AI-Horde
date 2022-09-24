@@ -300,7 +300,7 @@ class SubmitGeneration(Resource):
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
-        if user != procgen.server.user:
+        if user != procgen.worker.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
         kudos = procgen.set_generation(args['generation'], args['seed'])
         if kudos == 0:
