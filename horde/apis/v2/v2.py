@@ -181,7 +181,8 @@ class GenerateTemplate(Resource):
         if not worker_found:
             # We don't need to call .delete() on the wp because it's not activated yet
             # And therefore not added to the waiting_prompt dict.
-            raise e.NoValidWorkers(username)
+            raise e.NoValidWorkers(self.username)
+        self.activate_waiting_prompt()
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
@@ -210,8 +211,8 @@ class GenerateTemplate(Resource):
             servers=self.args["workers"],
         )
     
+    # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
-        # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         self.wp.activate()
 
 class AsyncGenerateTemplate(GenerateTemplate):
@@ -258,16 +259,18 @@ class SyncGenerateTemplate(GenerateTemplate):
         return(ret_dict, 200)
 
     def activate_waiting_prompt(self):
+        # We don't want to keep synchronous requests up unless there's someone who can fulfill them
         for worker in _db.servers.values():
             if len(self.args.workers) and worker.id not in self.args.workers:
                 continue
+            logger.error([worker.name, worker.can_generate(self.wp)])
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
                 break
         if not worker_found:
             raise e.NoValidWorkers(username)
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
-        super().wp.activate()
+        super().activate_waiting_prompt()
 
 
 def get_request_id():

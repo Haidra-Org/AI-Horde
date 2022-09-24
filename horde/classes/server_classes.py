@@ -277,6 +277,9 @@ class KAIServer:
         # takes as an argument a WaitingPrompt class and checks if this server is valid for generating it
         is_matching = True
         skipped_reason = None
+        if self.is_stale():
+            # We don't consider stale servers in the request, so we don't need to report a reason
+            is_matching = False
         # if thes server is paused, we return OK, but skip everything
         if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
             is_matching = False
