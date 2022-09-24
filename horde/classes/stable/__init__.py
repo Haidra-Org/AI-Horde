@@ -123,7 +123,7 @@ class Worker(Worker):
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
-    def record_contribution(self,pixelsteps):
+    def convert_contribution(self,pixelsteps):
         self.contributions = round(self.contributions + pixelsteps/1000000,2)
 
     def get_details(self, is_privileged = False):
