@@ -516,6 +516,7 @@ class User:
 
     def get_details(self):
         ret_dict = {
+            "username": self.get_unique_alias(),
             "id": self.id,
             "kudos": self.kudos,
             "kudos_details": self.kudos_details,

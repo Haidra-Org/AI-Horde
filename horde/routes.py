@@ -8,6 +8,7 @@ from uuid import uuid4
 from . import logger, maintenance, HORDE
 from .classes import db as _db
 from .classes import waiting_prompts,User
+import bleach
 
 dance_return_to = '/'
 
@@ -116,8 +117,8 @@ def register():
     if request.method == 'POST':
         api_key = secrets.token_urlsafe(16)
         if user:
-            username = request.form['username']
-            user.username = request.form['username']
+            username = bleach.clean(request.form['username'])
+            user.username = username
             user.api_key = api_key
         else:
             # Triggered when the user created a username without logging in
@@ -126,7 +127,7 @@ def register():
                 pseudonymous = True
             user = User(_db)
             user.create(request.form['username'], oauth_id, api_key, None)
-            username = request.form['username']
+            username = bleach.clean(request.form['username'])
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',

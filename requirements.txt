@@ -9,3 +9,4 @@ flask-dance[sqla]
 blinker
 python-dotenv
 loguru
+bleach
