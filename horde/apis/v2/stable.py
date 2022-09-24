@@ -7,6 +7,9 @@ response_model_generation_result = api.model('Generation', {
     'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
     'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
 })
+response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
+    'generations': fields.List(fields.Nested(response_model_generation_result)),
+})
 response_model_generation_payload = api.model('ModelPayload', {
     'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
     'ddim_steps': fields.Integer(example=50), 
@@ -56,6 +59,22 @@ response_model_horde_performance = api.model('HordePerformance', {
 
 class AsyncGenerate(AsyncGenerateTemplate):
     
+    # I need to reapply all decorators here as I'm modifying the models
+    @api.expect(generate_parser)
+    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(503, 'Maintenance Mode', response_model_error)
+    @api.response(429, 'Too Many Prompts', response_model_error)
+    def post(self):
+        '''Initiate an Asynchronous request to generate images.
+        This endpoint will immediately return with the UUID of the request for generation.
+        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
+        Perhaps some will appear in the next 10 minutes.
+        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
+        '''
+        return(super().post())
+
     def validate(self):
         super().validate()
         if self.args["params"].get("length",512)%64:
@@ -67,7 +86,22 @@ class AsyncGenerate(AsyncGenerateTemplate):
 
 
 class SyncGenerate(SyncGenerateTemplate):
-    
+
+    @api.expect(generate_parser)
+    @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(503, 'Maintenance Mode', response_model_error)
+    @api.response(429, 'Too Many Prompts', response_model_error)
+    def post(self):
+        '''Initiate a Synchronous request to generate images.
+        This connection will only terminate when the images have been generated, or an error occured.
+        If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
+        '''
+        r = super().post()
+        logger.error(r)
+        return(r)
+
     def validate(self):
         super().validate()
         if self.args["params"].get("length",512)%64:

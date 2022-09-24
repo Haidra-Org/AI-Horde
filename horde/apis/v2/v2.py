@@ -199,7 +199,8 @@ class GenerateTemplate(Resource):
 class AsyncGenerateTemplate(GenerateTemplate):
 
     @api.expect(generate_parser)
-    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
+     # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    # @api.marshal_with(response_model_async, code=202, description='Generation Queued')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(503, 'Maintenance Mode', response_model_error)
@@ -217,7 +218,8 @@ class AsyncGenerateTemplate(GenerateTemplate):
 class SyncGenerateTemplate(GenerateTemplate):
 
     @api.expect(generate_parser)
-    @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
+     # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    # @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(503, 'Maintenance Mode', response_model_error)
@@ -245,7 +247,6 @@ class SyncGenerateTemplate(GenerateTemplate):
         for worker in db.workers.values():
             if len(self.args.workers) and worker.id not in self.args.workers:
                 continue
-            logger.error([worker.name, worker.can_generate(self.wp)])
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
                 break
@@ -451,16 +452,17 @@ class WorkerSingle(Resource):
         if not worker:
             raise e.WorkerNotFound(worker_id)
         is_privileged = False
-        ## Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
+        # logger.debug('test start')
+        # # Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
         # args = self.parser.parse_args()
         # if args.apikey:
-        #     logger.error('hehehe')
+        #     logger.debug('hehehe')
         #     admin = db.find_user_by_api_key(args['apikey'])
         #     if not admin:
         #         raise e.InvalidAPIKey('admin worker details')
         #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
         #         raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
-        #     logger.error('hehehehe')
+        #     logger.debug('hehehehe')
         #     is_privileged = True
         return(worker.get_details(is_privileged),200)
 
@@ -570,7 +572,7 @@ class UserSingle(Resource):
 class HordeLoadTemplate(Resource):
     decorators = [limiter.limit("20/minute")]
     @logger.catch
-    @api.marshal_with(response_model_horde_performance, code=200, description='Horde Performance')
+    # @api.marshal_with(response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
         '''Details about the current performance of this Horde
         '''

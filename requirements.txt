@@ -1,6 +1,7 @@
 werkzeug==2.1.2
 Flask
 flask-restx
+# restx-monkey # Library to patch unmaintained flask-restx (https://github.com/python-restx/flask-restx/issues/462)
 flask_limiter
 waitress
 requests >= 2.27
