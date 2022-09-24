@@ -3,11 +3,7 @@ from uuid import uuid4
 from datetime import datetime
 import threading, time
 from .. import logger
-
-# We use this variable to avoid having to extend the name of the thing we're tracking as contributions
-thing_name = "kilothings"
-# In some cases, we track the raw value of the thing, without adding things like kilo/mega etc.
-raw_thing_name = "things"
+from .. import thing_name,raw_thing_name
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -293,7 +289,7 @@ class Worker:
         if len(self.performances):
             ret_num = sum(self.performances) / len(self.performances)
         else:
-            # Always sending at least 1 pixelstep per second, to avoid divisions by zero
+            # Always sending at least 1 thing per second, to avoid divisions by zero
             ret_num = 1
         return(ret_num)
 
@@ -498,11 +494,11 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, pixelsteps, kudos):
+    def record_usage(self, kudos):
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
-    def record_contributions(self, pixelsteps, kudos):
+    def record_contributions(self, kudos):
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
@@ -583,7 +579,7 @@ class Stats:
             del self.worker_performances[0]
         self.worker_performances.append(things_per_sec)
         fulfillment_dict = {
-            raw_thing_name: pixelsteps,
+            raw_thing_name: things,
             "start_time": starting_time,
             "deliver_time": datetime.now(),
         }
@@ -741,9 +737,9 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['megapixelsteps'] > top_contribution and user != self.anon:
+            if user.contributions[thing_name] > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions['megapixelsteps']
+                top_contribution = user.contributions[thing_name]
         return(top_contributor)
 
     def get_top_worker(self):
@@ -764,11 +760,11 @@ class Database:
 
     def get_total_usage(self):
         totals = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "fulfilments": 0,
         }
         for worker in self.workers.values():
-            totals["megapixelsteps"] += worker.contributions
+            totals[thing_name] += worker.contributions
             totals["fulfilments"] += worker.fulfilments
         return(totals)
 
@@ -850,3 +846,11 @@ class Database:
             return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
         kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
         return(kudos)
+
+    # Should be overriden
+    def convert_things_to_kudos(self, things):
+        # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
+        kudos = round(things,2)
+        # logger.info([pixels,multiplier,kudos])
+        return(kudos)
+

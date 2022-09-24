@@ -6,7 +6,7 @@ from flask_dance.contrib.github import github
 from markdown import markdown
 from uuid import uuid4
 from . import logger, maintenance, HORDE
-from .classes import db as _db
+from .classes import db
 from .classes import waiting_prompts,User
 import bleach
 
@@ -17,8 +17,8 @@ dance_return_to = '/'
 def index():
     with open('index.md') as index_file:
         index = index_file.read()
-    top_contributor = _db.get_top_contributor()
-    top_server = _db.get_top_worker()
+    top_contributor = db.get_top_contributor()
+    top_server = db.get_top_worker()
     align_image = 0
     big_image = align_image
     while big_image == align_image:
@@ -46,13 +46,13 @@ This is the worker which has generated the most pixels for the horde.
 [Privacy Policy](/privacy)
 
 [Terms of Service](/terms)"""
-    totals = _db.get_total_usage()
+    totals = db.get_total_usage()
     findex = index.format(
         stable_image = align_image,
-        avg_performance= round(_db.stats.get_request_avg() / 1000000,2),
+        avg_performance= round(db.stats.get_request_avg() / 1000000,2),
         total_pixels = round(totals["megapixelsteps"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
-        active_servers = _db.count_active_workers(),
+        active_servers = db.count_active_workers(),
         total_queue = waiting_prompts.count_total_waiting_generations(),
         maintenance_mode = maintenance.active,
     )
@@ -111,7 +111,7 @@ def register():
     pseudonymous = False
     oauth_id = get_oauth_id()
     if oauth_id:
-        user = _db.find_user_by_oauth_id(oauth_id)
+        user = db.find_user_by_oauth_id(oauth_id)
         if user:
             username = user.username
     if request.method == 'POST':
@@ -125,7 +125,7 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
-            user = User(_db)
+            user = User(db)
             user.create(request.form['username'], oauth_id, api_key, None)
             username = bleach.clean(request.form['username'])
     if user:
@@ -151,7 +151,7 @@ def transfer():
     welcome = 'Welcome'
     oauth_id = get_oauth_id()
     if oauth_id:
-        src_user = _db.find_user_by_oauth_id(oauth_id)
+        src_user = db.find_user_by_oauth_id(oauth_id)
         if not src_user:
             # This probably means the user was deleted
             oauth_id = None
@@ -163,11 +163,11 @@ def transfer():
             error = "Please enter a number in the kudos field"
         # Triggered when the user submited without logging in
         elif src_user:
-            ret = _db.transfer_kudos_to_username(src_user,dest_username,int(amount))
+            ret = db.transfer_kudos_to_username(src_user,dest_username,int(amount))
             kudos = ret[0]
             error = ret[1]
         else:
-            ret = _db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
+            ret = db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
             kudos = ret[0]
             error = ret[1]
     if src_user:

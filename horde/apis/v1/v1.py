@@ -129,7 +129,7 @@ class SyncGenerate(Resource):
             servers=args["servers"],
         )
         server_found = False
-        for server in _db.servers.values():
+        for server in _db.workers.values():
             if len(args.servers) and server.id not in args.servers:
                 continue
             if server.can_generate(wp)[0]:
@@ -217,7 +217,7 @@ class AsyncGenerate(Resource):
             servers=args["servers"],
         )
         server_found = False
-        for server in _db.servers.values():
+        for server in _db.workers.values():
             if len(args.servers) and server.id not in args.servers:
                 continue
             if server.can_generate(wp)[0]:
@@ -348,7 +348,7 @@ class Servers(Resource):
     @logger.catch
     def get(self):
         servers_ret = []
-        for server in _db.servers.values():
+        for server in _db.workers.values():
             if server.is_stale():
                 continue
             sdict = {

@@ -1,10 +1,5 @@
 from ..base import *
 
-# We use this variable to avoid having to extend the name of the thing we're tracking as contributions
-thing_name = "megapixelsteps"
-# In some cases, we track the raw value of the thing, without adding things like kilo/mega etc.
-raw_thing_name = "pixelsteps"
-
 class WaitingPrompt(WaitingPrompt):
 
     def extract_params(self, params):
@@ -187,7 +182,7 @@ class Stats(Stats):
 
 class Database(Database):
 
-    def convert_pixelsteps_to_kudos(self, pixelsteps):
+    def convert_things_to_kudos(self, pixelsteps):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
         kudos = round(pixelsteps / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])
