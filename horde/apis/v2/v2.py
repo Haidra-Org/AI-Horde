@@ -99,10 +99,6 @@ response_model_user_details = api.model('UserDetails', {
     "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
 })
 
-response_model_users_list = api.model('UsersList', {
-    "username": fields.Nested(response_model_user_details)
-})
-
 response_model_user_modify = api.model('ModifyUser', {
     "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
     "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
@@ -510,14 +506,12 @@ class WorkerSingle(Resource):
 class Users(Resource):
     decorators = [limiter.limit("2/minute")]
     @logger.catch
-    @api.marshal_with(response_model_users_list, code=200, description='Users List')
+    @api.marshal_with(response_model_user_details, code=200, description='Users List')
     def get(self):
         '''A List with the details and statistic of all registered users
         '''
-        user_dict = {}
-        for user in db.users.values():
-            user_dict[user.get_unique_alias()] = user.get_details()
-        return(user_dict,200)
+        users_list = [user.get_details() for user in db.users.values()]
+        return(users_list,200)
 
 
 class UserSingle(Resource):
