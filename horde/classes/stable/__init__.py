@@ -1,5 +1,9 @@
 from ..base import *
 
+# We use this variable to avoid having to extend the name of the thing we're tracking as contributions
+thing_name = "megapixelsteps"
+# In some cases, we track the raw value of the thing, without adding things like kilo/mega etc.
+raw_thing_name = "pixelsteps"
 
 class WaitingPrompt(WaitingPrompt):
 
@@ -32,8 +36,13 @@ class WaitingPrompt(WaitingPrompt):
         super().activate()
         logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
 
-    # The mps still queued to be generated for this WP
-    def get_queued_megapixelsteps(self):
+    def new_procgen(self, worker):
+        return(ProcessingGeneration(self, self._processing_generations, worker))
+
+    def get_queued_things(self):
+        '''The mps still queued to be generated for this WP
+        For the Stable Horde, things == megapixelsteps
+        '''
         return(round(self.pixelsteps * self.n/1000000,2))
 
     def get_status(self, lite = False):
@@ -59,6 +68,7 @@ class WaitingPrompt(WaitingPrompt):
             wait_time += procgen.get_expected_time_left()
         ret_dict["wait_time"] = round(wait_time)
         return(ret_dict)
+
 
 class ProcessingGeneration(WaitingPrompt):
 
@@ -109,7 +119,7 @@ class Worker(Worker):
         logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
 
     def can_generate(self, waiting_prompt):
-        can_generate = super().can_generate()
+        can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
         if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
@@ -120,13 +130,6 @@ class Worker(Worker):
     # We split it to its own function to make it extendable
     def record_contribution(self,pixelsteps):
         self.contributions = round(self.contributions + pixelsteps/1000000,2)
-
-    def get_performance(self):
-        if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} pixelsteps per second'
-        else:
-            ret_str = f'No requests fulfilled yet'
-        return(ret_str)
 
     def get_details(self, is_privileged = False):
         ret_dict = super().get_details()
@@ -148,16 +151,39 @@ class Worker(Worker):
             self.contributions = round(self.contributions / 50,2)
 
 class PromptsIndex(PromptsIndex):
-    pass
-               
-class GenerationsIndex(GenerationsIndex):
-    pass
 
+    def count_totals(self):
+        ret_dict = {
+            "queued_requests": 0,
+            # mps == Megapixelsteps
+            "queued_megapixelsteps": 0,
+        }
+        for wp in self._index.values():
+            ret_dict["queued_requests"] += wp.n
+            if wp.n > 0:
+                ret_dict["queued_megapixelsteps"] += wp.pixelsteps / 1000000
+        # We round the end result to avoid to many decimals
+        ret_dict["queued_megapixelsteps"] = round(ret_dict["queued_megapixelsteps"],2)
+        return(ret_dict)
+
+                              
 class User(User):
-    pass
+
+    def record_usage(self, pixelsteps, kudos):
+        super().record_usage()
+        self.usage[thing_name] = round(self.usage[thing_name] + (pixelsteps * self.usage_multiplier / 1000000),2)
+
+    def record_contributions(self, pixelsteps, kudos):
+        super().record_usage()
+        self.contributions[thing_name] = round(self.contributions[thing_name] + pixelsteps/1000000,2)
+
 
 class Stats(Stats):
-    pass
+
+    def get_things_per_min(self):
+        pixelsteps_per_min = super().get_things_per_min()
+        megapixelsteps_per_min = round(pixelsteps_per_min / 1000000,2)
+        return(megapixelsteps_per_min)
 
 class Database(Database):
 
@@ -166,3 +192,11 @@ class Database(Database):
         kudos = round(pixelsteps / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])
         return(kudos)
+
+    def new_worker(self):
+        return(Worker(self))
+    def new_user(self):
+        return(User(self))
+    def new_stats(self):
+        return(Stats(self))
+

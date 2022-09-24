@@ -4,6 +4,11 @@ from datetime import datetime
 import threading, time
 from .. import logger
 
+# We use this variable to avoid having to extend the name of the thing we're tracking as contributions
+thing_name = "kilothings"
+# In some cases, we track the raw value of the thing, without adding things like kilo/mega etc.
+raw_thing_name = "things"
+
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
         self.db = db
@@ -50,7 +55,7 @@ class WaitingPrompt:
     def start_generation(self, worker):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(self, self._processing_generations, worker)
+        new_gen = self.new_procgen(worker)
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
@@ -59,6 +64,10 @@ class WaitingPrompt:
             "id": new_gen.id,
         }
         return(prompt_payload)
+
+    # Using this function so that I can extend it to have it grab the correct extended class
+    def new_procgen(self, worker):
+        return(ProcessingGeneration(self, self._processing_generations, worker))
 
     def is_completed(self):
         if self.needs_gen():
@@ -79,6 +88,10 @@ class WaitingPrompt:
             else:
                 ret_dict["processing"] += 1
         return(ret_dict)
+
+    # Should be overwritten
+    def get_queued_things(self):
+        return(0)
 
     def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()
@@ -255,8 +268,8 @@ class Worker:
             skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
-    # We split it to its own function to make it extendable
-    def record_contribution(self,thing):
+    # We split it to its own function to make it extendable for specialized calculations
+    def record_contribution(self, thing):
         self.contributions = round(self.contributions + thing,2)
 
     @logger.catch
@@ -284,10 +297,9 @@ class Worker:
             ret_num = 1
         return(ret_num)
 
-    # Should be overriden
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} thing per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} {thing_name} per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
@@ -341,10 +353,7 @@ class Worker:
     def deserialize(self, saved_dict, convert_flag = None):
         self.user = self.db.find_user_by_oauth_id(saved_dict["oauth_id"])
         self.name = saved_dict["name"]
-        self.max_pixels = saved_dict["max_pixels"]
         self.contributions = saved_dict["contributions"]
-        if convert_flag == 'pixelsteps':
-            self.contributions = round(self.contributions / 50,2)
         self.fulfilments = saved_dict["fulfilments"]
         self.kudos = saved_dict.get("kudos",0)
         self.kudos_details = saved_dict.get("kudos_details",self.kudos_details)
@@ -396,15 +405,9 @@ class PromptsIndex(Index):
     def count_totals(self):
         ret_dict = {
             "queued_requests": 0,
-            # mps == Megapixelsteps
-            "queued_megapixelsteps": 0,
         }
         for wp in self._index.values():
             ret_dict["queued_requests"] += wp.n
-            if wp.n > 0:
-                ret_dict["queued_megapixelsteps"] += wp.pixelsteps / 1000000
-        # We round the end result to avoid to many decimals
-        ret_dict["queued_megapixelsteps"] = round(ret_dict["queued_megapixelsteps"],2)
         return(ret_dict)
 
     def get_waiting_wp_by_kudos(self):
@@ -416,18 +419,18 @@ class PromptsIndex(Index):
         return(final_wp_list)
 
     # Returns the queue position of the provided WP based on kudos
-    # Also returns the amount of mps until the wp is generated
+    # Also returns the amount of things until the wp is generated
     # Also returns the amount of different gens queued
     def get_wp_queue_stats(self, wp):
-        mps_ahead_in_queue = 0
+        things_ahead_in_queue = 0
         n_ahead_in_queue = 0
         priority_sorted_list = self.get_waiting_wp_by_kudos()
         for iter in range(len(priority_sorted_list)):
-            mps_ahead_in_queue += priority_sorted_list[iter].get_queued_megapixelsteps()
+            things_ahead_in_queue += priority_sorted_list[iter].get_queued_things()
             n_ahead_in_queue += priority_sorted_list[iter].n
             if priority_sorted_list[iter] == wp:
-                mps_ahead_in_queue = round(mps_ahead_in_queue,2)
-                return(iter, mps_ahead_in_queue, n_ahead_in_queue)
+                things_ahead_in_queue = round(things_ahead_in_queue,2)
+                return(iter, things_ahead_in_queue, n_ahead_in_queue)
         # -1 means the WP is done and not in the queue
         return(-1,0,0)
                 
@@ -458,11 +461,11 @@ class User:
         self.last_active = datetime.now()
         self.id = 0
         self.contributions = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "fulfillments": 0
         }
         self.usage = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "requests": 0
         }
         # We allow anonymous users more leeway for the max amount of concurrent requests
@@ -478,11 +481,11 @@ class User:
         self.last_active = datetime.now()
         self.id = self.db.register_new_user(self)
         self.contributions = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "fulfillments": 0
         }
         self.usage = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "requests": 0
         }
 
@@ -496,12 +499,10 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, pixelsteps, kudos):
-        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + (pixelsteps * self.usage_multiplier / 1000000),2)
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
     def record_contributions(self, pixelsteps, kudos):
-        self.contributions["megapixelsteps"] = round(self.contributions["megapixelsteps"] + pixelsteps/1000000,2)
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
@@ -559,12 +560,6 @@ class User:
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         if self.api_key == '0000000000':
             self.concurrency = 200
-        if convert_flag == 'pixelsteps':
-            # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
-            self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
-            del self.contributions['pixels']
-            self.usage['megapixelsteps'] = round(self.usage['pixels'] / 50,2)
-            del self.usage['pixels']
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
 
@@ -577,36 +572,35 @@ class Stats:
         self.interval = interval
         self.last_pruning = datetime.now()
 
-    def record_fulfilment(self, pixelsteps, starting_time):
+    def record_fulfilment(self, things, starting_time):
         seconds_taken = (datetime.now() - starting_time).seconds
         if seconds_taken == 0:
-            pixelsteps_per_sec = 1
+            things_per_sec = 1
         else:
-            pixelsteps_per_sec = round(pixelsteps / seconds_taken,1)
+            things_per_sec = round(things / seconds_taken,1)
         if len(self.worker_performances) >= 10:
             del self.worker_performances[0]
-        self.worker_performances.append(pixelsteps_per_sec)
+        self.worker_performances.append(things_per_sec)
         fulfillment_dict = {
-            "pixelsteps": pixelsteps,
+            raw_thing_name: pixelsteps,
             "start_time": starting_time,
             "deliver_time": datetime.now(),
         }
         self.fulfillments.append(fulfillment_dict)
-        return(pixelsteps_per_sec)
+        return(things_per_sec)
 
-    def get_megapixelsteps_per_min(self):
-        total_pixelsteps = 0
+    def get_things_per_min(self):
+        total_things = 0
         pruned_array = []
         for fulfillment in self.fulfillments:
             if (datetime.now() - fulfillment["deliver_time"]).seconds <= 60:
                 pruned_array.append(fulfillment)
-                total_pixelsteps += fulfillment["pixelsteps"]
+                total_things += fulfillment[raw_thing_name]
         if (datetime.now() - self.last_pruning).seconds > self.interval:
             self.last_pruning = datetime.now()
             self.fulfillments = pruned_array
             logger.debug("Pruned fulfillments")
-        megapixelsteps_per_min = round(total_pixelsteps / 1000000,2)
-        return(megapixelsteps_per_min)
+        return(total_things)
 
     def get_request_avg(self):
         if len(self.worker_performances) == 0:
@@ -619,7 +613,7 @@ class Stats:
         serialized_fulfillments = []
         for fulfillment in self.fulfillments.copy():
             json_fulfillment = {
-                "pixelsteps": fulfillment["pixelsteps"],
+                raw_thing_name: fulfillment[raw_thing_name],
                 "start_time": fulfillment["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
                 "deliver_time": fulfillment["deliver_time"].strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -642,7 +636,7 @@ class Stats:
         deserialized_fulfillments = []
         for fulfillment in saved_dict.get("fulfillments", []):
             class_fulfillment = {
-                "pixelsteps": fulfillment["pixelsteps"],
+                raw_thing_name: fulfillment[raw_thing_name],
                 "start_time": datetime.strptime(fulfillment["start_time"],"%Y-%m-%d %H:%M:%S"),
                 "deliver_time":datetime.strptime(fulfillment["deliver_time"],"%Y-%m-%d %H:%M:%S"),
             }
@@ -658,7 +652,7 @@ class Database:
         self.workers = {}
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
-        self.stats = Stats(self)
+        self.stats = self.new_stats()
         self.USERS_FILE = "db/users.json"
         self.users = {}
         # Increments any time a new user is added
@@ -674,7 +668,7 @@ class Database:
                     if not user_dict:
                         logger.error("Found null user on db load. Bypassing")
                         continue
-                    new_user = User(self)
+                    new_user = self.new_user()
                     new_user.deserialize(user_dict,convert_flag)
                     self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
@@ -691,7 +685,7 @@ class Database:
                     if not worker_dict:
                         logger.error("Found null worker on db load. Bypassing")
                         continue
-                    new_worker = Worker(self)
+                    new_worker = self.new_worker()
                     new_worker.deserialize(worker_dict,convert_flag)
                     self.workers[new_worker.name] = new_worker
         if os.path.isfile(self.STATS_FILE):
@@ -706,6 +700,15 @@ class Database:
         thread.daemon = True
         thread.start()
         logger.init_ok(f"Database Load", status="Completed")
+
+    # I don't know if I'm doing this right,  but I'm using these so that I can extend them from the extended DB
+    # So that it will grab the extended classes from each horde type, and not the internal classes in this package
+    def new_worker(self):
+        return(Worker(self))
+    def new_user(self):
+        return(User(self))
+    def new_stats(self):
+        return(Stats(self))
 
     def write_files(self):
         logger.init_ok("Database Store Thread", status="Started")

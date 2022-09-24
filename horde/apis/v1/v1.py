@@ -514,7 +514,7 @@ class HordeLoad(Resource):
     @logger.catch
     def get(self):
         load_dict = waiting_prompts.count_totals()
-        load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
+        load_dict["megapixelsteps_per_min"] = _db.stats.get_things_per_min()
         load_dict["server_count"] = _db.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)
