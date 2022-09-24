@@ -266,7 +266,7 @@ class Worker:
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable for specialized calculations
-    def record_contribution(self, thing):
+    def convert_contribution(self, thing):
         self.contributions = round(self.contributions + thing,2)
 
     @logger.catch
@@ -276,7 +276,7 @@ class Worker:
         '''
         self.user.record_contributions(thing, kudos)
         self.modify_kudos(kudos,'generated')
-        self.record_contribution(thing)
+        self.convert_contribution(thing)
         self.fulfilments += 1
         self.performances.append(thing_per_sec)
         if len(self.performances) > 20:
