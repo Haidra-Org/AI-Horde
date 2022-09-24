@@ -214,7 +214,8 @@ class Worker:
         self.uptime = 0
         self.db.register_new_worker(self)
 
-    def check_in(self, max_pixels):
+    # This should be overwriten by each specific horde
+    def check_in(self):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -229,7 +230,6 @@ class Worker:
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
-        self.max_pixels = max_pixels
         logger.debug(f"Worker {self.name} checked-in")
 
     def get_human_readable_uptime(self):
@@ -253,18 +253,22 @@ class Worker:
         if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'
-        if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
-            is_matching = False
-            skipped_reason = 'max_pixels'
         return([is_matching,skipped_reason])
 
+    # We split it to its own function to make it extendable
+    def record_contribution(self,thing):
+        self.contributions = round(self.contributions + thing,2)
+
     @logger.catch
-    def record_contribution(self, pixelsteps, kudos, pixelsteps_per_sec):
-        self.user.record_contributions(pixelsteps, kudos)
+    def record_contribution(self, thing, kudos, thing_per_sec):
+        '''We record the servers newest contribution
+        We do not need to know what type the contribution is, to avoid unnecessarily extending this method
+        '''
+        self.user.record_contributions(thing, kudos)
         self.modify_kudos(kudos,'generated')
-        self.contributions = round(self.contributions + pixelsteps/1000000,2) # We store them as Megapixelsteps
+        self.record_contribution(thing)
         self.fulfilments += 1
-        self.performances.append(pixelsteps_per_sec)
+        self.performances.append(thing_per_sec)
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -280,9 +284,10 @@ class Worker:
             ret_num = 1
         return(ret_num)
 
+    # Should be overriden
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} pixelsteps per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} thing per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
@@ -296,13 +301,12 @@ class Worker:
             return(True)
         return(False)
 
-    # We display these in the workers list json
+    # Should be extended by each specific horde
     def get_details(self, is_privileged = False):
+        '''We display these in the workers list json'''
         ret_dict = {
             "name": self.name,
             "id": self.id,
-            "max_pixels": self.max_pixels,
-            "megapixelsteps_generated": self.contributions,
             "requests_fulfilled": self.fulfilments,
             "kudos_rewards": self.kudos,
             "kudos_details": self.kudos_details,
@@ -314,12 +318,12 @@ class Worker:
             ret_dict['paused'] = self.paused
         return(ret_dict)
 
+    # Should be extended by each specific horde
     @logger.catch
     def serialize(self):
         ret_dict = {
             "oauth_id": self.user.oauth_id,
             "name": self.name,
-            "max_pixels": self.max_pixels,
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
             "kudos": self.kudos,

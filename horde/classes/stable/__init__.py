@@ -87,8 +87,65 @@ class ProcessingGeneration(WaitingPrompt):
         }
         return(ret_dict)
 
+
 class Worker(Worker):
-    pass
+
+    def check_in(self, max_pixels):
+        if not self.is_stale():
+            self.uptime += (datetime.now() - self.last_check_in).seconds
+            # Every 10 minutes of uptime gets 100 kudos rewarded
+            if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
+                kudos = 100
+                self.modify_kudos(kudos,'uptime')
+                self.user.record_uptime(kudos)
+                logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                self.last_reward_uptime = self.uptime
+        else:
+            # If the worker comes back from being stale, we just reset their last_reward_uptime
+            # So that they have to stay up at least 10 mins to get uptime kudos
+            self.last_reward_uptime = self.uptime
+        self.last_check_in = datetime.now()
+        self.max_pixels = max_pixels
+        logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
+
+    def can_generate(self, waiting_prompt):
+        can_generate = super().can_generate()
+        is_matching = can_generate[0]
+        skipped_reason = can_generate[1]
+        if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
+            is_matching = False
+            skipped_reason = 'max_pixels'
+        return([is_matching,skipped_reason])
+
+    # We split it to its own function to make it extendable
+    def record_contribution(self,pixelsteps):
+        self.contributions = round(self.contributions + pixelsteps/1000000,2)
+
+    def get_performance(self):
+        if len(self.performances):
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} pixelsteps per second'
+        else:
+            ret_str = f'No requests fulfilled yet'
+        return(ret_str)
+
+    def get_details(self, is_privileged = False):
+        ret_dict = super().get_details()
+        ret_dict["max_pixels"] = self.max_pixels
+        ret_dict["megapixelsteps_generated"] = self.contributions
+        return(ret_dict)
+
+    @logger.catch
+    def serialize(self):
+        ret_dict = super().serialize()
+        ret_dict["max_pixels"] = self.max_pixels
+        return(ret_dict)
+
+    @logger.catch
+    def deserialize(self, saved_dict, convert_flag = None):
+        super().deserialize(saved_dict, convert_flag)
+        self.max_pixels = saved_dict["max_pixels"]
+        if convert_flag == 'pixelsteps':
+            self.contributions = round(self.contributions / 50,2)
 
 class PromptsIndex(PromptsIndex):
     pass
