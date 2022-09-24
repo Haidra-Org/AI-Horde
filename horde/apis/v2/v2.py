@@ -592,7 +592,7 @@ class HordeMaintenance(Resource):
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="json")
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
     parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode", location="json")
 
     decorators = [limiter.limit("30/minute")]
