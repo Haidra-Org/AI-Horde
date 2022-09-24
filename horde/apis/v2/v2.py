@@ -199,8 +199,7 @@ class GenerateTemplate(Resource):
 class AsyncGenerateTemplate(GenerateTemplate):
 
     @api.expect(generate_parser)
-     # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    # @api.marshal_with(response_model_async, code=202, description='Generation Queued')
+    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(503, 'Maintenance Mode', response_model_error)
@@ -257,9 +256,10 @@ class SyncGenerateTemplate(GenerateTemplate):
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
 
-class AsyncStatus(Resource):
+class AsyncStatusTemplate(Resource):
     decorators = [limiter.limit("2/minute", key_func = get_request_path)]
-    @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
+     # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    # @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', response_model_error)
     def get(self, id = ''):
         '''Retrieve the full status of an Asynchronous generation request.

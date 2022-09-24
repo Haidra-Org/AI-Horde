@@ -59,22 +59,6 @@ response_model_horde_performance = api.model('HordePerformance', {
 
 class AsyncGenerate(AsyncGenerateTemplate):
     
-    # I need to reapply all decorators here as I'm modifying the models
-    @api.expect(generate_parser)
-    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
-    @api.response(400, 'Validation Error', response_model_error)
-    @api.response(401, 'Invalid API Key', response_model_error)
-    @api.response(503, 'Maintenance Mode', response_model_error)
-    @api.response(429, 'Too Many Prompts', response_model_error)
-    def post(self):
-        '''Initiate an Asynchronous request to generate images.
-        This endpoint will immediately return with the UUID of the request for generation.
-        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
-        Perhaps some will appear in the next 10 minutes.
-        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
-        '''
-        return(super().post())
-
     def validate(self):
         super().validate()
         if self.args["params"].get("length",512)%64:
@@ -108,6 +92,19 @@ class SyncGenerate(SyncGenerateTemplate):
             raise e.InvalidSize(self.username)
         if self.args["params"].get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
+
+# I need to override it just for the decorators :-/
+class AsyncStatus(AsyncStatusTemplate):
+    decorators = [limiter.limit("2/minute", key_func = get_request_path)]
+    @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.response(404, 'Request Not found', response_model_error)
+    def get(self, id = ''):
+        '''Retrieve the full status of an Asynchronous generation request.
+        This request will include all already generated images in base64 encoded .webp files.
+        As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
+        This endpoint is limited to 1 request per minute
+        '''
+        return(super().get(id))
 
 job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this worker can generate", location="json")
 
