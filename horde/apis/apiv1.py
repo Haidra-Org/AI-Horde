@@ -17,5 +17,5 @@ api = Api(blueprint,
     ordered=True,
 )
 
-api.add_namespace(v1)
 api.add_namespace(v2)
+api.add_namespace(v1)

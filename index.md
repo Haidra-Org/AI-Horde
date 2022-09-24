@@ -9,7 +9,7 @@ Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
 * Average Recent Performance: {avg_performance} Megapixelsteps per second
 * Total GPS generated: {total_pixels} Gigapixelsteps
 * Total requests fulfilled: {total_fulfillments}
-* Active [Servers](/api/v1/servers): {active_servers}
+* Active [Workers](/api/v2/workers): {active_workers}
 * Current Request Queue: {total_queue}
 
 ## Usage
