@@ -85,10 +85,10 @@ class ProcessingGeneration(ProcessingGeneration):
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''
         ret_dict = {
-            "img": procgen.generation,
-            "seed": procgen.seed,
-            "worker_id": procgen.worker.id,
-            "worker_name": procgen.worker.name,
+            "img": self.generation,
+            "seed": self.seed,
+            "worker_id": self.worker.id,
+            "worker_name": self.worker.name,
         }
         return(ret_dict)
 
