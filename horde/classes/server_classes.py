@@ -327,6 +327,24 @@ class KAIServer:
             return(True)
         return(False)
 
+    # We display these in the workers list json
+    def get_details(self, is_privileged = False):
+        ret_dict = {
+            "name": self.name,
+            "id": self.id,
+            "max_pixels": self.max_pixels,
+            "megapixelsteps_generated": self.contributions,
+            "requests_fulfilled": self.fulfilments,
+            "kudos_rewards": self.kudos,
+            "kudos_details": self.kudos_details,
+            "performance": self.get_performance(),
+            "uptime": self.uptime,
+            "maintenance_mode": self.maintenance,
+        }
+        if is_privileged:
+            ret_dict['paused'] = self.paused
+        return(ret_dict)
+
     @logger.catch
     def serialize(self):
         ret_dict = {
@@ -521,6 +539,17 @@ class User:
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
+
+    def get_details(self):
+        ret_dict = {
+            "id": self.id,
+            "kudos": self.kudos,
+            "kudos_details": self.kudos_details,
+            "usage": self.usage,
+            "contributions": self.contributions,
+            "concurrency": self.concurrency,
+        }
+        return(ret_dict)
 
 
     @logger.catch

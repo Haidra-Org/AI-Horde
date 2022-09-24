@@ -2,7 +2,7 @@ from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
 from ... import limiter
 from ...logger import logger
-from ...classes import db as _db
+from ...classes import db
 from ...classes import processing_generations,waiting_prompts,KAIServer,User,WaitingPrompt
 from ... import maintenance
 from enum import Enum
@@ -14,7 +14,6 @@ api = Namespace('v2', 'API Version 2' )
 
 response_model_generation_result = api.model('Generation', {
     'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file"),
-    'seed': fields.String(title="Generation Seed", description="The seed which generated this image"),
     'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
     'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
 })
@@ -54,13 +53,13 @@ response_model_generations_skipped = api.model('NoValidRequestFound', {
     'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
 })
 
-response_model_generation_pop = api.model('GenerationPayload', {
+response_model_job_pop = api.model('GenerationPayload', {
     'payload': fields.Nested(response_model_generation_payload),
     'id': fields.String(description="The UUID for this image generation"),
     'skipped': fields.Nested(response_model_generations_skipped)
 })
 
-response_model_generation_submit = api.model('GenerationSubmitted', {
+response_model_job_submit = api.model('GenerationSubmitted', {
 'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),
 })
 
@@ -124,8 +123,6 @@ response_model_user_modify = api.model('ModifyUser', {
 
 response_model_horde_performance = api.model('HordePerformance', {
     "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
-    "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
-    "megapixelsteps_per_min": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
     "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
 })
 
@@ -156,6 +153,10 @@ handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_reques
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 
+# Used to for the flas limiter, to limit requests per url paths
+def get_request_path():
+    return(request.path)
+
 generate_parser = reqparse.RequestParser()
 generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
 generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
@@ -172,7 +173,7 @@ class GenerateTemplate(Resource):
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
-        for worker in _db.servers.values():
+        for worker in db.servers.values():
             if len(self.args.workers) and worker.id not in self.args.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
@@ -189,7 +190,7 @@ class GenerateTemplate(Resource):
         if maintenance.active:
             raise e.MaintenanceMode('SyncGenerate')
         if self.args.apikey:
-            self.user = _db.find_user_by_api_key(self.args['apikey'])
+            self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('async generation')
         self.username = self.user.get_unique_alias()
@@ -202,7 +203,7 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
-            _db,
+            db,
             waiting_prompts,
             processing_generations,
             self.args["prompt"],
@@ -258,9 +259,10 @@ class SyncGenerateTemplate(GenerateTemplate):
         self.wp.delete()
         return(ret_dict, 200)
 
+    # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue
     def activate_waiting_prompt(self):
         # We don't want to keep synchronous requests up unless there's someone who can fulfill them
-        for worker in _db.servers.values():
+        for worker in db.servers.values():
             if len(self.args.workers) and worker.id not in self.args.workers:
                 continue
             logger.error([worker.name, worker.can_generate(self.wp)])
@@ -272,12 +274,8 @@ class SyncGenerateTemplate(GenerateTemplate):
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
 
-
-def get_request_id():
-    return(request.path)
-
 class AsyncStatus(Resource):
-    decorators = [limiter.limit("1/minute", key_func = get_request_id)]
+    decorators = [limiter.limit("1/minute", key_func = get_request_path)]
     @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', response_model_error)
     def get(self, id = ''):
@@ -311,74 +309,84 @@ class AsyncCheck(Resource):
         return(wp.get_lite_status(), 200)
 
 
-class PromptPop(Resource):
-    parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
-    parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
-    parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this worker can generate", location="json")
-    parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this worker", location="json")
+# The parser for RequestPop
+job_pop_parser = reqparse.RequestParser()
+job_pop_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
+job_pop_parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this worker", location="json")
+
+class JobPopTemplate(Resource):
 
     decorators = [limiter.limit("2/second")]
-    @api.expect(parser)
-    @api.marshal_with(response_model_generation_pop, code=200, description='Generation Popped')
+    @api.expect(job_pop_parser)
+    @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(403, 'Access Denied', response_model_error)
     def post(self):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
-        args = self.parser.parse_args()
-        skipped = {}
-        user = _db.find_user_by_api_key(args['apikey'])
-        if not user:
-            raise e.InvalidAPIKey('prompt pop')
-        worker = _db.find_server_by_name(args['name'])
-        if not worker:
-            worker = KAIServer(_db)
-            worker.create(user, args['name'])
-        if user != worker.user:
-            raise e.WrongCredentials(user.get_unique_alias(), args['name'])
-        worker.check_in(args['max_pixels'])
-        if worker.maintenance:
-            raise e.WorkerMaintenance()
-        if worker.paused:
+        self.args = pop_parser.parse_args()
+        self.validate()
+        self.check_in()
+        # Paused server return silently
+        if self.worker.paused:
             return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
-        prioritized_wp = []
-        priority_users = [user]
+        self.prioritized_wp = []
+        self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        for priority_username in args.priority_usernames:
-            priority_user = _db.find_user_by_username(priority_username)
+        for priority_username in self.args.priority_usernames:
+            priority_user = db.find_user_by_username(priority_username)
             if priority_user:
-                priority_users.append(priority_user)
-        for priority_user in priority_users:
+               self.priority_users.append(priority_user)
+        for priority_user in self.priority_users:
             for wp in waiting_prompts.get_all():
                 if wp.user == priority_user and wp.needs_gen():
-                    prioritized_wp.append(wp)
+                    self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
         for wp in waiting_prompts.get_waiting_wp_by_kudos():
-            if wp not in prioritized_wp:
-                prioritized_wp.append(wp)
-        for wp in prioritized_wp:
-            check_gen = worker.can_generate(wp)
+            if wp not in self.prioritized_wp:
+                self.prioritized_wp.append(wp)
+        for wp in self.prioritized_wp:
+            check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
-                skipped[skipped_reason] = skipped.get(skipped_reason,0) + 1
+                self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
                 continue
             ret = wp.start_generation(worker)
             return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
 
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self):
+        self.skipped = {}
+        self.user = db.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('prompt pop')
+        self.worker = db.find_server_by_name(args['name'])
+        if not self.worker:
+            self.worker = KAIServer(db)
+            self.worker.create(self.user, self.args['name'])
+        if self.user != self.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.args['name'])
+        if self.worker.maintenance:
+            raise e.WorkerMaintenance()
+    
+    # We split this to its own function so that it can be extended with the specific vars needed to check in
+    # You typically never want to use this template's function without extending it
+    def check_in(self):
+        self.worker.check_in()
 
-class SubmitGeneration(Resource):
-    parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
-    parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
-    parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image", location="json")
-    parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image", location="json")
 
-    @api.expect(parser)
-    @api.marshal_with(response_model_generation_submit, code=200, description='Generation Submitted')
+job_submit_parser = reqparse.RequestParser()
+job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
+job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
+job_submit_parser.add_argument("generation", type=str, required=False, default=[], help="The generated output", location="json")
+
+class JobSubmitTemplate(Resource):
+    @api.expect(job_submit_parser)
+    @api.marshal_with(response_model_job_submit, code=200, description='Generation Submitted')
     @api.response(400, 'Generation Already Submitted', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(402, 'Access Denied', response_model_error)
@@ -387,19 +395,23 @@ class SubmitGeneration(Resource):
         '''Submit a generated image.
         This endpoint is used by registered workers only
         '''
-        args = self.parser.parse_args()
-        procgen = processing_generations.get_item(args['id'])
-        if not procgen:
+        self.args = submit_parser.parse_args()
+        self.validate()
+        return({"reward": kudos}, 200)
+
+    def validate(self):
+        self.procgen = processing_generations.get_item(args['id'])
+        if not self.procgen:
             raise e.InvalidProcGen(procgen.server.name, args['id'])
-        user = _db.find_user_by_api_key(args['apikey'])
-        if not user:
+        self.user = db.find_user_by_api_key(args['apikey'])
+        if not self.user:
             raise e.InvalidAPIKey('worker submit:' + args['name'])
-        if user != procgen.server.user:
+        if self.user != self.procgen.server.user:
             raise e.WrongCredentials(user.get_unique_alias(), args['name'])
-        kudos = procgen.set_generation(args['generation'], args['seed'])
+        self.kudos = self.procgen.set_generation(args['generation'], args['seed'])
         if kudos == 0:
             raise e.DuplicateGen(procgen.server.name, args['id'])
-        return({"reward": kudos}, 200)
+
 
 class TransferKudos(Resource):
     parser = reqparse.RequestParser()
@@ -415,10 +427,10 @@ class TransferKudos(Resource):
         '''Transfer Kudos to another registed user
         '''
         args = self.parser.parse_args()
-        user = _db.find_user_by_api_key(args['apikey'])
+        user = db.find_user_by_api_key(args['apikey'])
         if not user:
             raise e.InvalidAPIKey('kudos transfer to: ' + args['username'])
-        ret = _db.transfer_kudos_from_apikey_to_username(args['apikey'],args['username'],args['amount'])
+        ret = db.transfer_kudos_from_apikey_to_username(args['apikey'],args['username'],args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
@@ -432,22 +444,11 @@ class Workers(Resource):
         '''A List with the details of all registered and active workers
         '''
         workers_ret = []
-        for worker in _db.servers.values():
+        # I could do this with a comprehension, but this is clearer to understand
+        for worker in db.servers.values():
             if worker.is_stale():
                 continue
-            sdict = {
-                "name": worker.name,
-                "id": worker.id,
-                "max_pixels": worker.max_pixels,
-                "megapixelsteps_generated": worker.contributions,
-                "requests_fulfilled": worker.fulfilments,
-                "kudos_rewards": worker.kudos,
-                "kudos_details": worker.kudos_details,
-                "performance": worker.get_performance(),
-                "uptime": worker.uptime,
-                "maintenance_mode": worker.maintenance,
-            }
-            workers_ret.append(sdict)
+            workers_ret.append(worker.get_details())
         return(workers_ret,200)
 
 class WorkerSingle(Resource):
@@ -464,32 +465,22 @@ class WorkerSingle(Resource):
         Can retrieve the details of a worker even if inactive
         (A worker is considered inactive if it has not checked in for 5 minutes)
         '''
-        worker = _db.find_server_by_id(worker_id)
-        if worker:
-            sdict = {
-                "name": worker.name,
-                "id": worker.id,
-                "max_pixels": worker.max_pixels,
-                "megapixelsteps_generated": worker.contributions,
-                "requests_fulfilled": worker.fulfilments,
-                "latest_performance": worker.get_performance(),
-                "maintenance_mode": worker.maintenance,
-            }
-            ## Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
-            # args = self.parser.parse_args()
-            # logger.error(apikey)
-            # if args.apikey:
-            #     logger.error('hehehe')
-            #     admin = _db.find_user_by_api_key(args['apikey'])
-            #     if not admin:
-            #         raise e.InvalidAPIKey('admin worker details')
-            #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-            #         raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
-            #     logger.error('hehehehe')
-            #     sdict['paused'] = worker.paused
-            return(sdict,200)
-        else:
+        worker = db.find_server_by_id(worker_id)
+        if not worker:
             raise e.WorkerNotFound(worker_id)
+        is_privileged = False
+        ## Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
+        # args = self.parser.parse_args()
+        # if args.apikey:
+        #     logger.error('hehehe')
+        #     admin = db.find_user_by_api_key(args['apikey'])
+        #     if not admin:
+        #         raise e.InvalidAPIKey('admin worker details')
+        #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+        #         raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
+        #     logger.error('hehehehe')
+        #     is_privileged = True
+        return(worker.get_details(is_privileged),200)
 
     decorators = [limiter.limit("30/minute")]
     # @api.expect(parser)
@@ -505,11 +496,11 @@ class WorkerSingle(Resource):
         Paused can be set only by the admins of this Horde.
         When in paused mode, the worker will not be given any requests to generate.
         '''
-        worker = _db.find_server_by_id(worker_id)
+        worker = db.find_server_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['apikey'])
+        admin = db.find_user_by_api_key(args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
         ret_dict = {}
@@ -538,15 +529,8 @@ class Users(Resource):
         '''A List with the details and statistic of all registered users
         '''
         user_dict = {}
-        for user in _db.users.values():
-            user_dict[user.get_unique_alias()] = {
-                "id": user.id,
-                "kudos": user.kudos,
-                "kudos_details": user.kudos_details,
-                "usage": user.usage,
-                "contributions": user.contributions,
-                "concurrency": user.concurrency,
-            }
+        for user in db.users.values():
+            user_dict[user.get_unique_alias()] = user.get_details()
         return(user_dict,200)
 
 
@@ -558,18 +542,10 @@ class UserSingle(Resource):
         '''Details and statistics about a specific user
         '''
         logger.debug(user_id)
-        user = _db.find_user_by_id(user_id)
-        if user:
-            udict = {
-                "username": user.get_unique_alias(),
-                "kudos": user.kudos,
-                "usage": user.usage,
-                "contributions": user.contributions,
-                "concurrency": user.concurrency,
-            }
-            return(udict,200)
-        else:
+        user = db.find_user_by_id(user_id)
+        if not user:
             raise e.UserNotFound(user_id)
+        return(user.get_details(),200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
@@ -587,11 +563,11 @@ class UserSingle(Resource):
     def put(self, user_id = ''):
         '''Endpoint for horde admins to perform operations on users
         '''
-        user = user = _db.find_user_by_id(user_id)
+        user = user = db.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['apikey'])
+        admin = db.find_user_by_api_key(args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
@@ -611,16 +587,15 @@ class UserSingle(Resource):
         return(ret_dict, 200)
 
 
-class HordeLoad(Resource):
-    decorators = [limiter.limit("30/minute")]
+class HordeLoadTemplate(Resource):
+    decorators = [limiter.limit("20/minute")]
     @logger.catch
     @api.marshal_with(response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
         '''Details about the current performance of this Horde
         '''
         load_dict = waiting_prompts.count_totals()
-        load_dict["megapixelsteps_per_min"] = _db.stats.get_megapixelsteps_per_min()
-        load_dict["worker_count"] = _db.count_active_servers()
+        load_dict["worker_count"] = db.count_active_servers()
         return(load_dict,200)
 
 class HordeMaintenance(Resource):
@@ -652,7 +627,7 @@ class HordeMaintenance(Resource):
         but requests currently in the queue will be completed.
         '''
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['apikey'])
+        admin = db.find_user_by_api_key(args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
