@@ -237,6 +237,7 @@ class AsyncStatus(Resource):
         '''Retrieve the full status of an Asynchronous generation request.
         This request will include all already generated images in base64 encoded .webp files.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
+        This endpoint is limited to 1 request per minute
         '''
         wp = waiting_prompts.get_item(id)
         if not wp:
@@ -336,7 +337,7 @@ class PromptPop(Resource):
     parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this worker can generate", location="json")
     parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this worker", location="json")
 
-    decorators = [limiter.limit("45/second")]
+    decorators = [limiter.limit("2/second")]
     @api.expect(parser)
     @api.marshal_with(response_model_generation_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', response_model_error)
@@ -549,6 +550,7 @@ class WorkerSingle(Resource):
         return(ret_dict, 200)
 
 class Users(Resource):
+    decorators = [limiter.limit("2/minute")]
     @logger.catch
     @api.marshal_with(response_model_user_details, code=200, description='Users List', as_list=True)
     def get(self):
@@ -568,6 +570,7 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
+    decorators = [limiter.limit("30/minute")]
     @logger.catch
     @api.marshal_with(response_model_user_details, code=200, description='User Details')
     @api.response(404, 'User Not Found', response_model_error)
@@ -629,6 +632,7 @@ class UserSingle(Resource):
 
 
 class HordeLoad(Resource):
+    decorators = [limiter.limit("30/minute")]
     @logger.catch
     @api.marshal_with(response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
@@ -640,6 +644,7 @@ class HordeLoad(Resource):
         return(load_dict,200)
 
 class HordeMaintenance(Resource):
+    decorators = [limiter.limit("2/second")]
     @logger.catch
     @api.marshal_with(response_model_horde_maintenance_mode, code=200, description='Horde Maintenance')
     def get(self):
