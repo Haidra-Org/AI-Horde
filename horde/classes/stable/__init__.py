@@ -165,11 +165,11 @@ class PromptsIndex(PromptsIndex):
 class User(User):
 
     def record_usage(self, pixelsteps, kudos):
-        super().record_usage()
+        super().record_usage(kudos)
         self.usage[thing_name] = round(self.usage[thing_name] + (pixelsteps * self.usage_multiplier / 1000000),2)
 
     def record_contributions(self, pixelsteps, kudos):
-        super().record_usage()
+        super().record_usage(kudos)
         self.contributions[thing_name] = round(self.contributions[thing_name] + pixelsteps/1000000,2)
 
 
