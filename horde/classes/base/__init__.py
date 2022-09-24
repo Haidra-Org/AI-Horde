@@ -2,16 +2,28 @@ import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time
-from . import logger
+from .. import logger
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
-        self._db = db
+        self.db = db
         self._waiting_prompts = wps
         self._processing_generations = pgs
         self.prompt = prompt
         self.user = user
         self.params = params
+        self.total_usage = 0
+        self.id = str(uuid4())
+        # The generations that have been created already
+        self.processing_gens = []
+        self.last_process_time = datetime.now()
+        self.servers = kwargs.get("servers", [])
+        # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
+        self.stale_time = 180 * self.n
+        if self.stale_time > 600:
+            self.stale_time = 600
+
+    def extract_params(self, params):
         self.n = params.pop('n', 1)
         self.steps = params.pop('steps', 50)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
@@ -22,24 +34,17 @@ class WaitingPrompt:
         self.height = params.get("height", 512)
         # To avoid unnecessary calculations, we do it once here.
         self.pixelsteps = self.width * self.height * self.steps
-        self.total_usage = round(self.pixelsteps * self.n / 1000000,2)
         # The total amount of to pixelsteps requested.
-        self.id = str(uuid4())
+        self.total_usage = round(self.pixelsteps * self.n / 1000000,2)
+        self.prepare_job_payload(params)
+
+    def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to KoboldAI to the /generate/ API
-        self.gen_payload = params
+        self.gen_payload = initial_dict
         self.gen_payload["prompt"] = prompt
         # We always send only 1 iteration to KoboldAI
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.steps
-        # The generations that have been created already
-        self.processing_gens = []
-        self.last_process_time = datetime.now()
-        self.servers = kwargs.get("servers", [])
-        # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
-        self.stale_time = 180 * self.n
-        if self.stale_time > 600:
-            self.stale_time = 600
-
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid server for it
@@ -100,12 +105,12 @@ class WaitingPrompt:
         # We increment the priority by 1, because it starts at 0
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        active_servers = self._db.count_active_servers()
+        active_servers = self.db.count_active_servers()
         # If there's less requests than the number of active servers
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_servers:
             active_servers = queued_n
-        mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
+        mpss = (self.db.stats.get_request_avg() / 1000000) * active_servers
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1mpss
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
@@ -188,8 +193,8 @@ class ProcessingGeneration:
             return(0)
         self.generation = generation
         self.seed = seed
-        pixelsteps_per_sec = self.owner._db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
-        self.kudos = self.owner._db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
+        pixelsteps_per_sec = self.owner.db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
+        self.kudos = self.owner.db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
         self.server.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
         self.owner.record_usage(self.owner.pixelsteps, self.kudos)
         
@@ -220,7 +225,7 @@ class ProcessingGeneration:
 
 class KAIServer:
     def __init__(self, db):
-        self._db = db
+        self.db = db
         self.kudos_details = {
             "generated": 0,
             "uptime": 0,
@@ -243,7 +248,7 @@ class KAIServer:
         self.kudos = 0
         self.performances = []
         self.uptime = 0
-        self._db.register_new_server(self)
+        self.db.register_new_server(self)
 
     def check_in(self, max_pixels):
         if not self.is_stale():
@@ -366,7 +371,7 @@ class KAIServer:
 
     @logger.catch
     def deserialize(self, saved_dict, convert_flag = None):
-        self.user = self._db.find_user_by_oauth_id(saved_dict["oauth_id"])
+        self.user = self.db.find_user_by_oauth_id(saved_dict["oauth_id"])
         self.name = saved_dict["name"]
         self.max_pixels = saved_dict["max_pixels"]
         self.contributions = saved_dict["contributions"]
@@ -381,7 +386,7 @@ class KAIServer:
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
-        self._db.servers[self.name] = self
+        self.db.servers[self.name] = self
 
 
 class Index:
@@ -465,7 +470,7 @@ class GenerationsIndex(Index):
 
 class User:
     def __init__(self, db):
-        self._db = db
+        self.db = db
         self.kudos = 0
         self.kudos_details = {
             "accumulated": 0,
@@ -503,7 +508,7 @@ class User:
         self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
-        self.id = self._db.register_new_user(self)
+        self.id = self.db.register_new_user(self)
         self.contributions = {
             "megapixelsteps": 0,
             "fulfillments": 0
@@ -870,10 +875,4 @@ class Database:
         if source_user == self.anon:
             return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
         kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
-        return(kudos)
-
-    def convert_pixelsteps_to_kudos(self, pixelsteps):
-        # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
-        kudos = round(pixelsteps / (512*512*5),2)
-        # logger.info([pixels,multiplier,kudos])
         return(kudos)

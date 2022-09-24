@@ -1,6 +1,6 @@
 from flask import Blueprint
 from flask_restx import Api
-from ..argparser import args
+from .. import args
 from importlib import import_module
 
 from .v1.v1 import api as v1
