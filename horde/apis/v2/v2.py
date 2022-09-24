@@ -167,10 +167,6 @@ class GenerateTemplate(Resource):
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
                 break
-        if not worker_found:
-            # We don't need to call .delete() on the wp because it's not activated yet
-            # And therefore not added to the waiting_prompt dict.
-            raise e.NoValidWorkers(self.username)
         self.activate_waiting_prompt()
 
     # We split this into its own function, so that it may be overriden and extended
@@ -258,12 +254,14 @@ class SyncGenerateTemplate(GenerateTemplate):
                 worker_found = True
                 break
         if not worker_found:
+            # We don't need to call .delete() on the wp because it's not activated yet
+            # And therefore not added to the waiting_prompt dict.
             raise e.NoValidWorkers(username)
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
 
 class AsyncStatus(Resource):
-    decorators = [limiter.limit("1/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("2/minute", key_func = get_request_path)]
     @api.marshal_with(response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', response_model_error)
     def get(self, id = ''):

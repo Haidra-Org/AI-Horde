@@ -13,6 +13,7 @@ class WaitingPrompt:
         self.user = user
         self.params = params
         self.total_usage = 0
+        self.extract_params(params)
         self.id = str(uuid4())
         # The generations that have been created already
         self.processing_gens = []
@@ -23,41 +24,23 @@ class WaitingPrompt:
         if self.stale_time > 600:
             self.stale_time = 600
 
+    # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params):
         self.n = params.pop('n', 1)
-        self.steps = params.pop('steps', 50)
-        # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
-        if self.n > 20:
-            logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
-            self.n = 20
-        self.width = params.get("width", 512)
-        self.height = params.get("height", 512)
-        # To avoid unnecessary calculations, we do it once here.
-        self.pixelsteps = self.width * self.height * self.steps
-        # The total amount of to pixelsteps requested.
-        self.total_usage = round(self.pixelsteps * self.n / 1000000,2)
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
-        # This is what we send to KoboldAI to the /generate/ API
+        # This is what we send to the worker
         self.gen_payload = initial_dict
-        self.gen_payload["prompt"] = prompt
-        # We always send only 1 iteration to KoboldAI
-        self.gen_payload["batch_size"] = 1
-        self.gen_payload["ddim_steps"] = self.steps
 
     def activate(self):
-        # We separate the activation from __init__ as often we want to check if there's a valid server for it
-        # Before we add it to the queue
+        '''We separate the activation from __init__ as often we want to check if there's a valid server for it
+        Before we add it to the queue
+        '''
         self._waiting_prompts.add_item(self)
-        logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
         thread = threading.Thread(target=self.check_for_stale, args=())
         thread.daemon = True
         thread.start()
-
-    # The mps still queued to be generated for this WP
-    def get_queued_megapixelsteps(self):
-        return(round(self.pixelsteps * self.n/1000000,2))
 
     def needs_gen(self):
         if self.n > 0:
@@ -101,55 +84,33 @@ class WaitingPrompt:
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         ret_dict["done"] = self.is_completed()
-        queue_pos, queued_mps, queued_n = self.get_own_queue_stats()
-        # We increment the priority by 1, because it starts at 0
-        # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
-        ret_dict["queue_position"] = queue_pos + 1
-        active_servers = self.db.count_active_servers()
-        # If there's less requests than the number of active servers
-        # Then we need to adjust the parallelization accordingly
-        if queued_n < active_servers:
-            active_servers = queued_n
-        mpss = (self.db.stats.get_request_avg() / 1000000) * active_servers
-        # Is this is 0, it means one of two things:
-        # 1. This horde hasn't had any requests yet. So we'll initiate it to 1mpss
-        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
-        if mpss == 0:
-            mpss = 1
-        wait_time = queued_mps / mpss
-        # We add the expected running time of our processing gens
-        for procgen in self.processing_gens:
-            wait_time += procgen.get_expected_time_left()
-        ret_dict["wait_time"] = round(wait_time)
         # Lite mode does not include the generations, to spare me download size
         if not lite:
             ret_dict["generations"] = []
             for procgen in self.processing_gens:
                 if procgen.is_completed():
-                    gen_dict = {
-                        "img": procgen.generation,
-                        "seed": procgen.seed,
-                        "server_id": procgen.server.id,
-                        "server_name": procgen.server.name,
-                    }
-                    ret_dict["generations"].append(gen_dict)
+                    ret_dict["generations"].append(procgen.get_details())
         return(ret_dict)
 
-    # Same as status, but without the images to avoid unnecessary size
     def get_lite_status(self):
+        '''Same as get_status(), but without the images to avoid unnecessary size'''
         ret_dict = self.get_status(True)
         return(ret_dict)
 
-    # Get out position in the working prompts queue sorted by kudos
-    # If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
     def get_own_queue_stats(self):
+        '''Get out position in the working prompts queue sorted by kudos
+        If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
+        '''
         if self.needs_gen():
             return(self._waiting_prompts.get_wp_queue_stats(self))
         return(-1,0,0)
 
-    # Record that we received a requested generation and how much kudos it costs us
-    def record_usage(self, pixelsteps, kudos):
-        self.user.record_usage(pixelsteps, kudos)
+    def record_usage(self, thing, kudos):
+        '''Record that we received a requested generation and how much kudos it costs us
+        We use 'thing' here as we do not care what type of thing we're recording at this point
+        This avoids me having to extend this just to change a var name
+        '''
+        self.user.record_usage(thing, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -182,24 +143,15 @@ class ProcessingGeneration:
         self.id = str(uuid4())
         self.owner = owner
         self.server = server
-        self.generation = None
-        self.seed = None
-        self.kudos = 0
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
 
-    def set_generation(self, generation, seed):
+    # This should be extended by every horde type
+    def set_generation(self, generation):
         if self.is_completed():
             return(0)
         self.generation = generation
-        self.seed = seed
-        pixelsteps_per_sec = self.owner.db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
-        self.kudos = self.owner.db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
-        self.server.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
-        self.owner.record_usage(self.owner.pixelsteps, self.kudos)
-        
-        logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
-        return(self.kudos)
+        return(0)
 
     def is_completed(self):
         if self.generation:
@@ -210,10 +162,14 @@ class ProcessingGeneration:
         self._processing_generations.del_item(self)
         del self
 
+    # This should be extended by every horde type
+    def get_seconds_needed(self):
+        return(0)
+
     def get_expected_time_left(self):
         if self.is_completed():
             return(0)
-        seconds_needed = self.owner.pixelsteps / self.server.get_performance_average()
+        seconds_needed = self.get_seconds_needed()
         seconds_elapsed = (datetime.now() - self.start_time).seconds
         expected_time = seconds_needed - seconds_elapsed
         # In case we run into a slow request
@@ -221,7 +177,15 @@ class ProcessingGeneration:
             expected_time = 0
         return(expected_time)
 
-
+    # This should be extended by every horde type
+    def get_details(self):
+        '''Returns a dictionary with details about this processing generation'''
+        ret_dict = {
+            "gen": procgen.generation,
+            "server_id": procgen.server.id,
+            "server_name": procgen.server.name,
+        }
+        return(ret_dict)
 
 class KAIServer:
     def __init__(self, db):
