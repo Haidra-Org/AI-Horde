@@ -154,6 +154,7 @@ class ProcessingGeneration:
         self.worker = worker
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
+        self.generation = None
 
     # This should be extended by every horde type
     def set_generation(self, generation):
