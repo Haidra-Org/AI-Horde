@@ -65,7 +65,7 @@ class WaitingPrompt(WaitingPrompt):
         return(ret_dict)
 
 
-class ProcessingGeneration(WaitingPrompt):
+class ProcessingGeneration(ProcessingGeneration):
 
     def set_generation(self, generation, seed):
         if self.is_completed():
