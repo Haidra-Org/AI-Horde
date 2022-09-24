@@ -187,7 +187,7 @@ class ProcessingGeneration:
         }
         return(ret_dict)
 
-class KAIServer:
+class Worker:
     def __init__(self, db):
         self.db = db
         self.kudos_details = {
@@ -685,7 +685,7 @@ class Database:
                     if not server_dict:
                         logger.error("Found null server on db load. Bypassing")
                         continue
-                    new_server = KAIServer(self)
+                    new_server = Worker(self)
                     new_server.deserialize(server_dict,convert_flag)
                     self.servers[new_server.name] = new_server
         if os.path.isfile(self.STATS_FILE):

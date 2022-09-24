@@ -87,7 +87,7 @@ class ProcessingGeneration(WaitingPrompt):
         }
         return(ret_dict)
 
-class KAIServer(KAIServer):
+class Worker(Worker):
     pass
 
 class PromptsIndex(PromptsIndex):

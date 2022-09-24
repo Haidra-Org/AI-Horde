@@ -2,7 +2,7 @@ from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from ... import limiter
 from ...logger import logger
 from ...classes import db as _db
-from ...classes import processing_generations,waiting_prompts,KAIServer,User,WaitingPrompt
+from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from ... import maintenance
 from enum import Enum
 import os, time
@@ -248,7 +248,7 @@ class PromptPop(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
         server = _db.find_server_by_name(args['name'])
         if not server:
-            server = KAIServer(_db)
+            server = Worker(_db)
             server.create(user, args['name'])
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)

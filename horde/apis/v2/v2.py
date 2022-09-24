@@ -3,7 +3,7 @@ from flask import request
 from ... import limiter
 from ...logger import logger
 from ...classes import db
-from ...classes import processing_generations,waiting_prompts,KAIServer,User,WaitingPrompt
+from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from ... import maintenance
 from enum import Enum
 from .. import exceptions as e
@@ -352,7 +352,7 @@ class JobPopTemplate(Resource):
             raise e.InvalidAPIKey('prompt pop')
         self.worker = db.find_server_by_name(args['name'])
         if not self.worker:
-            self.worker = KAIServer(db)
+            self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.args['name'])
