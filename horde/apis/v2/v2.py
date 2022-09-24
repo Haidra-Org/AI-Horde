@@ -468,7 +468,7 @@ class WorkerSingle(Resource):
 
     decorators = [limiter.limit("30/minute")]
     # @api.expect(parser)
-    @api.marshal_with(response_model_worker_modify, code=200, description='Modify Worker')
+    @api.marshal_with(response_model_worker_modify, code=200, description='Modify Worker', skip_none=True)
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(402, 'Access Denied', response_model_error)

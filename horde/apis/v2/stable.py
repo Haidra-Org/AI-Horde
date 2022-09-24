@@ -98,9 +98,7 @@ class SyncGenerate(SyncGenerateTemplate):
         This connection will only terminate when the images have been generated, or an error occured.
         If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
         '''
-        r = super().post()
-        logger.error(r)
-        return(r)
+        return(super().post())
 
     def validate(self):
         super().validate()
