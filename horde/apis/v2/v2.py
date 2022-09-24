@@ -337,7 +337,7 @@ class JobPopTemplate(Resource):
                 skipped_reason = check_gen[1]
                 self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
                 continue
-            ret = wp.start_generation(worker)
+            ret = wp.start_generation(self.worker)
             return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
 
