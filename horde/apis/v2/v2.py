@@ -13,7 +13,7 @@ import os, time
 api = Namespace('v2', 'API Version 2' )
 
 response_model_generation_result = api.model('Generation', {
-    'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file"),
+    'generation': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file"),
     'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
     'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
 })
@@ -33,24 +33,11 @@ response_model_async = api.model('RequestAsync', {
 })
 response_model_generation_payload = api.model('ModelPayload', {
     'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
-    'ddim_steps': fields.Integer(example=50), 
-    'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
-    'toggles': fields.List(fields.Integer,example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
-    'realesrgan_model_name': fields.String,
-    'ddim_eta': fields.Float, 
-    'n_iter': fields.Integer(example=1, description="The amount of images to generate"), 
-    'batch_size': fields.Integer(example=1), 
-    'cfg_scale': fields.Float(example=5.0), 
+    'n': fields.Integer(example=1, description="The amount of images to generate"), 
     'seed': fields.String(description="The seed to use to generete this request"),
-    'height': fields.Integer(example=512,description="The height of the image to generate"), 
-    'width': fields.Integer(example=512,description="The width of the image to generate"), 
-    'fp': fields.Integer(example=512), 
-    'variant_amount': fields.Float, 
-    'variant_seed': fields.Integer
 })
 response_model_generations_skipped = api.model('NoValidRequestFound', {
     'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
-    'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
 })
 
 response_model_job_pop = api.model('GenerationPayload', {
@@ -60,15 +47,15 @@ response_model_job_pop = api.model('GenerationPayload', {
 })
 
 response_model_job_submit = api.model('GenerationSubmitted', {
-'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),
+    'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),
 })
 
 response_model_kudos_transfer = api.model('KudosTransferred', {
-'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred"),
+    'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred"),
 })
 
 response_model_admin_maintenance = api.model('MaintenanceModeSet', {
-'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode"),
+    'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode"),
 })
 
 response_model_worker_kudos_details = api.model('WorkerKudosDetails', {
@@ -79,8 +66,6 @@ response_model_worker_kudos_details = api.model('WorkerKudosDetails', {
 response_model_worker_details = api.model('WorkerDetails', {
     "name": fields.String(description="The Name given to this worker"),
     "id": fields.String(description="The UUID of this worker"),
-    "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),
-    "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
     "requests_fulfilled": fields.Integer(description="How many images this worker has generated"),
     "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total"),
     "kudos_details": fields.Nested(response_model_worker_kudos_details),
@@ -102,7 +87,6 @@ response_model_user_kudos_details = api.model('UserKudosDetails', {
 })
 
 response_model_use_contrib_details = api.model('UsageAndContribDetails', {
-    "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated or requested"),
     "fulfillments": fields.Integer(description="How many images this user has generated or requested")
 })
 
