@@ -156,15 +156,83 @@ handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_reques
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 
+generate_parser = reqparse.RequestParser()
+generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
+generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
+generate_parser.add_argument("workers", type=str, action='append', required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
 
-class SyncGenerate(Resource):
-    parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
-    parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
-    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generation params to send to the worker", location="json")
-    parser.add_argument("workers", type=str, action='append', required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
+# I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
+class GenerateTemplate(Resource):
 
-    @api.expect(parser)
+    def post(self):
+        self.args = generate_parser.parse_args()
+        self.username = 'Anonymous'
+        self.user = None
+        self.validate()
+        self.initiate_waiting_prompt()
+        worker_found = False
+        for worker in _db.servers.values():
+            if len(self.args.workers) and worker.id not in self.args.workers:
+                continue
+            if worker.can_generate(self.wp)[0]:
+                worker_found = True
+                break
+        if not worker_found:
+            # We don't need to call .delete() on the wp because it's not activated yet
+            # And therefore not added to the waiting_prompt dict.
+            raise e.NoValidWorkers(username)
+        # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
+        self.wp.activate()
+
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self):
+        if maintenance.active:
+            raise e.MaintenanceMode('SyncGenerate')
+        if self.args.apikey:
+            self.user = _db.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('async generation')
+        self.username = self.user.get_unique_alias()
+        if self.args['prompt'] == '':
+            raise e.MissingPrompt(self.username)
+        wp_count = waiting_prompts.count_waiting_requests(self.user)
+        if wp_count >= self.user.concurrency:
+            raise e.TooManyPrompts(self.username, wp_count)
+    
+    # We split this into its own function, so that it may be overriden
+    def initiate_waiting_prompt(self):
+        self.wp = WaitingPrompt(
+            _db,
+            waiting_prompts,
+            processing_generations,
+            self.args["prompt"],
+            self.user,
+            self.args["params"],
+            servers=self.args["workers"],
+        )
+
+class AsyncGenerateTemplate(GenerateTemplate):
+
+    @api.expect(generate_parser)
+    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
+    @api.response(400, 'Validation Error', response_model_error)
+    @api.response(401, 'Invalid API Key', response_model_error)
+    @api.response(503, 'Maintenance Mode', response_model_error)
+    @api.response(429, 'Too Many Prompts', response_model_error)
+    def post(self):
+        '''Initiate an Asynchronous request to generate images.
+        This endpoint will immediately return with the UUID of the request for generation.
+        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
+        Perhaps some will appear in the next 10 minutes.
+        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
+        '''
+        super().post()
+        return({"id":self.wp.id}, 202)
+
+class SyncGenerateTemplate(GenerateTemplate):
+
+    @api.expect(generate_parser)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     @api.response(400, 'Validation Error', response_model_error)
     @api.response(401, 'Invalid API Key', response_model_error)
@@ -175,57 +243,16 @@ class SyncGenerate(Resource):
         This connection will only terminate when the images have been generated, or an error occured.
         If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
         '''
-        args = self.parser.parse_args()
-        username = 'Anonymous'
-        user = None
-        if maintenance.active:
-            raise e.MaintenanceMode('SyncGenerate')
-        if args.api_key:
-            user = _db.find_user_by_api_key(args['apikey'])
-        if not user:
-            raise e.InvalidAPIKey('sync generation')
-        username = user.get_unique_alias()
-        if args['prompt'] == '':
-            raise e.MissingPrompt(username)
-        wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.concurrency:
-            raise e.TooManyPrompts(username, wp_count)
-        if args["params"].get("length",512)%64:
-            raise e.InvalidSize(username)
-        if args["params"].get("width",512)%64:
-            raise e.InvalidSize(username)
-        if args["params"].get("steps",50) > 100:
-            raise e.TooManySteps(username, args['params']['steps'])
-        wp = WaitingPrompt(
-            _db,
-            waiting_prompts,
-            processing_generations,
-            args["prompt"],
-            user,
-            args["params"],
-            servers=args["workers"],
-        )
-        worker_found = False
-        for worker in _db.servers.values():
-            if len(args.workers) and worker.id not in args.workers:
-                continue
-            if worker.can_generate(wp)[0]:
-                worker_found = True
-                break
-        if not worker_found:
-            del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
-            raise e.NoValidWorkers(username)
-        # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
-        wp.activate()
+        super().post()
         while True:
             time.sleep(1)
-            if wp.is_stale():
-                raise e.RequestExpired(username)
-            if wp.is_completed():
+            if self.wp.is_stale():
+                raise e.RequestExpired(self.username)
+            if self.wp.is_completed():
                 break
-        ret_dict = wp.get_status()
+        ret_dict = self.wp.get_status()
         # We delete it from memory immediately to ensure we don't run out
-        wp.delete()
+        self.wp.delete()
         return(ret_dict, 200)
 
 def get_request_id():
@@ -264,73 +291,6 @@ class AsyncCheck(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         return(wp.get_lite_status(), 200)
-
-# I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
-async_generate_parser = reqparse.RequestParser()
-async_generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
-async_generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
-async_generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
-async_generate_parser.add_argument("workers", type=str, action='append', required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
-class AsyncGenerateTemplate(Resource):
-
-    @api.expect(async_generate_parser)
-    @api.marshal_with(response_model_async, code=202, description='Generation Queued')
-    @api.response(400, 'Validation Error', response_model_error)
-    @api.response(401, 'Invalid API Key', response_model_error)
-    @api.response(503, 'Maintenance Mode', response_model_error)
-    @api.response(429, 'Too Many Prompts', response_model_error)
-    def post(self):
-        '''Initiate an Asynchronous request to generate images.
-        This endpoint will immediately return with the UUID of the request for generation.
-        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
-        Perhaps some will appear in the next 10 minutes.
-        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
-        '''
-        self.args = async_generate_parser.parse_args()
-        self.username = 'Anonymous'
-        self.user = None
-        self.validate()
-        self.initiate_waiting_prompt()
-        worker_found = False
-        for worker in _db.servers.values():
-            if len(self.args.workers) and worker.id not in self.args.workers:
-                continue
-            if worker.can_generate(self.wp)[0]:
-                worker_found = True
-                break
-        if not worker_found:
-            raise e.NoValidWorkers(username)
-        # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
-        self.wp.activate()
-        return({"id":self.wp.id}, 202)
-
-    # We split this into its own function, so that it may be overriden and extended
-    def validate(self):
-        if maintenance.active:
-            raise e.MaintenanceMode('SyncGenerate')
-        if self.args.apikey:
-            self.user = _db.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('async generation')
-        self.username = self.user.get_unique_alias()
-        if self.args['prompt'] == '':
-            raise e.MissingPrompt(self.username)
-        wp_count = waiting_prompts.count_waiting_requests(self.user)
-        if wp_count >= self.user.concurrency:
-            raise e.TooManyPrompts(self.username, wp_count)
-    
-    # We split this into its own function, so that it may be overriden
-    def initiate_waiting_prompt(self):
-        self.wp = WaitingPrompt(
-            _db,
-            waiting_prompts,
-            processing_generations,
-            self.args["prompt"],
-            self.user,
-            self.args["params"],
-            servers=self.args["workers"],
-        )
-
 
 
 class PromptPop(Resource):
