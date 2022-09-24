@@ -347,7 +347,7 @@ class JobPopTemplate(Resource):
         self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
-        self.worker = db.find_worker_by_name(args['name'])
+        self.worker = db.find_worker_by_name(self.args['name'])
         if not self.worker:
             self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
@@ -383,17 +383,17 @@ class JobSubmitTemplate(Resource):
         return({"reward": kudos}, 200)
 
     def validate(self):
-        self.procgen = processing_generations.get_item(args['id'])
+        self.procgen = processing_generations.get_item(self.args['id'])
         if not self.procgen:
-            raise e.InvalidProcGen(procgen.worker.name, args['id'])
-        self.user = db.find_user_by_api_key(args['apikey'])
+            raise e.InvalidProcGen(procgen.worker.name, self.args['id'])
+        self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
-            raise e.InvalidAPIKey('worker submit:' + args['name'])
+            raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
-            raise e.WrongCredentials(user.get_unique_alias(), args['name'])
-        self.kudos = self.procgen.set_generation(args['generation'], args['seed'])
+            raise e.WrongCredentials(user.get_unique_alias(), self.args['name'])
+        self.kudos = self.procgen.set_generation(self.args['generation'], self.args['seed'])
         if kudos == 0:
-            raise e.DuplicateGen(procgen.worker.name, args['id'])
+            raise e.DuplicateGen(procgen.worker.name, self.args['id'])
 
 
 class TransferKudos(Resource):
@@ -409,11 +409,11 @@ class TransferKudos(Resource):
     def post(self):
         '''Transfer Kudos to another registed user
         '''
-        args = self.parser.parse_args()
-        user = db.find_user_by_api_key(args['apikey'])
+        self.args = self.parser.parse_args()
+        user = db.find_user_by_api_key(self.args['apikey'])
         if not user:
-            raise e.InvalidAPIKey('kudos transfer to: ' + args['username'])
-        ret = db.transfer_kudos_from_apikey_to_username(args['apikey'],args['username'],args['amount'])
+            raise e.InvalidAPIKey('kudos transfer to: ' + self.args['username'])
+        ret = db.transfer_kudos_from_apikey_to_username(self.args['apikey'],self.args['username'],self.args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
@@ -454,10 +454,10 @@ class WorkerSingle(Resource):
         is_privileged = False
         # logger.debug('test start')
         # # Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
-        # args = self.parser.parse_args()
-        # if args.apikey:
+        # self.args = self.parser.parse_args()
+        # if self.args.apikey:
         #     logger.debug('hehehe')
-        #     admin = db.find_user_by_api_key(args['apikey'])
+        #     admin = db.find_user_by_api_key(self.args['apikey'])
         #     if not admin:
         #         raise e.InvalidAPIKey('admin worker details')
         #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
@@ -483,20 +483,20 @@ class WorkerSingle(Resource):
         worker = db.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
-        args = self.parser.parse_args()
-        admin = db.find_user_by_api_key(args['apikey'])
+        self.args = self.parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
         ret_dict = {}
         # Both admins and owners can set the worker to maintenance
-        if args.maintenance != None:
+        if self.args.maintenance != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.maintenance = args.maintenance
             ret_dict["maintenance"] = worker.maintenance
         # Only admins can set a worker as paused
-        if args.paused != None:
+        if self.args.paused != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
                 raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
             worker.paused = args.paused
@@ -548,21 +548,21 @@ class UserSingle(Resource):
         user = user = db.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
-        args = self.parser.parse_args()
-        admin = db.find_user_by_api_key(args['apikey'])
+        self.args = self.parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
             raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyUser')
         ret_dict = {}
-        if args.kudos:
-            user.modify_kudos(args.kudos, 'admin')
+        if self.args.kudos:
+            user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
-        if args.concurrency:
-            user.concurrency = args.concurrency
+        if self.args.concurrency:
+            user.concurrency = self.args.concurrency
             ret_dict["concurrency"] = user.concurrency
-        if args.usage_multiplier:
-            user.usage_multiplier = args.usage_multiplier
+        if self.args.usage_multiplier:
+            user.usage_multiplier = self.args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
@@ -608,13 +608,13 @@ class HordeMaintenance(Resource):
         When in maintenance no new requests for generation will be accepted
         but requests currently in the queue will be completed.
         '''
-        args = self.parser.parse_args()
-        admin = db.find_user_by_api_key(args['apikey'])
+        self.args = self.parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
             raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
-        maintenance.toggle(args['active'])
+        maintenance.toggle(self.args['active'])
         return({"maintenance_mode": maintenance.active}, 200)
 
 
