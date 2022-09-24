@@ -42,13 +42,13 @@ class NotAdmin(wze.Forbidden):
         self.log = f"Non-admin user '{username}' tried to use admin endpoint: '{endpoint}. Aborting!"
 
 class NotOwner(wze.Forbidden):
-    def __init__(self, username, server_name):
+    def __init__(self, username, worker_name):
         self.specific = "You're not an admin. Sod off!"
-        self.log = f"User '{username}'' tried to modify server they do not own '{server_name}'. Aborting!"
+        self.log = f"User '{username}'' tried to modify worker they do not own '{worker_name}'. Aborting!"
 
 class WorkerMaintenance(wze.Forbidden):
     def __init__(self):
-        self.specific = "This server has been put into maintenance by its owner"
+        self.specific = "This worker has been put into maintenance by its owner"
         self.log = None
 
 class InvalidProcGen(wze.NotFound):
@@ -86,17 +86,17 @@ class TooManyPrompts(wze.TooManyRequests):
         self.specific = f"Parallel requests exceeded user limit ({count}). Please try again later or request to increase your concurrency."
         self.log = f"User '{username}' has already requested too many parallel requests ({count}). Aborting!"
 
-class NotValidServers(wze.ServiceUnavailable):
+class NoValidWorkers(wze.ServiceUnavailable):
     retry_after = 600
     def __init__(self, username):
-        self.specific = f"No active server found to fulfill this request. Please Try again later..."
-        self.log = f"No active server found to match the request from '{username}'. Aborting!"
+        self.specific = f"No active worker found to fulfill this request. Please Try again later..."
+        self.log = f"No active worker found to match the request from '{username}'. Aborting!"
 
 class MaintenanceMode(wze.ServiceUnavailable):
     retry_after = 60
     def __init__(self, endpoint):
-        self.specific = f"Server has enterred maintenance mode. Please try again later."
-        self.log = f"Rejecting endpoint '{endpoint}' because server in maintenance mode."
+        self.specific = f"Horde has enterred maintenance mode. Please try again later."
+        self.log = f"Rejecting endpoint '{endpoint}' because horde in maintenance mode."
 
 
 def handle_bad_requests(error):

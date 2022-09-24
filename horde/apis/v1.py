@@ -152,8 +152,8 @@ class SyncGenerate(Resource):
         return(ret_dict, 200)
 
 
-class AsyncGeneratePrompt(Resource):
-    decorators = [limiter.limit("3/minute")]
+class AsyncStatus(Resource):
+    decorators = [limiter.limit("1/minute")]
     @logger.catch
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
@@ -522,7 +522,7 @@ class HordeLoad(Resource):
 api.add_resource(SyncGenerate, "/generate/sync")
 # Async is disabled due to the memory requirements of keeping images in running memory
 api.add_resource(AsyncGenerate, "/generate/async")
-api.add_resource(AsyncGeneratePrompt, "/generate/prompt/<string:id>")
+api.add_resource(AsyncStatus, "/generate/prompt/<string:id>")
 api.add_resource(AsyncCheck, "/generate/check/<string:id>")
 api.add_resource(PromptPop, "/generate/pop")
 api.add_resource(SubmitGeneration, "/generate/submit")
