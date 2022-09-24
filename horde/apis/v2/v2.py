@@ -493,13 +493,13 @@ class WorkerSingle(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
-            worker.maintenance = args.maintenance
+            worker.maintenance = self.args.maintenance
             ret_dict["maintenance"] = worker.maintenance
         # Only admins can set a worker as paused
         if self.args.paused != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
                 raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
-            worker.paused = args.paused
+            worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
