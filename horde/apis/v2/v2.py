@@ -339,7 +339,7 @@ class JobPopTemplate(Resource):
                 continue
             ret = wp.start_generation(self.worker)
             return(ret, 200)
-        return({"id": None, "skipped": skipped}, 200)
+        return({"id": None, "skipped": self.skipped}, 200)
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
