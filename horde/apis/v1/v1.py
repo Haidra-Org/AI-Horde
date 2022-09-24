@@ -153,7 +153,7 @@ class SyncGenerate(Resource):
 
 
 class AsyncStatus(Resource):
-    decorators = [limiter.limit("1/minute")]
+    decorators = [limiter.limit("2/minute")]
     @logger.catch
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
