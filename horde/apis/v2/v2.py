@@ -309,7 +309,7 @@ class JobPopTemplate(Resource):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
-        self.args = pop_parser.parse_args()
+        self.args = job_pop_parser.parse_args()
         self.validate()
         self.check_in()
         # Paused worker return silently
@@ -378,7 +378,7 @@ class JobSubmitTemplate(Resource):
         '''Submit a generated image.
         This endpoint is used by registered workers only
         '''
-        self.args = submit_parser.parse_args()
+        self.args = job_submit_parser.parse_args()
         self.validate()
         return({"reward": kudos}, 200)
 
