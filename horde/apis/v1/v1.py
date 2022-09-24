@@ -14,7 +14,7 @@ api = Namespace('v1', 'API Version 1' )
 response_model_generation = api.model('Generation', {
 'img': fields.String,
 'seed': fields.String,
-'server_id': fields.String,
+'server_id': fields.String(attribute='worker_id'),
 'server_name': fields.String,
 })
 response_model_wp_status_lite = api.model('RequestStatusCheck', {
@@ -27,8 +27,6 @@ response_model_wp_status_lite = api.model('RequestStatusCheck', {
 response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
 'generations': fields.List(fields.Nested(response_model_generation)),
 })
-
-
 # Used to for the flas limiter, to limit requests per url paths
 def get_request_path():
     return(request.path)
@@ -98,7 +96,6 @@ class SyncGenerate(Resource):
     parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
     @api.expect(parser)
-    @api.marshal_with(response_model_generation, code=200, description='Images Generated', as_list=True)
     @api.response(200, 'Success', response_model_generation)
     @api.response(400, 'Validation Error')
     def post(self):
@@ -159,6 +156,7 @@ class SyncGenerate(Resource):
 class AsyncStatus(Resource):
     decorators = [limiter.limit("2/minute", key_func = get_request_path)]
     @logger.catch
+    @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
         if not wp:
