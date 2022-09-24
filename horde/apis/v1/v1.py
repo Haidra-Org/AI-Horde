@@ -11,21 +11,23 @@ import os, time
 
 api = Namespace('v1', 'API Version 1' )
 
-response_model_generation = api.model('Generation', {
-'img': fields.String,
-'seed': fields.String,
-'server_id': fields.String(attribute='worker_id'),
-'server_name': fields.String(attribute='worker_name'),
+response_model_generation = api.model('GenerationV1', {
+    'img': fields.String,
+    'seed': fields.String,
+    'server_id': fields.String(attribute='worker_id'),
+    'server_name': fields.String(attribute='worker_name'),
+    'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
 })
-response_model_wp_status_lite = api.model('RequestStatusCheck', {
-'finished': fields.Integer,
-'processing': fields.Integer,
-'waiting': fields.Integer,
-'done': fields.Boolean,
-'wait_time': fields.Integer,
+response_model_wp_status_lite = api.model('RequestStatusCheckV1', {
+    'finished': fields.Integer,
+    'processing': fields.Integer,
+    'waiting': fields.Integer,
+    'done': fields.Boolean,
+    'wait_time': fields.Integer,
+    'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
 })
-response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
-'generations': fields.List(fields.Nested(response_model_generation)),
+response_model_wp_status_full = api.inherit('RequestStatusV1', response_model_wp_status_lite, {
+    'generations': fields.List(fields.Nested(response_model_generation)),
 })
 # Used to for the flas limiter, to limit requests per url paths
 def get_request_path():
