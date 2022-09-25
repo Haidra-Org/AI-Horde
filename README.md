@@ -22,7 +22,6 @@ The point of registering is to track your usage and your contributions. The more
 
 # Generating Prompts
 
-
 ### GUI
 
 We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
@@ -48,6 +47,8 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 ## REST API
 
 [Full Documentation](https://stablehorde.net/api/v1)
+
+![](api_screenshot.png)
 
 You can also use the REST API directly. Be aware that this will return a base64 encoded image, so it will flood your output. This is not recommended unless you know what you're doing!
 

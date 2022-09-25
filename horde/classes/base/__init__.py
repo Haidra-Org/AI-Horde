@@ -296,7 +296,7 @@ class Worker:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} {thing_name} per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} {raw_thing_name} per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)

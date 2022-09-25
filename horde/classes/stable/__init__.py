@@ -132,6 +132,13 @@ class Worker(Worker):
         ret_dict["megapixelsteps_generated"] = self.contributions
         return(ret_dict)
 
+    def get_performance(self):
+        if len(self.performances):
+            ret_str = f'{round(sum(self.performances) / len(self.performances) / 1000000,1)} {thing_name} per second'
+        else:
+            ret_str = f'No requests fulfilled yet'
+        return(ret_str)
+
     @logger.catch
     def serialize(self):
         ret_dict = super().serialize()
