@@ -91,6 +91,7 @@ response_model_use_contrib_details = api.model('UsageAndContribDetails', {
 })
 
 response_model_user_details = api.model('UserDetails', {
+    "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
     "id": fields.Integer(description="The user unique ID. It is always an integer."),
     "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
     "kudos_details": fields.Nested(response_model_user_kudos_details),
