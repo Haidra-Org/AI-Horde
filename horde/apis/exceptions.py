@@ -52,9 +52,9 @@ class WorkerMaintenance(wze.Forbidden):
         self.log = None
 
 class InvalidProcGen(wze.NotFound):
-    def __init__(self, worker, gen_id):
+    def __init__(self, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} does not exist."
-        self.log = f"Worker '{worker}'attempted to provide generation for {gen_id} but it did not exist"
+        self.log = f"Worker attempted to provide generation for {gen_id} but it did not exist"
 
 class RequestNotFound(wze.NotFound):
     def __init__(self, wp_id):

@@ -10,7 +10,7 @@ response_model_generation_result = api.model('Generation', {
 response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
     'generations': fields.List(fields.Nested(response_model_generation_result)),
 })
-response_model_generation_payload = api.model('ModelPayload', {
+response_model_generation_payload = api.model('ModelPayloadV2', {
     'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
     'ddim_steps': fields.Integer(example=50), 
     'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
@@ -27,9 +27,14 @@ response_model_generation_payload = api.model('ModelPayload', {
     'variant_amount': fields.Float, 
     'variant_seed': fields.Integer
 })
-response_model_generations_skipped = api.model('NoValidRequestFound', {
-    'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
-    'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
+response_model_generations_skipped = api.model('NoValidRequestFoundV2', {
+    'worker_id': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a specific worker"),
+    'max_pixels': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
+})
+response_model_job_pop = api.model('GenerationPayloadV2', {
+    'payload': fields.Nested(response_model_generation_payload),
+    'id': fields.String(description="The UUID for this image generation"),
+    'skipped': fields.Nested(response_model_generations_skipped)
 })
 response_model_worker_details = api.model('WorkerDetails', {
     "name": fields.String(description="The Name given to this worker"),
@@ -112,14 +117,15 @@ class JobPop(JobPopTemplate):
 
     decorators = [limiter.limit("2/second")]
     @api.expect(job_pop_parser)
-    @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped')
+    # Mashalling breaks this return :( https://github.com/python-restx/flask-restx/issues/478
+    # @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped', skip_none=True)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(403, 'Access Denied', response_model_error)
     def post(self):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
-        super().post()
+        return(super().post())
 
 
     def check_in(self):
@@ -139,7 +145,7 @@ class JobSubmit(JobSubmitTemplate):
         '''Submit a generated image.
         This endpoint is used by registered workers only
         '''
-        super().post()
+        return(super().post())
 
 
 class HordeLoad(HordeLoadTemplate):

@@ -302,7 +302,7 @@ class JobPopTemplate(Resource):
 
     decorators = [limiter.limit("2/second")]
     @api.expect(job_pop_parser)
-    @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped')
+    # @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(403, 'Access Denied', response_model_error)
     def post(self):
@@ -380,20 +380,20 @@ class JobSubmitTemplate(Resource):
         '''
         self.args = job_submit_parser.parse_args()
         self.validate()
-        return({"reward": kudos}, 200)
+        return({"reward": self.kudos}, 200)
 
     def validate(self):
         self.procgen = processing_generations.get_item(self.args['id'])
         if not self.procgen:
-            raise e.InvalidProcGen(procgen.worker.name, self.args['id'])
+            raise e.InvalidProcGen(self.args['id'])
         self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(user.get_unique_alias(), self.args['name'])
         self.kudos = self.procgen.set_generation(self.args['generation'], self.args['seed'])
-        if kudos == 0:
-            raise e.DuplicateGen(procgen.worker.name, self.args['id'])
+        if self.kudos == 0:
+            raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 
 
 class TransferKudos(Resource):
