@@ -41,9 +41,9 @@ response_model_generations_skipped = api.model('NoValidRequestFound', {
 })
 
 response_model_job_pop = api.model('GenerationPayload', {
-    'payload': fields.Nested(response_model_generation_payload),
+    'payload': fields.Nested(response_model_generation_payload, skip_none=True),
     'id': fields.String(description="The UUID for this image generation"),
-    'skipped': fields.Nested(response_model_generations_skipped)
+    'skipped': fields.Nested(response_model_generations_skipped, skip_none=True)
 })
 
 response_model_job_submit = api.model('GenerationSubmitted', {

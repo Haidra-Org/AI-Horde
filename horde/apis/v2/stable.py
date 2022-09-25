@@ -32,9 +32,9 @@ response_model_generations_skipped = api.model('NoValidRequestFound', {
     'max_pixels': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
 })
 response_model_job_pop = api.model('GenerationPayload', {
-    'payload': fields.Nested(response_model_generation_payload),
+    'payload': fields.Nested(response_model_generation_payload,skip_none=True),
     'id': fields.String(description="The UUID for this image generation"),
-    'skipped': fields.Nested(response_model_generations_skipped)
+    'skipped': fields.Nested(response_model_generations_skipped,skip_none=True)
 })
 response_model_worker_details = api.model('WorkerDetails', {
     "name": fields.String(description="The Name given to this worker"),
@@ -117,8 +117,7 @@ class JobPop(JobPopTemplate):
 
     decorators = [limiter.limit("2/second")]
     @api.expect(job_pop_parser)
-    # Mashalling breaks this return :( https://github.com/python-restx/flask-restx/issues/478
-    # @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped', skip_none=True)
+    @api.marshal_with(response_model_job_pop, code=200, description='Generation Popped', skip_none=True)
     @api.response(401, 'Invalid API Key', response_model_error)
     @api.response(403, 'Access Denied', response_model_error)
     def post(self):
