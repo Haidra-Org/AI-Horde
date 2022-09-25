@@ -161,9 +161,10 @@ class PromptsIndex(PromptsIndex):
             "queued_megapixelsteps": 0,
         }
         for wp in self._index.values():
-            ret_dict["queued_requests"] += wp.n + wp.count_processing_gens()["processing"]
-            if wp.n > 0:
-                ret_dict["queued_megapixelsteps"] += wp.pixelsteps / 1000000
+            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+            ret_dict["queued_requests"] += current_wp_queue
+            if current_wp_queue > 0:
+                ret_dict["queued_megapixelsteps"] += wp.pixelsteps * current_wp_queue / 1000000
         # We round the end result to avoid to many decimals
         ret_dict["queued_megapixelsteps"] = round(ret_dict["queued_megapixelsteps"],2)
         return(ret_dict)
