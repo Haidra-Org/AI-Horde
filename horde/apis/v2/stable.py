@@ -10,7 +10,7 @@ response_model_generation_result = api.model('Generation', {
 response_model_wp_status_full = api.inherit('RequestStatus', response_model_wp_status_lite, {
     'generations': fields.List(fields.Nested(response_model_generation_result)),
 })
-response_model_generation_payload = api.model('ModelPayloadV2', {
+response_model_generation_payload = api.model('ModelPayload', {
     'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
     'ddim_steps': fields.Integer(example=50), 
     'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
@@ -27,11 +27,11 @@ response_model_generation_payload = api.model('ModelPayloadV2', {
     'variant_amount': fields.Float, 
     'variant_seed': fields.Integer
 })
-response_model_generations_skipped = api.model('NoValidRequestFoundV2', {
+response_model_generations_skipped = api.model('NoValidRequestFound', {
     'worker_id': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a specific worker"),
     'max_pixels': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
 })
-response_model_job_pop = api.model('GenerationPayloadV2', {
+response_model_job_pop = api.model('GenerationPayload', {
     'payload': fields.Nested(response_model_generation_payload),
     'id': fields.String(description="The UUID for this image generation"),
     'skipped': fields.Nested(response_model_generations_skipped)
