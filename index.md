@@ -51,7 +51,8 @@ We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Ad
 
 ## Community
 
-Join us on [Discord](https://discord.gg/3DxrhksKzn)
+* Join us on [Discord](https://discord.gg/3DxrhksKzn)
+* Support the development of the Stable Horde on [Patreon](https://www.patreon.com/db0) or [Github](https://github.com/db0)
 
 ## Credits
 
