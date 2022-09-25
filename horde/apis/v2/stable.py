@@ -48,9 +48,27 @@ response_model_worker_details = api.model('WorkerDetails', {
     "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde"),
     "maintenance_mode": fields.Boolean(description="When True, this worker will not pick up any new requests"),
 })
-response_model_use_contrib_details = api.model('UsageAndContribDetails', {
+
+response_model_contrib_details = api.model('UsageAndContribDetails', {
+    "fulfillments": fields.Integer(description="How many images this user has generated"),
+    "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
+})
+response_model_use_details = api.model('UsageAndContribDetails', {
+    "requests": fields.Integer(description="How many images this user has requested"),
+    "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
+})
+response_model_contrib_details = api.model('UsageAndContribDetails', {
     "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated or requested"),
     "fulfillments": fields.Integer(description="How many images this user has generated or requested")
+})
+response_model_user_details = api.model('UserDetails', {
+    "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
+    "id": fields.Integer(description="The user unique ID. It is always an integer."),
+    "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
+    "kudos_details": fields.Nested(response_model_user_kudos_details),
+    "usage": fields.Nested(response_model_use_details),
+    "contributions": fields.Nested(response_model_contrib_details),
+    "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
 })
 response_model_horde_performance = api.model('HordePerformance', {
     "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
@@ -145,6 +163,25 @@ class JobSubmit(JobSubmitTemplate):
         This endpoint is used by registered workers only
         '''
         return(super().post())
+
+class Users(Users):
+    decorators = [limiter.limit("2/minute")]
+    @logger.catch
+    @api.marshal_with(response_model_user_details, code=200, description='Users List')
+    def get(self):
+        '''A List with the details and statistic of all registered users
+        '''
+        return(super().get())
+
+
+class UserSingle(UserSingle):
+    decorators = [limiter.limit("30/minute")]
+    @api.marshal_with(response_model_user_details, code=200, description='User Details')
+    @api.response(404, 'User Not Found', response_model_error)
+    def get(self, user_id = ''):
+        '''Details and statistics about a specific user
+        '''
+        return(super().get(user_id))
 
 
 class HordeLoad(HordeLoadTemplate):

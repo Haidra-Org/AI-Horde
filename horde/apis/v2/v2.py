@@ -80,14 +80,17 @@ response_model_worker_modify = api.model('ModifyWorker', {
 })
 
 response_model_user_kudos_details = api.model('UserKudosDetails', {
-    "accumulated": fields.Float(description="The ammount of Kudos accumulated or used for generating images."),
-    "gifted": fields.Float(description="The amount of Kudos this user has given to other users"),
-    "admin": fields.Float(description="The amount of Kudos this user has been given by the Horde admins"),
-    "received": fields.Float(description="The amount of Kudos this user has been given by other users"),
+    "accumulated": fields.Float(default=0,description="The ammount of Kudos accumulated or used for generating images."),
+    "gifted": fields.Float(default=0,description="The amount of Kudos this user has given to other users"),
+    "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins"),
+    "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users"),
 })
 
-response_model_use_contrib_details = api.model('UsageAndContribDetails', {
-    "fulfillments": fields.Integer(description="How many images this user has generated or requested")
+response_model_contrib_details = api.model('UsageAndContribDetails', {
+    "fulfillments": fields.Integer(description="How many images this user has generated")
+})
+response_model_use_details = api.model('UsageAndContribDetails', {
+    "requests": fields.Integer(description="How many images this user has requested")
 })
 
 response_model_user_details = api.model('UserDetails', {
@@ -95,8 +98,8 @@ response_model_user_details = api.model('UserDetails', {
     "id": fields.Integer(description="The user unique ID. It is always an integer."),
     "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
     "kudos_details": fields.Nested(response_model_user_kudos_details),
-    "usage": fields.Nested(response_model_use_contrib_details),
-    "contributions": fields.Nested(response_model_use_contrib_details),
+    "usage": fields.Nested(response_model_use_details),
+    "contributions": fields.Nested(response_model_contrib_details),
     "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
 })
 
@@ -509,7 +512,7 @@ class WorkerSingle(Resource):
 class Users(Resource):
     decorators = [limiter.limit("2/minute")]
     @logger.catch
-    @api.marshal_with(response_model_user_details, code=200, description='Users List')
+    # @api.marshal_with(response_model_user_details, code=200, description='Users List')
     def get(self):
         '''A List with the details and statistic of all registered users
         '''
@@ -519,12 +522,11 @@ class Users(Resource):
 
 class UserSingle(Resource):
     decorators = [limiter.limit("30/minute")]
-    @api.marshal_with(response_model_user_details, code=200, description='User Details')
+    # @api.marshal_with(response_model_user_details, code=200, description='User Details')
     @api.response(404, 'User Not Found', response_model_error)
     def get(self, user_id = ''):
         '''Details and statistics about a specific user
         '''
-        logger.debug(user_id)
         user = db.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
