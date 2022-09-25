@@ -47,13 +47,15 @@ This is the worker which has generated the most pixels for the horde.
 
 [Terms of Service](/terms)"""
     totals = db.get_total_usage()
+    wp_totals = waiting_prompts.count_totals()
     findex = index.format(
         stable_image = align_image,
         avg_performance= round(db.stats.get_request_avg() / 1000000,2),
         total_pixels = round(totals["megapixelsteps"] / 1000,2),
         total_fulfillments = totals["fulfilments"],
         active_workers = db.count_active_workers(),
-        total_queue = waiting_prompts.count_total_waiting_generations(),
+        total_queue = wp_totals["queued_requests"],
+        total_mps = wp_totals["queued_megapixelsteps"],
         maintenance_mode = maintenance.active,
     )
     head = """<head>

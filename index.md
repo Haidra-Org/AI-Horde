@@ -10,7 +10,7 @@ Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
 * Total GPS generated: {total_pixels} Gigapixelsteps
 * Total requests fulfilled: {total_fulfillments}
 * Active [Workers](/api/v2/workers): {active_workers}
-* Current Request Queue: {total_queue}
+* Queue: {total_queue} waiting requests for a total of {total_mps} megapixelsteps
 
 ## Usage
 

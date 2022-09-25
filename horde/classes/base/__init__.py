@@ -404,7 +404,7 @@ class PromptsIndex(Index):
             "queued_requests": 0,
         }
         for wp in self._index.values():
-            ret_dict["queued_requests"] += wp.n
+            ret_dict["queued_requests"] += wp.n + wp.count_processing_gens()["processing"]
         return(ret_dict)
 
     def get_waiting_wp_by_kudos(self):
