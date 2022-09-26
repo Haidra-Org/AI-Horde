@@ -182,6 +182,7 @@ class AsyncStatus(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status()
+        logger.info(f"Request with ID {wp.id} has been cancelled.")
         wp.delete()
         return(wp_status, 200)
 
