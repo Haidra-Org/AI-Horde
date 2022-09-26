@@ -1,1 +1,1 @@
-from . import v2
+from .stable_v2 import Models
