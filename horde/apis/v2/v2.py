@@ -172,6 +172,19 @@ class AsyncStatus(Resource):
             wp.delete()
         return(wp_status, 200)
 
+    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.response(404, 'Request Not found', models.response_model_error)
+    def delete(self, id = ''):
+        '''Cancel an unfinished request.
+        This request will include all already generated images in base64 encoded .webp files.
+        '''
+        wp = waiting_prompts.get_item(id)
+        if not wp:
+            raise e.RequestNotFound(id)
+        wp_status = wp.get_status()
+        wp.delete()
+        return(wp_status, 200)
+
 
 class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
