@@ -64,14 +64,15 @@ response_model_worker_kudos_details = api.model('WorkerKudosDetails', {
 })
 
 response_model_worker_details = api.model('WorkerDetails', {
-    "name": fields.String(description="The Name given to this worker"),
-    "id": fields.String(description="The UUID of this worker"),
-    "requests_fulfilled": fields.Integer(description="How many images this worker has generated"),
-    "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total"),
+    "name": fields.String(description="The Name given to this worker."),
+    "id": fields.String(description="The UUID of this worker."),
+    "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),
+    "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total."),
     "kudos_details": fields.Nested(response_model_worker_kudos_details),
-    "performance": fields.String(description="The average performance of this worker in human readable form"),
-    "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde"),
-    "maintenance_mode": fields.Boolean(description="When True, this worker will not pick up any new requests"),
+    "performance": fields.String(description="The average performance of this worker in human readable form."),
+    "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde."),
+    "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
+    "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
 })
 
 response_model_worker_modify = api.model('ModifyWorker', {
@@ -440,12 +441,10 @@ class Workers(Resource):
 
 class WorkerSingle(Resource):
 
-    parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
-    parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
-    parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
 
-    @api.marshal_with(response_model_worker_details, code=200, description='Worker Details')
+    @api.marshal_with(response_model_worker_details, code=200, description='Worker Details', skip_none=True)
     @api.response(404, 'Worker Not Found', response_model_error)
     def get(self, worker_id = ''):
         '''Details of a registered worker
@@ -456,19 +455,21 @@ class WorkerSingle(Resource):
         if not worker:
             raise e.WorkerNotFound(worker_id)
         is_privileged = False
-        # logger.debug('test start')
-        # # Doesn't work at the moment. I'm getting a bad request when setting args. I'll come back to this later.
-        # self.args = self.parser.parse_args()
-        # if self.args.apikey:
-        #     logger.debug('hehehe')
-        #     admin = db.find_user_by_api_key(self.args['apikey'])
-        #     if not admin:
-        #         raise e.InvalidAPIKey('admin worker details')
-        #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-        #         raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
-        #     logger.debug('hehehehe')
-        #     is_privileged = True
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            admin = db.find_user_by_api_key(self.args['apikey'])
+            if not admin:
+                raise e.InvalidAPIKey('admin worker details')
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+                raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
+            is_privileged = True
         return(worker.get_details(is_privileged),200)
+
+    put_parser = reqparse.RequestParser()
+    put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
+    put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
+    put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
+
 
     decorators = [limiter.limit("30/minute")]
     # @api.expect(parser)
@@ -487,7 +488,7 @@ class WorkerSingle(Resource):
         worker = db.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
-        self.args = self.parser.parse_args()
+        self.args = self.put_parser.parse_args()
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')

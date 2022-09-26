@@ -46,7 +46,8 @@ response_model_worker_details = api.model('WorkerDetails', {
     "kudos_details": fields.Nested(response_model_worker_kudos_details),
     "performance": fields.String(description="The average performance of this worker in human readable form"),
     "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde"),
-    "maintenance_mode": fields.Boolean(description="When True, this worker will not pick up any new requests"),
+    "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
+    "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
 })
 
 response_model_contrib_details = api.model('UsageAndContribDetails', {

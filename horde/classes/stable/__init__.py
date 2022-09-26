@@ -127,7 +127,7 @@ class Worker(Worker):
         self.contributions = round(self.contributions + pixelsteps/1000000,2)
 
     def get_details(self, is_privileged = False):
-        ret_dict = super().get_details()
+        ret_dict = super().get_details(is_privileged)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
         return(ret_dict)
