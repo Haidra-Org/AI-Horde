@@ -54,7 +54,6 @@ class Models(v2.Models):
         self.response_model_use_details = api.inherit('UsageDetailsStable', self.response_model_use_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
         })
-        print(self.response_model_use_details)
         self.response_model_user_details = api.model('UserDetails', {
             "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
             "id": fields.Integer(description="The user unique ID. It is always an integer."),

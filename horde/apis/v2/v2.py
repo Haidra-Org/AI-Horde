@@ -14,7 +14,6 @@ api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
 parsers = ParsersV2()
 
-logger.error(parsers)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
@@ -301,7 +300,7 @@ class TransferKudos(Resource):
 
 class Workers(Resource):
     @logger.catch
-    @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True)
+    @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True,  skip_none=True)
     def get(self):
         '''A List with the details of all registered and active workers
         '''
