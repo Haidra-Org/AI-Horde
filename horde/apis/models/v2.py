@@ -42,6 +42,7 @@ class Models:
         })
         self.response_model_async = api.model('RequestAsync', {
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
+            'message': fields.String(default=None,description="Any extra information from the horde about this request"),
         })
         self.response_model_generation_payload = api.model('ModelPayload', {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),

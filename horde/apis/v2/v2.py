@@ -85,10 +85,20 @@ class GenerateTemplate(Resource):
     def activate_waiting_prompt(self):
         self.wp.activate()
 
+    def has_valid_workers(self):
+        worker_found = False
+        for worker in db.workers.values():
+            if len(self.args.workers) and worker.id not in self.args.workers:
+                continue
+            if worker.can_generate(self.wp)[0]:
+                worker_found = True
+                break
+        return(worker_found)
+
 class AsyncGenerate(GenerateTemplate):
 
     @api.expect(parsers.generate_parser)
-    @api.marshal_with(models.response_model_async, code=202, description='Generation Queued')
+    @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(503, 'Maintenance Mode', models.response_model_error)
@@ -101,7 +111,10 @@ class AsyncGenerate(GenerateTemplate):
         Asynchronous requests live for 10 minutes before being considered stale and being deleted.
         '''
         super().post()
-        return({"id":self.wp.id}, 202)
+        ret_dict = {"id":self.wp.id}
+        if not self.has_valid_workers():
+            ret_dict['message'] = "Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512"
+        return(ret_dict, 202)
 
 class SyncGenerate(GenerateTemplate):
 
@@ -132,16 +145,10 @@ class SyncGenerate(GenerateTemplate):
     # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue
     def activate_waiting_prompt(self):
         # We don't want to keep synchronous requests up unless there's someone who can fulfill them
-        for worker in db.workers.values():
-            if len(self.args.workers) and worker.id not in self.args.workers:
-                continue
-            if worker.can_generate(self.wp)[0]:
-                worker_found = True
-                break
-        if not worker_found:
+        if not self.has_valid_workers():
             # We don't need to call .delete() on the wp because it's not activated yet
             # And therefore not added to the waiting_prompt dict.
-            raise e.NoValidWorkers(username)
+            raise e.NoValidWorkers(self.username)
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
 
@@ -300,7 +307,7 @@ class TransferKudos(Resource):
 
 class Workers(Resource):
     @logger.catch
-    @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True,  skip_none=True)
+    @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True, skip_none=True)
     def get(self):
         '''A List with the details of all registered and active workers
         '''
