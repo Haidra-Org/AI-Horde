@@ -36,7 +36,7 @@ class HordeLoad(HordeLoad):
     def get(self):
         '''Details about the current performance of this Horde
         '''
-        load_dict = super().get()
+        load_dict = super().get()[0]
         load_dict["past_minute_megapixelsteps"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
