@@ -2,68 +2,56 @@ import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time
-from logger import logger
-
+from .. import logger
+from .. import thing_name,raw_thing_name
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
-        self._db = db
+        self.db = db
         self._waiting_prompts = wps
         self._processing_generations = pgs
         self.prompt = prompt
         self.user = user
         self.params = params
-        self.n = params.pop('n', 1)
-        self.steps = params.pop('steps', 50)
-        # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
-        if self.n > 20:
-            logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
-            self.n = 20
-        self.width = params.get("width", 512)
-        self.height = params.get("height", 512)
-        # To avoid unnecessary calculations, we do it once here.
-        self.pixelsteps = self.width * self.height * self.steps
-        self.total_usage = round(self.pixelsteps * self.n / 1000000,2)
-        # The total amount of to pixelsteps requested.
+        self.total_usage = 0
+        self.extract_params(params)
         self.id = str(uuid4())
-        # This is what we send to KoboldAI to the /generate/ API
-        self.gen_payload = params
-        self.gen_payload["prompt"] = prompt
-        # We always send only 1 iteration to KoboldAI
-        self.gen_payload["batch_size"] = 1
-        self.gen_payload["ddim_steps"] = self.steps
         # The generations that have been created already
         self.processing_gens = []
         self.last_process_time = datetime.now()
-        self.servers = kwargs.get("servers", [])
+        self.workers = kwargs.get("workers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 180 * self.n
         if self.stale_time > 600:
             self.stale_time = 600
 
+    # These are typically worker-specific so they will be defined in the specific class for this horde type
+    def extract_params(self, params):
+        self.n = params.pop('n', 1)
+        self.prepare_job_payload(params)
+
+    def prepare_job_payload(self, initial_dict = {}):
+        # This is what we send to the worker
+        self.gen_payload = initial_dict
 
     def activate(self):
-        # We separate the activation from __init__ as often we want to check if there's a valid server for it
-        # Before we add it to the queue
+        '''We separate the activation from __init__ as often we want to check if there's a valid worker for it
+        Before we add it to the queue
+        '''
         self._waiting_prompts.add_item(self)
-        logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
         thread = threading.Thread(target=self.check_for_stale, args=())
         thread.daemon = True
         thread.start()
-
-    # The mps still queued to be generated for this WP
-    def get_queued_megapixelsteps(self):
-        return(round(self.pixelsteps * self.n/1000000,2))
 
     def needs_gen(self):
         if self.n > 0:
             return(True)
         return(False)
 
-    def start_generation(self, server):
+    def start_generation(self, worker):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(self, self._processing_generations, server)
+        new_gen = self.new_procgen(worker)
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
@@ -72,6 +60,10 @@ class WaitingPrompt:
             "id": new_gen.id,
         }
         return(prompt_payload)
+
+    # Using this function so that I can extend it to have it grab the correct extended class
+    def new_procgen(self, worker):
+        return(ProcessingGeneration(self, self._processing_generations, worker))
 
     def is_completed(self):
         if self.needs_gen():
@@ -93,59 +85,41 @@ class WaitingPrompt:
                 ret_dict["processing"] += 1
         return(ret_dict)
 
+    # Should be overwritten
+    def get_queued_things(self):
+        return(0)
+
     def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         ret_dict["done"] = self.is_completed()
-        queue_pos, queued_mps, queued_n = self.get_own_queue_stats()
-        # We increment the priority by 1, because it starts at 0
-        # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
-        ret_dict["queue_position"] = queue_pos + 1
-        active_servers = self._db.count_active_servers()
-        # If there's less requests than the number of active servers
-        # Then we need to adjust the parallelization accordingly
-        if queued_n < active_servers:
-            active_servers = queued_n
-        mpss = (self._db.stats.get_request_avg() / 1000000) * active_servers
-        # Is this is 0, it means one of two things:
-        # 1. This horde hasn't had any requests yet. So we'll initiate it to 1mpss
-        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
-        if mpss == 0:
-            mpss = 1
-        wait_time = queued_mps / mpss
-        # We add the expected running time of our processing gens
-        for procgen in self.processing_gens:
-            wait_time += procgen.get_expected_time_left()
-        ret_dict["wait_time"] = round(wait_time)
         # Lite mode does not include the generations, to spare me download size
         if not lite:
             ret_dict["generations"] = []
             for procgen in self.processing_gens:
                 if procgen.is_completed():
-                    gen_dict = {
-                        "img": procgen.generation,
-                        "seed": procgen.seed,
-                        "server_id": procgen.server.id,
-                        "server_name": procgen.server.name,
-                    }
-                    ret_dict["generations"].append(gen_dict)
+                    ret_dict["generations"].append(procgen.get_details())
         return(ret_dict)
 
-    # Same as status, but without the images to avoid unnecessary size
     def get_lite_status(self):
+        '''Same as get_status(), but without the images to avoid unnecessary size'''
         ret_dict = self.get_status(True)
         return(ret_dict)
 
-    # Get out position in the working prompts queue sorted by kudos
-    # If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
     def get_own_queue_stats(self):
+        '''Get out position in the working prompts queue sorted by kudos
+        If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
+        '''
         if self.needs_gen():
             return(self._waiting_prompts.get_wp_queue_stats(self))
         return(-1,0,0)
 
-    # Record that we received a requested generation and how much kudos it costs us
-    def record_usage(self, pixelsteps, kudos):
-        self.user.record_usage(pixelsteps, kudos)
+    def record_usage(self, thing, kudos):
+        '''Record that we received a requested generation and how much kudos it costs us
+        We use 'thing' here as we do not care what type of thing we're recording at this point
+        This avoids me having to extend this just to change a var name
+        '''
+        self.user.record_usage(thing, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -173,29 +147,21 @@ class WaitingPrompt:
 
 
 class ProcessingGeneration:
-    def __init__(self, owner, pgs, server):
+    def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
         self.id = str(uuid4())
         self.owner = owner
-        self.server = server
-        self.generation = None
-        self.seed = None
-        self.kudos = 0
+        self.worker = worker
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
+        self.generation = None
 
-    def set_generation(self, generation, seed):
+    # This should be extended by every horde type
+    def set_generation(self, generation):
         if self.is_completed():
             return(0)
         self.generation = generation
-        self.seed = seed
-        pixelsteps_per_sec = self.owner._db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
-        self.kudos = self.owner._db.convert_pixelsteps_to_kudos(self.owner.pixelsteps)
-        self.server.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
-        self.owner.record_usage(self.owner.pixelsteps, self.kudos)
-        
-        logger.info(f"New Generation worth {self.kudos} kudos, delivered by server: {self.server.name}")
-        return(self.kudos)
+        return(0)
 
     def is_completed(self):
         if self.generation:
@@ -206,10 +172,14 @@ class ProcessingGeneration:
         self._processing_generations.del_item(self)
         del self
 
+    # This should be extended by every horde type
+    def get_seconds_needed(self):
+        return(0)
+
     def get_expected_time_left(self):
         if self.is_completed():
             return(0)
-        seconds_needed = self.owner.pixelsteps / self.server.get_performance_average()
+        seconds_needed = self.get_seconds_needed()
         seconds_elapsed = (datetime.now() - self.start_time).seconds
         expected_time = seconds_needed - seconds_elapsed
         # In case we run into a slow request
@@ -217,22 +187,30 @@ class ProcessingGeneration:
             expected_time = 0
         return(expected_time)
 
+    # This should be extended by every horde type
+    def get_details(self):
+        '''Returns a dictionary with details about this processing generation'''
+        ret_dict = {
+            "gen": procgen.generation,
+            "worker_id": procgen.worker.id,
+            "worker_name": procgen.worker.name,
+        }
+        return(ret_dict)
 
-
-class KAIServer:
+class Worker:
     def __init__(self, db):
-        self._db = db
+        self.db = db
         self.kudos_details = {
             "generated": 0,
             "uptime": 0,
         }
         self.last_reward_uptime = 0
-        # Every how many seconds does this server get a kudos reward
+        # Every how many seconds does this worker get a kudos reward
         self.uptime_reward_threshold = 600
-        # Maintenance can be requested by the owner of the server (to allow them to not pick up more requests)
+        # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
         self.maintenance = False
-        # Paused is set by the admins to prevent that server from seeing any more requests
-        # This can be used for stopping servers who misbhevave for example, without informing their owners
+        # Paused is set by the admins to prevent that worker from seeing any more requests
+        # This can be used for stopping workers who misbhevave for example, without informing their owners
         self.paused = False
 
     def create(self, user, name):
@@ -244,9 +222,10 @@ class KAIServer:
         self.kudos = 0
         self.performances = []
         self.uptime = 0
-        self._db.register_new_server(self)
+        self.db.register_new_worker(self)
 
-    def check_in(self, max_pixels):
+    # This should be overwriten by each specific horde
+    def check_in(self):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -254,15 +233,14 @@ class KAIServer:
                 kudos = 100
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
-                logger.debug(f"server '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
-            # If the server comes back from being stale, we just reset their last_reward_uptime
+            # If the worker comes back from being stale, we just reset their last_reward_uptime
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
-        self.max_pixels = max_pixels
-        logger.debug(f"Server {self.name} checked-in")
+        logger.debug(f"Worker {self.name} checked-in")
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -275,25 +253,32 @@ class KAIServer:
             return(f"{round(self.uptime/60/60/24,2)} days")
 
     def can_generate(self, waiting_prompt):
-        # takes as an argument a WaitingPrompt class and checks if this server is valid for generating it
+        # takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it
         is_matching = True
         skipped_reason = None
-        # if thes server is paused, we return OK, but skip everything
-        if len(waiting_prompt.servers) >= 1 and self.id not in waiting_prompt.servers:
+        if self.is_stale():
+            # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
-            skipped_reason = 'server_id'
-        if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
+        # if thes worker is paused, we return OK, but skip everything
+        if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
-            skipped_reason = 'max_pixels'
+            skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
+    # We split it to its own function to make it extendable for specialized calculations
+    def convert_contribution(self, thing):
+        self.contributions = round(self.contributions + thing,2)
+
     @logger.catch
-    def record_contribution(self, pixelsteps, kudos, pixelsteps_per_sec):
-        self.user.record_contributions(pixelsteps, kudos)
+    def record_contribution(self, thing, kudos, thing_per_sec):
+        '''We record the servers newest contribution
+        We do not need to know what type the contribution is, to avoid unnecessarily extending this method
+        '''
+        self.user.record_contributions(thing, kudos)
         self.modify_kudos(kudos,'generated')
-        self.contributions = round(self.contributions + pixelsteps/1000000,2) # We store them as Megapixelsteps
+        self.convert_contribution(thing)
         self.fulfilments += 1
-        self.performances.append(pixelsteps_per_sec)
+        self.performances.append(thing_per_sec)
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -305,13 +290,13 @@ class KAIServer:
         if len(self.performances):
             ret_num = sum(self.performances) / len(self.performances)
         else:
-            # Always sending at least 1 pixelstep per second, to avoid divisions by zero
+            # Always sending at least 1 thing per second, to avoid divisions by zero
             ret_num = 1
         return(ret_num)
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} pixelsteps per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} {raw_thing_name} per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
@@ -320,17 +305,34 @@ class KAIServer:
         try:
             if (datetime.now() - self.last_check_in).seconds > 300:
                 return(True)
-        # If the last_check_in isn't set, it's a new server, so it's stale by default
+        # If the last_check_in isn't set, it's a new worker, so it's stale by default
         except AttributeError:
             return(True)
         return(False)
 
+    # Should be extended by each specific horde
+    def get_details(self, is_privileged = False):
+        '''We display these in the workers list json'''
+        ret_dict = {
+            "name": self.name,
+            "id": self.id,
+            "requests_fulfilled": self.fulfilments,
+            "kudos_rewards": self.kudos,
+            "kudos_details": self.kudos_details,
+            "performance": self.get_performance(),
+            "uptime": self.uptime,
+            "maintenance_mode": self.maintenance,
+        }
+        if is_privileged:
+            ret_dict['paused'] = self.paused
+        return(ret_dict)
+
+    # Should be extended by each specific horde
     @logger.catch
     def serialize(self):
         ret_dict = {
             "oauth_id": self.user.oauth_id,
             "name": self.name,
-            "max_pixels": self.max_pixels,
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
             "kudos": self.kudos,
@@ -346,12 +348,9 @@ class KAIServer:
 
     @logger.catch
     def deserialize(self, saved_dict, convert_flag = None):
-        self.user = self._db.find_user_by_oauth_id(saved_dict["oauth_id"])
+        self.user = self.db.find_user_by_oauth_id(saved_dict["oauth_id"])
         self.name = saved_dict["name"]
-        self.max_pixels = saved_dict["max_pixels"]
         self.contributions = saved_dict["contributions"]
-        if convert_flag == 'pixelsteps':
-            self.contributions = round(self.contributions / 50,2)
         self.fulfilments = saved_dict["fulfilments"]
         self.kudos = saved_dict.get("kudos",0)
         self.kudos_details = saved_dict.get("kudos_details",self.kudos_details)
@@ -361,7 +360,7 @@ class KAIServer:
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
-        self._db.servers[self.name] = self
+        self.db.workers[self.name] = self
 
 
 class Index:
@@ -369,14 +368,12 @@ class Index:
         self._index = {}
 
     def add_item(self, item):
-        logger.debug(item)
         self._index[item.id] = item
 
     def get_item(self, uuid):
         return(self._index.get(uuid))
 
     def del_item(self, item):
-        logger.debug(item)
         del self._index[item.id]
 
     def get_all(self):
@@ -405,15 +402,9 @@ class PromptsIndex(Index):
     def count_totals(self):
         ret_dict = {
             "queued_requests": 0,
-            # mps == Megapixelsteps
-            "queued_megapixelsteps": 0,
         }
         for wp in self._index.values():
-            ret_dict["queued_requests"] += wp.n
-            if wp.n > 0:
-                ret_dict["queued_megapixelsteps"] += wp.pixelsteps / 1000000
-        # We round the end result to avoid to many decimals
-        ret_dict["queued_megapixelsteps"] = round(ret_dict["queued_megapixelsteps"],2)
+            ret_dict["queued_requests"] += wp.n + wp.count_processing_gens()["processing"]
         return(ret_dict)
 
     def get_waiting_wp_by_kudos(self):
@@ -425,18 +416,18 @@ class PromptsIndex(Index):
         return(final_wp_list)
 
     # Returns the queue position of the provided WP based on kudos
-    # Also returns the amount of mps until the wp is generated
+    # Also returns the amount of things until the wp is generated
     # Also returns the amount of different gens queued
     def get_wp_queue_stats(self, wp):
-        mps_ahead_in_queue = 0
+        things_ahead_in_queue = 0
         n_ahead_in_queue = 0
         priority_sorted_list = self.get_waiting_wp_by_kudos()
         for iter in range(len(priority_sorted_list)):
-            mps_ahead_in_queue += priority_sorted_list[iter].get_queued_megapixelsteps()
+            things_ahead_in_queue += priority_sorted_list[iter].get_queued_things()
             n_ahead_in_queue += priority_sorted_list[iter].n
             if priority_sorted_list[iter] == wp:
-                mps_ahead_in_queue = round(mps_ahead_in_queue,2)
-                return(iter, mps_ahead_in_queue, n_ahead_in_queue)
+                things_ahead_in_queue = round(things_ahead_in_queue,2)
+                return(iter, things_ahead_in_queue, n_ahead_in_queue)
         # -1 means the WP is done and not in the queue
         return(-1,0,0)
                 
@@ -447,7 +438,7 @@ class GenerationsIndex(Index):
 
 class User:
     def __init__(self, db):
-        self._db = db
+        self.db = db
         self.kudos = 0
         self.kudos_details = {
             "accumulated": 0,
@@ -467,11 +458,11 @@ class User:
         self.last_active = datetime.now()
         self.id = 0
         self.contributions = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "fulfillments": 0
         }
         self.usage = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "requests": 0
         }
         # We allow anonymous users more leeway for the max amount of concurrent requests
@@ -485,13 +476,13 @@ class User:
         self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
-        self.id = self._db.register_new_user(self)
+        self.id = self.db.register_new_user(self)
         self.contributions = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "fulfillments": 0
         }
         self.usage = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "requests": 0
         }
 
@@ -504,13 +495,11 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, pixelsteps, kudos):
-        self.usage["megapixelsteps"] = round(self.usage["megapixelsteps"] + (pixelsteps * self.usage_multiplier / 1000000),2)
+    def record_usage(self, kudos):
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
 
-    def record_contributions(self, pixelsteps, kudos):
-        self.contributions["megapixelsteps"] = round(self.contributions["megapixelsteps"] + pixelsteps/1000000,2)
+    def record_contributions(self, kudos):
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
 
@@ -521,6 +510,18 @@ class User:
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
+
+    def get_details(self):
+        ret_dict = {
+            "username": self.get_unique_alias(),
+            "id": self.id,
+            "kudos": self.kudos,
+            "kudos_details": self.kudos_details,
+            "usage": self.usage,
+            "contributions": self.contributions,
+            "concurrency": self.concurrency,
+        }
+        return(ret_dict)
 
 
     @logger.catch
@@ -557,12 +558,6 @@ class User:
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         if self.api_key == '0000000000':
             self.concurrency = 200
-        if convert_flag == 'pixelsteps':
-            # I average to 25 steps, to convert pixels to pixelsteps, since I wasn't tracking it until now
-            self.contributions['megapixelsteps'] = round(self.contributions['pixels'] / 50,2)
-            del self.contributions['pixels']
-            self.usage['megapixelsteps'] = round(self.usage['pixels'] / 50,2)
-            del self.usage['pixels']
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
 
@@ -570,46 +565,45 @@ class User:
 class Stats:
     def __init__(self, db, convert_flag = None, interval = 60):
         self.db = db
-        self.server_performances = []
+        self.worker_performances = []
         self.fulfillments = []
         self.interval = interval
         self.last_pruning = datetime.now()
 
-    def record_fulfilment(self, pixelsteps, starting_time):
+    def record_fulfilment(self, things, starting_time):
         seconds_taken = (datetime.now() - starting_time).seconds
         if seconds_taken == 0:
-            pixelsteps_per_sec = 1
+            things_per_sec = 1
         else:
-            pixelsteps_per_sec = round(pixelsteps / seconds_taken,1)
-        if len(self.server_performances) >= 10:
-            del self.server_performances[0]
-        self.server_performances.append(pixelsteps_per_sec)
+            things_per_sec = round(things / seconds_taken,1)
+        if len(self.worker_performances) >= 10:
+            del self.worker_performances[0]
+        self.worker_performances.append(things_per_sec)
         fulfillment_dict = {
-            "pixelsteps": pixelsteps,
+            raw_thing_name: things,
             "start_time": starting_time,
             "deliver_time": datetime.now(),
         }
         self.fulfillments.append(fulfillment_dict)
-        return(pixelsteps_per_sec)
+        return(things_per_sec)
 
-    def get_megapixelsteps_per_min(self):
-        total_pixelsteps = 0
+    def get_things_per_min(self):
+        total_things = 0
         pruned_array = []
         for fulfillment in self.fulfillments:
             if (datetime.now() - fulfillment["deliver_time"]).seconds <= 60:
                 pruned_array.append(fulfillment)
-                total_pixelsteps += fulfillment["pixelsteps"]
+                total_things += fulfillment[raw_thing_name]
         if (datetime.now() - self.last_pruning).seconds > self.interval:
             self.last_pruning = datetime.now()
             self.fulfillments = pruned_array
             logger.debug("Pruned fulfillments")
-        megapixelsteps_per_min = round(total_pixelsteps / 1000000,2)
-        return(megapixelsteps_per_min)
+        return(total_things)
 
     def get_request_avg(self):
-        if len(self.server_performances) == 0:
+        if len(self.worker_performances) == 0:
             return(0)
-        avg = sum(self.server_performances) / len(self.server_performances)
+        avg = sum(self.worker_performances) / len(self.worker_performances)
         return(round(avg,1))
 
     @logger.catch
@@ -617,14 +611,13 @@ class Stats:
         serialized_fulfillments = []
         for fulfillment in self.fulfillments.copy():
             json_fulfillment = {
-                "pixelsteps": fulfillment["pixelsteps"],
+                raw_thing_name: fulfillment[raw_thing_name],
                 "start_time": fulfillment["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
                 "deliver_time": fulfillment["deliver_time"].strftime("%Y-%m-%d %H:%M:%S"),
             }
             serialized_fulfillments.append(json_fulfillment)
         ret_dict = {
-            "server_performances": self.server_performances,
-            "model_mulitpliers": self.model_mulitpliers,
+            "worker_performances": self.worker_performances,
             "fulfillments": serialized_fulfillments,
         }
         return(ret_dict)
@@ -632,19 +625,18 @@ class Stats:
     @logger.catch
     def deserialize(self, saved_dict, convert_flag = None):
         # Convert old key
-        if "fulfilment_times" in saved_dict:
-            self.server_performances = saved_dict["fulfilment_times"]
+        if "server_performances" in saved_dict:
+            self.worker_performances = saved_dict["server_performances"]
         else:
-            self.server_performances = saved_dict["server_performances"]
+            self.worker_performances = saved_dict["worker_performances"]
         deserialized_fulfillments = []
         for fulfillment in saved_dict.get("fulfillments", []):
             class_fulfillment = {
-                "pixelsteps": fulfillment["pixelsteps"],
+                raw_thing_name: fulfillment[raw_thing_name],
                 "start_time": datetime.strptime(fulfillment["start_time"],"%Y-%m-%d %H:%M:%S"),
                 "deliver_time":datetime.strptime(fulfillment["deliver_time"],"%Y-%m-%d %H:%M:%S"),
             }
             deserialized_fulfillments.append(class_fulfillment)
-        self.model_mulitpliers = saved_dict["model_mulitpliers"]
         self.fulfillments = deserialized_fulfillments
        
 class Database:
@@ -652,11 +644,11 @@ class Database:
         self.interval = interval
         self.ALLOW_ANONYMOUS = True
         # This is used for synchronous generations
-        self.SERVERS_FILE = "db/servers.json"
-        self.servers = {}
+        self.WORKERS_FILE = "db/workers.json"
+        self.workers = {}
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
-        self.stats = Stats(self)
+        self.stats = self.new_stats()
         self.USERS_FILE = "db/users.json"
         self.users = {}
         # Increments any time a new user is added
@@ -672,7 +664,7 @@ class Database:
                     if not user_dict:
                         logger.error("Found null user on db load. Bypassing")
                         continue
-                    new_user = User(self)
+                    new_user = self.new_user()
                     new_user.deserialize(user_dict,convert_flag)
                     self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
@@ -682,16 +674,16 @@ class Database:
             self.anon = User(self)
             self.anon.create_anon()
             self.users[self.anon.oauth_id] = self.anon
-        if os.path.isfile(self.SERVERS_FILE):
-            with open(self.SERVERS_FILE) as db:
-                serialized_servers = json.load(db)
-                for server_dict in serialized_servers:
-                    if not server_dict:
-                        logger.error("Found null server on db load. Bypassing")
+        if os.path.isfile(self.WORKERS_FILE):
+            with open(self.WORKERS_FILE) as db:
+                serialized_workers = json.load(db)
+                for worker_dict in serialized_workers:
+                    if not worker_dict:
+                        logger.error("Found null worker on db load. Bypassing")
                         continue
-                    new_server = KAIServer(self)
-                    new_server.deserialize(server_dict,convert_flag)
-                    self.servers[new_server.name] = new_server
+                    new_worker = self.new_worker()
+                    new_worker.deserialize(worker_dict,convert_flag)
+                    self.workers[new_worker.name] = new_worker
         if os.path.isfile(self.STATS_FILE):
             with open(self.STATS_FILE) as stats_db:
                 self.stats.deserialize(json.load(stats_db),convert_flag)
@@ -705,6 +697,15 @@ class Database:
         thread.start()
         logger.init_ok(f"Database Load", status="Completed")
 
+    # I don't know if I'm doing this right,  but I'm using these so that I can extend them from the extended DB
+    # So that it will grab the extended classes from each horde type, and not the internal classes in this package
+    def new_worker(self):
+        return(Worker(self))
+    def new_user(self):
+        return(User(self))
+    def new_stats(self):
+        return(Stats(self))
+
     def write_files(self):
         logger.init_ok("Database Store Thread", status="Started")
         while True:
@@ -714,14 +715,14 @@ class Database:
     def write_files_to_disk(self):
         if not os.path.exists('db'):
             os.mkdir('db')
-        server_serialized_list = []
+        worker_serialized_list = []
         logger.debug("Saving DB")
-        for server in self.servers.copy().values():
-            # We don't store data for anon servers
-            if server.user == self.anon: continue
-            server_serialized_list.append(server.serialize())
-        with open(self.SERVERS_FILE, 'w') as db:
-            json.dump(server_serialized_list,db)
+        for worker in self.workers.copy().values():
+            # We don't store data for anon workers
+            if worker.user == self.anon: continue
+            worker_serialized_list.append(worker.serialize())
+        with open(self.WORKERS_FILE, 'w') as db:
+            json.dump(worker_serialized_list,db)
         with open(self.STATS_FILE, 'w') as db:
             json.dump(self.stats.serialize(),db)
         user_serialized_list = []
@@ -735,35 +736,35 @@ class Database:
         top_contributor = None
         user = None
         for user in self.users.values():
-            if user.contributions['megapixelsteps'] > top_contribution and user != self.anon:
+            if user.contributions[thing_name] > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions['megapixelsteps']
+                top_contribution = user.contributions[thing_name]
         return(top_contributor)
 
-    def get_top_server(self):
-        top_server = None
-        top_server_contribution = 0
-        for server in self.servers:
-            if self.servers[server].contributions > top_server_contribution:
-                top_server = self.servers[server]
-                top_server_contribution = self.servers[server].contributions
-        return(top_server)
+    def get_top_worker(self):
+        top_worker = None
+        top_worker_contribution = 0
+        for worker in self.workers:
+            if self.workers[worker].contributions > top_worker_contribution:
+                top_worker = self.workers[worker]
+                top_worker_contribution = self.workers[worker].contributions
+        return(top_worker)
 
-    def count_active_servers(self):
+    def count_active_workers(self):
         count = 0
-        for server in self.servers.values():
-            if not server.is_stale():
+        for worker in self.workers.values():
+            if not worker.is_stale():
                 count += 1
         return(count)
 
     def get_total_usage(self):
         totals = {
-            "megapixelsteps": 0,
+            thing_name: 0,
             "fulfilments": 0,
         }
-        for server in self.servers.values():
-            totals["megapixelsteps"] += server.contributions
-            totals["fulfilments"] += server.fulfilments
+        for worker in self.workers.values():
+            totals[thing_name] += worker.contributions
+            totals["fulfilments"] += worker.fulfilments
         return(totals)
 
 
@@ -773,16 +774,16 @@ class Database:
         logger.info(f'New user created: {user.username}#{self.last_user_id}')
         return(self.last_user_id)
 
-    def register_new_server(self, server):
-        self.servers[server.name] = server
-        logger.info(f'New server checked-in: {server.name} by {server.user.get_unique_alias()}')
+    def register_new_worker(self, worker):
+        self.workers[worker.name] = worker
+        logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
 
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
             return(None)
         return(self.users.get(oauth_id))
 
-    def find_user_by_username(self, id):
+    def find_user_by_username(self, username):
         for user in self.users.values():
             ulist = username.split('#')
             # This approach handles someone cheekily putting # in their username
@@ -809,13 +810,13 @@ class Database:
                 return(user)
         return(None)
 
-    def find_server_by_name(self,server_name):
-        return(self.servers.get(server_name))
+    def find_worker_by_name(self,worker_name):
+        return(self.workers.get(worker_name))
 
-    def find_server_by_id(self,server_id):
-        for server in self.servers.values():
-            if server.id == server_id:
-                return(server)
+    def find_worker_by_id(self,worker_id):
+        for worker in self.workers.values():
+            if worker.id == worker_id:
+                return(worker)
         return(None)
 
     def transfer_kudos(self, source_user, dest_user, amount):
@@ -845,8 +846,10 @@ class Database:
         kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
         return(kudos)
 
-    def convert_pixelsteps_to_kudos(self, pixelsteps):
+    # Should be overriden
+    def convert_things_to_kudos(self, things):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
-        kudos = round(pixelsteps / (512*512*5),2)
+        kudos = round(things,2)
         # logger.info([pixels,multiplier,kudos])
         return(kudos)
+

@@ -1,5 +1,6 @@
+werkzeug==2.1.2
 Flask
-flask_restful
+flask-restx
 flask_limiter
 waitress
 requests >= 2.27
@@ -8,3 +9,4 @@ flask-dance[sqla]
 blinker
 python-dotenv
 loguru
+bleach

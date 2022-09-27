@@ -7,10 +7,10 @@ Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
 ## Stats 
 
 * Average Recent Performance: {avg_performance} Megapixelsteps per second
-* Total GP⋅s generated: {total_pixels} Gigapixelsteps
+* Total GPS generated: {total_pixels} Gigapixelsteps
 * Total requests fulfilled: {total_fulfillments}
-* Active [Servers](/api/v1/servers): {active_servers}
-* Current Request Queue: {total_queue}
+* Active [Workers](/api/v2/workers): {active_workers}
+* Queue: {total_queue} requests for a total of {total_mps} Megapixelsteps
 
 ## Usage
 
@@ -40,6 +40,10 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
 
+## REST API
+
+[Full Documentation](/api)
+
 ## Services
 
 * [Register New Account](/register)
@@ -47,7 +51,8 @@ We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Ad
 
 ## Community
 
-Join us on [Discord](https://discord.gg/3DxrhksKzn)
+* Join us on [Discord](https://discord.gg/3DxrhksKzn)
+* Support the development of the Stable Horde on [Patreon](https://www.patreon.com/db0) or [Github](https://github.com/db0)
 
 ## Credits
 
