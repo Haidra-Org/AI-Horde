@@ -32,11 +32,11 @@ class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
     # When we extend the actual method, we need to re-apply the decorators
     @logger.catch
-    @api.marshal_with(models.response_model_horde_maintenance_mode, code=200, description='Horde Maintenance')
+    @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
     def get(self):
         '''Details about the current performance of this Horde
         '''
-        load_dict = super().get()
+        load_dict = super().get()[0]
         load_dict["past_minute_megapixelsteps"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
