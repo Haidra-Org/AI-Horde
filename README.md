@@ -26,7 +26,7 @@ The point of registering is to track your usage and your contributions. The more
 
 We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
 
-<img src="screenshot.png" width="500" />
+<img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
 
 ## Command Line
