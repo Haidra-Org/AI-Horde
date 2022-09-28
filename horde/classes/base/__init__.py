@@ -26,7 +26,7 @@ class WaitingPrompt:
             self.stale_time = 600
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
-    def extract_params(self, params):
+    def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
         # This specific per horde so it should be set in the extended class
         self.things = 0
@@ -182,12 +182,17 @@ class ProcessingGeneration:
         self._processing_generations.add_item(self)
         self.generation = None
 
-    # This should be extended by every horde type
-    def set_generation(self, generation):
+    def set_generation(self, generation, seed):
         if self.is_completed():
             return(0)
         self.generation = generation
-        return(0)
+        self.seed = seed
+        things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
+        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things)
+        self.worker.record_contribution(self.owner.things, self.kudos, things_per_sec)
+        self.owner.record_usage(self.owner.things, self.kudos)
+        logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        return(self.kudos)
 
     def is_completed(self):
         if self.generation:
@@ -198,9 +203,8 @@ class ProcessingGeneration:
         self._processing_generations.del_item(self)
         del self
 
-    # This should be extended by every horde type
     def get_seconds_needed(self):
-        return(0)
+        return(self.owner.things / self.worker.get_performance_average())
 
     def get_expected_time_left(self):
         if self.is_completed():
@@ -253,12 +257,12 @@ class Worker:
         self.db.register_new_worker(self)
 
     # This should be overwriten by each specific horde
-    def check_in(self, note):
+    def check_in(self, max_pixels):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                kudos = 100
+                kudos = calculate_uptime_reward(self)
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
                 logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
@@ -268,7 +272,6 @@ class Worker:
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
-        logger.debug(f"Worker {self.name} checked-in")
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -287,7 +290,7 @@ class Worker:
         if self.is_stale():
             # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
-        # if thes worker is paused, we return OK, but skip everything
+        # If the request specified only specific workers to fulfill it, and we're not one of them, we skip
         if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'

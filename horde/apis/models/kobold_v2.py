@@ -1,0 +1,82 @@
+from flask_restx import fields, reqparse
+from . import v2
+
+
+class Parsers(v2.Parsers):
+    def __init__(self):
+        self.job_pop_parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
+        self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate")
+        self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
+        self.job_pop_parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this worker for the currently running model")
+        # self.job_submit_parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generation", location="json")
+
+class Models(v2.Models):
+    def __init__(self,api):
+
+        super().__init__(api)
+
+        self.response_model_generation_result = api.inherit('GenerationKobold', self.response_model_generation_result, {
+            'text': fields.String(title="Generated Text", description="The generated text."),
+            # 'seed': fields.String(title="Generation Seed", description="The seed which generated this image"),
+        })
+        self.response_model_wp_status_full = api.inherit('RequestStatusKobold', self.response_model_wp_status_lite, {
+            'generations': fields.List(fields.Nested(self.response_model_generation_result)),
+        })
+        self.response_model_generation_payload = api.model('ModelPayloadKobold', {
+            'prompt': fields.String(description="The prompt which will be sent to Kobold Diffusion to generate an image"),
+            'n': fields.Integer(example=1), 
+            'frmtadsnsp': fields.Boolean(example=False,description="Input formatting option. When enabled, adds a leading space to your input if there is no trailing whitespace at the end of the previous action."),
+            'frmtrmblln': fields.Boolean(example=False,description="Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines in the output with one newline."),
+            'frmtrmspch': fields.Boolean(example=False,description="Output formatting option. When enabled, removes #/@%}{+=~|\^<> from the output."),
+            'frmttriminc': fields.Boolean(example=False,description="Output formatting option. When enabled, removes some characters from the end of the output such that the output doesn't end in the middle of a sentence. If the output is less than one sentence long, does nothing."),
+            'max_context_length': fields.Integer(default=1024, example=1024, description="Maximum number of tokens to send to the model."), 
+            'max_length': fields.Integer(default=80, example=80, description="Number of tokens to generate."), 
+            'rep_pen': fields.Float(description="Base repetition penalty value."), 
+            'rep_pen_range': fields.Integer(description="Repetition penalty range."), 
+            'rep_pen_slope': fields.Float(description="Repetition penalty slope."), 
+            'singleline': fields.Boolean(example=False,description="Output formatting option. When enabled, removes everything after the first line of the output, including the newline."),
+            'soft_prompt': fields.String(description="Soft prompt to use when generating. If set to the empty string or any other string containing no non-whitespace characters, uses no soft prompt."),
+            'temperature': fields.Float(description="Temperature value."), 
+            'tfs': fields.Float(description="Tail free sampling value."), 
+            'top_a': fields.Float(description="Top-a sampling value."), 
+            'top_k': fields.Integer(description="Top-k sampling value."), 
+            'top_p': fields.Float(description="Top-p sampling value."), 
+            'typical': fields.Float(description="Typical sampling value."), 
+        })
+        self.response_model_generations_skipped = api.inherit('NoValidRequestFoundKobold', self.response_model_generations_skipped, {
+            'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides."),
+            'max_content_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher max_content_length than what this worker provides."),
+            'max_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded more generated tokens that what this worker can provide."),
+            'matching_softprompt': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded an available soft-prompt which this worker does not have."),
+        })
+        self.response_model_job_pop = api.model('GenerationPayload', {
+            'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
+            'id': fields.String(description="The UUID for this image generation"),
+            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True)
+        })
+        self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {
+            "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
+            "max_content_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
+            "kilotokens_generated": fields.Float(description="How many kilotokens this worker has generated until now"),
+        })
+        self.response_model_contrib_details = api.inherit('ContributionsDetailsKobold', self.response_model_contrib_details, {
+            "kilotokens": fields.Float(description="How many kilotokens this user has generated"),
+        })
+        self.response_model_use_details = api.inherit('UsageDetailsKobold', self.response_model_use_details, {
+            "kilotokens": fields.Float(description="How many kilotokens this user has requested"),
+        })
+        self.response_model_user_details = api.model('UserDetails', {
+            "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
+            "id": fields.Integer(description="The user unique ID. It is always an integer."),
+            "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting generations."),
+            "kudos_details": fields.Nested(self.response_model_user_kudos_details),
+            "usage": fields.Nested(self.response_model_use_details),
+            "contributions": fields.Nested(self.response_model_contrib_details),
+            "concurrency": fields.Integer(description="How many concurrent text generations this user may request."),    
+        })
+        self.response_model_horde_performance = api.inherit('HordePerformanceKobold', self.response_model_horde_performance, {
+            "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
+            "queued_kilotokens": fields.Float(description="The amount of kilotokens in waiting and processing requests currently in this Horde"),
+            "past_minute_kilotokens": fields.Float(description="How many kilotokens this Horde generated in the last minute"),
+            "worker_count": fields.Integer(description="How many workers are actively processing text generations in this Horde in the past 5 minutes"),
+        })

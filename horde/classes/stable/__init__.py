@@ -2,7 +2,7 @@ from ..base import *
 
 class WaitingPrompt(WaitingPrompt):
 
-    def extract_params(self, params):
+    def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
         self.steps = params.pop('steps', 50)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
@@ -21,7 +21,7 @@ class WaitingPrompt(WaitingPrompt):
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = initial_dict
         self.gen_payload["prompt"] = self.prompt
-        # We always send only 1 iteration to KoboldAI
+        # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.steps
 
@@ -37,21 +37,6 @@ class WaitingPrompt(WaitingPrompt):
 
 class ProcessingGeneration(ProcessingGeneration):
 
-    def set_generation(self, generation, seed):
-        if self.is_completed():
-            return(0)
-        self.generation = generation
-        self.seed = seed
-        pixelsteps_per_sec = self.owner.db.stats.record_fulfilment(self.owner.pixelsteps, self.start_time)
-        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.pixelsteps)
-        self.worker.record_contribution(self.owner.pixelsteps, self.kudos, pixelsteps_per_sec)
-        self.owner.record_usage(self.owner.pixelsteps, self.kudos)
-        logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
-        return(self.kudos)
-
-    def get_seconds_needed(self):
-        return(self.owner.pixelsteps / self.worker.get_performance_average())
-
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''
         ret_dict = {
@@ -66,22 +51,12 @@ class ProcessingGeneration(ProcessingGeneration):
 class Worker(Worker):
 
     def check_in(self, max_pixels):
-        if not self.is_stale():
-            self.uptime += (datetime.now() - self.last_check_in).seconds
-            # Every 10 minutes of uptime gets 100 kudos rewarded
-            if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                kudos = 100
-                self.modify_kudos(kudos,'uptime')
-                self.user.record_uptime(kudos)
-                logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
-                self.last_reward_uptime = self.uptime
-        else:
-            # If the worker comes back from being stale, we just reset their last_reward_uptime
-            # So that they have to stay up at least 10 mins to get uptime kudos
-            self.last_reward_uptime = self.uptime
-        self.last_check_in = datetime.now()
+        super().check_in()
         self.max_pixels = max_pixels
         logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
+
+    def calculate_uptime_reward(self):
+        return(100)
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
