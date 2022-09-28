@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime
 import threading, time
 from .. import logger
-from .. import thing_name,raw_thing_name
+from ...vars import thing_name,raw_thing_name
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -14,7 +14,7 @@ class WaitingPrompt:
         self.user = user
         self.params = params
         self.total_usage = 0
-        self.extract_params(params)
+        self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
         self.processing_gens = []

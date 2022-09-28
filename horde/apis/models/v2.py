@@ -90,8 +90,9 @@ class Models:
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
-            "maintenance": fields.Boolean(description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests"),
-            "paused": fields.Boolean(description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests"),
+            "maintenance": fields.Boolean(description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests."),
+            "paused": fields.Boolean(description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests."),
+            "info": fields.String(description="The new state of the 'info' var for this worker."),
         })
 
         self.response_model_user_kudos_details = api.model('UserKudosDetails', {

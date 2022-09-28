@@ -5,17 +5,19 @@ from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from markdown import markdown
 from uuid import uuid4
-from . import logger, maintenance, HORDE
+from . import logger, maintenance, args, HORDE
+from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url
 from .classes import db
 from .classes import waiting_prompts,User
 import bleach
+from .utils import ConvertAmount
 
 dance_return_to = '/'
 
 @logger.catch
 @HORDE.route('/')
 def index():
-    with open('index.md') as index_file:
+    with open(f'index_{args.horde}.md') as index_file:
         index = index_file.read()
     top_contributor = db.get_top_contributor()
     top_worker = db.get_top_worker()
@@ -26,18 +28,23 @@ def index():
     if not top_contributor or not top_worker:
         top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.png?raw=true" width="800" />'
     else:
+        # We don't use the prefix char, so we just discard it
+        top_contrib_things = ConvertAmount(top_contributor.contributions[thing_name] * thing_divisor)
+        top_contrib_fulfillments = ConvertAmount(top_contributor.contributions['fulfillments'])
+        top_worker_things = ConvertAmount(top_worker.contributions * thing_divisor)
+        top_worker_fulfillments = ConvertAmount(top_worker.fulfilments)
         top_contributors = f"""\n## Top Contributors
 These are the people and workers who have contributed most to this horde.
 ### Users
 This is the person whose worker(s) have generated the most pixels for the horde.
 #### {top_contributor.get_unique_alias()}
-* {round(top_contributor.contributions['megapixelsteps'] / 1000,2)} Gigapixelsteps generated.
-* {top_contributor.contributions['fulfillments']} requests fulfilled.
+* {top_contrib_things.amount} {top_contrib_things.prefix + raw_thing_name} generated.
+* {top_contrib_fulfillments.amount}{top_contrib_fulfillments.char} requests fulfilled.
 ### Workers
 This is the worker which has generated the most pixels for the horde.
 #### {top_worker.name}
-* {round(top_worker.contributions/1000,2)} Gigapixelsteps generated.
-* {top_worker.fulfilments} request fulfillments.
+* {top_worker_things.amount} {top_worker_things.prefix + raw_thing_name} generated.
+* {top_worker_fulfillments.amount}{top_worker_fulfillments.char} request fulfillments.
 * {top_worker.get_human_readable_uptime()} uptime.
 """
     policies = """
@@ -48,19 +55,29 @@ This is the worker which has generated the most pixels for the horde.
 [Terms of Service](/terms)"""
     totals = db.get_total_usage()
     wp_totals = waiting_prompts.count_totals()
+    avg_performance = ConvertAmount(db.stats.get_request_avg())
+    # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately
+    total_things = ConvertAmount(totals[thing_name] * thing_divisor)
+    queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
+    total_fulfillments = ConvertAmount(totals["fulfilments"])
     findex = index.format(
-        stable_image = align_image,
-        avg_performance= round(db.stats.get_request_avg() / 1000000,2),
-        total_pixels = round(totals["megapixelsteps"] / 1000,2),
-        total_fulfillments = totals["fulfilments"],
+        horde_img_url = img_url,
+        horde_image = align_image,
+        avg_performance= avg_performance.amount,
+        avg_thing_name= avg_performance.prefix + raw_thing_name,
+        total_things = total_things.amount,
+        total_things_name = total_things.prefix + raw_thing_name,
+        total_fulfillments = total_fulfillments.amount,
+        total_fulfillments_char = total_fulfillments.char,
         active_workers = db.count_active_workers(),
         total_queue = wp_totals["queued_requests"],
-        total_mps = wp_totals["queued_megapixelsteps"],
+        queued_things = queued_things.amount,
+        queued_things_name = queued_things.prefix + raw_thing_name,
         maintenance_mode = maintenance.active,
     )
-    head = """<head>
+    head = f"""<head>
     <title>Stable Horde</title>
-    <meta name="google-site-verification" content="pmLKyCEPKM5csKT9mW1ZbGLu2TX_wD0S5FCxWlmg_iI" />
+    <meta name="google-site-verification" content="{google_verification_string}" />
     </head>
     """
     return(head + markdown(findex + top_contributors + policies))

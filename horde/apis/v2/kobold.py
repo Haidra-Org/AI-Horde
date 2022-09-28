@@ -2,31 +2,43 @@ from .v2 import *
 
 class AsyncGenerate(AsyncGenerate):
     
-    def validate(self):
-        super().validate()
-        if self.args["params"].get("length",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.args["params"].get("width",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.args["params"].get("steps",50) > 100:
-            raise e.TooManySteps(self.username, self.args['params']['steps'])
+    def initiate_waiting_prompt(self):
+        self.wp = WaitingPrompt(
+            db,
+            waiting_prompts,
+            processing_generations,
+            self.args["prompt"],
+            self.user,
+            self.args["params"],
+            workers = self.args["workers"],
+            models = self.args["models"],
+            softprompts = self.args["softprompts"],
+        )
 
 
 class SyncGenerate(SyncGenerate):
 
-    def validate(self):
-        super().validate()
-        if self.args["params"].get("length",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.args["params"].get("width",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.args["params"].get("steps",50) > 100:
-            raise e.TooManySteps(self.username, self.args['params']['steps'])
+    def initiate_waiting_prompt(self):
+        self.wp = WaitingPrompt(
+            db,
+            waiting_prompts,
+            processing_generations,
+            self.args["prompt"],
+            self.user,
+            self.args["params"],
+            workers = self.args["workers"],
+            models = self.args["models"],
+            softprompts = self.args["softprompts"],
+        )
 
 class JobPop(JobPop):
 
     def check_in(self):
-        self.worker.check_in(self.args['max_pixels'])
+        self.worker.check_in(
+            self.args['max_length'],
+            self.args['max_content_length'],
+            self.args['softprompts']
+        )
   
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
@@ -37,7 +49,7 @@ class HordeLoad(HordeLoad):
         '''Details about the current performance of this Horde
         '''
         load_dict = super().get()[0]
-        load_dict["past_minute_megapixelsteps"] = db.stats.get_things_per_min()
+        load_dict["past_minute_tokens"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
 

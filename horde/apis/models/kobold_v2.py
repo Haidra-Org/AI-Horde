@@ -57,13 +57,13 @@ class Models(v2.Models):
         self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {
             "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
             "max_content_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
-            "kilotokens_generated": fields.Float(description="How many kilotokens this worker has generated until now"),
+            "tokens_generated": fields.Float(description="How many tokens this worker has generated until now"),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsKobold', self.response_model_contrib_details, {
-            "kilotokens": fields.Float(description="How many kilotokens this user has generated"),
+            "tokens": fields.Float(description="How many tokens this user has generated"),
         })
         self.response_model_use_details = api.inherit('UsageDetailsKobold', self.response_model_use_details, {
-            "kilotokens": fields.Float(description="How many kilotokens this user has requested"),
+            "tokens": fields.Float(description="How many tokens this user has requested"),
         })
         self.response_model_user_details = api.model('UserDetails', {
             "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
@@ -76,7 +76,7 @@ class Models(v2.Models):
         })
         self.response_model_horde_performance = api.inherit('HordePerformanceKobold', self.response_model_horde_performance, {
             "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
-            "queued_kilotokens": fields.Float(description="The amount of kilotokens in waiting and processing requests currently in this Horde"),
-            "past_minute_kilotokens": fields.Float(description="How many kilotokens this Horde generated in the last minute"),
+            "queued_tokens": fields.Float(description="The amount of tokens in waiting and processing requests currently in this Horde"),
+            "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute"),
             "worker_count": fields.Integer(description="How many workers are actively processing text generations in this Horde in the past 5 minutes"),
         })

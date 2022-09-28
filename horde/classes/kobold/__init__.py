@@ -16,7 +16,6 @@ class WaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.max_length * self.n / thing_divisor,2)
         self.model = kwargs.get("model", 'ReadOnly')
-        self.servers = kwargs.get("servers", [])
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
 
