@@ -153,3 +153,16 @@ class Database(Database):
     def new_stats(self):
         return(Stats(self))
 
+    def get_available_models(self):
+        models_dict = {}
+        for worker in self.workers.values():
+            if worker.is_stale():
+                continue
+            mode_dict_template = {
+                "model_name": worker.model,
+                "model_count": 0,
+            }
+            models_dict[worker.model] = models_dict.get(worker.model, mode_dict_template)
+            models_dict[worker.model]["model_count"] += 1
+        return(list(models_dict.values()))
+

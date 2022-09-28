@@ -278,7 +278,7 @@ class SubmitGeneration(Resource):
     parser.add_argument("id", type=str, required=True, help="The processing generation uuid")
     parser.add_argument("api_key", type=str, required=True, help="The server's owner API key")
     parser.add_argument("generation", type=str, required=False, default=[], help="The download location of the image")
-    parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
+    # parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generated image")
 
     @api.expect(parser)
     def post(self):
@@ -332,6 +332,13 @@ class AdminMaintenanceMode(Resource):
         logger.debug(maintenance)
         maintenance.toggle(args['active'])
         return({"maintenance_mode": maintenance.active}, 200)
+
+class Models(Resource):
+    decorators = [limiter.limit("2/minute")]
+    @logger.catch
+    def get(self):
+        return(_db.get_available_models(),200)
+
 
 class Servers(Resource):
     @logger.catch
@@ -522,3 +529,4 @@ api.add_resource(ServerSingle, "/servers/<string:server_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(AdminMaintenanceMode, "/admin/maintenance")
+api.add_resource(Models, "/models")

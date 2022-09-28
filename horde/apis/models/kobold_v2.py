@@ -82,3 +82,8 @@ class Models(v2.Models):
             "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute"),
             "worker_count": fields.Integer(description="How many workers are actively processing text generations in this Horde in the past 5 minutes"),
         })
+        self.response_model_model = api.model('Model', {
+            'name': fields.String(description="The Name of a model available by workers in this horde."),
+            'count': fields.Integer(description="How many of workers in this horde are running this model."),
+        })
+        

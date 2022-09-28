@@ -55,6 +55,15 @@ class HordeLoad(HordeLoad):
         load_dict["past_minute_tokens"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
+class Models(Resource):
+    decorators = [limiter.limit("2/minute")]
+    @logger.catch
+    @api.marshal_with(models.response_model_model, code=200, description='List All Active Models', as_list=True)
+    def get(self):
+        '''Returns a list of models active currently in this horde
+        '''
+        return(db.get_available_models(),200)
+
 
 api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
@@ -69,3 +78,4 @@ api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(HordeMaintenance, "/status/maintenance")
+api.add_resource(Models, "/status/models")
