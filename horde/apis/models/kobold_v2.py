@@ -4,6 +4,8 @@ from . import v2
 
 class Parsers(v2.Parsers):
     def __init__(self):
+        self.generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate", location="json")
+        self.generate_parser.add_argument("softprompts", type=str, action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request", location="json")
         self.job_pop_parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
         self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate")
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")

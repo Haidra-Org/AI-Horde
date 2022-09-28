@@ -1,10 +1,8 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter
-from ...logger import logger
+from ... import limiter, logger, maintenance
 from ...classes import db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance
 from enum import Enum
 from .. import exceptions as e
 import os, time
@@ -113,8 +111,12 @@ class AsyncGenerate(GenerateTemplate):
         super().post()
         ret_dict = {"id":self.wp.id}
         if not self.has_valid_workers():
-            ret_dict['message'] = "Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512"
+            ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
+
+    def get_size_too_big_message(self):
+        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Please confider reducing its size of the request.")
+
 
 class SyncGenerate(GenerateTemplate):
 

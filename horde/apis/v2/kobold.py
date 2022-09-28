@@ -15,6 +15,9 @@ class AsyncGenerate(AsyncGenerate):
             softprompts = self.args["softprompts"],
         )
 
+    def get_size_too_big_message(self):
+        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the amount of tokens to generate.")
+
 
 class SyncGenerate(SyncGenerate):
 

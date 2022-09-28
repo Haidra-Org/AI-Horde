@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime
 import threading, time
 from .. import logger
-from ...vars import thing_name,raw_thing_name
+from ...vars import thing_name,raw_thing_name,thing_divisor
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
