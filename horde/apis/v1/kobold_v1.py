@@ -12,8 +12,7 @@ import os, time
 api = Namespace('v1', 'API Version 1' )
 
 response_model_generation = api.model('GenerationV1', {
-    'img': fields.String,
-    'seed': fields.String,
+    'text': fields.String,
     'server_id': fields.String(attribute='worker_id'),
     'server_name': fields.String(attribute='worker_name'),
     'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
@@ -241,7 +240,7 @@ class PromptPop(Resource):
             server.create(user, args['name'])
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        server.check_in(args['max_pixels'])
+        server.check_in(args['max_length'], args['max_content_length'], args["softprompts"], model = args['model'])
         if server.maintenance:
             return(f"Server has been put into maintenance mode by the owner",403)
         if server.paused:
@@ -268,7 +267,19 @@ class PromptPop(Resource):
                 skipped_reason = check_gen[1]
                 skipped[skipped_reason] = skipped.get(skipped_reason,0) + 1
                 continue
-            ret = wp.start_generation(server)
+            matching_softprompt = False
+            for sp in wp.softprompts:
+                # If a None softprompts has been provided, we always match, since we can always remove the softprompt
+                if sp == '':
+                    matching_softprompt = sp
+                for sp_name in args['softprompts']:
+                    # logger.info([sp_name,sp,sp in sp_name])
+                    if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
+                        matching_softprompt = sp_name
+                        break
+                if matching_softprompt:
+                    break
+            ret = wp.start_generation(server,matching_softprompt)
             return(ret, 200)
         return({"id": None, "skipped": skipped}, 200)
 
@@ -291,7 +302,7 @@ class SubmitGeneration(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.worker.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        kudos = procgen.set_generation(args['generation'], args['seed'])
+        kudos = procgen.set_generation(args['generation'])
         if kudos == 0:
             return(f"{get_error(ServerErrors.DUPLICATE_GEN,id = args['id'])}",400)
         return({"reward": kudos}, 200)
@@ -337,7 +348,12 @@ class Models(Resource):
     decorators = [limiter.limit("2/minute")]
     @logger.catch
     def get(self):
-        return(_db.get_available_models(),200)
+        # Old style, using new class
+        models = _db.get_available_models()
+        mdict = {}
+        for model in models:
+            mdict[model['name']] = model['count']
+        return(mdict,200)
 
 
 class Servers(Resource):
@@ -350,8 +366,9 @@ class Servers(Resource):
             sdict = {
                 "name": server.name,
                 "id": server.id,
-                "max_pixels": server.max_pixels,
-                "megapixelsteps_generated": server.contributions,
+                "model": server.model,
+                "max_length": server.max_length,
+                "max_content_length": server.max_content_length,
                 "requests_fulfilled": server.fulfilments,
                 "kudos_rewards": server.kudos,
                 "kudos_details": server.kudos_details,
@@ -370,8 +387,9 @@ class ServerSingle(Resource):
             sdict = {
                 "name": server.name,
                 "id": server.id,
-                "max_pixels": server.max_pixels,
-                "megapixelsteps_generated": server.contributions,
+                "model": server.model,
+                "max_length": server.max_length,
+                "max_content_length": server.max_content_length,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
                 "maintenance_mode": server.maintenance,
@@ -412,33 +430,6 @@ class ServerSingle(Resource):
         if not len(ret_dict):
             return("No server modification selected!", 400)
         return(ret_dict, 200)
-
-    # parser = reqparse.RequestParser()
-    # parser.add_argument("api_key", type=str, required=True, help="The Admin or server owner API key")
-
-    # # post shows also hidden server info
-    # decorators = [limiter.limit("30/minute")]
-    # def post(self, server_id = ''):
-    #     server = _db.find_worker_by_id(server_id)
-    #     if not server:
-    #         return("Invalid Server ID", 404)
-    #     args = self.parser.parse_args()
-    #     admin = _db.find_user_by_api_key(args['api_key'])
-    #     if not admin:
-    #         return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
-    #     sdict = {
-    #         "name": server.name,
-    #         "id": server.id,
-    #         "max_pixels": server.max_pixels,
-    #         "megapixelsteps_generated": server.contributions,
-    #         "requests_fulfilled": server.fulfilments,
-    #         "latest_performance": server.get_performance(),
-    #         "maintenance": server.maintenance,
-    #         "paused": server.paused,
-    #         "owner": server.user.get_unique_alias(),
-    #     }
-    #     return(sdict,200)
-
 
 class Users(Resource):
     @logger.catch
@@ -510,7 +501,7 @@ class HordeLoad(Resource):
     @logger.catch
     def get(self):
         load_dict = waiting_prompts.count_totals()
-        load_dict["megapixelsteps_per_min"] = _db.stats.get_things_per_min()
+        load_dict["kilotokens_per_min"] = _db.stats.get_things_per_min()
         load_dict["server_count"] = _db.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)

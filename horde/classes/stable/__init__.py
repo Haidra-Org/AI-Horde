@@ -50,8 +50,8 @@ class ProcessingGeneration(ProcessingGeneration):
 
 class Worker(Worker):
 
-    def check_in(self, max_pixels):
-        super().check_in()
+    def check_in(self, max_pixels, **kwargs):
+        super().check_in(**kwargs)
         self.max_pixels = max_pixels
         logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
 
@@ -88,7 +88,7 @@ class Worker(Worker):
 
 class Database(Database):
 
-    def convert_things_to_kudos(self, pixelsteps):
+    def convert_things_to_kudos(self, pixelsteps, **kwargs):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
         kudos = round(pixelsteps / (512*512*5),2)
         # logger.info([pixels,multiplier,kudos])

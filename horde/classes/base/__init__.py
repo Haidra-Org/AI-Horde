@@ -173,22 +173,27 @@ class WaitingPrompt:
 
 
 class ProcessingGeneration:
+    generation = None
+    seed = None
+ 
     def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
         self.id = str(uuid4())
         self.owner = owner
         self.worker = worker
+        self.model = worker.model
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
-        self.generation = None
 
-    def set_generation(self, generation, seed):
+    # We allow the seed to not be sent
+    def set_generation(self, generation, **kwargs):
         if self.is_completed():
             return(0)
         self.generation = generation
-        self.seed = seed
+        # Support for two typical properties 
+        self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
-        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things)
+        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
         self.worker.record_contribution(self.owner.things, self.kudos, things_per_sec)
         self.owner.record_usage(self.owner.things, self.kudos)
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
@@ -228,22 +233,23 @@ class ProcessingGeneration:
         return(ret_dict)
 
 class Worker:
+    last_reward_uptime = 0
+    # Every how many seconds does this worker get a kudos reward
+    uptime_reward_threshold = 600
+    # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
+    maintenance = False
+    # Paused is set by the admins to prevent that worker from seeing any more requests
+    # This can be used for stopping workers who misbhevave for example, without informing their owners
+    paused = False
+    # Extra comment about the worker, set by its owner
+    info = None
+    kudos_details = {
+        "generated": 0,
+        "uptime": 0,
+    }
+
     def __init__(self, db):
         self.db = db
-        self.kudos_details = {
-            "generated": 0,
-            "uptime": 0,
-        }
-        self.last_reward_uptime = 0
-        # Every how many seconds does this worker get a kudos reward
-        self.uptime_reward_threshold = 600
-        # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
-        self.maintenance = False
-        # Paused is set by the admins to prevent that worker from seeing any more requests
-        # This can be used for stopping workers who misbhevave for example, without informing their owners
-        self.paused = False
-        # Extra comment about the worker, set by its owner
-        self.info = None
 
     def create(self, user, name):
         self.user = user
@@ -257,12 +263,17 @@ class Worker:
         self.db.register_new_worker(self)
 
     # This should be overwriten by each specific horde
-    def check_in(self, max_pixels):
+    def calculate_uptime_reward(self):
+        return(100)
+
+    # This should be extended by each specific horde
+    def check_in(self, **kwargs):
+        self.model = kwargs.get("model")
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                kudos = calculate_uptime_reward(self)
+                kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
                 logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
@@ -607,10 +618,11 @@ class User:
 
 
 class Stats:
+    worker_performances = []
+    fulfillments = []
+
     def __init__(self, db, convert_flag = None, interval = 60):
         self.db = db
-        self.worker_performances = []
-        self.fulfillments = []
         self.interval = interval
         self.last_pruning = datetime.now()
 
@@ -864,6 +876,19 @@ class Database:
                 return(worker)
         return(None)
 
+    def get_available_models(self):
+        models_dict = {}
+        for worker in self.workers.values():
+            if worker.is_stale():
+                continue
+            mode_dict_template = {
+                "name": worker.model,
+                "count": 0,
+            }
+            models_dict[worker.model] = models_dict.get(worker.model, mode_dict_template)
+            models_dict[worker.model]["count"] += 1
+        return(list(models_dict.values()))
+
     def transfer_kudos(self, source_user, dest_user, amount):
         if amount > source_user.kudos:
             return([0,'Not enough kudos.'])
@@ -892,7 +917,7 @@ class Database:
         return(kudos)
 
     # Should be overriden
-    def convert_things_to_kudos(self, things):
+    def convert_things_to_kudos(self, things, **kwargs):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
         kudos = round(things,2)
         return(kudos)

@@ -40,7 +40,8 @@ class JobPop(JobPop):
         self.worker.check_in(
             self.args['max_length'],
             self.args['max_content_length'],
-            self.args['softprompts']
+            self.args['softprompts'],
+            model = self.args['model']
         )
   
 class HordeLoad(HordeLoad):

@@ -53,18 +53,17 @@ class ProcessingGeneration(ProcessingGeneration):
         }
         return(ret_dict)
 
-
 class Worker(Worker):
 
-    def check_in(self, max_length, max_content_length, softprompts):
-        super().check_in()
+    def check_in(self, max_length, max_content_length, softprompts, **kwargs):
+        super().check_in(**kwargs)
         self.max_length = max_length
         self.max_content_length = max_content_length
         self.softprompts = softprompts
-        logger.debug(f"Worker {self.name} checked-in, offering {self.max_length} max tokens and {self.max_content_length} max content length.")
+        logger.debug(f"Worker {self.name} checked-in, offering model {self.model} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
     def calculate_uptime_reward(self):
-        return(round(self._db.stats.calculate_model_multiplier(model) / 2.75, 2))
+        return(round(self.db.stats.calculate_model_multiplier(self.model) / 2.75, 2))
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
@@ -118,6 +117,8 @@ class Worker(Worker):
 
 class Stats(Stats):
 
+    model_mulitpliers = {}
+
     def calculate_model_multiplier(self, model_name):
         # To avoid doing this calculations all the time
         multiplier = self.model_mulitpliers.get(model_name)
@@ -140,8 +141,9 @@ class Stats(Stats):
 
 class Database(Database):
 
-    def convert_things_to_kudos(self, tokens):
-        multiplier = self.stats.calculate_model_multiplier(model_name)
+    def convert_things_to_kudos(self, tokens, **kwargs):
+        logger.debug(kwargs)
+        multiplier = self.stats.calculate_model_multiplier(kwargs['model_name'])
         # We want a 2.7B model at 80 tokens to be worth around 10 kudos
         kudos = round(tokens * multiplier / 21, 2)
         return(kudos)
@@ -152,17 +154,4 @@ class Database(Database):
         return(User(self))
     def new_stats(self):
         return(Stats(self))
-
-    def get_available_models(self):
-        models_dict = {}
-        for worker in self.workers.values():
-            if worker.is_stale():
-                continue
-            mode_dict_template = {
-                "model_name": worker.model,
-                "model_count": 0,
-            }
-            models_dict[worker.model] = models_dict.get(worker.model, mode_dict_template)
-            models_dict[worker.model]["model_count"] += 1
-        return(list(models_dict.values()))
 
