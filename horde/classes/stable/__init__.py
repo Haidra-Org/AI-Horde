@@ -12,9 +12,9 @@ class WaitingPrompt(WaitingPrompt):
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
         # To avoid unnecessary calculations, we do it once here.
-        self.pixelsteps = self.width * self.height * self.steps
+        self.things = self.width * self.height * self.steps
         # The total amount of to pixelsteps requested.
-        self.total_usage = round(self.pixelsteps * self.n / 1000000,2)
+        self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
@@ -33,36 +33,6 @@ class WaitingPrompt(WaitingPrompt):
 
     def new_procgen(self, worker):
         return(ProcessingGeneration(self, self._processing_generations, worker))
-
-    def get_queued_things(self):
-        '''The mps still queued to be generated for this WP
-        For the Stable Horde, things == megapixelsteps
-        '''
-        return(round(self.pixelsteps * self.n/1000000,2))
-
-    def get_status(self, lite = False):
-        ret_dict = super().get_status(lite)
-        queue_pos, queued_mps, queued_n = self.get_own_queue_stats()
-        # We increment the priority by 1, because it starts at 0
-        # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
-        ret_dict["queue_position"] = queue_pos + 1
-        active_workers = self.db.count_active_workers()
-        # If there's less requests than the number of active workers
-        # Then we need to adjust the parallelization accordingly
-        if queued_n < active_workers:
-            active_workers = queued_n
-        mpss = (self.db.stats.get_request_avg() / 1000000) * active_workers
-        # Is this is 0, it means one of two things:
-        # 1. This horde hasn't had any requests yet. So we'll initiate it to 1mpss
-        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
-        if mpss == 0:
-            mpss = 1
-        wait_time = queued_mps / mpss
-        # We add the expected running time of our processing gens
-        for procgen in self.processing_gens:
-            wait_time += procgen.get_expected_time_left()
-        ret_dict["wait_time"] = round(wait_time)
-        return(ret_dict)
 
 
 class ProcessingGeneration(ProcessingGeneration):
@@ -122,22 +92,11 @@ class Worker(Worker):
             skipped_reason = 'max_pixels'
         return([is_matching,skipped_reason])
 
-    # We split it to its own function to make it extendable
-    def convert_contribution(self,pixelsteps):
-        self.contributions = round(self.contributions + pixelsteps/1000000,2)
-
     def get_details(self, is_privileged = False):
         ret_dict = super().get_details(is_privileged)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
         return(ret_dict)
-
-    def get_performance(self):
-        if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances) / 1000000,1)} {thing_name} per second'
-        else:
-            ret_str = f'No requests fulfilled yet'
-        return(ret_str)
 
     @logger.catch
     def serialize(self):
@@ -151,42 +110,6 @@ class Worker(Worker):
         self.max_pixels = saved_dict["max_pixels"]
         if convert_flag == 'pixelsteps':
             self.contributions = round(self.contributions / 50,2)
-
-class PromptsIndex(PromptsIndex):
-
-    def count_totals(self):
-        ret_dict = {
-            "queued_requests": 0,
-            # mps == Megapixelsteps
-            "queued_megapixelsteps": 0,
-        }
-        for wp in self._index.values():
-            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
-            ret_dict["queued_requests"] += current_wp_queue
-            if current_wp_queue > 0:
-                ret_dict["queued_megapixelsteps"] += wp.pixelsteps * current_wp_queue / 1000000
-        # We round the end result to avoid to many decimals
-        ret_dict["queued_megapixelsteps"] = round(ret_dict["queued_megapixelsteps"],2)
-        return(ret_dict)
-
-                              
-class User(User):
-
-    def record_usage(self, pixelsteps, kudos):
-        super().record_usage(kudos)
-        self.usage[thing_name] = round(self.usage[thing_name] + (pixelsteps * self.usage_multiplier / 1000000),2)
-
-    def record_contributions(self, pixelsteps, kudos):
-        super().record_contributions(kudos)
-        self.contributions[thing_name] = round(self.contributions[thing_name] + pixelsteps/1000000,2)
-
-
-class Stats(Stats):
-
-    def get_things_per_min(self):
-        pixelsteps_per_min = super().get_things_per_min()
-        megapixelsteps_per_min = round(pixelsteps_per_min / 1000000,2)
-        return(megapixelsteps_per_min)
 
 class Database(Database):
 

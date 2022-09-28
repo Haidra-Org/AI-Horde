@@ -338,6 +338,7 @@ class WorkerSingle(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
 
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Worker Details', skip_none=True)
     @api.response(404, 'Worker Not Found', models.response_model_error)
     def get(self, worker_id = ''):
@@ -363,10 +364,11 @@ class WorkerSingle(Resource):
     put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
+    put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details.", location="json")
 
 
     decorators = [limiter.limit("30/minute")]
-    # @api.expect(parser)
+    @api.expect(put_parser)
     @api.marshal_with(models.response_model_worker_modify, code=200, description='Modify Worker', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -394,6 +396,12 @@ class WorkerSingle(Resource):
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.maintenance = self.args.maintenance
             ret_dict["maintenance"] = worker.maintenance
+        # Only owners can set info notes
+        if self.args.info != None:
+            if admin != worker.user:
+                raise e.NotOwner(admin.get_unique_alias(), worker.name)
+            worker.info = self.args.info
+            ret_dict["info"] = worker.info
         # Only admins can set a worker as paused
         if self.args.paused != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):

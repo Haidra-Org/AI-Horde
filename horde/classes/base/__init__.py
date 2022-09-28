@@ -28,6 +28,9 @@ class WaitingPrompt:
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params):
         self.n = params.pop('n', 1)
+        # This specific per horde so it should be set in the extended class
+        self.things = 0
+        self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
@@ -85,9 +88,9 @@ class WaitingPrompt:
                 ret_dict["processing"] += 1
         return(ret_dict)
 
-    # Should be overwritten
     def get_queued_things(self):
-        return(0)
+        '''The things still queued to be generated for this waiting prompt'''
+        return(round(self.things * self.n/thing_divisor,2))
 
     def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()
@@ -99,6 +102,29 @@ class WaitingPrompt:
             for procgen in self.processing_gens:
                 if procgen.is_completed():
                     ret_dict["generations"].append(procgen.get_details())
+        queue_pos, queued_things, queued_n = self.get_own_queue_stats()
+        # We increment the priority by 1, because it starts at 0
+        # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
+        ret_dict["queue_position"] = queue_pos + 1
+        active_workers = self.db.count_active_workers()
+        # If there's less requests than the number of active workers
+        # Then we need to adjust the parallelization accordingly
+        if queued_n < active_workers:
+            active_workers = queued_n
+        avg_things_per_sec = (self.db.stats.get_request_avg() / thing_divisor) * active_workers
+        # Is this is 0, it means one of two things:
+        # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
+        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
+        if avg_things_per_sec == 0:
+            avg_things_per_sec = 1
+        wait_time = queued_things / avg_things_per_sec
+        # We add the expected running time of our processing gens
+        for procgen in self.processing_gens:
+            wait_time += procgen.get_expected_time_left()
+        ret_dict["wait_time"] = round(wait_time)
+        return(ret_dict)
+
+
         return(ret_dict)
 
     def get_lite_status(self):
@@ -212,6 +238,8 @@ class Worker:
         # Paused is set by the admins to prevent that worker from seeing any more requests
         # This can be used for stopping workers who misbhevave for example, without informing their owners
         self.paused = False
+        # Extra comment about the worker, set by its owner
+        self.info = None
 
     def create(self, user, name):
         self.user = user
@@ -225,7 +253,7 @@ class Worker:
         self.db.register_new_worker(self)
 
     # This should be overwriten by each specific horde
-    def check_in(self):
+    def check_in(self, note):
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -265,9 +293,9 @@ class Worker:
             skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
-    # We split it to its own function to make it extendable for specialized calculations
-    def convert_contribution(self, thing):
-        self.contributions = round(self.contributions + thing,2)
+    # We split it to its own function to make it extendable
+    def convert_contribution(self,raw_things):
+        self.contributions = round(self.contributions + raw_things/thing_divisor,2)
 
     @logger.catch
     def record_contribution(self, thing, kudos, thing_per_sec):
@@ -296,7 +324,7 @@ class Worker:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} {raw_thing_name} per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances) / thing_divisor,1)} {thing_name} per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
@@ -322,6 +350,7 @@ class Worker:
             "performance": self.get_performance(),
             "uptime": self.uptime,
             "maintenance_mode": self.maintenance,
+            "info": self.info,
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
@@ -343,6 +372,7 @@ class Worker:
             "uptime": self.uptime,
             "paused": self.paused,
             "maintenance": self.maintenance,
+            "info": self.info,
         }
         return(ret_dict)
 
@@ -360,6 +390,7 @@ class Worker:
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
+        self.info = saved_dict.get("info",None)
         self.db.workers[self.name] = self
 
 
@@ -400,12 +431,20 @@ class PromptsIndex(Index):
         return(count)
 
     def count_totals(self):
+        queued_thing = f"queued_{thing_name}"
         ret_dict = {
             "queued_requests": 0,
+            queued_thing: 0,
         }
         for wp in self._index.values():
-            ret_dict["queued_requests"] += wp.n + wp.count_processing_gens()["processing"]
+            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+            ret_dict["queued_requests"] += current_wp_queue
+            if current_wp_queue > 0:
+                ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
+        # We round the end result to avoid to many decimals
+        ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
         return(ret_dict)
+
 
     def get_waiting_wp_by_kudos(self):
         sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
@@ -495,13 +534,15 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, kudos):
+    def record_usage(self, kudos, raw_things):
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
+        self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
 
-    def record_contributions(self, kudos):
+    def record_contributions(self, kudos, raw_things):
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
+        self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
 
     def record_uptime(self, kudos):
         self.modify_kudos(kudos,"accumulated")
@@ -598,6 +639,7 @@ class Stats:
             self.last_pruning = datetime.now()
             self.fulfillments = pruned_array
             logger.debug("Pruned fulfillments")
+        things_per_min = round(total_things / thing_divisor,2)
         return(total_things)
 
     def get_request_avg(self):
@@ -850,6 +892,5 @@ class Database:
     def convert_things_to_kudos(self, things):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
         kudos = round(things,2)
-        # logger.info([pixels,multiplier,kudos])
         return(kudos)
 

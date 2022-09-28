@@ -86,6 +86,7 @@ class Models:
             "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde."),
             "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
             "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
+            "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {

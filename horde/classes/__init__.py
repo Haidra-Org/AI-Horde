@@ -9,9 +9,15 @@ raw_thing_names = {
     "stable": "pixelsteps",
     "kobold": "tokens",
 }
+# The division that converts raw thing to thing
+thing_divisors = {
+    "stable": 1000000,
+    "kobold": 1000,
+}
 
 thing_name = thing_names[args.horde]
 raw_thing_name = raw_thing_names[args.horde]
+thing_divisor = thing_divisors[args.horde]
 
 # Should figure out an elegant way to do this with a for loop
 WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt

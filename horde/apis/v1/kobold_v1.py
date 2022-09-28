@@ -95,8 +95,12 @@ class SyncGenerate(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
     parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
+    parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
+    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+    parser.add_argument("softprompts", type=str, action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
+    # Not implemented yet
+    parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
     @api.expect(parser)
     @api.response(200, 'Success', response_model_generation)
     @api.response(400, 'Validation Error')
@@ -116,12 +120,6 @@ class SyncGenerate(Resource):
         wp_count = waiting_prompts.count_waiting_requests(user)
         if wp_count >= user.concurrency:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
-        if args["params"].get("length",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
-        if args["params"].get("width",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
-        if args["params"].get("steps",50) > 100:
-            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
         wp = WaitingPrompt(
             _db,
             waiting_prompts,
@@ -130,6 +128,8 @@ class SyncGenerate(Resource):
             user,
             args["params"],
             servers=args["servers"],
+            models=args["models"],
+            softprompts=args["softprompts"],
         )
         server_found = False
         for server in _db.workers.values():
@@ -164,9 +164,6 @@ class AsyncStatus(Resource):
         if not wp:
             return("ID not found", 404)
         wp_status = wp.get_status()
-        # If the status is retrieved after the wp is done we clear it to free the ram
-        if wp_status["done"]:
-            wp.delete()
         return(wp_status, 200)
 
 
@@ -185,8 +182,10 @@ class AsyncGenerate(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
     parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the SD server")
+    parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
+    parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
     parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+    parser.add_argument("softprompts", action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
 
     @api.expect(parser)
     def post(self):
@@ -205,12 +204,6 @@ class AsyncGenerate(Resource):
         wp_count = waiting_prompts.count_waiting_requests(user)
         if wp_count >= user.concurrency:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
-        if args["params"].get("length",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
-        if args["params"].get("width",512)%64:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
-        if args["params"].get("steps",50) > 100:
-            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
         wp = WaitingPrompt(
             _db,
             waiting_prompts,
@@ -220,17 +213,6 @@ class AsyncGenerate(Resource):
             args["params"],
             servers=args["servers"],
         )
-        server_found = False
-        for server in _db.workers.values():
-            if len(args.servers) and server.id not in args.servers:
-                continue
-            if server.can_generate(wp)[0]:
-                server_found = True
-                break
-        if not server_found:
-            del wp # Normally garbage collection will handle it, but doesn't hurt to be thorough
-            return("No active server found to fulfill this request. Please Try again later...", 503)
-        # if a server is available to fulfil this prompt, we activate it and add it to the queue to be generated
         wp.activate()
         return({"id":wp.id}, 200)
 
@@ -239,8 +221,11 @@ class PromptPop(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
     parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
-    parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this server can generate")
+    parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
+    parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
+    parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
     parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
+    parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
 
     decorators = [limiter.limit("45/second")]
     @api.expect(parser)
