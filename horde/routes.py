@@ -60,7 +60,11 @@ This is the worker which has generated the most pixels for the horde.
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
     total_fulfillments = ConvertAmount(totals["fulfilments"])
+    horde_title = args.horde.capitalize()
+    if args.horde == "kobold":
+        horde_title = "KoboldAI"
     findex = index.format(
+        horde_title = horde_title,
         horde_img_url = img_url,
         horde_image = align_image,
         avg_performance= avg_performance.amount,
@@ -75,8 +79,9 @@ This is the worker which has generated the most pixels for the horde.
         queued_things_name = queued_things.prefix + raw_thing_name,
         maintenance_mode = maintenance.active,
     )
+
     head = f"""<head>
-    <title>Stable Horde</title>
+    <title>{horde_title} Horde</title>
     <meta name="google-site-verification" content="{google_verification_string}" />
     </head>
     """
