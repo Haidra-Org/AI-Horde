@@ -11,6 +11,8 @@ class AsyncGenerate(AsyncGenerate):
         if self.args["params"].get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
 
+    def get_size_too_big_message(self):
+        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
 
 class SyncGenerate(SyncGenerate):
 

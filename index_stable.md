@@ -1,16 +1,16 @@
 # Stable Horde
 
-<img style="float:right" src="https://raw.githubusercontent.com/db0/Stable-Horde/main/img/{stable_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/Stable-Horde) of [Stable Diffusion workers](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
+<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/Stable-Horde) of [Stable Diffusion workers](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
 
 Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
 
 ## Stats 
 
-* Average Recent Performance: {avg_performance} Megapixelsteps per second
-* Total GPS generated: {total_pixels} Gigapixelsteps
+* Average Recent Performance: {avg_performance} {avg_thing_name} per second
+* Total GPS generated: {total_things} {total_things_name}
 * Total requests fulfilled: {total_fulfillments}
 * Active [Workers](/api/v2/workers): {active_workers}
-* Queue: {total_queue} requests for a total of {total_mps} Megapixelsteps
+* Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}
 
 ## Usage
 

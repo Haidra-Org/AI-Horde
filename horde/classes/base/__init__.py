@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime
 import threading, time
 from .. import logger
-from .. import thing_name,raw_thing_name
+from ...vars import thing_name,raw_thing_name,thing_divisor
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -14,7 +14,7 @@ class WaitingPrompt:
         self.user = user
         self.params = params
         self.total_usage = 0
-        self.extract_params(params)
+        self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
         self.processing_gens = []
@@ -26,8 +26,11 @@ class WaitingPrompt:
             self.stale_time = 600
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
-    def extract_params(self, params):
+    def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
+        # This specific per horde so it should be set in the extended class
+        self.things = 0
+        self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
@@ -85,9 +88,9 @@ class WaitingPrompt:
                 ret_dict["processing"] += 1
         return(ret_dict)
 
-    # Should be overwritten
     def get_queued_things(self):
-        return(0)
+        '''The things still queued to be generated for this waiting prompt'''
+        return(round(self.things * self.n/thing_divisor,2))
 
     def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()
@@ -99,6 +102,29 @@ class WaitingPrompt:
             for procgen in self.processing_gens:
                 if procgen.is_completed():
                     ret_dict["generations"].append(procgen.get_details())
+        queue_pos, queued_things, queued_n = self.get_own_queue_stats()
+        # We increment the priority by 1, because it starts at 0
+        # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
+        ret_dict["queue_position"] = queue_pos + 1
+        active_workers = self.db.count_active_workers()
+        # If there's less requests than the number of active workers
+        # Then we need to adjust the parallelization accordingly
+        if queued_n < active_workers:
+            active_workers = queued_n
+        avg_things_per_sec = (self.db.stats.get_request_avg() / thing_divisor) * active_workers
+        # Is this is 0, it means one of two things:
+        # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
+        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
+        if avg_things_per_sec == 0:
+            avg_things_per_sec = 1
+        wait_time = queued_things / avg_things_per_sec
+        # We add the expected running time of our processing gens
+        for procgen in self.processing_gens:
+            wait_time += procgen.get_expected_time_left()
+        ret_dict["wait_time"] = round(wait_time)
+        return(ret_dict)
+
+
         return(ret_dict)
 
     def get_lite_status(self):
@@ -147,21 +173,31 @@ class WaitingPrompt:
 
 
 class ProcessingGeneration:
+    generation = None
+    seed = None
+ 
     def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
         self.id = str(uuid4())
         self.owner = owner
         self.worker = worker
+        self.model = worker.model
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
-        self.generation = None
 
-    # This should be extended by every horde type
-    def set_generation(self, generation):
+    # We allow the seed to not be sent
+    def set_generation(self, generation, **kwargs):
         if self.is_completed():
             return(0)
         self.generation = generation
-        return(0)
+        # Support for two typical properties 
+        self.seed = kwargs.get('seed', None)
+        things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
+        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
+        self.worker.record_contribution(self.owner.things, self.kudos, things_per_sec)
+        self.owner.record_usage(self.owner.things, self.kudos)
+        logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        return(self.kudos)
 
     def is_completed(self):
         if self.generation:
@@ -172,9 +208,8 @@ class ProcessingGeneration:
         self._processing_generations.del_item(self)
         del self
 
-    # This should be extended by every horde type
     def get_seconds_needed(self):
-        return(0)
+        return(self.owner.things / self.worker.get_performance_average())
 
     def get_expected_time_left(self):
         if self.is_completed():
@@ -198,20 +233,23 @@ class ProcessingGeneration:
         return(ret_dict)
 
 class Worker:
+    last_reward_uptime = 0
+    # Every how many seconds does this worker get a kudos reward
+    uptime_reward_threshold = 600
+    # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
+    maintenance = False
+    # Paused is set by the admins to prevent that worker from seeing any more requests
+    # This can be used for stopping workers who misbhevave for example, without informing their owners
+    paused = False
+    # Extra comment about the worker, set by its owner
+    info = None
+    kudos_details = {
+        "generated": 0,
+        "uptime": 0,
+    }
+
     def __init__(self, db):
         self.db = db
-        self.kudos_details = {
-            "generated": 0,
-            "uptime": 0,
-        }
-        self.last_reward_uptime = 0
-        # Every how many seconds does this worker get a kudos reward
-        self.uptime_reward_threshold = 600
-        # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
-        self.maintenance = False
-        # Paused is set by the admins to prevent that worker from seeing any more requests
-        # This can be used for stopping workers who misbhevave for example, without informing their owners
-        self.paused = False
 
     def create(self, user, name):
         self.user = user
@@ -225,12 +263,17 @@ class Worker:
         self.db.register_new_worker(self)
 
     # This should be overwriten by each specific horde
-    def check_in(self):
+    def calculate_uptime_reward(self):
+        return(100)
+
+    # This should be extended by each specific horde
+    def check_in(self, **kwargs):
+        self.model = kwargs.get("model")
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                kudos = 100
+                kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
                 logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
@@ -240,7 +283,6 @@ class Worker:
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.now()
-        logger.debug(f"Worker {self.name} checked-in")
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -259,15 +301,15 @@ class Worker:
         if self.is_stale():
             # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
-        # if thes worker is paused, we return OK, but skip everything
+        # If the request specified only specific workers to fulfill it, and we're not one of them, we skip
         if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
-    # We split it to its own function to make it extendable for specialized calculations
-    def convert_contribution(self, thing):
-        self.contributions = round(self.contributions + thing,2)
+    # We split it to its own function to make it extendable
+    def convert_contribution(self,raw_things):
+        self.contributions = round(self.contributions + raw_things/thing_divisor,2)
 
     @logger.catch
     def record_contribution(self, thing, kudos, thing_per_sec):
@@ -296,7 +338,7 @@ class Worker:
 
     def get_performance(self):
         if len(self.performances):
-            ret_str = f'{round(sum(self.performances) / len(self.performances),1)} {raw_thing_name} per second'
+            ret_str = f'{round(sum(self.performances) / len(self.performances) / thing_divisor,1)} {thing_name} per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
@@ -322,6 +364,7 @@ class Worker:
             "performance": self.get_performance(),
             "uptime": self.uptime,
             "maintenance_mode": self.maintenance,
+            "info": self.info,
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
@@ -343,6 +386,7 @@ class Worker:
             "uptime": self.uptime,
             "paused": self.paused,
             "maintenance": self.maintenance,
+            "info": self.info,
         }
         return(ret_dict)
 
@@ -360,6 +404,7 @@ class Worker:
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
+        self.info = saved_dict.get("info",None)
         self.db.workers[self.name] = self
 
 
@@ -400,12 +445,20 @@ class PromptsIndex(Index):
         return(count)
 
     def count_totals(self):
+        queued_thing = f"queued_{thing_name}"
         ret_dict = {
             "queued_requests": 0,
+            queued_thing: 0,
         }
         for wp in self._index.values():
-            ret_dict["queued_requests"] += wp.n + wp.count_processing_gens()["processing"]
+            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+            ret_dict["queued_requests"] += current_wp_queue
+            if current_wp_queue > 0:
+                ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
+        # We round the end result to avoid to many decimals
+        ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
         return(ret_dict)
+
 
     def get_waiting_wp_by_kudos(self):
         sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
@@ -495,13 +548,15 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, kudos):
+    def record_usage(self, kudos, raw_things):
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
+        self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
 
-    def record_contributions(self, kudos):
+    def record_contributions(self, kudos, raw_things):
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
+        self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
 
     def record_uptime(self, kudos):
         self.modify_kudos(kudos,"accumulated")
@@ -563,10 +618,11 @@ class User:
 
 
 class Stats:
+    worker_performances = []
+    fulfillments = []
+
     def __init__(self, db, convert_flag = None, interval = 60):
         self.db = db
-        self.worker_performances = []
-        self.fulfillments = []
         self.interval = interval
         self.last_pruning = datetime.now()
 
@@ -598,6 +654,7 @@ class Stats:
             self.last_pruning = datetime.now()
             self.fulfillments = pruned_array
             logger.debug("Pruned fulfillments")
+        things_per_min = round(total_things / thing_divisor,2)
         return(total_things)
 
     def get_request_avg(self):
@@ -819,6 +876,19 @@ class Database:
                 return(worker)
         return(None)
 
+    def get_available_models(self):
+        models_dict = {}
+        for worker in self.workers.values():
+            if worker.is_stale():
+                continue
+            mode_dict_template = {
+                "name": worker.model,
+                "count": 0,
+            }
+            models_dict[worker.model] = models_dict.get(worker.model, mode_dict_template)
+            models_dict[worker.model]["count"] += 1
+        return(list(models_dict.values()))
+
     def transfer_kudos(self, source_user, dest_user, amount):
         if amount > source_user.kudos:
             return([0,'Not enough kudos.'])
@@ -847,9 +917,8 @@ class Database:
         return(kudos)
 
     # Should be overriden
-    def convert_things_to_kudos(self, things):
+    def convert_things_to_kudos(self, things, **kwargs):
         # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
         kudos = round(things,2)
-        # logger.info([pixels,multiplier,kudos])
         return(kudos)
 

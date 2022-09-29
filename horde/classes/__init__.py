@@ -1,18 +1,6 @@
 from .. import logger, args
 from importlib import import_module
 
-thing_names = {
-    "stable": "megapixelsteps",
-    "kobold": "kilotokens",
-}
-raw_thing_names = {
-    "stable": "pixelsteps",
-    "kobold": "tokens",
-}
-
-thing_name = thing_names[args.horde]
-raw_thing_name = raw_thing_names[args.horde]
-
 # Should figure out an elegant way to do this with a for loop
 WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
 ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}').ProcessingGeneration

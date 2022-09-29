@@ -1,5 +1,5 @@
 from werkzeug import exceptions as wze
-from ..logger import logger
+from .. logger import logger
 
 class MissingPrompt(wze.BadRequest):
     def __init__(self, username):
