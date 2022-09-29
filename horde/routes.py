@@ -58,6 +58,7 @@ This is the worker which has generated the most pixels for the horde.
     avg_performance = ConvertAmount(db.stats.get_request_avg())
     # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
+    logger.message(totals[thing_name],thing_divisor,total_things.amount)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
     total_fulfillments = ConvertAmount(totals["fulfilments"])
     findex = index.format(

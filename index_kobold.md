@@ -1,8 +1,9 @@
 # KoboldAI Horde
 
-<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a crowdsourced distributed cluster of [KoboldAI clients](https://github.com/KoboldAI/KoboldAI-Client). You can download the client and use it to experience stories similar to AI-Dungeon for free. If you like this service, consider joining the horde yourself!
+<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/KoboldAI-Horde) of [KoboldAI clients](https://github.com/KoboldAI/KoboldAI-Client). You can download the client and use it to experience stories similar to AI-Dungeon for free. If you like this service, consider joining the horde yourself!
 
-You can find the source and documentation for [KoboldAI Horde](https://github.com/db0/KoboldAI-Horde) in github.
+Also check out our sister project for image generation: [Stable Horde](https://stablehorde.net)
+
 
 ## Stats 
 
