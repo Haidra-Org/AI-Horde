@@ -26,7 +26,7 @@ def index():
     while big_image == align_image:
         big_image = random.randint(1, 5)
     if not top_contributor or not top_worker:
-        top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.png?raw=true" width="800" />'
+        top_contributors = f'\n<img src="{img_url}/{big_image}.jpg" width="800" />'
     else:
         # We don't use the prefix char, so we just discard it
         top_contrib_things = ConvertAmount(top_contributor.contributions[thing_name] * thing_divisor)
@@ -46,6 +46,8 @@ This is the worker which has generated the most pixels for the horde.
 * {top_worker_things.amount} {top_worker_things.prefix + raw_thing_name} generated.
 * {top_worker_fulfillments.amount}{top_worker_fulfillments.char} request fulfillments.
 * {top_worker.get_human_readable_uptime()} uptime.
+
+<img src="{img_url}/{big_image}.jpg" width="800" />
 """
     policies = """
 ## Policies

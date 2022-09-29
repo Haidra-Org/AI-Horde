@@ -2,7 +2,7 @@
 
 <img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/Stable-Horde) of [Stable Diffusion workers](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
 
-Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
+Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
 
 ## Stats 
 
