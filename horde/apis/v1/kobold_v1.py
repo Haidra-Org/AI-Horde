@@ -101,7 +101,7 @@ class SyncGenerate(Resource):
     # Not implemented yet
     parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
     @api.expect(parser)
-    @api.response(200, 'Success', response_model_generation)
+    # @api.response(200, 'Success', response_model_generation)
     @api.response(400, 'Validation Error')
     def post(self):
         args = self.parser.parse_args()
