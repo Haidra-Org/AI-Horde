@@ -6,7 +6,7 @@ from flask_dance.contrib.github import github
 from markdown import markdown
 from uuid import uuid4
 from . import logger, maintenance, args, HORDE
-from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url
+from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
 from .classes import db
 from .classes import waiting_prompts,User
 import bleach
@@ -60,9 +60,6 @@ This is the worker which has generated the most pixels for the horde.
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
     total_fulfillments = ConvertAmount(totals["fulfilments"])
-    horde_title = args.horde.capitalize()
-    if args.horde == "kobold":
-        horde_title = "KoboldAI"
     findex = index.format(
         horde_title = horde_title,
         horde_img_url = img_url,

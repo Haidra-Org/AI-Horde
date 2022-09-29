@@ -32,3 +32,6 @@ raw_thing_name = raw_thing_names[args.horde]
 thing_divisor = thing_divisors[args.horde]
 google_verification_string = google_verification_strings[args.horde]
 img_url = f"https://raw.githubusercontent.com/db0/Stable-Horde/main/img_{args.horde}/"
+horde_title = args.horde.capitalize()
+if args.horde == "kobold":
+    horde_title = "KoboldAI"
