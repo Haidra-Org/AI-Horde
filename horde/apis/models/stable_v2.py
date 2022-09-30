@@ -19,14 +19,11 @@ class Models(v2.Models):
         self.response_model_wp_status_full = api.inherit('RequestStatusStable', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
-        self.response_model_generation_payload = api.model('ModelPayload', {
-            'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
-            'ddim_steps': fields.Integer(example=50), 
+        self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
             'toggles': fields.List(fields.Integer,example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
             'realesrgan_model_name': fields.String,
             'ddim_eta': fields.Float, 
-            'n_iter': fields.Integer(example=1, description="The amount of images to generate"), 
             'batch_size': fields.Integer(example=1), 
             'cfg_scale': fields.Float(example=5.0), 
             'seed': fields.String(description="The seed to use to generete this request"),
@@ -36,6 +33,15 @@ class Models(v2.Models):
             'variant_amount': fields.Float, 
             'variant_seed': fields.Integer
         })
+        self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
+            'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
+            'ddim_steps': fields.Integer(example=50), 
+            'n_iter': fields.Integer(example=1, description="The amount of images to generate"), 
+        })
+        self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
+            'steps': fields.Integer(example=50), 
+            'n': fields.Integer(example=1, description="The amount of images to generate"), 
+        })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
         })
@@ -43,6 +49,11 @@ class Models(v2.Models):
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True)
+        })
+        self.input_model_request_generation = api.model('GenerationInput', {
+            'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
+            'payload': fields.Nested(self.input_model_generation_payload,skip_none=True),
+            'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),

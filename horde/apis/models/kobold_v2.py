@@ -24,8 +24,7 @@ class Models(v2.Models):
         self.response_model_wp_status_full = api.inherit('RequestStatusKobold', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
-        self.response_model_generation_payload = api.model('ModelPayloadKobold', {
-            'prompt': fields.String(description="The prompt which will be sent to Kobold Diffusion to generate an image"),
+        self.root_model_generation_payload_kobold = api.model('ModelPayloadRootKobold', {
             'n': fields.Integer(example=1), 
             'frmtadsnsp': fields.Boolean(example=False,description="Input formatting option. When enabled, adds a leading space to your input if there is no trailing whitespace at the end of the previous action."),
             'frmtrmblln': fields.Boolean(example=False,description="Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines in the output with one newline."),
@@ -45,6 +44,11 @@ class Models(v2.Models):
             'top_p': fields.Float(description="Top-p sampling value."), 
             'typical': fields.Float(description="Typical sampling value."), 
         })
+        self.response_model_generation_payload = api.inherit('ModelPayloadKobold', self.root_model_generation_payload_kobold, {
+            'prompt': fields.String(description="The prompt which will be sent to Kobold Diffusion to generate an image"),
+        })
+        self.input_model_generation_payload = api.inherit('ModelGenerationInputKobold', self.root_model_generation_payload_kobold, {
+        })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundKobold', self.response_model_generations_skipped, {
             'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides."),
             'max_content_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher max_content_length than what this worker provides."),
@@ -55,6 +59,13 @@ class Models(v2.Models):
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True)
+        })
+        self.input_model_request_generation = api.model('GenerationInput', {
+            'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),
+            'payload': fields.Nested(self.input_model_generation_payload,skip_none=True),
+            'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
+            'models': fields.List(fields.String(description="Specify which models are allowed to service this request")),
+            'softprompts': fields.List(fields.String(description="Specify which softpompts need to be used to service this request")),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {
             "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
