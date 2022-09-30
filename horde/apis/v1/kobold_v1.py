@@ -345,7 +345,7 @@ class AdminMaintenanceMode(Resource):
         return({"maintenance_mode": maintenance.active}, 200)
 
 class Models(Resource):
-    decorators = [limiter.limit("6/minute")]
+    decorators = [limiter.limit("30/minute")]
     @logger.catch
     def get(self):
         # Old style, using new class

@@ -57,7 +57,7 @@ class HordeLoad(HordeLoad):
         return(load_dict,200)
 
 class Models(Resource):
-    decorators = [limiter.limit("6/minute")]
+    decorators = [limiter.limit("30/minute")]
     @logger.catch
     @api.marshal_with(models.response_model_model, code=200, description='List All Active Models', as_list=True)
     def get(self):
