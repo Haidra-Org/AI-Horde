@@ -5,8 +5,8 @@ It allows people without a powerful GPU to use Stable Diffusion or Text generati
 It also allows non-python clients, such as games and apps, to use AI-provided generations.
 
 This software runs in two modes:
-   * Stable Horde: Stable Diffusion Image Generation
-   * KoboldAI Horde: KoboldAI text generation
+   * [Stable Horde](https://stablehorde.net): Stable Diffusion Image Generation
+   * [KoboldAI Horde](https://koboldai.net): KoboldAI text generation
 
 
 # Registering
@@ -14,8 +14,8 @@ This software runs in two modes:
 To use the horde you need to have a registered amount, or use anonymous mode.
 
 To register an account, go to the Horde you want to use:
-   * [Stable Horde](https://stablehorde.net/register)
-   * [KoboldAI Horde](https://koboldai.net/register)
+   * [Stable Horde Registration](https://stablehorde.net/register)
+   * [KoboldAI Horde Registration](https://koboldai.net/register)
 
 and login with one of the available services. Once you do you'll see a form where you can put a username. Add one in and it will automatically store a user object for you and provide an API key to identify you. **Note that the different hordes not share databses**, so even if you use the same authentication, you'll get a different user.
 
@@ -31,5 +31,9 @@ If you do not want to login even with a pseudonymous account, you can use this s
 
 The point of registering is to track your usage and your contributions. The more you contribute to the Horde, the more priority you have. [Read about this here](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/)
 
-# Generating Prompts
+# Horde-Specific Information
 
+Please see the individual readmes for each specific mode supported by the AI Horde.
+
+   * [Stable Horde Readme](README_StableHorde.md)
+   * [KoboldAI Horde Readme](README_KoboldAIHorde.md)
