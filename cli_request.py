@@ -1,5 +1,5 @@
 import requests, json, os, time, argparse, base64
-from logger import logger, set_logger_verbosity, quiesce_logger, test_logger
+from cli_logger import logger, set_logger_verbosity, quiesce_logger, test_logger
 from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
 from io import BytesIO
 
@@ -17,6 +17,7 @@ args = arg_parser.parse_args()
 
 
 filename = "horde_generation.png"
+api_key = 0000000000
 # You can fill these in to avoid putting them as args all the time
 imgen_params = {
     # You can put extra SD webui params here if you wish
@@ -27,6 +28,7 @@ submit_dict = {
 @logger.catch
 def generate():
     final_filename = args.filename if args.filename else crd.filename
+    final_api_key = args.api_key if args.api_key else crd.api_key
     final_imgen_params = {
         "n": args.amount if args.amount else crd.imgen_params.get('n',1),
         "width": args.width if args.width else crd.imgen_params.get('width',512),
@@ -37,13 +39,32 @@ def generate():
 
     final_submit_dict = {
         "prompt": args.prompt if args.prompt else crd.submit_dict.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
-        "api_key": args.api_key if args.api_key else crd.submit_dict.get('api_key',"0000000000"),
         "params": final_imgen_params,
     }
+    headers = {"apikey": final_api_key}
     logger.debug(final_submit_dict)
-    submit_req = requests.post('https://stablehorde.net/api/v1/generate/sync', json = final_submit_dict)
+    submit_req = requests.post('https://stablehorde.net/api/v2/generate/async', json = final_submit_dict, headers = headers)
     if submit_req.ok:
-        results = submit_req.json()
+        submit_results = submit_req.json()
+        logger.debug(submit_results)
+        req_id = submit_results['id']
+        is_done = False
+        while not is_done:
+            chk_req = requests.get(f'https://stablehorde.net/api/v2/generate/check/{req_id}')
+            if not chk_req.ok:
+                logger.error(chk_req.text)
+                return
+            chk_results = chk_req.json()
+            logger.info(chk_results)
+            is_done = chk_results['done']
+            time.sleep(1)
+        retrieve_req = requests.get(f'https://stablehorde.net/api/v2/generate/status/{req_id}')
+        if not retrieve_req.ok:
+            logger.error(retrieve_req.text)
+            return
+        results_json = retrieve_req.json()
+        # logger.debug(results_json)
+        results = results_json['generations']
         for iter in range(len(results)):
             b64img = results[iter]["img"]
             base64_bytes = b64img.encode('utf-8')
@@ -52,8 +73,9 @@ def generate():
             if len(results) > 1:
                 final_filename = f"{iter}_{filename}"
             img.save(final_filename)
+            logger.info(f"Saved {final_filename}")
     else:
-        print(submit_req.text)
+        logger.error(submit_req.text)
 
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
