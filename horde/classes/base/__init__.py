@@ -140,12 +140,12 @@ class WaitingPrompt:
             return(self._waiting_prompts.get_wp_queue_stats(self))
         return(-1,0,0)
 
-    def record_usage(self, thing, kudos):
+    def record_usage(self, raw_things, kudos):
         '''Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
-        self.user.record_usage(thing, kudos)
+        self.user.record_usage(raw_things, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -194,8 +194,8 @@ class ProcessingGeneration:
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
         self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
-        self.worker.record_contribution(self.owner.things, self.kudos, things_per_sec)
-        self.owner.record_usage(self.owner.things, self.kudos)
+        self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+        self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
         return(self.kudos)
 
@@ -312,15 +312,15 @@ class Worker:
         self.contributions = round(self.contributions + raw_things/thing_divisor,2)
 
     @logger.catch
-    def record_contribution(self, thing, kudos, thing_per_sec):
+    def record_contribution(self, raw_things, kudos, things_per_sec):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
-        self.user.record_contributions(thing, kudos)
+        self.user.record_contributions(raw_things = raw_things, kudos = kudos)
         self.modify_kudos(kudos,'generated')
-        self.convert_contribution(thing)
+        self.convert_contribution(raw_things)
         self.fulfilments += 1
-        self.performances.append(thing_per_sec)
+        self.performances.append(things_per_sec)
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -548,12 +548,12 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, kudos, raw_things):
+    def record_usage(self, raw_things, kudos):
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
         self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
 
-    def record_contributions(self, kudos, raw_things):
+    def record_contributions(self, raw_things, kudos):
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
         self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
