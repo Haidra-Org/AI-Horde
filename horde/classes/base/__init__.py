@@ -411,8 +411,8 @@ class Worker:
             recalc_kudos =  (self.fulfilments) * 20
             self.kudos = recalc_kudos + self.kudos_details.get("uptime",0)
             self.kudos_details['generated'] = recalc_kudos
-            logger.message([self.user.id, self.id, self.kudos_details['uptime']])
             self.user.kudos_details['accumulated'] += self.kudos_details['uptime']
+            self.user.kudos += self.kudos_details['uptime']
 
 
 
