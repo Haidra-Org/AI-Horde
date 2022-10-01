@@ -77,6 +77,7 @@ class GenerateTemplate(Resource):
             self.user,
             self.args["params"],
             workers=self.args["workers"],
+            nsfw=self.args["nsfw"],
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -266,7 +267,7 @@ class JobPop(Resource):
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
-        self.worker.check_in()
+        self.worker.check_in(nsfw = self.args['nsfw'])
 
 
 class JobSubmit(Resource):

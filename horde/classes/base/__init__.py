@@ -21,6 +21,7 @@ class WaitingPrompt:
         self.processing_gens = []
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
+        self.nsfw = kwargs.get("nsfw", False)
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 180 * self.n
         if self.stale_time > 600:
@@ -270,6 +271,7 @@ class Worker:
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
         self.model = kwargs.get("model")
+        self.nsfw = kwargs.get("nsfw", True)
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -306,6 +308,9 @@ class Worker:
         if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'
+        if waiting_prompt.nsfw and not self.nsfw:
+            is_matching = False
+            skipped_reason = 'nsfw'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
@@ -366,6 +371,7 @@ class Worker:
             "uptime": self.uptime,
             "maintenance_mode": self.maintenance,
             "info": self.info,
+            "nsfw": self.nsfw,
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
@@ -388,6 +394,7 @@ class Worker:
             "paused": self.paused,
             "maintenance": self.maintenance,
             "info": self.info,
+            "nsfw": self.nsfw,
         }
         return(ret_dict)
 
@@ -406,6 +413,7 @@ class Worker:
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
+        self.nsfw = saved_dict.get("nsfw",True)
         self.db.workers[self.name] = self
         if convert_flag == "kudos_fix":
             multiplier = 20

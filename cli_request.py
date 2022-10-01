@@ -13,6 +13,8 @@ arg_parser.add_argument('--api_key', type=str, action='store', required=False, h
 arg_parser.add_argument('-f', '--filename', type=str, action='store', required=False, help="The filename to use to save the images. If more than 1 image is generated, the number of generation will be prepended")
 arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
+arg_parser.add_argument('--horde', action="store", required=False, type=str, default="https://koboldai.net", help="Use a different horde")
+arg_parser.add_argument('--nsfw', action="store_true", default=False, required=False, help="Mark the request as NSFW. Only servers which allow NSFW will pick it up")
 args = arg_parser.parse_args()
 
 
@@ -40,17 +42,18 @@ def generate():
     final_submit_dict = {
         "prompt": args.prompt if args.prompt else crd.submit_dict.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
         "params": final_imgen_params,
+        "nsfw": args.nsfw if args.nsfw else crd.submit_dict.get("nsfw", False),
     }
     headers = {"apikey": final_api_key}
     logger.debug(final_submit_dict)
-    submit_req = requests.post('https://stablehorde.net/api/v2/generate/async', json = final_submit_dict, headers = headers)
+    submit_req = requests.post(f'{args.horde}/api/v2/generate/async', json = final_submit_dict, headers = headers)
     if submit_req.ok:
         submit_results = submit_req.json()
         logger.debug(submit_results)
         req_id = submit_results['id']
         is_done = False
         while not is_done:
-            chk_req = requests.get(f'https://stablehorde.net/api/v2/generate/check/{req_id}')
+            chk_req = requests.get(f'{args.horde}/api/v2/generate/check/{req_id}')
             if not chk_req.ok:
                 logger.error(chk_req.text)
                 return
@@ -58,7 +61,7 @@ def generate():
             logger.info(chk_results)
             is_done = chk_results['done']
             time.sleep(1)
-        retrieve_req = requests.get(f'https://stablehorde.net/api/v2/generate/status/{req_id}')
+        retrieve_req = requests.get(f'{args.horde}/api/v2/generate/status/{req_id}')
         if not retrieve_req.ok:
             logger.error(retrieve_req.text)
             return
