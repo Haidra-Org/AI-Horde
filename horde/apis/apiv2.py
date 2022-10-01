@@ -2,6 +2,7 @@ from flask import Blueprint
 from flask_restx import Api
 from .. import args
 from importlib import import_module
+from ..vars import horde_title
 
 v1 = import_module(name=f'.{args.horde}_v1', package=f'horde.apis.v1').api
 v2 = import_module(name=f'.{args.horde}', package=f'horde.apis.v2').api

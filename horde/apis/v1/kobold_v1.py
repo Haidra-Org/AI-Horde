@@ -11,13 +11,13 @@ import os, time
 
 api = Namespace('v1', 'API Version 1' )
 
-response_model_generation = api.model('GenerationV1', {
+response_model_generation = api.model('GenerationKoboldV1', {
     'text': fields.String,
     'server_id': fields.String(attribute='worker_id'),
     'server_name': fields.String(attribute='worker_name'),
     'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
 })
-response_model_wp_status_lite = api.model('RequestStatusCheckV1', {
+response_model_wp_status_lite = api.model('RequestStatusCheckKoboldV1', {
     'finished': fields.Integer,
     'processing': fields.Integer,
     'waiting': fields.Integer,
@@ -25,7 +25,7 @@ response_model_wp_status_lite = api.model('RequestStatusCheckV1', {
     'wait_time': fields.Integer,
     'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
 })
-response_model_wp_status_full = api.inherit('RequestStatusV1', response_model_wp_status_lite, {
+response_model_wp_status_full = api.inherit('RequestStatusKoboldV1', response_model_wp_status_lite, {
     'generations': fields.List(fields.Nested(response_model_generation)),
 })
 # Used to for the flas limiter, to limit requests per url paths
@@ -101,7 +101,7 @@ class SyncGenerate(Resource):
     # Not implemented yet
     parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
     @api.expect(parser)
-    @api.response(200, 'Success', response_model_generation)
+    @api.marshal_with(response_model_generation, code=200, description='Text Generated', as_list = True)
     @api.response(400, 'Validation Error')
     def post(self):
         args = self.parser.parse_args()
@@ -345,7 +345,7 @@ class AdminMaintenanceMode(Resource):
         return({"maintenance_mode": maintenance.active}, 200)
 
 class Models(Resource):
-    decorators = [limiter.limit("2/minute")]
+    decorators = [limiter.limit("30/minute")]
     @logger.catch
     def get(self):
         # Old style, using new class

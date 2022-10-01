@@ -26,7 +26,7 @@ def index():
     while big_image == align_image:
         big_image = random.randint(1, 5)
     if not top_contributor or not top_worker:
-        top_contributors = f'\n<img src="https://github.com/db0/Stable-Horde/blob/master/img/{big_image}.png?raw=true" width="800" />'
+        top_contributors = f'\n<img src="{img_url}/{big_image}.jpg" width="800" />'
     else:
         # We don't use the prefix char, so we just discard it
         top_contrib_things = ConvertAmount(top_contributor.contributions[thing_name] * thing_divisor)
@@ -46,6 +46,8 @@ This is the worker which has generated the most pixels for the horde.
 * {top_worker_things.amount} {top_worker_things.prefix + raw_thing_name} generated.
 * {top_worker_fulfillments.amount}{top_worker_fulfillments.char} request fulfillments.
 * {top_worker.get_human_readable_uptime()} uptime.
+
+<img src="{img_url}/{big_image}.jpg" width="800" />
 """
     policies = """
 ## Policies
@@ -55,7 +57,8 @@ This is the worker which has generated the most pixels for the horde.
 [Terms of Service](/terms)"""
     totals = db.get_total_usage()
     wp_totals = waiting_prompts.count_totals()
-    avg_performance = ConvertAmount(db.stats.get_request_avg())
+    active_worker_count = db.count_active_workers()
+    avg_performance = ConvertAmount(db.stats.get_request_avg() * active_worker_count)
     # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
@@ -70,7 +73,7 @@ This is the worker which has generated the most pixels for the horde.
         total_things_name = total_things.prefix + raw_thing_name,
         total_fulfillments = total_fulfillments.amount,
         total_fulfillments_char = total_fulfillments.char,
-        active_workers = db.count_active_workers(),
+        active_workers = active_worker_count,
         total_queue = wp_totals["queued_requests"],
         queued_things = queued_things.amount,
         queued_things_name = queued_things.prefix + raw_thing_name,

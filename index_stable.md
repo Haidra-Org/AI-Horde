@@ -2,13 +2,13 @@
 
 <img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/Stable-Horde) of [Stable Diffusion workers](https://github.com/db0/stable-diffusion-webui). If you like this service, consider joining the horde yourself!
 
-Also check out our sister project: [KoboldAI Horde](https://koboldai.net)
+Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
 
 ## Stats 
 
 * Average Recent Performance: {avg_performance} {avg_thing_name} per second
 * Total GPS generated: {total_things} {total_things_name}
-* Total requests fulfilled: {total_fulfillments}
+* Total requests fulfilled: {total_fulfillments}{total_fulfillments_char}
 * Active [Workers](/api/v2/workers): {active_workers}
 * Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}
 

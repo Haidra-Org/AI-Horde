@@ -19,11 +19,11 @@ class ConvertAmount:
             self.amount = round(amount / 1000, self.decimals)
             self.prefix = 'kilo'
             self.char = 'K'
-        elif self.digits < 7:
+        elif self.digits < 10:
             self.amount = round(amount / 1000000, self.decimals)
             self.prefix = 'mega'
             self.char = 'M'
-        elif self.digits < 10:
+        elif self.digits < 13:
             self.amount = round(amount / 1000000000, self.decimals)
             self.prefix = 'giga'
             self.char = 'G'

@@ -95,7 +95,8 @@ class GenerateTemplate(Resource):
 
 class AsyncGenerate(GenerateTemplate):
 
-    @api.expect(parsers.generate_parser)
+    # @api.expect(parsers.generate_parser)
+    @api.expect(models.input_model_request_generation)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -120,7 +121,7 @@ class AsyncGenerate(GenerateTemplate):
 
 class SyncGenerate(GenerateTemplate):
 
-    @api.expect(parsers.generate_parser)
+    @api.expect(models.input_model_request_generation)
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Images Generated')
     @api.response(400, 'Validation Error', models.response_model_error)
@@ -292,7 +293,7 @@ class JobSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(user.get_unique_alias(), self.args['name'])
-        self.kudos = self.procgen.set_generation(self.args['generation'], self.args['seed'])
+        self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
         if self.kudos == 0:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 
