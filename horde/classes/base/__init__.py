@@ -4,6 +4,7 @@ from datetime import datetime
 import threading, time
 from .. import logger
 from ...vars import thing_name,raw_thing_name,thing_divisor
+import uuid
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -406,6 +407,13 @@ class Worker:
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
         self.db.workers[self.name] = self
+        if convert_flag == "stable_kudos_fix":
+            recalc_kudos =  (self.fulfilments) * 20
+            self.kudos = recalc_kudos + self.kudos_details.get("uptime",0)
+            self.kudos_details['generated'] = recalc_kudos
+            logger.message([self.user.id, self.id, self.kudos_details['uptime']])
+            self.user.kudos_details['accumulated'] += self.kudos_details['uptime']
+
 
 
 class Index:
@@ -564,7 +572,28 @@ class User:
     def modify_kudos(self, kudos, action = 'accumulated'):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
+        self.ensure_kudos_positive()
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
+
+    def ensure_kudos_positive(self):
+        if self.kudos < 0 and self.is_anon():
+            self.kudos = 0
+        elif self.kudos < 1 and self.is_pseudonymus():
+            self.kudos = 1
+        elif self.kudos < 2:
+            self.kudos = 2
+
+    def is_anon(self):
+        if self.oauth_id == 'anon':
+            return(True)
+        return(False)
+
+    def is_pseudonymus(self):
+        try:
+            uuid.UUID(str(self.oauth_id))
+            return(True)
+        except ValueError:
+            return(False)
 
     def get_details(self):
         ret_dict = {
@@ -615,6 +644,11 @@ class User:
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
+        if convert_flag == "stable_kudos_fix":
+            recalc_kudos =  (self.contributions['fulfillments'] - self.usage['requests']) * 20
+            self.kudos = recalc_kudos + self.kudos_details.get('admin',0) + self.kudos_details.get('received',0) - self.kudos_details.get('gifted',0)
+            self.kudos_details['accumulated'] = recalc_kudos
+        self.ensure_kudos_positive()
 
 
 class Stats:
@@ -922,3 +956,10 @@ class Database:
         kudos = round(things,2)
         return(kudos)
 
+
+    def find_workers_by_user(self, user):
+        found_workers = []
+        for worker in self.workers.values():
+            if worker.user == user:
+                found_workers.append(worker)
+        return(found_workers)
