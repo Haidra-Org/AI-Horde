@@ -15,6 +15,7 @@ class WaitingPrompt(WaitingPrompt):
         self.things = self.width * self.height * self.steps
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
@@ -24,6 +25,13 @@ class WaitingPrompt(WaitingPrompt):
         # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.steps
+        if not self.nsfw and self.censor_nsfw:
+            if "toggles" not in self.gen_payload:
+                self.gen_payload["toggles"] = [1, 4, 8]
+            elif 8 not in self.gen_payload["toggles"]:
+                self.gen_payload.append(8)
+
+
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it

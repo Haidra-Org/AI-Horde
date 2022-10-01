@@ -15,6 +15,7 @@ arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="Th
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
 arg_parser.add_argument('--horde', action="store", required=False, type=str, default="https://koboldai.net", help="Use a different horde")
 arg_parser.add_argument('--nsfw', action="store_true", default=False, required=False, help="Mark the request as NSFW. Only servers which allow NSFW will pick it up")
+arg_parser.add_argument('--censor_nsfw', action="store_true", default=False, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.")
 args = arg_parser.parse_args()
 
 
@@ -43,6 +44,7 @@ def generate():
         "prompt": args.prompt if args.prompt else crd.submit_dict.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
         "params": final_imgen_params,
         "nsfw": args.nsfw if args.nsfw else crd.submit_dict.get("nsfw", False),
+        "censor_nsfw": args.censor_nsfw if args.censor_nsfw else crd.submit_dict.get("censor_nsfw", True),
     }
     headers = {"apikey": final_api_key}
     logger.debug(final_submit_dict)

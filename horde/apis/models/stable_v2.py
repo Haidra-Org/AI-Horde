@@ -4,6 +4,7 @@ from . import v2
 
 class Parsers(v2.Parsers):
     def __init__(self):
+        self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512, help="The maximum amount of pixels this worker can generate", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generation", location="json")
 
@@ -53,6 +54,8 @@ class Models(v2.Models):
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
             'payload': fields.Nested(self.input_model_generation_payload,skip_none=True),
+            'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
+            'censor_nsfw': fields.Boolean(description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {

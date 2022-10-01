@@ -66,6 +66,7 @@ class Models(v2.Models):
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to service this request")),
             'softprompts': fields.List(fields.String(description="Specify which softpompts need to be used to service this request")),
+            'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers censor text."),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {
             "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),

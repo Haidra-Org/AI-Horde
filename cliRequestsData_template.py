@@ -10,5 +10,6 @@ imgen_params = {
 }
 submit_dict = {
     "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
-    "nsfw": False
+    "nsfw": False,
+    "censor_nsfw": False,
 }

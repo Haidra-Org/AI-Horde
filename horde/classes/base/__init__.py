@@ -15,13 +15,14 @@ class WaitingPrompt:
         self.user = user
         self.params = params
         self.total_usage = 0
+        self.nsfw = kwargs.get("nsfw", False)
+        self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
         self.processing_gens = []
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
-        self.nsfw = kwargs.get("nsfw", False)
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 180 * self.n
         if self.stale_time > 600:

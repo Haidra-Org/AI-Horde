@@ -9,6 +9,7 @@ class Parsers:
     generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
     generate_parser.add_argument("workers", type=str, action='append', required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
+    generate_parser.add_argument("censor_accidental_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
     # generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="Models", location="json")
 
     # The parser for RequestPop
