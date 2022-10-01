@@ -2,7 +2,7 @@ import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time
-from .. import logger
+from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor
 import uuid
 
@@ -407,8 +407,12 @@ class Worker:
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
         self.db.workers[self.name] = self
-        if convert_flag == "stable_kudos_fix":
-            recalc_kudos =  (self.fulfilments) * 20
+        if convert_flag == "kudos_fix":
+            multiplier = 20
+            # Average kudos in the kobold horde is much bigger
+            if args.horde == 'kobold':
+                multiplier = 100
+            recalc_kudos =  (self.fulfilments) * multiplier
             self.kudos = recalc_kudos + self.kudos_details.get("uptime",0)
             self.kudos_details['generated'] = recalc_kudos
             self.user.kudos_details['accumulated'] += self.kudos_details['uptime']
@@ -644,8 +648,11 @@ class User:
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
-        if convert_flag == "stable_kudos_fix":
-            recalc_kudos =  (self.contributions['fulfillments'] - self.usage['requests']) * 20
+        if convert_flag == "kudos_fix":
+            multiplier = 20
+            if args.horde == 'kobold':
+                multiplier = 100
+            recalc_kudos =  (self.contributions['fulfillments'] - self.usage['requests']) * multiplier
             self.kudos = recalc_kudos + self.kudos_details.get('admin',0) + self.kudos_details.get('received',0) - self.kudos_details.get('gifted',0)
             self.kudos_details['accumulated'] = recalc_kudos
         self.ensure_kudos_positive()
