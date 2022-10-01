@@ -56,7 +56,7 @@ class Worker(Worker):
         logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
-        return(100)
+        return(50)
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)

@@ -2,8 +2,9 @@ import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time
-from .. import logger
+from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor
+import uuid
 
 class WaitingPrompt:
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
@@ -140,12 +141,12 @@ class WaitingPrompt:
             return(self._waiting_prompts.get_wp_queue_stats(self))
         return(-1,0,0)
 
-    def record_usage(self, thing, kudos):
+    def record_usage(self, raw_things, kudos):
         '''Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
-        self.user.record_usage(thing, kudos)
+        self.user.record_usage(raw_things, kudos)
         self.refresh()
 
     def check_for_stale(self):
@@ -194,8 +195,8 @@ class ProcessingGeneration:
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
         self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
-        self.worker.record_contribution(self.owner.things, self.kudos, things_per_sec)
-        self.owner.record_usage(self.owner.things, self.kudos)
+        self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+        self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
         logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
         return(self.kudos)
 
@@ -312,15 +313,15 @@ class Worker:
         self.contributions = round(self.contributions + raw_things/thing_divisor,2)
 
     @logger.catch
-    def record_contribution(self, thing, kudos, thing_per_sec):
+    def record_contribution(self, raw_things, kudos, things_per_sec):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
-        self.user.record_contributions(thing, kudos)
+        self.user.record_contributions(raw_things = raw_things, kudos = kudos)
         self.modify_kudos(kudos,'generated')
-        self.convert_contribution(thing)
+        self.convert_contribution(raw_things)
         self.fulfilments += 1
-        self.performances.append(thing_per_sec)
+        self.performances.append(things_per_sec)
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -406,6 +407,17 @@ class Worker:
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
         self.db.workers[self.name] = self
+        if convert_flag == "kudos_fix":
+            multiplier = 20
+            # Average kudos in the kobold horde is much bigger
+            if args.horde == 'kobold':
+                multiplier = 100
+            recalc_kudos =  (self.fulfilments) * multiplier
+            self.kudos = recalc_kudos + self.kudos_details.get("uptime",0)
+            self.kudos_details['generated'] = recalc_kudos
+            self.user.kudos_details['accumulated'] += self.kudos_details['uptime']
+            self.user.kudos += self.kudos_details['uptime']
+
 
 
 class Index:
@@ -548,12 +560,12 @@ class User:
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, kudos, raw_things):
+    def record_usage(self, raw_things, kudos):
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
         self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
 
-    def record_contributions(self, kudos, raw_things):
+    def record_contributions(self, raw_things, kudos):
         self.contributions["fulfillments"] += 1
         self.modify_kudos(kudos,"accumulated")
         self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
@@ -564,7 +576,28 @@ class User:
     def modify_kudos(self, kudos, action = 'accumulated'):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
+        self.ensure_kudos_positive()
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
+
+    def ensure_kudos_positive(self):
+        if self.kudos < 0 and self.is_anon():
+            self.kudos = 0
+        elif self.kudos < 1 and self.is_pseudonymus():
+            self.kudos = 1
+        elif self.kudos < 2:
+            self.kudos = 2
+
+    def is_anon(self):
+        if self.oauth_id == 'anon':
+            return(True)
+        return(False)
+
+    def is_pseudonymus(self):
+        try:
+            uuid.UUID(str(self.oauth_id))
+            return(True)
+        except ValueError:
+            return(False)
 
     def get_details(self):
         ret_dict = {
@@ -615,6 +648,14 @@ class User:
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
+        if convert_flag == "kudos_fix":
+            multiplier = 20
+            if args.horde == 'kobold':
+                multiplier = 100
+            recalc_kudos =  (self.contributions['fulfillments'] - self.usage['requests']) * multiplier
+            self.kudos = recalc_kudos + self.kudos_details.get('admin',0) + self.kudos_details.get('received',0) - self.kudos_details.get('gifted',0)
+            self.kudos_details['accumulated'] = recalc_kudos
+        self.ensure_kudos_positive()
 
 
 class Stats:
@@ -922,3 +963,10 @@ class Database:
         kudos = round(things,2)
         return(kudos)
 
+
+    def find_workers_by_user(self, user):
+        found_workers = []
+        for worker in self.workers.values():
+            if worker.user == user:
+                found_workers.append(worker)
+        return(found_workers)
