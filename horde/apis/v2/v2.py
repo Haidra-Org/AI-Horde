@@ -208,7 +208,7 @@ class AsyncCheck(Resource):
 
 class JobPop(Resource):
 
-    decorators = [limiter.limit("2/second")]
+    decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_pop_parser)
     @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -271,6 +271,7 @@ class JobPop(Resource):
 
 
 class JobSubmit(Resource):
+    decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
     @api.response(400, 'Generation Already Submitted', models.response_model_error)
