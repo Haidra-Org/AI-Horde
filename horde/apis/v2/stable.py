@@ -14,6 +14,21 @@ class AsyncGenerate(AsyncGenerate):
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
 
+    
+    # We split this into its own function, so that it may be overriden
+    def initiate_waiting_prompt(self):
+        self.wp = WaitingPrompt(
+            db,
+            waiting_prompts,
+            processing_generations,
+            self.args["prompt"],
+            self.user,
+            self.args["params"],
+            workers=self.args["workers"],
+            nsfw=self.args["nsfw"],
+            censor_nsfw=self.args["censor_nsfw"],
+        )
+    
 class SyncGenerate(SyncGenerate):
 
     def validate(self):
@@ -25,10 +40,25 @@ class SyncGenerate(SyncGenerate):
         if self.args["params"].get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
 
+    
+    # We split this into its own function, so that it may be overriden
+    def initiate_waiting_prompt(self):
+        self.wp = WaitingPrompt(
+            db,
+            waiting_prompts,
+            processing_generations,
+            self.args["prompt"],
+            self.user,
+            self.args["params"],
+            workers=self.args["workers"],
+            nsfw=self.args["nsfw"],
+            censor_nsfw=self.args["censor_nsfw"],
+        )
+    
 class JobPop(JobPop):
 
     def check_in(self):
-        self.worker.check_in(self.args['max_pixels'])
+        self.worker.check_in(self.args['max_pixels'], nsfw = self.args['nsfw'])
   
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]

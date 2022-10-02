@@ -41,7 +41,8 @@ class JobPop(JobPop):
             self.args['max_length'],
             self.args['max_content_length'],
             self.args['softprompts'],
-            model = self.args['model']
+            model = self.args['model'],
+            nsfw = self.args['nsfw']
         )
   
 class HordeLoad(HordeLoad):

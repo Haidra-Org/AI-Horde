@@ -15,6 +15,7 @@ class WaitingPrompt:
         self.user = user
         self.params = params
         self.total_usage = 0
+        self.nsfw = kwargs.get("nsfw", False)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
@@ -270,6 +271,7 @@ class Worker:
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
         self.model = kwargs.get("model")
+        self.nsfw = kwargs.get("nsfw", True)
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -306,6 +308,9 @@ class Worker:
         if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'
+        if waiting_prompt.nsfw and not self.nsfw:
+            is_matching = False
+            skipped_reason = 'nsfw'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
@@ -366,6 +371,7 @@ class Worker:
             "uptime": self.uptime,
             "maintenance_mode": self.maintenance,
             "info": self.info,
+            "nsfw": self.nsfw,
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
@@ -388,6 +394,7 @@ class Worker:
             "paused": self.paused,
             "maintenance": self.maintenance,
             "info": self.info,
+            "nsfw": self.nsfw,
         }
         return(ret_dict)
 
@@ -406,6 +413,7 @@ class Worker:
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
+        self.nsfw = saved_dict.get("nsfw",True)
         self.db.workers[self.name] = self
         if convert_flag == "kudos_fix":
             multiplier = 20
@@ -696,7 +704,7 @@ class Stats:
             self.fulfillments = pruned_array
             logger.debug("Pruned fulfillments")
         things_per_min = round(total_things / thing_divisor,2)
-        return(total_things)
+        return(things_per_min)
 
     def get_request_avg(self):
         if len(self.worker_performances) == 0:
