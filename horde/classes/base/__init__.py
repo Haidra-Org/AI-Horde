@@ -16,7 +16,6 @@ class WaitingPrompt:
         self.params = params
         self.total_usage = 0
         self.nsfw = kwargs.get("nsfw", False)
-        self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
@@ -705,7 +704,7 @@ class Stats:
             self.fulfillments = pruned_array
             logger.debug("Pruned fulfillments")
         things_per_min = round(total_things / thing_divisor,2)
-        return(total_things)
+        return(things_per_min)
 
     def get_request_avg(self):
         if len(self.worker_performances) == 0:
