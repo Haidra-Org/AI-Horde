@@ -48,13 +48,23 @@ You can optionally specify only specific servers to generate for you. Grab one o
 
 # Joining the horde
 
-1. Go to this fork of the [stable diffusion webui](https://github.com/db0/stable-diffusion-webui) and follow the install instructions as normal but do not start it. If you already the upstream version of this repo, you can simply change your origin to my fork and pull again.
-1. (Optional) Make a copy of `scripts/bridgeData_template.py` into `scripts/bridgeData.py`. If you do not do this step, you will contribute anonymously.
-1. (Optional) Edit `scripts/bridgeData.py` and put details for your server such as the API key you've received, so that you can receive Kudos. If you do not do this step, you will contribute anonymously.
-1. Start the software with webui.(cmd|sh) as usual.
+1. Go to this fork of the [stable diffusion webui](https://github.com/sd-webui/stable-diffusion-webui) and follow the install instructions as normal with a few differences:
+1. (Optional step) Before you run webui.sh or webui.cmd. If you do not do this step, you will contribute anonymously.
+   * Make a copy of `scripts/bridgeData_template.py` into `scripts/bridgeData.py`. 
+   * Edit `scripts/bridgeData.py` and put details for your server such as the API key you've received, so that you can receive Kudos. 
+1. Start the software with webui.(cmd|sh) as usual and add the `--bridge` argument
+   * Linux: `webui.sh --bridge`
+   * Windows: `webui.cmd --bridge`
 
-My fork has been modified to start in bridge mode, but you can edit `relauncher.py` to make it start as a normal webui as well.
+# Joining the horde with multiple GPUs
 
+To use multiple GPUs as with NVLINK workers, each has to start their own webui instance. For linux, you just need to limit the run to a specific card:
+
+```
+CUDA_VISIBLE_DEVICES=0 ./webui.sh --bridge -n "My awesome instance #1"
+CUDA_VISIBLE_DEVICES=1 ./webui.sh --bridge -n "My awesome instance #2"
+```
+etc
 
 ## Advanced Usage: Local + Horde SD
 
