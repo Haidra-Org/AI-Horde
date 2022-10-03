@@ -44,7 +44,27 @@ class JobPop(JobPop):
             model = self.args['model'],
             nsfw = self.args['nsfw']
         )
-  
+
+
+    # Making it into its own function to allow extension
+    def start_worker(self):
+        for wp in self.prioritized_wp:
+            matching_softprompt = False
+            for sp in wp.softprompts:
+                # If a None softprompts has been provided, we always match, since we can always remove the softprompt
+                if sp == '':
+                    matching_softprompt = sp
+                for sp_name in self.args['softprompts']:
+                    # logger.info([sp_name,sp,sp in sp_name])
+                    if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
+                        matching_softprompt = sp_name
+                        break
+                if matching_softprompt:
+                    break
+        ret = wp.start_generation(self.worker, matching_softprompt)
+        return(ret)
+
+
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
     # When we extend the actual method, we need to re-apply the decorators
