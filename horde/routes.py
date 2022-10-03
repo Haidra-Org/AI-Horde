@@ -80,22 +80,23 @@ This is the worker which has generated the most pixels for the horde.
         maintenance_mode = maintenance.active,
     )
 
-    # This doesn't work. It just blanks the page
-    # style = """<style>
-    #     body {
-    #         max-width: 120ex;
-    #         margin: 0 auto;
-    #         color: #333333;
-    #         line-height: 1.4;
-    #         font-family: sans-serif;
-    #         padding: 1em;
-    #     }
-    # """
+    style = """<style>
+        body {
+            max-width: 120ex;
+            margin: 0 auto;
+            color: #333333;
+            line-height: 1.4;
+            font-family: sans-serif;
+            padding: 1em;
+        }
+        </style>
+    """
     
     head = f"""<head>
     <title>{horde_title} Horde</title>
     <meta name="google-site-verification" content="{google_verification_string}" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {style}
     </head>
     """
     return(head + markdown(findex + top_contributors + policies))
