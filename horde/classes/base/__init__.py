@@ -24,9 +24,7 @@ class WaitingPrompt:
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
-        self.stale_time = 180 * self.n
-        if self.stale_time > 1200:
-            self.stale_time = 1200
+        self.stale_time = 1200
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params, **kwargs):
