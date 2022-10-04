@@ -205,9 +205,9 @@ class AsyncGenerate(Resource):
         wp_count = waiting_prompts.count_waiting_requests(user)
         if wp_count >= user.concurrency:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
-        if args["params"].get("length",512)%64:
+        if args["params"].get("length",512)%64 or args["params"].get("length",512) <= 0:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
-        if args["params"].get("width",512)%64:
+        if args["params"].get("width",512)%64 or args["params"].get("width",512) <= 0:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
         if args["params"].get("steps",50) > 100:
             return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
