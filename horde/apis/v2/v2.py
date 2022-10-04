@@ -271,7 +271,7 @@ class JobPop(Resource):
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
-        self.worker.check_in(nsfw = self.args['nsfw'])
+        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'])
 
 
 class JobSubmit(Resource):

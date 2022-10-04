@@ -274,6 +274,7 @@ class Worker:
     def check_in(self, **kwargs):
         self.model = kwargs.get("model")
         self.nsfw = kwargs.get("nsfw", True)
+        self.blacklist = kwargs.get("blacklist", [])
         if not self.is_stale():
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -313,6 +314,9 @@ class Worker:
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False
             skipped_reason = 'nsfw'
+        if any(word in waiting_prompt.prompt for word in self.blacklist):
+            is_matching = False
+            skipped_reason = 'blacklist'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
@@ -397,6 +401,7 @@ class Worker:
             "maintenance": self.maintenance,
             "info": self.info,
             "nsfw": self.nsfw,
+            "blacklist": self.blacklist.copy(),
         }
         return(ret_dict)
 
@@ -416,6 +421,7 @@ class Worker:
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
         self.nsfw = saved_dict.get("nsfw",True)
+        self.blacklist = saved_dict.get("blacklist",[])
         self.db.workers[self.name] = self
         if convert_flag == "kudos_fix":
             multiplier = 20
