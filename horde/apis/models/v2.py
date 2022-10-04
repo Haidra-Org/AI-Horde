@@ -17,7 +17,7 @@ class Parsers:
     job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
     job_pop_parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
-    job_pop_parser.add_argument("blacklist", type=list, default=[], required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
+    job_pop_parser.add_argument("blacklist", type=str, action='append', required=False, default=[], help="Specifies the words that this worker will not accept in a prompt.", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
