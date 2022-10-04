@@ -62,7 +62,7 @@ class Models(v2.Models):
         })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),
-            'payload': fields.Nested(self.input_model_generation_payload,skip_none=True),
+            'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to service this request")),
             'softprompts': fields.List(fields.String(description="Specify which softpompts need to be used to service this request")),

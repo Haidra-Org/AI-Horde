@@ -9,7 +9,6 @@ class Parsers:
     generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
     generate_parser.add_argument("workers", type=str, action='append', required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
-    generate_parser.add_argument("censor_accidental_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
     # generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="Models", location="json")
 
     # The parser for RequestPop
@@ -91,7 +90,7 @@ class Models:
             "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
             "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
-            "nsfw": fields.String(description="Whether this server can generate NSFW requests or not.", example="https://dbzer0.com", default=None),
+            "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
