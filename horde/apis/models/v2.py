@@ -17,6 +17,7 @@ class Parsers:
     job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
     job_pop_parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
+    job_pop_parser.add_argument("blacklist", type=list, default=[], required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
@@ -54,6 +55,7 @@ class Models:
         self.response_model_generations_skipped = api.model('NoValidRequestFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."),
+            'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept."),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
@@ -91,6 +93,7 @@ class Models:
             "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
+            "blacklist": fields.Boolean(default=False, description="Specifies the words that this worker will not accept in a prompt."),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
