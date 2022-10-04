@@ -7,6 +7,7 @@ from ...vars import thing_name,raw_thing_name,thing_divisor
 import uuid
 
 class WaitingPrompt:
+    extra_priority = 0
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
         self.db = db
         self._waiting_prompts = wps
@@ -23,9 +24,7 @@ class WaitingPrompt:
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
-        self.stale_time = 180 * self.n
-        if self.stale_time > 600:
-            self.stale_time = 600
+        self.stale_time = 1200
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params, **kwargs):
@@ -157,7 +156,8 @@ class WaitingPrompt:
             if self.is_stale():
                 self.delete()
                 break
-            time.sleep(600)
+            time.sleep(10)
+            self.extra_priority += 50
 
     def delete(self):
         for gen in self.processing_gens:
@@ -173,6 +173,8 @@ class WaitingPrompt:
             return(True)
         return(False)
 
+    def get_priority(self):
+        return(self.user.kudos + self.extra_priority)
 
 class ProcessingGeneration:
     generation = None
@@ -481,11 +483,12 @@ class PromptsIndex(Index):
 
 
     def get_waiting_wp_by_kudos(self):
-        sorted_wp_list = sorted(self._index.values(), key=lambda x: x.user.kudos, reverse=True)
+        sorted_wp_list = sorted(self._index.values(), key=lambda x: x.get_priority(), reverse=True)
         final_wp_list = []
         for wp in sorted_wp_list:
             if wp.needs_gen():
                 final_wp_list.append(wp)
+        # logger.debug([(wp,wp.get_priority()) for wp in final_wp_list])
         return(final_wp_list)
 
     # Returns the queue position of the provided WP based on kudos

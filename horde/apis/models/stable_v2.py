@@ -53,7 +53,7 @@ class Models(v2.Models):
         })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
-            'payload': fields.Nested(self.input_model_generation_payload,skip_none=True),
+            'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
             'censor_nsfw': fields.Boolean(description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
