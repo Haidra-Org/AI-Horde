@@ -10,7 +10,7 @@ class Parsers(v2.Parsers):
         self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate")
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
         self.job_pop_parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this worker for the currently running model")
-        # self.job_submit_parser.add_argument("seed", type=str, required=True, default=[], help="The seed of the generation", location="json")
+        self.job_submit_parser.add_argument("seed", type=str, required=False, default='', help="The seed of the generation", location="json")
 
 class Models(v2.Models):
     def __init__(self,api):
@@ -58,7 +58,8 @@ class Models(v2.Models):
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
-            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True)
+            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
+            'softprompt': fields.String(description="The soft prompt requested for this generation"),
         })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),
