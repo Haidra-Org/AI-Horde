@@ -93,7 +93,7 @@ class Models:
             "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
-            "blacklist": fields.Boolean(default=False, description="Specifies the words that this worker will not accept in a prompt."),
+            "blacklist": fields.Boolean(default=[], description="Specifies the words that this worker will not accept in a prompt."),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
