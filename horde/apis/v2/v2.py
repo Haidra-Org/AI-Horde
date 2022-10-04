@@ -245,11 +245,11 @@ class JobPop(Resource):
                 skipped_reason = check_gen[1]
                 self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
                 continue
-            return(self.start_worker(), 200)
+            return(self.start_worker(wp), 200)
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension
-    def start_worker(self):
+    def start_worker(self, wp):
         ret = wp.start_generation(self.worker)
         return(ret)
 

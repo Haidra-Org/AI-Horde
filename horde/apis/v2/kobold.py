@@ -47,7 +47,7 @@ class JobPop(JobPop):
 
 
     # Making it into its own function to allow extension
-    def start_worker(self):
+    def start_worker(self, wp):
         for wp in self.prioritized_wp:
             matching_softprompt = False
             for sp in wp.softprompts:
