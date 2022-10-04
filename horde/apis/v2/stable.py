@@ -58,7 +58,7 @@ class SyncGenerate(SyncGenerate):
 class JobPop(JobPop):
 
     def check_in(self):
-        self.worker.check_in(self.args['max_pixels'], nsfw = self.args['nsfw'])
+        self.worker.check_in(self.args['max_pixels'], nsfw = self.args['nsfw'], blacklist = self.args['blacklist'])
   
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
