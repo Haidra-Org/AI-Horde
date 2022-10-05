@@ -5,10 +5,10 @@
 This is a very big subject which will be later be expanded in a devlog. But putting it simply:
 
 * As a requestor, you send a prompt to the horde which adds it into a "first in/first out" queue, prioritizing it according to the amount of Kudos you have. If the request has multiple generations required, it is split into multiple jobs by the horde.
-* Any joined workers periodically check-in to the horde and request a job to do. The horde sends them the first available request they can fulfil, by order of kudos-priority
+* Any joined workers periodically check-in to the horde and request a job to do. The horde sends them the first available request they can fulfil, by order of kudos-priority, respecting the worker's wishes for specific workers who have priority.
 * The worker generates the job's prompt and submits it back to the horde
-* Once all the component jobs of a request have been submitted, the horde marks the job as "Done"
-* The requestor can at any point check the status of their job and retrieve the results, even if it's not "done"
+* Once all the component jobs of a request have been submitted, the horde marks the request as "Done"
+* The requestor can at any point check the status of their waiting requests and retrieve the results, even if they're not "done"
 
 ## Workers?
 
@@ -16,7 +16,7 @@ This is a very big subject which will be later be expanded in a devlog. But putt
 
 ### What is a worker?
 
-A worker is computer with usually a mid-range or higher class GPU, who has setup specific software to generate images via Stable Diffusion or KoboldAI localy and it connected to the horde through what we call the "bridge". It is constantly polling the horde for new generations and receiving Kudos in return for creating them.
+A worker is computer with usually a mid-range or higher class GPU, who has installed specific software to generate images via Stable Diffusion or KoboldAI locally and it connected to the horde through what we call the "bridge". It is constantly polling the horde for new generations and receiving Kudos in return for creating them.
 
 ### What is in it for the worker?
 
@@ -48,6 +48,10 @@ Depends.
 For text generation on the KoboldAI Horde the answer is yes, but you select your model manually.
 
 For image generation on the Stable Horde, the answer is not yet. We plan to add this functionality in the future.
+
+### Can I prioritize myself and my friends on my own worker?
+
+Yes! By default, your own requests are always served first by your own worker, regardless of Kudos. But you can also specify specific usernames which will also be prioritized the same way.
 
 ## Kudos?
 
@@ -152,3 +156,10 @@ Other services which run on centralized servers have costs. Someone has to pay f
 If you're fine with that, go ahead and use them.
 
 Finally a lot of these services do not provide free REST APIs, so if you need to integrate with them, you have to use a browser interface, so that you can see the adverts.
+
+
+### Can I run my own private horde?
+
+Of course! This software is FOSS and you are welcome to use, modify and share, so long as you respect the AGPL3 license.
+
+If you set up your own horde of course, you will need to also maintain your own workers, as hordes do not share workers with each other.
