@@ -38,7 +38,14 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 ### Tools
 
-We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
+* We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
+* The community has made the following
+    * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
+    * [Telegram Bot](https://t.me/CraiyonArtBot)
+    * [G.I.M.P Plugin](https://github.com/blueturtleai/gimp-stable-diffusion)
+    * [Browser Interface](https://diffusionui.com/b/stable_horde)
+    * [Horde Leaderboard](https://aqualxx.github.io/Horde-Overseer/)
+
 
 ## REST API
 
