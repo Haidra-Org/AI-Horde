@@ -266,7 +266,7 @@ class JobPop(Resource):
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.args['name'])
         if self.worker.maintenance:
-            raise e.WorkerMaintenance()
+            raise e.WorkerMaintenance(self.worker.id)
     
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it

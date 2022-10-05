@@ -47,8 +47,8 @@ class NotOwner(wze.Forbidden):
         self.log = f"User '{username}'' tried to modify worker they do not own '{worker_name}'. Aborting!"
 
 class WorkerMaintenance(wze.Forbidden):
-    def __init__(self):
-        self.specific = "This worker has been put into maintenance by its owner"
+    def __init__(self, worker_id):
+        self.specific = f"worker {worker_id} has been put into maintenance by its owner"
         self.log = None
 
 class InvalidProcGen(wze.NotFound):
