@@ -2,9 +2,9 @@
 
 ## How does this all work?
 
-This is a very big subjet which will be later be expanded in a devlog. But putting it simply:
+This is a very big subject which will be later be expanded in a devlog. But putting it simply:
 
-* As a requestor, you send a prompt to the horde whichs adds it into a FIFO queue, prioritizing it according to the amount of Kudos you have. If the request has multiple generations required, it is split into multiple jobs by the horde.
+* As a requestor, you send a prompt to the horde which adds it into a "first in/first out" queue, prioritizing it according to the amount of Kudos you have. If the request has multiple generations required, it is split into multiple jobs by the horde.
 * Any joined workers periodically check-in to the horde and request a job to do. The horde sends them the first available request they can fulfil, by order of kudos-priority
 * The worker generates the job's prompt and submits it back to the horde
 * Once all the component jobs of a request have been submitted, the horde marks the job as "Done"
@@ -16,7 +16,7 @@ This is a very big subjet which will be later be expanded in a devlog. But putti
 
 ### What is a worker?
 
-A worker is computer with usually a mid-range or higher class GPU, who has setup specific software to generate images via Stable Diffusion localy and it connected to the horde through what we call the "bridge". It is constantly polling the horde for new generations and receiving Kudos in return for creating them.
+A worker is computer with usually a mid-range or higher class GPU, who has setup specific software to generate images via Stable Diffusion or KoboldAI localy and it connected to the horde through what we call the "bridge". It is constantly polling the horde for new generations and receiving Kudos in return for creating them.
 
 ### What is in it for the worker?
 
@@ -24,7 +24,7 @@ Generating images for others 24/7 technically costs electricity, we know.
 
 People want to contribute to the horde for many reasons
 
-* They want to provide constant processing power for tools they've built on top of Stable Diffusion, such as chat bots or software plugins
+* They want to provide constant processing power for tools they've built on top of Stable Diffusion or KoboldAI, such as video games, chat bots or software plugins
 * They want to accumulate Kudos so that when it's time to generate their own requests they can get them done faster.
 * They want to warm their room productively (this is indeed a literal reason people have given)
 * They are just nice people and want to support this endeavour.
@@ -41,6 +41,13 @@ Nevertheless always request generations as if you're posting in a public forum l
 
 Yes! We do not require workers to stay always online. We only request that you put your worker in maintenance before you do so to avoid messing with a currently running generation your worker might have picked up.
 
+### Do workers support multiple models
+
+Depends. 
+
+For text generation on the KoboldAI Horde the answer is yes, but you select your model manually.
+
+For image generation on the Stable Horde, the answer is not yet. We plan to add this functionality in the future.
 
 ## Kudos?
 
@@ -108,17 +115,25 @@ If you feel a worker is using the censorlist maliciously, or improperly, please 
 
 This project started as a way to consolidate resources for the KoboldAI Client. As we needed a name for it, I came up with something thematic for the concept of "Kobolds". "A Horde of Kobolds". When I started doing image generation as well, I kept the "Horde" part.
 
+The AI Horde is the underlying technology. We separate each type of code according to the type of generations they provide
+
+There are two hordes at the moment
+   * [Stable Horde](https://stablehorde.net): Stable Diffusion Image Generation
+   * [KoboldAI Horde](https://koboldai.net): KoboldAI text generation
+
+But more Hordes for other purposes are possible.
+
 ### Does the horde spy on my prompts and generations?
 
 No, the horde itself is not storing such details. The prompts and the generations are only stored in-memory transiently and deleted shortly after the generation is delivered or cancelled.
 
 ### Why should I use the Horde and not my local PC?
 
-Not everyone has a power GPU in their PC. The horde allows anyone to use fast Stable Diffusion, not only the ones privileded enough to be able to afford an expensive graphics card. 
+Not everyone has a power GPU in their PC. The horde allows anyone to use fast Stable Diffusion and KoboldAI, not only the ones privileded enough to be able to afford an expensive graphics card. 
 
 Furthermore, local clients, even at the best of times, are difficult to setup up and often error prone due to python dependencies. They also need plenty of internet bandwidth to download 4GB of models. The stable horde provides no-install clients, as well as browser clients you can use even on your phone!
 
-Finally if you wanted to provide a service built on stable diffusion, you can now use your own PC to power your image generations, and therefore avoid all the complexity and capital costs required with setting up a server infrastructure. 
+Finally if you wanted to provide a service built on image or text generation, you can now use your own PC to power your image generations, and therefore avoid all the complexity and capital costs required with setting up a server infrastructure. 
 
 ### Why should I use the Horde and not a service like Stability.ai?
 

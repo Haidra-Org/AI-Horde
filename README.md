@@ -8,6 +8,7 @@ This software runs in two modes:
    * [Stable Horde](https://stablehorde.net): Stable Diffusion Image Generation
    * [KoboldAI Horde](https://koboldai.net): KoboldAI text generation
 
+For more questions, check the [FAQ](FAQ.md)
 
 # Registering
 
