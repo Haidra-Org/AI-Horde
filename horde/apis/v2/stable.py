@@ -6,7 +6,11 @@ class AsyncGenerate(AsyncGenerate):
         super().validate()
         if self.args["params"].get("length",512)%64:
             raise e.InvalidSize(self.username)
+        if self.args["params"].get("height",512) <= 0:
+            raise e.InvalidSize(self.username)
         if self.args["params"].get("width",512)%64:
+            raise e.InvalidSize(self.username)
+        if self.args["params"].get("width",512) <= 0:
             raise e.InvalidSize(self.username)
         if self.args["params"].get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
@@ -33,9 +37,13 @@ class SyncGenerate(SyncGenerate):
 
     def validate(self):
         super().validate()
-        if self.args["params"].get("length",512)%64:
+        if self.args["params"].get("height",512)%64:
+            raise e.InvalidSize(self.username)
+        if self.args["params"].get("height",512) <= 0:
             raise e.InvalidSize(self.username)
         if self.args["params"].get("width",512)%64:
+            raise e.InvalidSize(self.username)
+        if self.args["params"].get("width",512) <= 0:
             raise e.InvalidSize(self.username)
         if self.args["params"].get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
@@ -58,7 +66,7 @@ class SyncGenerate(SyncGenerate):
 class JobPop(JobPop):
 
     def check_in(self):
-        self.worker.check_in(self.args['max_pixels'], nsfw = self.args['nsfw'])
+        self.worker.check_in(self.args['max_pixels'], nsfw = self.args['nsfw'], blacklist = self.args['blacklist'])
   
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]

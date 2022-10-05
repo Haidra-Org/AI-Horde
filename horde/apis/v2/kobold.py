@@ -42,7 +42,8 @@ class JobPop(JobPop):
             self.args['max_content_length'],
             self.args['softprompts'],
             model = self.args['model'],
-            nsfw = self.args['nsfw']
+            nsfw = self.args['nsfw'],
+            blacklist = self.args['blacklist']
         )
 
 

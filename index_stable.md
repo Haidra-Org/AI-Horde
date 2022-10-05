@@ -2,7 +2,7 @@
 
 <img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Stable Diffusion workers](https://github.com/db0/stable-diffusion-webui). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md)!
 
-Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
+For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
 
 ## Stats 
 
@@ -38,7 +38,14 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 ### Tools
 
-We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
+* We provide a [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
+* The community has made the following
+    * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
+    * [Telegram Bot](https://t.me/CraiyonArtBot)
+    * [G.I.M.P Plugin](https://github.com/blueturtleai/gimp-stable-diffusion)
+    * [Browser Interface](https://diffusionui.com/b/stable_horde)
+    * [Horde Leaderboard](https://aqualxx.github.io/Horde-Overseer/)
+
 
 ## REST API
 
