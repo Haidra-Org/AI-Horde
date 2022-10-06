@@ -707,7 +707,13 @@ class User:
         self.suspicious += amount
         if reason:
             logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
-            
+
+    def get_workers(self):
+        return(self.db.find_workers_by_user(self))
+    
+    def count_workers(self):
+        return(len(self.get_workers()))
+
     @logger.catch
     def serialize(self):
         ret_dict = {

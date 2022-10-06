@@ -62,8 +62,11 @@ class WorkerMaintenance(wze.Forbidden):
         self.log = None
 
 class WorkerInviteOnly(wze.Forbidden):
-    def __init__(self):
-        self.specific = f"This horde has been switched to worker invite-only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
+    def __init__(self, current_workers):
+        if current_workers == 0:
+            self.specific = f"This horde has been switched to worker invite-only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
+        else:
+            self.specific = f"This horde has been switched to worker invite-only mode and you already have {current_workers} workers. Please contact us on Discord to allow you to join more workers: https://discord.gg/aG68kk3Qpz "
         self.log = None
 
 class UnsafeIP(wze.Forbidden):

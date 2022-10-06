@@ -278,8 +278,9 @@ class JobPop(Resource):
         if not self.worker:
             if is_profane(self.args['name']):
                 raise e.Profanity(self.user.get_unique_alias(), 'worker name', self.args['name'])
-            if invite_only.active and not self.user.worker_invited:
-                raise e.WorkerInviteOnly()
+            worker_count = self.user.count_workers()
+            if invite_only.active and not self.user.worker_invited >= worker_count:
+                raise e.WorkerInviteOnly(worker_count)
             self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
         if self.user != self.worker.user:
