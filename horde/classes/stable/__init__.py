@@ -61,7 +61,10 @@ class Worker(Worker):
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
         self.max_pixels = max_pixels
-        logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
+        paused_string = ''
+        if self.paused:
+            paused_string = '(Paused) '
+        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return(50)

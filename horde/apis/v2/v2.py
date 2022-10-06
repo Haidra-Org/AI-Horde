@@ -302,7 +302,7 @@ class JobSubmit(Resource):
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
-            raise e.WrongCredentials(user.get_unique_alias(), self.args['name'])
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
         self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
         if self.kudos == 0:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
@@ -415,10 +415,10 @@ class WorkerSingle(Resource):
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.info = self.args.info
             ret_dict["info"] = worker.info
-        # Only admins can set a worker as paused
+        # Only mods can set a worker as paused
         if self.args.paused != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-                raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
         if not len(ret_dict):

@@ -33,7 +33,7 @@ class InvalidAPIKey(wze.Unauthorized):
 
 class WrongCredentials(wze.Forbidden):
     def __init__(self, username, worker):
-        self.specific = "You cannot specify an empty prompt."
+        self.specific = "Wrong credentials to submit as this worker."
         self.log = f"User '{username}' sent wrong credentials for utilizing worker {worker}"
 
 class NotAdmin(wze.Forbidden):

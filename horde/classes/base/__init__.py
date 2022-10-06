@@ -252,12 +252,12 @@ class Worker:
         "uptime": 0,
     }
     suspicious = 0
+    suspicion_threshold = 3
 
     def __init__(self, db):
         self.db = db
 
     def create(self, user, name, **kwargs):
-        self.suspicious = 0
         self.user = user
         self.name = name
         self.id = str(uuid4())
@@ -267,22 +267,31 @@ class Worker:
         self.performances = []
         self.uptime = 0
         self.check_for_bad_actor()
-        if self.suspicious >= 2:
-            self.paused = True
-        else:
+        if not self.is_suspicious():
             self.db.register_new_worker(self)
 
     def check_for_bad_actor(self):
         if len(self.name) > 100:
+            if len(self.name) > 200:
+                self.report_suspicion(reason = 'Name extremely long')
             self.name = self.name[:100]
-            self.suspicious += 1
+            self.report_suspicion(reason = 'Name too long')
         if os.getenv("SUSPICIOUS_STUFF"):
             for word in json.loads(os.getenv("SUSPICIOUS_STUFF")):
                 if re.search(word, self.name, re.IGNORECASE):
-                    self.suspicious += 2
-                    logger.debug(f"matched suspicious word {word} in worker name {self.name}")
-        if self.suspicious > 0:
-            logger.warning(f"New worker '{self.name}' suspicion level: {self.suspicious}")
+                    self.report_suspicion(reason = f"matched suspicious word {word} in worker name {self.name}")
+
+    def report_suspicion(self, amount = 1, reason = None):
+        self.suspicious += amount
+        if reason:
+            logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
+        if self.is_suspicious():
+            self.paused = True
+
+    def is_suspicious(self):        
+        if self.suspicious >= self.suspicion_threshold:
+            return(True)
+        return(False)
 
     # This should be overwriten by each specific horde
     def calculate_uptime_reward(self):
@@ -293,14 +302,14 @@ class Worker:
         self.model = kwargs.get("model")
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
-        if not self.is_stale():
+        if not self.is_stale() and not self.paused:
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
-                logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                logger.debug(f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
             # If the worker comes back from being stale, we just reset their last_reward_uptime
@@ -351,6 +360,8 @@ class Worker:
         self.convert_contribution(raw_things)
         self.fulfilments += 1
         self.performances.append(things_per_sec)
+        if things_per_sec / 1000000 > 7:
+            self.report_suspicion(reason = f'Generation unreasonably fast ({round(things_per_sec / 1000000,2)} MPS)')
         if len(self.performances) > 20:
             del self.performances[0]
 
