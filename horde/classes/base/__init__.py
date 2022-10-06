@@ -4,7 +4,7 @@ from datetime import datetime
 import threading, time
 from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor
-import uuid
+import uuid, re
 
 class WaitingPrompt:
     extra_priority = 0
@@ -251,11 +251,13 @@ class Worker:
         "generated": 0,
         "uptime": 0,
     }
+    suspicious = 0
 
     def __init__(self, db):
         self.db = db
 
-    def create(self, user, name):
+    def create(self, user, name, **kwargs):
+        self.suspicious = 0
         self.user = user
         self.name = name
         self.id = str(uuid4())
@@ -264,7 +266,23 @@ class Worker:
         self.kudos = 0
         self.performances = []
         self.uptime = 0
-        self.db.register_new_worker(self)
+        self.check_for_bad_actor()
+        if self.suspicious >= 2:
+            self.paused = True
+        else:
+            self.db.register_new_worker(self)
+
+    def check_for_bad_actor(self):
+        if len(self.name) > 100:
+            self.name = self.name[:100]
+            self.suspicious += 1
+        if os.getenv("SUSPICIOUS_STUFF"):
+            for word in json.loads(os.getenv("SUSPICIOUS_STUFF")):
+                if re.search(word, self.name, re.IGNORECASE):
+                    self.suspicious += 2
+                    logger.debug(f"matched suspicious word {word} in worker name {self.name}")
+        if self.suspicious > 0:
+            logger.warning(f"New worker '{self.name}' suspicion level: {self.suspicious}")
 
     # This should be overwriten by each specific horde
     def calculate_uptime_reward(self):
@@ -422,7 +440,11 @@ class Worker:
         self.info = saved_dict.get("info",None)
         self.nsfw = saved_dict.get("nsfw",True)
         self.blacklist = saved_dict.get("blacklist",[])
-        self.db.workers[self.name] = self
+        self.check_for_bad_actor()
+        if self.suspicious >= 2:
+            self.paused = True
+        else:
+            self.db.workers[self.name] = self
         if convert_flag == "kudos_fix":
             multiplier = 20
             # Average kudos in the kobold horde is much bigger
@@ -530,6 +552,7 @@ class User:
         }
         self.concurrency = 30
         self.usage_multiplier = 1.0
+        self.suspicious = 0
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -558,6 +581,7 @@ class User:
         self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
+        self.check_for_bad_actor()
         self.id = self.db.register_new_user(self)
         self.contributions = {
             thing_name: 0,
@@ -567,6 +591,15 @@ class User:
             thing_name: 0,
             "requests": 0
         }
+
+    def check_for_bad_actor(self):
+        if len(self.username) > 30:
+            self.username = self.username[:30]
+            self.suspicious += 1
+        if os.getenv("SUSPICIOUS_STUFF") and any(word in self.name for word in os.getenv("SUSPICIOUS_STUFF")):
+            self.suspicious += 2
+        if self.suspicious > 0:
+            logger.warning(f"New user '{self.username}' suspicion level: {self.suspicious}")
 
     # Checks that this user matches the specified API key
     def check_key(api_key):
@@ -796,6 +829,7 @@ class Database:
                     if not worker_dict:
                         logger.error("Found null worker on db load. Bypassing")
                         continue
+                    # This should not be possible. If its' there, it's a bad actor we want to remove
                     new_worker = self.new_worker()
                     new_worker.deserialize(worker_dict,convert_flag)
                     self.workers[new_worker.name] = new_worker
