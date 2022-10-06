@@ -25,6 +25,7 @@ handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
+handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
 handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
@@ -224,9 +225,10 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
-        self.safe_ip = cm.is_ip_safe(request.remote_addr)
+        self.worker_ip = request.remote_addr
+        self.safe_ip = cm.is_ip_safe(self.worker_ip)
         if not self.safe_ip and not raid.active:
-            raise e.UnsafeIP(request.remote_addr)
+            raise e.UnsafeIP(self.worker_ip)
         self.validate()
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
@@ -279,8 +281,10 @@ class JobPop(Resource):
             if is_profane(self.args['name']):
                 raise e.Profanity(self.user.get_unique_alias(), 'worker name', self.args['name'])
             worker_count = self.user.count_workers()
-            if invite_only.active and not self.user.worker_invited >= worker_count:
+            if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
+            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+                raise e.TooManySameIPs(self.user.username)
             self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
         if self.user != self.worker.user:
@@ -291,7 +295,7 @@ class JobPop(Resource):
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
-        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'], safe_ip = self.safe_ip)
+        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'], safe_ip = self.safe_ip, ipaddr = self.worker_ip)
 
 
 class JobSubmit(Resource):

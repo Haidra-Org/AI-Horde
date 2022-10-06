@@ -61,6 +61,11 @@ class WorkerMaintenance(wze.Forbidden):
         self.specific = f"worker {worker_id} has been put into maintenance by its owner"
         self.log = None
 
+class TooManySameIPs(wze.Forbidden):
+    def __init__(self, username):
+        self.specific = f"You are running too many workers from the same node. To prevent abuse, please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz "
+        self.log = f"User '{username} is trying to onboard too many workers from the same IP Address. Aborting!"
+
 class WorkerInviteOnly(wze.Forbidden):
     def __init__(self, current_workers):
         if current_workers == 0:

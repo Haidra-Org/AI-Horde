@@ -325,6 +325,7 @@ class Worker:
         self.model = kwargs.get("model")
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
+        self.ipaddr = kwargs.get("ipaddr", None)
         if not kwargs.get("safe_ip", True):
             if not self.user.worker_invited:
                 self.report_suspicion(reason = 'Worker using unsafe IP')
@@ -462,6 +463,7 @@ class Worker:
             "info": self.info,
             "nsfw": self.nsfw,
             "blacklist": self.blacklist.copy(),
+            "ipaddr": self.ipaddr,
         }
         return(ret_dict)
 
@@ -482,6 +484,7 @@ class Worker:
         self.info = saved_dict.get("info",None)
         self.nsfw = saved_dict.get("nsfw",True)
         self.blacklist = saved_dict.get("blacklist",[])
+        self.ipaddr = saved_dict.get("ipaddr", None)
         self.check_for_bad_actor()
         if self.suspicious >= 2:
             self.paused = True
@@ -589,6 +592,7 @@ class User:
     concurrency = 30
     usage_multiplier = 1.0
     kudos = 0
+    same_ip_worker_threshold = 8
 
     def __init__(self, db):
         self.kudos_details = {
@@ -722,6 +726,18 @@ class User:
     
     def count_workers(self):
         return(len(self.get_workers()))
+
+    def exceeding_ipaddr_restrictions(self, ipaddr):
+        '''Checks that the ipaddr of the new worker does not have too many other workers
+        to prevent easy spamming of new workers with a script
+        '''
+        ipcount = 0
+        for worker in self.get_workers():
+            if worker.ipaddr == ipaddr:
+                ipcount += 1
+        if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
+            return(True)
+        return(False)
 
     @logger.catch
     def serialize(self):

@@ -7,18 +7,22 @@ def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', 6379)) == 0
 
+limiter = None
 # Very basic DOS prevention
 if is_redis_up():
-    limiter = Limiter(
-        HORDE,
-        key_func=get_remote_address,
-        storage_uri="redis://localhost:6379/1",
-        # storage_options={"connect_timeout": 30},
-        strategy="fixed-window", # or "moving-window"
-        default_limits=["90 per minute"]
-    )
+    try:
+        limiter = Limiter(
+            HORDE,
+            key_func=get_remote_address,
+            storage_uri="redis://localhost:6379/1",
+            # storage_options={"connect_timeout": 30},
+            strategy="fixed-window", # or "moving-window"
+            default_limits=["90 per minute"]
+        )
+    except:
+        pass
 # Allow local workatation run
-else:
+if limiter == None:
     limiter = Limiter(
         HORDE,
         key_func=get_remote_address,

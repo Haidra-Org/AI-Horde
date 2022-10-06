@@ -71,6 +71,7 @@ class JobPop(JobPop):
             nsfw = self.args['nsfw'], 
             blacklist = self.args['blacklist'], 
             safe_ip = self.safe_ip,
+            ipaddr = self.worker_ip,
         )
   
 class HordeLoad(HordeLoad):
