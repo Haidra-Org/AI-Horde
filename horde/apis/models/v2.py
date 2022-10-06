@@ -122,6 +122,7 @@ class Models:
             "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
             "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
             "worker_invited": fields.Boolean(description="Whether this user has been invited to join a worker to the horde."),    
+            "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "usage": fields.Nested(self.response_model_use_details),
             "contributions": fields.Nested(self.response_model_contrib_details),
@@ -131,7 +132,8 @@ class Models:
             "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
             "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
-            "worker_invited": fields.Boolean(example=False,description="This worker has been ivited to join their worker to the horde."),
+            "worker_invited": fields.Boolean(example=False,description="This user has been ivited to join their worker to the horde."),
+            "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {

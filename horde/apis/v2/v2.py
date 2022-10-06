@@ -454,6 +454,7 @@ class UserSingle(Resource):
     parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
     parser.add_argument("worker_invite", type=bool, required=False, help="Set to true to allow this user to join a worker to the horde when in worker invite-only mode.", location="json")
+    parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -472,22 +473,31 @@ class UserSingle(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-            raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyUser')
         ret_dict = {}
         if self.args.kudos:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
-        if self.args.concurrency:
-            user.concurrency = self.args.concurrency
-            ret_dict["concurrency"] = user.concurrency
         if self.args.usage_multiplier:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.usage_multiplier = self.args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
-        # Only admins can set a user in worer invite mode
-        if self.args.worker_invite != None:
+        if self.args.moderator != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-                raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
+            user.moderator = self.args.moderator
+            ret_dict["moderator"] = user.moderator
+        # Moderator Duties
+        if self.args.concurrency:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.concurrency = self.args.concurrency
+            ret_dict["concurrency"] = user.concurrency
+        if self.args.worker_invite != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.worker_invited = self.args.worker_invite
             ret_dict["worker_invited"] = user.worker_invited
         if not len(ret_dict):
@@ -553,7 +563,7 @@ class HordeWorkerInviteOnly(Resource):
         Use this endpoint to quicky determine if this horde is in invite mode.
         '''
         ret_dict = {
-            "invite_only": invite_only.invite_only
+            "invite_only": invite_only.active
         }
         return(ret_dict,200)
 
@@ -575,7 +585,7 @@ class HordeWorkerInviteOnly(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'HordeWorkerInviteOnly')
-        if not os.getenv("MODS") or admin.get_unique_alias() not in json.loads(os.getenv("MODS")):
+        if not admin.moderator:
             raise e.NotModerator(admin.get_unique_alias(), 'HordeWorkerInviteOnly')
         invite_only.toggle(self.args['active'])
         return({"invite_only": invite_only.active}, 200)

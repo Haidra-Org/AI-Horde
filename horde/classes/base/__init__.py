@@ -543,6 +543,7 @@ class GenerationsIndex(Index):
 class User:
     suspicious = 0
     worker_invited = False
+    moderator = False
     concurrency = 30
     usage_multiplier = 1.0
     kudos = 0
@@ -664,6 +665,7 @@ class User:
             "contributions": self.contributions,
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
+            "moderator": self.moderator,
         }
         return(ret_dict)
 
@@ -683,6 +685,7 @@ class User:
             "usage_multiplier": self.usage_multiplier,
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
+            "moderator": self.moderator,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -702,6 +705,7 @@ class User:
         self.concurrency = saved_dict.get("concurrency", 30)
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         self.worker_invited = saved_dict.get("worker_invited", False)
+        self.moderator = saved_dict.get("moderator", False)
         if self.api_key == '0000000000':
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
