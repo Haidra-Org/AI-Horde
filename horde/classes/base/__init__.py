@@ -24,6 +24,7 @@ class WaitingPrompt:
         self.id = str(uuid4())
         # The generations that have been created already
         self.processing_gens = []
+        self.fake_gens = []
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
@@ -65,8 +66,11 @@ class WaitingPrompt:
         return(self.get_pop_payload())
 
     def fake_generation(self, worker):
+        new_gen = self.new_procgen(worker)
+        new_gen.fake = True
+        self.fake_gens.append(new_gen.id)
         self.tricked_workers.append(worker)
-        return(self.get_pop_payload(str(uuid4())))
+        return(self.get_pop_payload(new_gen.id))
     
     def tricked_worker(self, worker):
         return(worker in self.tricked_workers)
@@ -138,9 +142,6 @@ class WaitingPrompt:
         ret_dict["wait_time"] = round(wait_time)
         return(ret_dict)
 
-
-        return(ret_dict)
-
     def get_lite_status(self):
         '''Same as get_status(), but without the images to avoid unnecessary size'''
         ret_dict = self.get_status(True)
@@ -175,6 +176,8 @@ class WaitingPrompt:
     def delete(self):
         for gen in self.processing_gens:
             gen.delete()
+        for gen in self.fake_gens:
+            gen.delete()
         self._waiting_prompts.del_item(self)
         del self
 
@@ -192,6 +195,7 @@ class WaitingPrompt:
 class ProcessingGeneration:
     generation = None
     seed = None
+    fake = False
  
     def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
@@ -211,9 +215,14 @@ class ProcessingGeneration:
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
         self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
-        self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
-        self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
-        logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        if fake and self.worker.user != self.owner.user:
+            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+            logger.info(f"Fake Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        else:
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+            self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
+            logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
         return(self.kudos)
 
     def is_completed(self):
