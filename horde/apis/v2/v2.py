@@ -118,7 +118,7 @@ class AsyncGenerate(GenerateTemplate):
         '''
         super().post()
         ret_dict = {"id":self.wp.id}
-        if not self.has_valid_workers():
+        if not self.has_valid_workers() and not raid.active:
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 

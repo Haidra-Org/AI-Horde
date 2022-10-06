@@ -10,8 +10,8 @@ from ...utils import is_profane
 
 class WaitingPrompt:
     extra_priority = 0
-    tricked_workers = []
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
+        self.tricked_workers = []
         self.db = db
         self._waiting_prompts = wps
         self._processing_generations = pgs
@@ -63,7 +63,7 @@ class WaitingPrompt:
         self.processing_gens.append(new_gen.id)
         self.n -= 1
         self.refresh()
-        return(self.get_pop_payload())
+        return(self.get_pop_payload(new_gen.id))
 
     def fake_generation(self, worker):
         new_gen = self.new_procgen(worker)
@@ -215,7 +215,7 @@ class ProcessingGeneration:
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
         self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
-        if fake and self.worker.user != self.owner.user:
+        if self.fake and self.worker.user != self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
             logger.info(f"Fake Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
@@ -269,14 +269,14 @@ class Worker:
     paused = False
     # Extra comment about the worker, set by its owner
     info = None
-    kudos_details = {
-        "generated": 0,
-        "uptime": 0,
-    }
     suspicious = 0
     suspicion_threshold = 3
 
     def __init__(self, db):
+        self.kudos_details = {
+            "generated": 0,
+            "uptime": 0,
+        }
         self.db = db
 
     def create(self, user, name, **kwargs):
@@ -589,14 +589,14 @@ class User:
     concurrency = 30
     usage_multiplier = 1.0
     kudos = 0
-    kudos_details = {
-        "accumulated": 0,
-        "gifted": 0,
-        "admin": 0,
-        "received": 0,
-    }
 
     def __init__(self, db):
+        self.kudos_details = {
+            "accumulated": 0,
+            "gifted": 0,
+            "admin": 0,
+            "received": 0,
+        }
         self.db = db
 
     def create_anon(self):
