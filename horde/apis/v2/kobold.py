@@ -43,7 +43,8 @@ class JobPop(JobPop):
             self.args['softprompts'],
             model = self.args['model'],
             nsfw = self.args['nsfw'],
-            blacklist = self.args['blacklist']
+            blacklist = self.args['blacklist'],
+            safe_ip = self.safe_ip,
         )
 
 

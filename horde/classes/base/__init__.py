@@ -271,6 +271,8 @@ class Worker:
             self.db.register_new_worker(self)
 
     def check_for_bad_actor(self):
+        # Each worker starts at the suspicion level of its user
+        self.suspicious = self.user.suspicious
         if len(self.name) > 100:
             if len(self.name) > 200:
                 self.report_suspicion(reason = 'Name extremely long')
@@ -283,6 +285,7 @@ class Worker:
 
     def report_suspicion(self, amount = 1, reason = None):
         self.suspicious += amount
+        self.user.report_suspicion(amount)
         if reason:
             logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
         if self.is_suspicious():
@@ -302,6 +305,9 @@ class Worker:
         self.model = kwargs.get("model")
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
+        if not kwargs.get("safe_ip", True):
+            if not self.user.worker_invited:
+                self.report_suspicion(reason = 'Worker using unsafe IP')
         if not self.is_stale() and not self.paused:
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -553,7 +559,7 @@ class GenerationsIndex(Index):
 
 class User:
     suspicious = 0
-    worker_invited = False
+    worker_invited = 0
     moderator = False
     concurrency = 30
     usage_multiplier = 1.0
@@ -609,14 +615,12 @@ class User:
     def check_for_bad_actor(self):
         if len(self.username) > 30:
             self.username = self.username[:30]
-            self.suspicious += 1
+            self.report_suspicion("Username too long")
         if os.getenv("SUSPICIOUS_STUFF"):
             for word in json.loads(os.getenv("SUSPICIOUS_STUFF")):
                 if re.search(word, self.username, re.IGNORECASE):
-                    self.suspicious += 2
+                    self.report_suspicion()
                     logger.debug(f"matched suspicious word {word} in user name {self.username}")
-        if self.suspicious > 0:
-            logger.warning(f"New user '{self.username}' suspicion level: {self.suspicious}")
 
     # Checks that this user matches the specified API key
     def check_key(api_key):
@@ -680,7 +684,14 @@ class User:
         }
         return(ret_dict)
 
-
+    def report_suspicion(self, amount = 1, reason = None):
+        # Anon is never considered suspicious
+        if self.id == 'anon':
+            return
+        self.suspicious += amount
+        if reason:
+            logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
+            
     @logger.catch
     def serialize(self):
         ret_dict = {
@@ -715,7 +726,8 @@ class User:
         self.usage = saved_dict["usage"]
         self.concurrency = saved_dict.get("concurrency", 30)
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
-        self.worker_invited = saved_dict.get("worker_invited", False)
+        # I am putting int() here, to convert a boolean entry I had in the past
+        self.worker_invited = int(saved_dict.get("worker_invited", 0))
         self.moderator = saved_dict.get("moderator", False)
         if self.api_key == '0000000000':
             self.concurrency = 200

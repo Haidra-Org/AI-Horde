@@ -221,7 +221,7 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
-        safe_ip = cm.is_ip_safe(request.remote_addr)
+        self.safe_ip = cm.is_ip_safe(request.remote_addr)
         if not safe_ip and not raid_mode.active:
             raise e.UnsafeIP(request.remote_addr)
         self.validate()
@@ -279,7 +279,7 @@ class JobPop(Resource):
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
-        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'])
+        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'], safe_ip = self.safe_ip)
 
 
 class JobSubmit(Resource):
