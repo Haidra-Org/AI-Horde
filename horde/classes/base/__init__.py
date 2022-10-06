@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime
 import threading, time
 from .. import logger, args
-from ...vars import thing_name,raw_thing_name,thing_divisor
+from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re
 
 class WaitingPrompt:
@@ -360,8 +360,8 @@ class Worker:
         self.convert_contribution(raw_things)
         self.fulfilments += 1
         self.performances.append(things_per_sec)
-        if things_per_sec / 1000000 > 7:
-            self.report_suspicion(reason = f'Generation unreasonably fast ({round(things_per_sec / 1000000,2)} MPS)')
+        if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
+            self.report_suspicion(reason = f'Generation unreasonably fast ({round(things_per_sec / thing_divisor,2)} MPS)')
         if len(self.performances) > 20:
             del self.performances[0]
 
