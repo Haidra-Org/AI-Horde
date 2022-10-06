@@ -41,6 +41,11 @@ class NotAdmin(wze.Forbidden):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"Non-admin user '{username}' tried to use admin endpoint: '{endpoint}. Aborting!"
 
+class NotModerator(wze.Forbidden):
+    def __init__(self, username, endpoint):
+        self.specific = "You're not a mod. BTFO!"
+        self.log = f"Non-mod user '{username}' tried to use mod endpoint: '{endpoint}. Aborting!"
+
 class NotOwner(wze.Forbidden):
     def __init__(self, username, worker_name):
         self.specific = "You're not an admin. Sod off!"

@@ -19,6 +19,7 @@ handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
+handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
@@ -574,8 +575,8 @@ class HordeWorkerInviteOnly(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'HordeWorkerInviteOnly')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-            raise e.NotAdmin(admin.get_unique_alias(), 'HordeWorkerInviteOnly')
+        if not os.getenv("MODS") or admin.get_unique_alias() not in json.loads(os.getenv("MODS")):
+            raise e.NotModerator(admin.get_unique_alias(), 'HordeWorkerInviteOnly')
         invite_only.toggle(self.args['active'])
         return({"invite_only": invite_only.active}, 200)
 
