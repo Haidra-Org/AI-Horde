@@ -58,7 +58,7 @@ class WorkerMaintenance(wze.Forbidden):
 
 class WorkerInviteOnly(wze.Forbidden):
     def __init__(self):
-        self.specific = f"This horde has been switched to Worker-invite only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz"
+        self.specific = f"This horde has been switched to worker invite-only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
         self.log = None
 
 class InvalidProcGen(wze.NotFound):
