@@ -4,7 +4,7 @@ from ... import limiter
 from ...logger import logger
 from ...classes import db as _db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance
+from ... import maintenance, invite_only, raid_mode, cm
 from enum import Enum
 import os, time, json
 
@@ -230,6 +230,8 @@ class PromptPop(Resource):
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
+        if not cm.is_ip_safe(request.remote_addr):
+            return(f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.",403)
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:

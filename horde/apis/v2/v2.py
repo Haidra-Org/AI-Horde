@@ -1,6 +1,6 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter, logger, maintenance, invite_only
+from ... import limiter, logger, maintenance, invite_only, raid_mode, cm
 from ...classes import db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from enum import Enum
@@ -23,6 +23,7 @@ handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
+handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
@@ -220,6 +221,8 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
+        if not cm.is_ip_safe(request.remote_addr):
+            raise e.UnsafeIP(request.remote_addr)
         self.validate()
         self.check_in()
         # Paused worker return silently

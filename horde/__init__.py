@@ -1,5 +1,6 @@
 from .logger import logger, set_logger_verbosity, quiesce_logger
 from .argparser import args
+from . import countermeasures as cm
 
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
@@ -9,6 +10,9 @@ maintenance = Maintenance()
 invite_only = Maintenance()
 if args.worker_invite:
     invite_only.activate()
+raid_mode = Maintenance()
+if args.raid_mode:
+    raid_mode.activate()
 
 from .limiter import limiter
 from flask import Flask, render_template, redirect, url_for, request, Blueprint
