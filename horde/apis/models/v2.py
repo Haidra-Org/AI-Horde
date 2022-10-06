@@ -141,12 +141,10 @@ class Models:
             "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
         })
 
-        self.response_model_horde_maintenance_mode = api.model('HordeMaintenanceMode', {
+        self.response_model_horde_modes = api.model('HordeModes', {
             "maintenance_mode": fields.Boolean(description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue."),
-        })
-
-        self.response_model_horde_worker_invite_only_mode = api.model('HordeWorkerInviteOnlyMode', {
-            "invite_only": fields.Boolean(description="When True, this Horde will not only accept worker explicitly invited to join."),
+            "invite_only_mode": fields.Boolean(description="When True, this Horde will not only accept worker explicitly invited to join."),
+            "raid_mode": fields.Boolean(description="When True, this Horde will not always provide full information in order to throw off attackers."),
         })
 
         self.response_model_error = api.model('RequestError', {

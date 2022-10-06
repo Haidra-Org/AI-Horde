@@ -1,6 +1,6 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter, logger, maintenance, invite_only, raid_mode, cm
+from ... import limiter, logger, maintenance, invite_only, raid, cm
 from ...classes import db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from enum import Enum
@@ -221,7 +221,8 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
-        if not cm.is_ip_safe(request.remote_addr):
+        safe_ip = cm.is_ip_safe(request.remote_addr)
+        if not safe_ip and not raid_mode.active:
             raise e.UnsafeIP(request.remote_addr)
         self.validate()
         self.check_in()
@@ -477,12 +478,12 @@ class UserSingle(Resource):
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         ret_dict = {}
-        if self.args.kudos:
+        if self.args.kudos != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
-        if self.args.usage_multiplier:
+        if self.args.usage_multiplier != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.usage_multiplier = self.args.usage_multiplier
@@ -493,7 +494,7 @@ class UserSingle(Resource):
             user.moderator = self.args.moderator
             ret_dict["moderator"] = user.moderator
         # Moderator Duties
-        if self.args.concurrency:
+        if self.args.concurrency != None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.concurrency = self.args.concurrency
@@ -519,78 +520,56 @@ class HordeLoad(Resource):
         load_dict["worker_count"] = db.count_active_workers()
         return(load_dict,200)
 
-class HordeMaintenance(Resource):
+class HordeModes(Resource):
     decorators = [limiter.limit("2/second")]
     @logger.catch
-    @api.marshal_with(models.response_model_horde_maintenance_mode, code=200, description='Horde Maintenance')
+    @api.marshal_with(models.response_model_horde_modes, code=200, description='Horde Maintenance')
     def get(self):
         '''Horde Maintenance Mode Status
         Use this endpoint to quicky determine if this horde is in maintenance.
         '''
         ret_dict = {
-            "maintenance_mode": maintenance.active
+            "maintenance_mode": maintenance.active,
+            "invite_only_mode": invite_only.active,
+            "raid_mode": raid.active,
         }
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
-    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode", location="json")
+    parser.add_argument("maintenance", type=bool, required=False, help="Start or stop maintenance mode", location="json")
+    parser.add_argument("invite_only", type=bool, required=False, help="Start or stop worker invite-only mode", location="json")
+    parser.add_argument("raid", type=bool, required=False, help="Start or stop raid mode", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
-    @api.marshal_with(models.response_model_admin_maintenance, code=200, description='Maintenance Mode Set')
+    @api.marshal_with(models.response_model_horde_modes, code=200, description='Maintenance Mode Set', skip_none=True)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(402, 'Access Denied', models.response_model_error)
     def put(self):
-        '''Change Horde Maintenance Mode 
-        Endpoint for admins to (un)set the horde into maintenance.
-        When in maintenance no new requests for generation will be accepted
-        but requests currently in the queue will be completed.
+        '''Change Horde Modes
+        Endpoint for admins to (un)set the horde into maintenance, invite_only or raid modes.
         '''
         self.args = self.parser.parse_args()
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
-            raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-            raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
-        maintenance.toggle(self.args['active'])
-        return({"maintenance_mode": maintenance.active}, 200)
-
-
-class HordeWorkerInviteOnly(Resource):
-    decorators = [limiter.limit("2/second")]
-    @logger.catch
-    @api.marshal_with(models.response_model_horde_worker_invite_only_mode, code=200, description='Horde Invite Mode')
-    def get(self):
-        '''Horde Invite Mode Status
-        Use this endpoint to quicky determine if this horde is in invite mode.
-        '''
-        ret_dict = {
-            "invite_only": invite_only.active
-        }
-        return(ret_dict,200)
-
-    parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
-    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode", location="json")
-
-    decorators = [limiter.limit("30/minute")]
-    @api.expect(parser)
-    @api.marshal_with(models.response_model_horde_worker_invite_only_mode, code=200, description='Maintenance Mode Set')
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(402, 'Access Denied', models.response_model_error)
-    def put(self):
-        '''Change Horde Worker Invite Only Mode 
-        Endpoint for admins to (un)set the horde into worker invite only mode.
-        When in worker invite only mode only workers whose users have received an invite can join.
-        '''
-        self.args = self.parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
-        if not admin:
-            raise e.InvalidAPIKey('Admin action: ' + 'HordeWorkerInviteOnly')
-        if not admin.moderator:
-            raise e.NotModerator(admin.get_unique_alias(), 'HordeWorkerInviteOnly')
-        invite_only.toggle(self.args['active'])
-        return({"invite_only": invite_only.active}, 200)
-
-
+            raise e.InvalidAPIKey('Admin action: ' + 'PUT AdminMaintenanceMode')
+        ret_dict = {}
+        if self.args.maintenance != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
+            maintenance.toggle(self.args.maintenance)
+            ret_dict["maintenance_mode"] = maintenance.active
+        if self.args.invite_only != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            invite_only.toggle(self.args.invite_only)
+            ret_dict["invite_only_mode"] = invite_only.active
+        if self.args.raid != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            raid.toggle(self.args.raid)
+            ret_dict["raid_mode"] = raid.active
+        if not len(ret_dict):
+            raise e.NoValidActions("No mod change selected!")
+        return(ret_dict, 200)

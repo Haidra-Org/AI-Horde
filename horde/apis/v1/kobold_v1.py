@@ -4,7 +4,7 @@ from ... import limiter
 from ...logger import logger
 from ...classes import db as _db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance, invite_only, raid_mode, cm
+from ... import maintenance, invite_only, raid, cm
 from enum import Enum
 import os, time, json
 

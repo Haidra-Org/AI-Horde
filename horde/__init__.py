@@ -10,9 +10,9 @@ maintenance = Maintenance()
 invite_only = Maintenance()
 if args.worker_invite:
     invite_only.activate()
-raid_mode = Maintenance()
-if args.raid_mode:
-    raid_mode.activate()
+raid = Maintenance()
+if args.raid:
+    raid.activate()
 
 from .limiter import limiter
 from flask import Flask, render_template, redirect, url_for, request, Blueprint

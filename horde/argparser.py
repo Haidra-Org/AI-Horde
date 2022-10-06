@@ -8,5 +8,5 @@ arg_parser.add_argument('-c', '--convert_flag', action='store', default=None, re
 arg_parser.add_argument('-p', '--port', action='store', default=7001, required=False, type=int, help="Provide a different port to start with")
 arg_parser.add_argument('--horde', action='store', default='stable', required=True, type=str, help="Which Horde to Start. This customizes endpoints and methods")
 arg_parser.add_argument('--worker_invite', action="store_true", help="If set, Will start the horde in worker invite-only mode")
-arg_parser.add_argument('--raid_mode', action="store_true", help="If set, Will start the horde in raid prevention mode")
+arg_parser.add_argument('--raid', action="store_true", help="If set, Will start the horde in raid prevention mode")
 args = arg_parser.parse_args()

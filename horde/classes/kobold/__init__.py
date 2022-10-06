@@ -38,6 +38,7 @@ class WaitingPrompt(WaitingPrompt):
     def start_generation(self, worker, matching_softprompt):
         prompt_payload = super().start_generation(worker)
         prompt_payload["softprompt"] = matching_softprompt
+        
         return(prompt_payload)
 
 class ProcessingGeneration(ProcessingGeneration):
