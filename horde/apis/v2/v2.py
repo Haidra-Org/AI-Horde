@@ -368,8 +368,8 @@ class WorkerSingle(Resource):
             admin = db.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('admin worker details')
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-                raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
             is_privileged = True
         return(worker.get_details(is_privileged),200)
 
