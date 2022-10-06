@@ -5,7 +5,7 @@ from ...classes import db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from enum import Enum
 from .. import exceptions as e
-import os, time
+import os, time, json
 from .. import ModelsV2, ParsersV2
 
 api = Namespace('v2', 'API Version 2' )
@@ -367,7 +367,7 @@ class WorkerSingle(Resource):
             admin = db.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('admin worker details')
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
             is_privileged = True
         return(worker.get_details(is_privileged),200)
@@ -403,7 +403,7 @@ class WorkerSingle(Resource):
         ret_dict = {}
         # Both admins and owners can set the worker to maintenance
         if self.args.maintenance != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.maintenance = self.args.maintenance
@@ -416,7 +416,7 @@ class WorkerSingle(Resource):
             ret_dict["info"] = worker.info
         # Only admins can set a worker as paused
         if self.args.paused != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
             worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
@@ -471,7 +471,7 @@ class UserSingle(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
             raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyUser')
         ret_dict = {}
         if self.args.kudos:
@@ -485,7 +485,7 @@ class UserSingle(Resource):
             ret_dict["usage_multiplier"] = user.usage_multiplier
         # Only admins can set a user in worer invite mode
         if self.args.worker_invite != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
             user.worker_invited = self.args.worker_invite
             ret_dict["worker_invited"] = user.worker_invited
@@ -537,7 +537,7 @@ class HordeMaintenance(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
             raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
         maintenance.toggle(self.args['active'])
         return({"maintenance_mode": maintenance.active}, 200)
@@ -574,7 +574,7 @@ class HordeWorkerInviteOnly(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'HordeWorkerInviteOnly')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
             raise e.NotAdmin(admin.get_unique_alias(), 'HordeWorkerInviteOnly')
         invite_only.toggle(self.args['active'])
         return({"invite_only": invite_only.active}, 200)
