@@ -521,18 +521,30 @@ class HordeLoad(Resource):
         return(load_dict,200)
 
 class HordeModes(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
+
     decorators = [limiter.limit("2/second")]
-    @logger.catch
-    @api.marshal_with(models.response_model_horde_modes, code=200, description='Horde Maintenance')
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_horde_modes, code=200, description='Horde Maintenance', skip_none=True)
     def get(self):
         '''Horde Maintenance Mode Status
-        Use this endpoint to quicky determine if this horde is in maintenance.
+        Use this endpoint to quicky determine if this horde is in maintenance, invite_only or raid mode.
         '''
         ret_dict = {
             "maintenance_mode": maintenance.active,
             "invite_only_mode": invite_only.active,
-            "raid_mode": raid.active,
+            
         }
+        is_privileged = False
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            admin = db.find_user_by_api_key(self.args['apikey'])
+            if not admin:
+                raise e.InvalidAPIKey('admin worker details')
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
+            ret_dict["raid_mode"] = raid.active
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
@@ -553,21 +565,21 @@ class HordeModes(Resource):
         self.args = self.parser.parse_args()
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
-            raise e.InvalidAPIKey('Admin action: ' + 'PUT AdminMaintenanceMode')
+            raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
         ret_dict = {}
         if self.args.maintenance != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-                raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
             ret_dict["maintenance_mode"] = maintenance.active
         if self.args.invite_only != None:
             if not admin.moderator:
-                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
             invite_only.toggle(self.args.invite_only)
             ret_dict["invite_only_mode"] = invite_only.active
         if self.args.raid != None:
             if not admin.moderator:
-                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
             raid.toggle(self.args.raid)
             ret_dict["raid_mode"] = raid.active
         if not len(ret_dict):
