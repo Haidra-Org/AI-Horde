@@ -5,9 +5,12 @@ import threading, time
 from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re
+from ...utils import is_profane
+
 
 class WaitingPrompt:
     extra_priority = 0
+    tricked_workers = []
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
         self.db = db
         self._waiting_prompts = wps
@@ -56,12 +59,22 @@ class WaitingPrompt:
         if self.n <= 0:
             return
         new_gen = self.new_procgen(worker)
-        self.processing_gens.append(new_gen)
+        self.processing_gens.append(new_gen.id)
         self.n -= 1
         self.refresh()
+        return(self.get_pop_payload())
+
+    def fake_generation(self, worker):
+        self.tricked_workers.append(worker)
+        return(self.get_pop_payload(str(uuid4())))
+    
+    def tricked_worker(self, worker):
+        return(worker in self.tricked_workers)
+
+    def get_pop_payload(self, procgen_id):
         prompt_payload = {
             "payload": self.gen_payload,
-            "id": new_gen.id,
+            "id": procgen_id,
         }
         return(prompt_payload)
 
@@ -278,10 +291,8 @@ class Worker:
                 self.report_suspicion(reason = 'Name extremely long')
             self.name = self.name[:100]
             self.report_suspicion(reason = 'Name too long')
-        if os.getenv("SUSPICIOUS_STUFF"):
-            for word in json.loads(os.getenv("SUSPICIOUS_STUFF")):
-                if re.search(word, self.name, re.IGNORECASE):
-                    self.report_suspicion(reason = f"matched suspicious word {word} in worker name {self.name}")
+        if is_profane(self.name):
+            self.report_suspicion(reason = f"discovered profanity in worker name {self.name}")
 
     def report_suspicion(self, amount = 1, reason = None):
         self.suspicious += amount
@@ -347,6 +358,11 @@ class Worker:
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False
             skipped_reason = 'nsfw'
+        # If the worker has been tricked once by this prompt, we don't want to resend it it
+        # as it may give up the jig
+        if waiting_prompt.tricked_worker(self):
+            is_matching = False
+            skipped_reason = 'secret'
         if any(word in waiting_prompt.prompt for word in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
@@ -686,7 +702,7 @@ class User:
 
     def report_suspicion(self, amount = 1, reason = None):
         # Anon is never considered suspicious
-        if self.id == 'anon':
+        if self.is_anon():
             return
         self.suspicious += amount
         if reason:

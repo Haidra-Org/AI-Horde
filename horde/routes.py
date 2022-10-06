@@ -10,7 +10,7 @@ from .vars import thing_name, raw_thing_name, thing_divisor, google_verification
 from .classes import db
 from .classes import waiting_prompts,User
 import bleach
-from .utils import ConvertAmount
+from .utils import ConvertAmount, is_profane
 
 dance_return_to = '/'
 
@@ -156,10 +156,14 @@ def register():
         api_key = secrets.token_urlsafe(16)
         if user:
             username = bleach.clean(request.form['username'])
+            if is_profane(username):
+                return render_template('bad_username.html', page_title="Bad Username")
             user.username = username
             user.api_key = api_key
         else:
             # Triggered when the user created a username without logging in
+            if is_profane(request.form['username']):
+                return render_template('bad_username.html', page_title="Bad Username")
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True

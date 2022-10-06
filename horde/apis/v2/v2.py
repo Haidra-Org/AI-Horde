@@ -7,6 +7,8 @@ from enum import Enum
 from .. import exceptions as e
 import os, time, json
 from .. import ModelsV2, ParsersV2
+from ...utils import is_profane
+
 
 api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
@@ -16,6 +18,7 @@ handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
 handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
+handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
@@ -222,13 +225,10 @@ class JobPop(Resource):
         '''
         self.args = parsers.job_pop_parser.parse_args()
         self.safe_ip = cm.is_ip_safe(request.remote_addr)
-        if not safe_ip and not raid_mode.active:
+        if not self.safe_ip and not raid.active:
             raise e.UnsafeIP(request.remote_addr)
         self.validate()
         self.check_in()
-        # Paused worker return silently
-        if self.worker.paused:
-            return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
         self.priority_users = [self.user]
@@ -249,14 +249,23 @@ class JobPop(Resource):
             check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
-                self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
+                # We don't report on secret skipped reasons
+                # as they're typically countermeasures to raids
+                if skipped_reason != "secret":
+                    self.skipped[skipped_reason] =  self.skipped.get(skipped_reason,0) + 1
                 continue
             return(self.start_worker(wp), 200)
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):
-        ret = wp.start_generation(self.worker)
+        # Paused worker gives a fake prompt
+        # Unless the owner of the worker is the owner of the prompt
+        # Then we allow them to fulfil their own request
+        if self.worker.paused and wp.user != self.worker.user:
+            ret = wp.fake_generation(self.worker)
+        else:
+            ret = wp.start_generation(self.worker)
         return(ret)
 
     # We split this into its own function, so that it may be overriden and extended
@@ -267,6 +276,8 @@ class JobPop(Resource):
             raise e.InvalidAPIKey('prompt pop')
         self.worker = db.find_worker_by_name(self.args['name'])
         if not self.worker:
+            if is_profane(self.args['name']):
+                raise e.Profanity(self.user.get_unique_alias(), 'worker name', self.args['name'])
             if invite_only.active and not self.user.worker_invited:
                 raise e.WorkerInviteOnly()
             self.worker = Worker(db)
@@ -417,6 +428,8 @@ class WorkerSingle(Resource):
         if self.args.info != None:
             if admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
+            if is_profane(self.args.info):
+                raise e.Profanity(admin.get_unique_alias(), 'worker info', self.args.info)
             worker.info = self.args.info
             ret_dict["info"] = worker.info
         # Only mods can set a worker as paused

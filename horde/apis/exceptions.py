@@ -26,6 +26,11 @@ class TooManySteps(wze.BadRequest):
         self.specific = "Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps."
         self.log = f"User '{username}' sent too many steps ({steps}). Aborting!"
 
+class Profanity(wze.BadRequest):
+    def __init__(self, username, text, text_type):
+        self.specific = "As our API is public, we do not allow profanity in the text, please try again."
+        self.log = f"User '{username}' tried to submit profanity for {text_type} ({text}). Aborting!"
+
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
