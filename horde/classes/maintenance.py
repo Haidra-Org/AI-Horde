@@ -9,5 +9,3 @@ class Maintenance:
 
     def toggle(self,value):
         self.active = value
-
-

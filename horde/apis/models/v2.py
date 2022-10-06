@@ -120,16 +120,18 @@ class Models:
             "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
             "id": fields.Integer(description="The user unique ID. It is always an integer."),
             "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
+            "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
+            "worker_invited": fields.Boolean(description="Whether this user has been invited to join a worker to the horde."),    
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "usage": fields.Nested(self.response_model_use_details),
             "contributions": fields.Nested(self.response_model_contrib_details),
-            "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
         })
 
         self.response_model_user_modify = api.model('ModifyUser', {
             "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
             "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
+            "worker_invited": fields.Boolean(example=False,description="This worker has been ivited to join their worker to the horde."),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {
@@ -139,6 +141,10 @@ class Models:
 
         self.response_model_horde_maintenance_mode = api.model('HordeMaintenanceMode', {
             "maintenance_mode": fields.Boolean(description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue."),
+        })
+
+        self.response_model_horde_worker_invite_only_mode = api.model('HordeWorkerInviteOnlyMode', {
+            "invite_only": fields.Boolean(description="When True, this Horde will not only accept worker explicitly invited to join."),
         })
 
         self.response_model_error = api.model('RequestError', {

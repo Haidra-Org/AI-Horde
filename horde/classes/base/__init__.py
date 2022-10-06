@@ -541,18 +541,20 @@ class GenerationsIndex(Index):
 
 
 class User:
+    suspicious = 0
+    worker_invited = False
+    concurrency = 30
+    usage_multiplier = 1.0
+    kudos = 0
+    kudos_details = {
+        "accumulated": 0,
+        "gifted": 0,
+        "admin": 0,
+        "received": 0,
+    }
+
     def __init__(self, db):
         self.db = db
-        self.kudos = 0
-        self.kudos_details = {
-            "accumulated": 0,
-            "gifted": 0,
-            "admin": 0,
-            "received": 0,
-        }
-        self.concurrency = 30
-        self.usage_multiplier = 1.0
-        self.suspicious = 0
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -596,8 +598,11 @@ class User:
         if len(self.username) > 30:
             self.username = self.username[:30]
             self.suspicious += 1
-        if os.getenv("SUSPICIOUS_STUFF") and any(word in self.name for word in os.getenv("SUSPICIOUS_STUFF")):
-            self.suspicious += 2
+        if os.getenv("SUSPICIOUS_STUFF"):
+            for word in json.loads(os.getenv("SUSPICIOUS_STUFF")):
+                if re.search(word, self.username, re.IGNORECASE):
+                    self.suspicious += 2
+                    logger.debug(f"matched suspicious word {word} in user name {self.username}")
         if self.suspicious > 0:
             logger.warning(f"New user '{self.username}' suspicion level: {self.suspicious}")
 
@@ -658,6 +663,7 @@ class User:
             "usage": self.usage,
             "contributions": self.contributions,
             "concurrency": self.concurrency,
+            "worker_invited": self.worker_invited,
         }
         return(ret_dict)
 
@@ -676,6 +682,7 @@ class User:
             "usage": self.usage.copy(),
             "usage_multiplier": self.usage_multiplier,
             "concurrency": self.concurrency,
+            "worker_invited": self.worker_invited,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -694,6 +701,7 @@ class User:
         self.usage = saved_dict["usage"]
         self.concurrency = saved_dict.get("concurrency", 30)
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
+        self.worker_invited = saved_dict.get("worker_invited", False)
         if self.api_key == '0000000000':
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")

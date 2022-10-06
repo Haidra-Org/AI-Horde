@@ -1,6 +1,6 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter, logger, maintenance
+from ... import limiter, logger, maintenance, invite_only
 from ...classes import db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from enum import Enum
@@ -21,6 +21,7 @@ handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_req
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
+handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
@@ -261,6 +262,8 @@ class JobPop(Resource):
             raise e.InvalidAPIKey('prompt pop')
         self.worker = db.find_worker_by_name(self.args['name'])
         if not self.worker:
+            if invite_only.active and not self.user.worker_invited:
+                raise e.WorkerInviteOnly()
             self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
         if self.user != self.worker.user:
@@ -449,6 +452,7 @@ class UserSingle(Resource):
     parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)", location="json")
     parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
+    parser.add_argument("worker_invite", type=bool, required=False, help="Set to true to allow this user to join a worker to the horde when in worker invite-only mode.", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -479,6 +483,12 @@ class UserSingle(Resource):
         if self.args.usage_multiplier:
             user.usage_multiplier = self.args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
+        # Only admins can set a user in worer invite mode
+        if self.args.worker_invite != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+                raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
+            user.worker_invited = self.args.worker_invite
+            ret_dict["worker_invited"] = user.worker_invited
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)
@@ -531,5 +541,42 @@ class HordeMaintenance(Resource):
             raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
         maintenance.toggle(self.args['active'])
         return({"maintenance_mode": maintenance.active}, 200)
+
+
+class HordeWorkerInviteOnly(Resource):
+    decorators = [limiter.limit("2/second")]
+    @logger.catch
+    @api.marshal_with(models.response_model_horde_worker_invite_only_mode, code=200, description='Horde Invite Mode')
+    def get(self):
+        '''Horde Invite Mode Status
+        Use this endpoint to quicky determine if this horde is in invite mode.
+        '''
+        ret_dict = {
+            "invite_only": invite_only.invite_only
+        }
+        return(ret_dict,200)
+
+    parser = reqparse.RequestParser()
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
+    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode", location="json")
+
+    decorators = [limiter.limit("30/minute")]
+    @api.expect(parser)
+    @api.marshal_with(models.response_model_horde_worker_invite_only_mode, code=200, description='Maintenance Mode Set')
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(402, 'Access Denied', models.response_model_error)
+    def put(self):
+        '''Change Horde Worker Invite Only Mode 
+        Endpoint for admins to (un)set the horde into worker invite only mode.
+        When in worker invite only mode only workers whose users have received an invite can join.
+        '''
+        self.args = self.parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
+        if not admin:
+            raise e.InvalidAPIKey('Admin action: ' + 'HordeWorkerInviteOnly')
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            raise e.NotAdmin(admin.get_unique_alias(), 'HordeWorkerInviteOnly')
+        invite_only.toggle(self.args['active'])
+        return({"invite_only": invite_only.active}, 200)
 
 

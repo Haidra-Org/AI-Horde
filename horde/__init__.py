@@ -6,6 +6,7 @@ quiesce_logger(args.quiet)
 
 from .classes.maintenance import Maintenance
 maintenance = Maintenance()
+invite_only = Maintenance()
 
 from .limiter import limiter
 from flask import Flask, render_template, redirect, url_for, request, Blueprint

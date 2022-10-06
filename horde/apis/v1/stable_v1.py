@@ -4,7 +4,7 @@ from ... import limiter
 from ...logger import logger
 from ...classes import db as _db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance
+from ... import maintenance, invite_only
 from enum import Enum
 import os, time
 
@@ -252,6 +252,8 @@ class PromptPop(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
         server = _db.find_worker_by_name(args['name'])
         if not server:
+            if invite_only.active:
+                return(f"Horde in worker invite mode only. Please use APIv2 if you have an invite.",401)
             server = Worker(_db)
             server.create(user, args['name'])
         if user != server.user:

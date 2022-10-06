@@ -80,14 +80,10 @@ class Models(v2.Models):
         self.response_model_use_details = api.inherit('UsageDetailsKobold', self.response_model_use_details, {
             "tokens": fields.Float(description="How many tokens this user has requested"),
         })
-        self.response_model_user_details = api.model('UserDetails', {
-            "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
-            "id": fields.Integer(description="The user unique ID. It is always an integer."),
-            "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting generations."),
+        self.response_model_user_details = api.inherit('UserDetailsKobold', self.response_model_user_details, {
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "usage": fields.Nested(self.response_model_use_details),
             "contributions": fields.Nested(self.response_model_contrib_details),
-            "concurrency": fields.Integer(description="How many concurrent text generations this user may request."),    
         })
         self.response_model_horde_performance = api.inherit('HordePerformanceKobold', self.response_model_horde_performance, {
             "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),

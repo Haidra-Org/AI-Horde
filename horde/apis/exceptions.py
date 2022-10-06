@@ -51,6 +51,11 @@ class WorkerMaintenance(wze.Forbidden):
         self.specific = f"worker {worker_id} has been put into maintenance by its owner"
         self.log = None
 
+class WorkerInviteOnly(wze.Forbidden):
+    def __init__(self):
+        self.specific = f"This has been switched to Worker-invite only mode. Please contact us on discord to allow you to join your worker."
+        self.log = None
+
 class InvalidProcGen(wze.NotFound):
     def __init__(self, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} does not exist."

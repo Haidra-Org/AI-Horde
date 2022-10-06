@@ -68,10 +68,7 @@ class Models(v2.Models):
         self.response_model_use_details = api.inherit('UsageDetailsStable', self.response_model_use_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
         })
-        self.response_model_user_details = api.model('UserDetails', {
-            "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
-            "id": fields.Integer(description="The user unique ID. It is always an integer."),
-            "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
+        self.response_model_user_details = api.inherit('UserDetailsStable', self.response_model_user_details, {
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "usage": fields.Nested(self.response_model_use_details),
             "contributions": fields.Nested(self.response_model_contrib_details),
