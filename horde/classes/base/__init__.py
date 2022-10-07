@@ -60,7 +60,7 @@ class WaitingPrompt:
         if self.n <= 0:
             return
         new_gen = self.new_procgen(worker)
-        self.processing_gens.append(new_gen.id)
+        self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
         return(self.get_pop_payload(new_gen.id))
@@ -68,7 +68,7 @@ class WaitingPrompt:
     def fake_generation(self, worker):
         new_gen = self.new_procgen(worker)
         new_gen.fake = True
-        self.fake_gens.append(new_gen.id)
+        self.fake_gens.append(new_gen)
         self.tricked_workers.append(worker)
         return(self.get_pop_payload(new_gen.id))
     
@@ -99,7 +99,6 @@ class WaitingPrompt:
             "finished": 0,
             "processing": 0,
         }
-        logger.error(self.processing_gens)
         for procgen in self.processing_gens:
             if procgen.is_completed():
                 ret_dict["finished"] += 1
