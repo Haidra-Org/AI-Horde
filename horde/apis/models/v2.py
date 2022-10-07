@@ -120,9 +120,11 @@ class Models:
             "id": fields.Integer(description="The user unique ID. It is always an integer."),
             "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
             "concurrency": fields.Integer(description="How many concurrent generations this user may request."),    
-            "worker_invited": fields.Integer(description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),    
+            "worker_invited": fields.Integer(description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
+            "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
+            "worker_ids": fields.List(fields.String(description="Only visible to the user and mods, and when the user has explicitly allows it to be public.")),
             # I need to pass these two via inheritabce, or they take over
             # "usage": fields.Nested(self.response_model_use_details),
             # "contributions": fields.Nested(self.response_model_contrib_details),

@@ -593,6 +593,7 @@ class User:
     usage_multiplier = 1.0
     kudos = 0
     same_ip_worker_threshold = 8
+    public_workers = False
 
     def __init__(self, db):
         self.kudos_details = {
@@ -699,7 +700,7 @@ class User:
         except ValueError:
             return(False)
 
-    def get_details(self):
+    def get_details(self, is_privileged = False):
         ret_dict = {
             "username": self.get_unique_alias(),
             "id": self.id,
@@ -710,7 +711,13 @@ class User:
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
+            "worker_count": self.count_workers(),
         }
+        if self.public_workers or is_privileged:
+            workers_array = []
+            for worker in self.get_workers():
+                workers_array.append(worker.id)
+            ret_dict["worker_ids"] = workers_array
         return(ret_dict)
 
     def report_suspicion(self, amount = 1, reason = None):
@@ -756,6 +763,7 @@ class User:
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
             "suspicious": self.suspicious,
+            "public_workers": self.public_workers,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -778,6 +786,7 @@ class User:
         self.worker_invited = int(saved_dict.get("worker_invited", 0))
         self.moderator = saved_dict.get("moderator", False)
         self.suspicious = saved_dict.get("suspicious", 0)
+        self.public_workers = saved_dict.get("public_workers", False)
         if self.api_key == '0000000000':
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")

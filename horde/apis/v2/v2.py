@@ -450,7 +450,6 @@ class WorkerSingle(Resource):
 
 class Users(Resource):
     decorators = [limiter.limit("2/minute")]
-    @logger.catch
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
     def get(self):
         '''A List with the details and statistic of all registered users
@@ -460,8 +459,12 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin, Mod or Owner API key", location='headers')
+
     decorators = [limiter.limit("30/minute")]
-    @api.marshal_with(models.response_model_user_details, code=200, description='User Details')
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
         '''Details and statistics about a specific user
@@ -469,7 +472,17 @@ class UserSingle(Resource):
         user = db.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
-        return(user.get_details(),200)
+        is_privileged = False
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            admin = db.find_user_by_api_key(self.args['apikey'])
+            if not admin:
+                raise e.InvalidAPIKey('privileged user details')
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
+            is_privileged = True
+        ret_dict = {}
+        return(user.get_details(is_privileged),200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
