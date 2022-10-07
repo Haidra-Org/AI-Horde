@@ -99,6 +99,7 @@ class WaitingPrompt:
             "finished": 0,
             "processing": 0,
         }
+        logger.error(self.processing_gens)
         for procgen in self.processing_gens:
             if procgen.is_completed():
                 ret_dict["finished"] += 1
