@@ -94,6 +94,7 @@ class Models:
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             "owner": fields.String(example="username#1", description="The owner of this server. This is only visible is the owner has allowed it."),
+            "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
@@ -134,6 +135,7 @@ class Models:
             "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
             "worker_ids": fields.List(fields.String(description="Only visible to the user and mods, and when the user has explicitly allows it to be public.")),
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
+            "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
             # I need to pass these two via inheritabce, or they take over
             # "usage": fields.Nested(self.response_model_use_details),
             # "contributions": fields.Nested(self.response_model_contrib_details),
@@ -148,6 +150,7 @@ class Models:
             "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
             "username": fields.String(example='username#1',description="The user's new username."),
             "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
+            "trusted": fields.Boolean(description="The user's new trusted status"),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {

@@ -510,6 +510,7 @@ class UserSingle(Resource):
     parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
     parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
     parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
+    parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -547,7 +548,7 @@ class UserSingle(Resource):
         if self.args.moderator != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
-            user.moderator = self.args.moderator
+            user.set_moderator(self.args.moderator)
             ret_dict["moderator"] = user.moderator
         # Moderator Duties
         if self.args.concurrency != None:
@@ -560,6 +561,11 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.worker_invited = self.args.worker_invite
             ret_dict["worker_invited"] = user.worker_invited
+        if self.args.trusted != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_trusted(self.args.trusted)
+            ret_dict["trusted"] = user.trusted
         if self.args.public_workers != None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')

@@ -311,7 +311,9 @@ class Worker:
         if self.is_suspicious():
             self.paused = True
 
-    def is_suspicious(self):        
+    def is_suspicious(self): 
+        if self.user.trusted:
+            return(False)       
         if self.suspicious >= self.suspicion_threshold:
             return(True)
         return(False)
@@ -462,6 +464,7 @@ class Worker:
             "maintenance_mode": self.maintenance,
             "info": self.info,
             "nsfw": self.nsfw,
+            "trusted": self.user.trusted,
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
@@ -511,9 +514,7 @@ class Worker:
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
         self.check_for_bad_actor()
-        if self.suspicious >= 2:
-            self.paused = True
-        else:
+        if convert_flag == "prune_bad_worker" and not self.is_suspicious():
             self.db.workers[self.name] = self
         if convert_flag == "kudos_fix":
             multiplier = 20
@@ -619,6 +620,7 @@ class User:
     kudos = 0
     same_ip_worker_threshold = 8
     public_workers = False
+    trusted = False
 
     def __init__(self, db):
         self.kudos_details = {
@@ -694,6 +696,17 @@ class User:
         self.username = new_username
         return("OK")
 
+    def set_trusted(self,is_trusted):
+        self.trusted = is_trusted
+        if self.trusted:
+            for worker in self.get_workers():
+                worker.paused = False
+
+    def set_moderator(self,is_moderator):
+        self.moderator = is_moderator
+        if self.moderator:
+            logger.warning(f"{self.username} Set as moderator")
+            self.set_trusted(True)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
@@ -779,6 +792,7 @@ class User:
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
+            "trusted": self.trusted,
             "worker_count": self.count_workers(),
         }
         if self.public_workers or is_privileged:
@@ -791,6 +805,7 @@ class User:
             for worker in self.get_workers():
                 workers_array.append(worker.id)
             ret_dict["worker_ids"] = workers_array
+            logger.debug(ret_dict)
         return(ret_dict)
 
     def report_suspicion(self, amount = 1, reason = None):
@@ -844,6 +859,7 @@ class User:
             "moderator": self.moderator,
             "suspicious": self.suspicious,
             "public_workers": self.public_workers,
+            "trusted": self.trusted,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
             "monthly_kudos": serialized_monthly_kudos
@@ -865,9 +881,10 @@ class User:
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         # I am putting int() here, to convert a boolean entry I had in the past
         self.worker_invited = int(saved_dict.get("worker_invited", 0))
-        self.moderator = saved_dict.get("moderator", False)
         self.suspicious = saved_dict.get("suspicious", 0)
         self.public_workers = saved_dict.get("public_workers", False)
+        self.trusted = saved_dict.get("trusted", False)
+        self.set_moderator(saved_dict.get("moderator", False))
         serialized_monthly_kudos = saved_dict.get("monthly_kudos")
         if serialized_monthly_kudos and serialized_monthly_kudos['last_received'] != None:
             self.monthly_kudos['amount'] = serialized_monthly_kudos['amount']
