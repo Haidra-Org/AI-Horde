@@ -1,10 +1,12 @@
 import requests, os
-from . import logger
+from . import logger, args
 
 # Returns False if the IP is not false
 # Else return true
 # This function is a bit obscured with env vars to prevent defeat
 def is_ip_safe(ipaddr):
+	if args.allow_all_ips:
+		return(True)
 	safety_threshold=0.99
 	timeout=2.00
 	result = requests.get(os.getenv("IP_CHECKER").format(ipaddr = ipaddr), timeout=timeout)

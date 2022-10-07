@@ -9,4 +9,5 @@ arg_parser.add_argument('-p', '--port', action='store', default=7001, required=F
 arg_parser.add_argument('--horde', action='store', default='stable', required=True, type=str, help="Which Horde to Start. This customizes endpoints and methods")
 arg_parser.add_argument('--worker_invite', action="store_true", help="If set, Will start the horde in worker invite-only mode")
 arg_parser.add_argument('--raid', action="store_true", help="If set, Will start the horde in raid prevention mode")
+arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, will consider all IPs safe")
 args = arg_parser.parse_args()
