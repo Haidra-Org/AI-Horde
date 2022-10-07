@@ -5,12 +5,12 @@ from . import countermeasures as cm
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
 
-from .classes.maintenance import Maintenance
-maintenance = Maintenance()
-invite_only = Maintenance()
+from .switch import Switch
+maintenance = Switch()
+invite_only = Switch()
 if args.worker_invite:
     invite_only.activate()
-raid = Maintenance()
+raid = Switch()
 if args.raid:
     raid.activate()
 

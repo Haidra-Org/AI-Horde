@@ -19,6 +19,8 @@ handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handl
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
 handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
 handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
+handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
+handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
@@ -398,7 +400,8 @@ class WorkerSingle(Resource):
     put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
-    put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details.", location="json")
+    put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")
+    put_parser.add_argument("name", type=str, required=False, help="When this is set, it will change the worker's name. No profanity allowed!", location="json")
 
 
     decorators = [limiter.limit("30/minute")]
@@ -432,11 +435,13 @@ class WorkerSingle(Resource):
             ret_dict["maintenance"] = worker.maintenance
         # Only owners can set info notes
         if self.args.info != None:
-            if admin != worker.user:
+            if not admin.moderator and admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
-            if is_profane(self.args.info):
-                raise e.Profanity(admin.get_unique_alias(), 'worker info', self.args.info)
-            worker.info = self.args.info
+            ret = worker.set_info(self.args.info)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.info, 'worker info')
+            if ret == "Too Long":
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, 'worker info')
             ret_dict["info"] = worker.info
         # Only mods can set a worker as paused
         if self.args.paused != None:
@@ -444,6 +449,17 @@ class WorkerSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
+        if self.args.name != None:
+            if not admin.moderator and admin != worker.user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
+            ret = worker.set_name(self.args.name)
+            if ret == "Profanity":
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'worker name')
+            if ret == "Too Long":
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.name), 100, 'worker name')
+            if ret == "Already Exists":
+                raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
+            ret_dict["name"] = worker.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
         return(ret_dict, 200)
@@ -492,6 +508,7 @@ class UserSingle(Resource):
     parser.add_argument("worker_invite", type=bool, required=False, help="Set to true to allow this user to join a worker to the horde when in worker invite-only mode.", location="json")
     parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
     parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
+    parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -542,6 +559,15 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.public_workers = self.args.public_workers
             ret_dict["public_workers"] = user.public_workers
+        if self.args.username != None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            ret = user.set_username(self.args.username)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.username, 'username')
+            if ret == "Too Long":
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, 'username')
+            ret_dict["username"] = user.username
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)

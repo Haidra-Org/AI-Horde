@@ -100,6 +100,7 @@ class Models:
             "maintenance": fields.Boolean(description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests."),
             "paused": fields.Boolean(description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests."),
             "info": fields.String(description="The new state of the 'info' var for this worker."),
+            "name": fields.String(description="The new name for this this worker."),
         })
 
         self.response_model_user_kudos_details = api.model('UserKudosDetails', {
@@ -138,6 +139,7 @@ class Models:
             "worker_invited": fields.Integer(example=False,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
             "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
+            "username": fields.String(example=False,description="The user's new username."),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {

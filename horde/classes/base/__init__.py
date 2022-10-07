@@ -6,6 +6,7 @@ from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re
 from ...utils import is_profane
+from ... import raid
 
 
 class WaitingPrompt:
@@ -297,9 +298,9 @@ class Worker:
         self.suspicious = self.user.suspicious
         if len(self.name) > 100:
             if len(self.name) > 200:
-                self.report_suspicion(reason = 'Name extremely long')
+                self.report_suspicion(reason = 'Worker Name extremely long')
             self.name = self.name[:100]
-            self.report_suspicion(reason = 'Name too long')
+            self.report_suspicion(reason = 'Worker Name too long')
         if is_profane(self.name):
             self.report_suspicion(reason = f"discovered profanity in worker name {self.name}")
 
@@ -315,6 +316,29 @@ class Worker:
         if self.suspicious >= self.suspicion_threshold:
             return(True)
         return(False)
+
+    def set_name(self,new_name):
+        if self.name == new_name:
+            return("OK")        
+        if is_profane(new_name):
+            return("Profanity")
+        if len(new_name) > 100:
+            return("Too Long")
+        ret = self.db.update_worker_name(self, new_name)
+        if ret == 1:
+            return("Already Exists")
+        self.name = new_name
+        return("OK")
+
+    def set_info(self,new_info):
+        if self.info == new_info:
+            return("OK")
+        if is_profane(new_info):
+            return("Profanity")
+        if len(new_info) > 1000:
+            return("Too Long")
+        self.info = new_info
+        return("OK")
 
     # This should be overwriten by each specific horde
     def calculate_uptime_reward(self):
@@ -648,18 +672,24 @@ class User:
     def check_for_bad_actor(self):
         if len(self.username) > 30:
             self.username = self.username[:30]
-            self.report_suspicion("Username too long")
-        if os.getenv("SUSPICIOUS_STUFF"):
-            for word in json.loads(os.getenv("SUSPICIOUS_STUFF")):
-                if re.search(word, self.username, re.IGNORECASE):
-                    self.report_suspicion()
-                    logger.debug(f"matched suspicious word {word} in user name {self.username}")
+            self.report_suspicion(reason = "Username too long")
+        if is_profane(self.username):
+            self.report_suspicion(reason = "Profanity in username")
 
     # Checks that this user matches the specified API key
     def check_key(api_key):
         if self.api_key and self.api_key == api_key:
             return(True)
         return(False)
+
+    def set_username(self,new_username):
+        if is_profane(new_username):
+            return("Profanity")
+        if len(new_username) > 30:
+            return("Too Long")
+        self.username = new_username
+        return("OK")
+
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
@@ -1118,3 +1148,11 @@ class Database:
             if worker.user == user:
                 found_workers.append(worker)
         return(found_workers)
+    
+    def update_worker_name(self, worker, new_name):
+        if new_name in self.workers:
+            # If the name already exists, we return error code 1
+            return(1)
+        self.workers[new_name] = worker
+        del self.workers[worker.name]
+        logger.info(f'Worker renamed from {worker.name} to {new_name}')

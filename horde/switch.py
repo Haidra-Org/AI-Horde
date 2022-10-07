@@ -1,4 +1,4 @@
-class Maintenance:
+class Switch:
     active = False
 
     def activate(self):

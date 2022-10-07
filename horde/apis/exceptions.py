@@ -28,8 +28,18 @@ class TooManySteps(wze.BadRequest):
 
 class Profanity(wze.BadRequest):
     def __init__(self, username, text, text_type):
-        self.specific = "As our API is public, we do not allow profanity in the text, please try again."
+        self.specific = f"As our API is public, we do not allow profanity in the {text_type}, please try again."
         self.log = f"User '{username}' tried to submit profanity for {text_type} ({text}). Aborting!"
+
+class TooLong(wze.BadRequest):
+    def __init__(self, username, chars, limit, text_type):
+        self.specific = f"The specified {text_type} is too long. Please stay below {limit}"
+        self.log = f"User '{username}' tried to submit {chars} chars for {text_type}. Aborting!"
+
+class NameAlreadyExists(wze.BadRequest):
+    def __init__(self, username, old_worker_name, new_worker_name):
+        self.specific = f"The specified worker name '{new_worker_name}' is already taken!"
+        self.log = f"User '{username}' tried to change worker name from {old_worker_name} to {new_worker_name}. Aborting!"
 
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
