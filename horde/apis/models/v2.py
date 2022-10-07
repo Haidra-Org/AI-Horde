@@ -105,9 +105,10 @@ class Models:
 
         self.response_model_user_kudos_details = api.model('UserKudosDetails', {
             "accumulated": fields.Float(default=0,description="The ammount of Kudos accumulated or used for generating images."),
-            "gifted": fields.Float(default=0,description="The amount of Kudos this user has given to other users"),
-            "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins"),
-            "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users"),
+            "gifted": fields.Float(default=0,description="The amount of Kudos this user has given to other users."),
+            "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins."),
+            "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users."),
+            "recurring": fields.Float(default=0,description="The amount of Kudos this user has received from recurring rewards."),
         })
 
         self.response_model_contrib_details = api.model('ContributionsDetails', {
@@ -115,6 +116,11 @@ class Models:
         })
         self.response_model_use_details = api.model('UsageDetails', {
             "requests": fields.Integer(description="How many images this user has requested")
+        })
+
+        self.response_model_monthly_kudos = api.model('MonthlyKudos', {
+            "amount": fields.Integer(description="How much recurring Kudos this user receives monthly."),
+            "last_received": fields.DateTime(dt_format='rfc822',description="Last date this user received monthly Kudos."),
         })
 
         self.response_model_user_details = api.model('UserDetails', {
@@ -127,6 +133,7 @@ class Models:
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
             "worker_ids": fields.List(fields.String(description="Only visible to the user and mods, and when the user has explicitly allows it to be public.")),
+            "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             # I need to pass these two via inheritabce, or they take over
             # "usage": fields.Nested(self.response_model_use_details),
             # "contributions": fields.Nested(self.response_model_contrib_details),
@@ -139,7 +146,8 @@ class Models:
             "worker_invited": fields.Integer(example=False,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
             "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
-            "username": fields.String(example=False,description="The user's new username."),
+            "username": fields.String(example='username#1',description="The user's new username."),
+            "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {

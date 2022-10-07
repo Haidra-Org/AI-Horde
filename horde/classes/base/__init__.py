@@ -1,13 +1,12 @@
 import json, os, sys
 from uuid import uuid4
 from datetime import datetime
-import threading, time
+import threading, time, dateutil.relativedelta
 from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re
 from ...utils import is_profane
 from ... import raid
-
 
 class WaitingPrompt:
     extra_priority = 0
@@ -627,6 +626,11 @@ class User:
             "gifted": 0,
             "admin": 0,
             "received": 0,
+            "recurring": 0,
+        }
+        self.monthly_kudos = {
+            "amount": 0,
+            "last_received": None,
         }
         self.db = db
 
@@ -707,6 +711,26 @@ class User:
     def record_uptime(self, kudos):
         self.modify_kudos(kudos,"accumulated")
 
+    def modify_monthly_kudos(self, monthly_kudos):
+        # We always give upfront the monthly kudos to the user once.
+        # If they already had some, we give the difference but don't change the date
+        if monthly_kudos > 0:
+            self.modify_kudos(monthly_kudos, "recurring")
+        if not self.monthly_kudos["last_received"]:
+            self.monthly_kudos["last_received"] = datetime.now()
+        self.monthly_kudos["amount"] += monthly_kudos
+        if self.monthly_kudos["amount"] < 0:
+            self.monthly_kudos["amount"] = 0
+
+    def receive_monthly_kudos(self):
+        if self.monthly_kudos['amount'] == 0:
+            return
+        has_month_passed = datetime.now() > self.monthly_kudos["last_received"] + dateutil.relativedelta.relativedelta(months=+1)
+        if has_month_passed:
+            self.modify_kudos(self.monthly_kudos['amount'], "recurring")
+            self.monthly_kudos["last_received"] = datetime.now()
+            logger.info(f"User {self.get_unique_alias()} received their {self.monthly_kudos['amount']} monthly Kudos")
+
     def modify_kudos(self, kudos, action = 'accumulated'):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
@@ -747,6 +771,7 @@ class User:
             "worker_count": self.count_workers(),
         }
         if self.public_workers or is_privileged:
+            ret_dict["monthly_kudos"] = self.monthly_kudos
             workers_array = []
             for worker in self.get_workers():
                 workers_array.append(worker.id)
@@ -781,6 +806,13 @@ class User:
 
     @logger.catch
     def serialize(self):
+        serialized_monthly_kudos = {
+            "amount": self.monthly_kudos["amount"],
+        }
+        if self.monthly_kudos["last_received"]:
+            serialized_monthly_kudos["last_received"] = self.monthly_kudos["last_received"].strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            serialized_monthly_kudos["last_received"] = None
         ret_dict = {
             "username": self.username,
             "oauth_id": self.oauth_id,
@@ -799,6 +831,7 @@ class User:
             "public_workers": self.public_workers,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
+            "monthly_kudos": serialized_monthly_kudos
         }
         return(ret_dict)
 
@@ -820,6 +853,10 @@ class User:
         self.moderator = saved_dict.get("moderator", False)
         self.suspicious = saved_dict.get("suspicious", 0)
         self.public_workers = saved_dict.get("public_workers", False)
+        serialized_monthly_kudos = saved_dict.get("monthly_kudos")
+        if serialized_monthly_kudos and serialized_monthly_kudos['last_received'] != None:
+            self.monthly_kudos['amount'] = serialized_monthly_kudos['amount']
+            self.monthly_kudos['last_received'] = datetime.strptime(serialized_monthly_kudos['last_received'],"%Y-%m-%d %H:%M:%S")
         if self.is_anon():
             self.concurrency = 200
             self.public_workers = True
@@ -971,6 +1008,9 @@ class Database:
         thread = threading.Thread(target=self.write_files, args=())
         thread.daemon = True
         thread.start()
+        monthly_kudos_thread = threading.Thread(target=self.assign_monthly_kudos, args=())
+        monthly_kudos_thread.daemon = True
+        monthly_kudos_thread.start()
         logger.init_ok(f"Database Load", status="Completed")
 
     # I don't know if I'm doing this right,  but I'm using these so that I can extend them from the extended DB
@@ -1006,6 +1046,14 @@ class Database:
             user_serialized_list.append(user.serialize())
         with open(self.USERS_FILE, 'w') as db:
             json.dump(user_serialized_list,db)
+
+    def assign_monthly_kudos(self):
+        logger.init_ok("Monthly Kudos Awards Thread", status="Started")
+        while True:
+            for user in self.users.values():
+                user.receive_monthly_kudos()
+            # Check once a day
+            time.sleep(86400)
 
     def get_top_contributor(self):
         top_contribution = 0

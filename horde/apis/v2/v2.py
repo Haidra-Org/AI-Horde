@@ -509,6 +509,7 @@ class UserSingle(Resource):
     parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
     parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
     parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
+    parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -533,6 +534,11 @@ class UserSingle(Resource):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
+        if self.args.monthly_kudos != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
+            user.modify_monthly_kudos(self.args.monthly_kudos)
+            ret_dict["monthly_kudos"] = user.monthly_kudos['amount']
         if self.args.usage_multiplier != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
