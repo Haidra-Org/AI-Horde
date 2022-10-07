@@ -72,7 +72,6 @@ class Models(v2.Models):
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "usage": fields.Nested(self.response_model_use_details),
             "contributions": fields.Nested(self.response_model_contrib_details),
-            "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
         })
         self.response_model_horde_performance = api.inherit('HordePerformanceStable', self.response_model_horde_performance, {
             "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),

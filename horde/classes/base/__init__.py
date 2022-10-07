@@ -755,6 +755,7 @@ class User:
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
+            "suspicious": self.suspicious,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -776,6 +777,7 @@ class User:
         # I am putting int() here, to convert a boolean entry I had in the past
         self.worker_invited = int(saved_dict.get("worker_invited", 0))
         self.moderator = saved_dict.get("moderator", False)
+        self.suspicious = saved_dict.get("suspicious", 0)
         if self.api_key == '0000000000':
             self.concurrency = 200
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
