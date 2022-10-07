@@ -12,3 +12,4 @@ loguru
 bleach
 alt-profanity-check
 better_profanity
+dateutil
