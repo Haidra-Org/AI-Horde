@@ -491,6 +491,7 @@ class UserSingle(Resource):
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
     parser.add_argument("worker_invite", type=bool, required=False, help="Set to true to allow this user to join a worker to the horde when in worker invite-only mode.", location="json")
     parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
+    parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -536,6 +537,11 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.worker_invited = self.args.worker_invite
             ret_dict["worker_invited"] = user.worker_invited
+        if self.args.public_workers != None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.public_workers = self.args.public_workers
+            ret_dict["public_workers"] = user.public_workers
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)

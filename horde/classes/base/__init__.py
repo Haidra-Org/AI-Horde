@@ -442,6 +442,8 @@ class Worker:
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
+        if is_privileged or self.user.public_workers:
+            ret_dict['owner'] = self.user.get_unique_alias()
         return(ret_dict)
 
     # Should be extended by each specific horde
@@ -612,6 +614,7 @@ class User:
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
         self.id = 0
+        self.public_workers = True
         self.contributions = {
             thing_name: 0,
             "fulfillments": 0
@@ -787,8 +790,9 @@ class User:
         self.moderator = saved_dict.get("moderator", False)
         self.suspicious = saved_dict.get("suspicious", 0)
         self.public_workers = saved_dict.get("public_workers", False)
-        if self.api_key == '0000000000':
+        if self.is_anon():
             self.concurrency = 200
+            self.public_workers = True
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
         if convert_flag == "kudos_fix":

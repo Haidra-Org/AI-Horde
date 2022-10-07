@@ -93,6 +93,7 @@ class Models:
             "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
+            "owner": fields.String(example="username#1", description="The owner of this server. This is only visible is the owner has allowed it."),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
@@ -136,6 +137,7 @@ class Models:
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
             "worker_invited": fields.Integer(example=False,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
+            "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {
