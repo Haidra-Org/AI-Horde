@@ -723,13 +723,24 @@ class User:
             self.monthly_kudos["amount"] = 0
 
     def receive_monthly_kudos(self):
-        if self.monthly_kudos['amount'] == 0:
+        kudos_amount = self.calculate_monthly_kudos()
+        if kudos_amount == 0:
             return
-        has_month_passed = datetime.now() > self.monthly_kudos["last_received"] + dateutil.relativedelta.relativedelta(months=+1)
+        if self.monthly_kudos["last_received"]:
+            has_month_passed = datetime.now() > self.monthly_kudos["last_received"] + dateutil.relativedelta.relativedelta(months=+6)
+        else:
+            # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
+            has_month_passed = True
         if has_month_passed:
-            self.modify_kudos(self.monthly_kudos['amount'], "recurring")
+            self.modify_kudos(kudos_amount, "recurring")
             self.monthly_kudos["last_received"] = datetime.now()
-            logger.info(f"User {self.get_unique_alias()} received their {self.monthly_kudos['amount']} monthly Kudos")
+            logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
+
+    def calculate_monthly_kudos(self):
+        base_amount = self.monthly_kudos['amount']
+        if self.moderator:
+            base_amount += 100000
+        return(base_amount)
 
     def modify_kudos(self, kudos, action = 'accumulated'):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
@@ -771,7 +782,11 @@ class User:
             "worker_count": self.count_workers(),
         }
         if self.public_workers or is_privileged:
-            ret_dict["monthly_kudos"] = self.monthly_kudos
+            mk_dict = {
+                "amount": self.calculate_monthly_kudos(),
+                "last_received": self.monthly_kudos["last_received"]
+            }
+            ret_dict["monthly_kudos"] = mk_dict
             workers_array = []
             for worker in self.get_workers():
                 workers_array.append(worker.id)
