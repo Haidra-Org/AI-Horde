@@ -95,9 +95,9 @@ class WorkerNotFound(wze.NotFound):
         self.log = f"Attempted to retrieve worker with non-existent ID '{worker_id}'"
 
 class UserNotFound(wze.NotFound):
-    def __init__(self, user_id):
-        self.specific = f"User with ID '{user_id}' not found."
-        self.log = f"Attempted to retrieve user with non-existent ID '{user_id}'"
+    def __init__(self, user_id, lookup_type = 'ID'):
+        self.specific = f"User with {lookup_type} '{user_id}' not found."
+        self.log = f"Attempted to retrieve user with non-existent {lookup_type} '{user_id}'"
 
 class DuplicateGen(wze.NotFound):
     def __init__(self, worker, gen_id):

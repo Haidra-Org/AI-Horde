@@ -528,6 +528,24 @@ class UserSingle(Resource):
         return(ret_dict, 200)
 
 
+class FindUser(Resource):
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="User API key we're looking for", location='headers')
+
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_user_details, code=200, description='Worker Details', skip_none=True)
+    @api.response(404, 'User Not Found', models.response_model_error)
+    def get(self):
+        '''Lookup user details based on their API key
+        This can be used to verify a user exists
+        '''
+        self.args = self.get_parser.parse_args()
+        user = db.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.UserNotFound(self.args.apikey, 'api_key')
+        return(user.get_details(),200)
+
 class HordeLoad(Resource):
     decorators = [limiter.limit("20/minute")]
     @logger.catch
