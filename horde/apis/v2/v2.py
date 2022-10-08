@@ -26,6 +26,7 @@ handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_req
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
+handle_anon_forbidden = api.errorhandler(e.AnonForbidden)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
 handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
@@ -448,6 +449,8 @@ class WorkerSingle(Resource):
         if self.args.info != None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
+            if admin.is_anon():
+                raise e.AnonForbidden()
             ret = worker.set_info(self.args.info)
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.info, 'worker info')
@@ -463,6 +466,8 @@ class WorkerSingle(Resource):
         if self.args.name != None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
             ret = worker.set_name(self.args.name)
             if ret == "Profanity":
                 raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'worker name')
@@ -580,11 +585,15 @@ class UserSingle(Resource):
         if self.args.public_workers != None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
             user.public_workers = self.args.public_workers
             ret_dict["public_workers"] = user.public_workers
         if self.args.username != None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
             ret = user.set_username(self.args.username)
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.username, 'username')

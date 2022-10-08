@@ -66,6 +66,11 @@ class NotOwner(wze.Forbidden):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"User '{username}'' tried to modify worker they do not own '{worker_name}'. Aborting!"
 
+class AnonForbidden(wze.Forbidden):
+    def __init__(self):
+        self.specific = "Anonymous user is forbidden from performing this operation"
+        self.log = None
+
 class WorkerMaintenance(wze.Forbidden):
     def __init__(self, worker_id):
         self.specific = f"worker {worker_id} has been put into maintenance by its owner"
