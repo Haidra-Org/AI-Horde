@@ -129,7 +129,8 @@ class Models:
         self.response_model_user_details = api.model('UserDetails', {
             "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
             "id": fields.Integer(description="The user unique ID. It is always an integer."),
-            "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
+            "kudos": fields.Float(description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations."),
+            "evaluating_kudos": fields.Float(description="The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches 50000, they automatically become trusted."),
             "concurrency": fields.Integer(description="How many concurrent generations this user may request."),    
             "worker_invited": fields.Integer(description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),

@@ -332,7 +332,7 @@ class Worker:
             return
         self.suspicions.append(int(reason))
         self.suspicious += amount
-        self.user.report_suspicion(amount, reason)
+        self.user.report_suspicion(amount, reason, formats)
         if reason:
             reason_log = suspicion_logs[reason].format(*formats)
             logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason_log}")
@@ -651,17 +651,17 @@ class GenerationsIndex(Index):
 
 
 class User:
-    suspicious = 0
-    worker_invited = 0
-    moderator = False
-    concurrency = 30
-    usage_multiplier = 1.0
-    kudos = 0
-    same_ip_worker_threshold = 8
-    public_workers = False
-    trusted = False
-
     def __init__(self, db):
+        self.suspicious = 0
+        self.worker_invited = 0
+        self.moderator = False
+        self.concurrency = 30
+        self.usage_multiplier = 1.0
+        self.kudos = 0
+        self.same_ip_worker_threshold = 8
+        self.public_workers = False
+        self.trusted = False
+        self.evaluating_kudos = 0
         self.kudos_details = {
             "accumulated": 0,
             "gifted": 0,
@@ -758,11 +758,34 @@ class User:
 
     def record_contributions(self, raw_things, kudos):
         self.contributions["fulfillments"] += 1
-        self.modify_kudos(kudos,"accumulated")
+        # While a worker is untrusted, half of all generated kudos go for evaluation
+        if not self.trusted:
+            kudos_eval = round(kudos / 2)
+            kudos -= kudos_eval
+            self.evaluating_kudos += kudos_eval
+            self.modify_kudos(kudos,"accumulated")
+            self.check_for_trust()
+        else:
+            self.modify_kudos(kudos,"accumulated")
         self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
 
     def record_uptime(self, kudos):
-        self.modify_kudos(kudos,"accumulated")
+        # While a worker is untrusted, all uptime kudos go for evaluation
+        if not self.trusted:
+            self.evaluating_kudos += kudos
+            self.check_for_trust()
+        else:
+            self.modify_kudos(kudos,"accumulated")
+
+    def check_for_trust(self):
+        '''After a user passes the evaluation threshold (50000 kudos)
+        All  the evaluating Kudos added to their total and they automatically become trusted
+        '''
+        if self.evaluating_kudos >= 50000:
+            self.modify_kudos(evaluating_kudos,"accumulated")
+            self.evaluating_kudos = 0
+            self.set_trusted(True)
+
 
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
@@ -845,6 +868,7 @@ class User:
             for worker in self.get_workers():
                 workers_array.append(worker.id)
             ret_dict["worker_ids"] = workers_array
+            ret_dict["evaluating_kudos"] = self.evaluating_kudos
             logger.debug(ret_dict)
         return(ret_dict)
 
@@ -906,7 +930,8 @@ class User:
             "trusted": self.trusted,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
-            "monthly_kudos": serialized_monthly_kudos
+            "monthly_kudos": serialized_monthly_kudos,
+            "evaluating_kudos": self.evaluating_kudos,
         }
         return(ret_dict)
 
@@ -931,6 +956,7 @@ class User:
             logger.debug(f"Suspecting user {self.get_unique_alias()} for {self.suspicious} with reasons {self.suspicions}")
         self.public_workers = saved_dict.get("public_workers", False)
         self.trusted = saved_dict.get("trusted", False)
+        self.evaluating_kudos = saved_dict.get("evaluating_kudos", 0)
         self.set_moderator(saved_dict.get("moderator", False))
         serialized_monthly_kudos = saved_dict.get("monthly_kudos")
         if serialized_monthly_kudos and serialized_monthly_kudos['last_received'] != None:
