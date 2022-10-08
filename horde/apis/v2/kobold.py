@@ -13,6 +13,7 @@ class AsyncGenerate(AsyncGenerate):
             workers = self.args["workers"],
             models = self.args["models"],
             softprompts = self.args["softprompts"],
+            trusted_workers = self.args["trusted_workers"],
         )
 
     def get_size_too_big_message(self):
@@ -32,6 +33,7 @@ class SyncGenerate(SyncGenerate):
             workers = self.args["workers"],
             models = self.args["models"],
             softprompts = self.args["softprompts"],
+            trusted_workers = self.args["trusted_workers"],
         )
 
 class JobPop(JobPop):

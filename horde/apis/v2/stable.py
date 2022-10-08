@@ -31,6 +31,7 @@ class AsyncGenerate(AsyncGenerate):
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
             censor_nsfw=self.args["censor_nsfw"],
+            trusted_workers=self.args["trusted_workers"],
         )
     
 class SyncGenerate(SyncGenerate):
@@ -61,6 +62,7 @@ class SyncGenerate(SyncGenerate):
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
             censor_nsfw=self.args["censor_nsfw"],
+            trusted_workers=self.args["trusted_workers"],
         )
     
 class JobPop(JobPop):

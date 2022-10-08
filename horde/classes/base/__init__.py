@@ -20,6 +20,7 @@ class WaitingPrompt:
         self.params = params
         self.total_usage = 0
         self.nsfw = kwargs.get("nsfw", False)
+        self.trusted_workers = kwargs.get("trusted_workers", True)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
@@ -393,6 +394,9 @@ class Worker:
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False
             skipped_reason = 'nsfw'
+        if waiting_prompt.trusted_workers and not self.user.trusted:
+            is_matching = False
+            skipped_reason = 'untrusted'
         # If the worker has been tricked once by this prompt, we don't want to resend it it
         # as it may give up the jig
         if waiting_prompt.tricked_worker(self):

@@ -55,6 +55,7 @@ class Models(v2.Models):
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
             'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
+            'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'censor_nsfw': fields.Boolean(description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
         })

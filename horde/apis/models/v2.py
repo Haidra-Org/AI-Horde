@@ -7,6 +7,7 @@ class Parsers:
     generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
     generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
     generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
+    generate_parser.add_argument("trusted_workers", type=bool, required=False, default=True, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
     generate_parser.add_argument("workers", type=list, required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
     # generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="Models", location="json")
@@ -56,6 +57,7 @@ class Models:
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept."),
+            'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not."),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {

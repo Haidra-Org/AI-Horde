@@ -67,6 +67,7 @@ class Models(v2.Models):
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to service this request")),
             'softprompts': fields.List(fields.String(description="Specify which softpompts need to be used to service this request")),
+            'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers censor text."),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {

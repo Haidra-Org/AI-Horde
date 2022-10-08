@@ -89,6 +89,7 @@ class GenerateTemplate(Resource):
             self.args["params"],
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
+            trusted_workers=self.args["trusted_workers"],
         )
     
     # We split this into its own function, so that it may be overriden and extended
