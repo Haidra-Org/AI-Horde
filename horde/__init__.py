@@ -1,9 +1,10 @@
 from .logger import logger, set_logger_verbosity, quiesce_logger
 from .argparser import args
-from . import countermeasures as cm
 
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
+
+from . import countermeasures as cm
 
 from .switch import Switch
 maintenance = Switch()

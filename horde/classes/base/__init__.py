@@ -1113,6 +1113,19 @@ class Database:
                 count += 1
         return(count)
 
+    def compile_workers_by_ip(self):
+        workers_per_ip = {}
+        for worker in self.workers.values():
+            if worker.ipaddr not in workers_per_ip:
+                workers_per_ip[worker.ipaddr] = []
+            workers_per_ip[worker.ipaddr].append(worker)
+        return(workers_per_ip)
+
+    def count_workers_in_ipaddr(self,ipaddr):
+        workers_per_ip = self.compile_workers_by_ip()
+        found_workers = workers_per_ip.get(ipaddr,[])
+        return(len(found_workers))
+
     def get_total_usage(self):
         totals = {
             thing_name: 0,
