@@ -30,6 +30,7 @@ handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_r
 handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
 handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
+handle_too_many_new_ips = api.errorhandler(e.TooManyNewIPs)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
@@ -229,9 +230,6 @@ class JobPop(Resource):
         '''
         self.args = parsers.job_pop_parser.parse_args()
         self.worker_ip = request.remote_addr
-        self.safe_ip = cm.is_ip_safe(self.worker_ip)
-        if not self.safe_ip and not raid.active:
-            raise e.UnsafeIP(self.worker_ip)
         self.validate()
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
@@ -280,9 +278,21 @@ class JobPop(Resource):
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
         self.worker = db.find_worker_by_name(self.args['name'])
+        self.safe_ip = True
+        if not self.worker or not self.worker.user.trusted:
+            self.safe_ip = cm.is_ip_safe(self.worker_ip)
+            if self.safe_ip == None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip == False:
+                # We allow max two workers in each unsafe IP from untrusted users. Any more will have to request it via discord
+                if db.count_workers_in_ipaddr(self.worker_ip) < 2:
+                    self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                elif not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
         if not self.worker:
             if is_profane(self.args['name']):
-                raise e.Profanity(self.user.get_unique_alias(), 'worker name', self.args['name'])
+                raise e.Profanity(self.user.get_unique_alias(), self.args['name'], 'worker name')
             worker_count = self.user.count_workers()
             if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)

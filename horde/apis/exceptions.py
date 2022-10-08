@@ -73,7 +73,7 @@ class WorkerMaintenance(wze.Forbidden):
 
 class TooManySameIPs(wze.Forbidden):
     def __init__(self, username):
-        self.specific = f"You are running too many workers from the same node. To prevent abuse, please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz "
+        self.specific = f"You are running too many workers from the same location. To prevent abuse, please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz "
         self.log = f"User '{username} is trying to onboard too many workers from the same IP Address. Aborting!"
 
 class WorkerInviteOnly(wze.Forbidden):
@@ -86,8 +86,13 @@ class WorkerInviteOnly(wze.Forbidden):
 
 class UnsafeIP(wze.Forbidden):
     def __init__(self, ipaddr):
-        self.specific = f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake."
+        self.specific = f"Due to abuse prevention, we cannot accept more workers from your IP address. Please contact us on Discord if you feel this is a mistake."
         self.log = f"Worker attempted to pop from unsafe IP: {ipaddr}"
+
+class TooManyNewIPs(wze.Forbidden):
+    def __init__(self, ipaddr):
+        self.specific = f"We are getting too many new workers from unknown IPs. To prevent abuse, please try again later. If this persists, please contact us on discord https://discord.gg/3DxrhksKzn "
+        self.log = f"Too many new IPs to check: {ipaddr}. Asked to retry"
 
 class InvalidProcGen(wze.NotFound):
     def __init__(self, gen_id):
