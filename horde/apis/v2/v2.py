@@ -416,7 +416,7 @@ class WorkerSingle(Resource):
     put_parser.add_argument("name", type=str, required=False, help="When this is set, it will change the worker's name. No profanity allowed!", location="json")
 
 
-    decorators = [limiter.limit("30/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
     @api.expect(put_parser)
     @api.marshal_with(models.response_model_worker_modify, code=200, description='Modify Worker', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
@@ -528,7 +528,7 @@ class UserSingle(Resource):
     parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
     parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
 
-    decorators = [limiter.limit("30/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
     @api.expect(parser)
     @api.marshal_with(models.response_model_user_modify, code=200, description='Modify User', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
