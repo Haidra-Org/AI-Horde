@@ -13,3 +13,4 @@ bleach
 alt-profanity-check
 better_profanity
 python-dateutil
+redis

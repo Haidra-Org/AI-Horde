@@ -1,5 +1,8 @@
 import requests, os
 from . import logger, args
+from .redis_ctrl import get_ipaddr_db
+
+r = get_ipaddr_db()
 
 # Returns False if the IP is not false
 # Else return true
