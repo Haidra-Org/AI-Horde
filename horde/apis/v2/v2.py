@@ -42,9 +42,9 @@ handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_reques
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 
-# Used to for the flas limiter, to limit requests per url paths
+# Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
-    return(request.path)
+    return(f"{request.remote_addr}@{request.path}")
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
