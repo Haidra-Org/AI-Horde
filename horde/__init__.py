@@ -25,8 +25,9 @@ from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
 import os
 
-HORDE.register_blueprint(apiv1)
 HORDE.register_blueprint(apiv2)
+if args.horde == 'kobold':
+    HORDE.register_blueprint(apiv1)
 
 @HORDE.before_request
 def limit_remote_addr():
