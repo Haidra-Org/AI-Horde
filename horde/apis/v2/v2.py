@@ -44,7 +44,8 @@ handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_reque
 
 # Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
-    return(f"{request.remote_addr}@{request.path}")
+    # logger.info(dir(request))
+    return(f"{request.remote_addr}@{request.method}@{request.path}")
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
