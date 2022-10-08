@@ -282,20 +282,20 @@ class ProcessingGeneration:
         return(ret_dict)
 
 class Worker:
-    last_reward_uptime = 0
+    suspicion_threshold = 3
     # Every how many seconds does this worker get a kudos reward
     uptime_reward_threshold = 600
-    # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
-    maintenance = False
-    # Paused is set by the admins to prevent that worker from seeing any more requests
-    # This can be used for stopping workers who misbhevave for example, without informing their owners
-    paused = False
-    # Extra comment about the worker, set by its owner
-    info = None
-    suspicious = 0
-    suspicion_threshold = 3
 
     def __init__(self, db):
+        self.last_reward_uptime = 0
+        # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
+        self.maintenance = False
+        # Paused is set by the admins to prevent that worker from seeing any more requests
+        # This can be used for stopping workers who misbhevave for example, without informing their owners
+        self.paused = False
+        # Extra comment about the worker, set by its owner
+        self.info = None
+        self.suspicious = 0
         self.kudos_details = {
             "generated": 0,
             "uptime": 0,
@@ -328,7 +328,8 @@ class Worker:
             self.report_suspicion(reason = Suspicions.WORKER_PROFANITY, formats = [self.name])
 
     def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = []):
-        if int(reason) in self.suspicions:
+        # Unreasonable Fast can be added multiple times and it increases suspicion each time
+        if int(reason) in self.suspicions and reason != Suspicions.UNREASONABLY_FAST:
             return
         self.suspicions.append(int(reason))
         self.suspicious += amount
@@ -499,6 +500,7 @@ class Worker:
             "info": self.info,
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
+            "suspicious": self.suspicious,
         }
         if is_privileged:
             ret_dict['paused'] = self.paused
@@ -651,6 +653,8 @@ class GenerationsIndex(Index):
 
 
 class User:
+    suspicion_threshold = 3
+
     def __init__(self, db):
         self.suspicious = 0
         self.worker_invited = 0
@@ -779,13 +783,13 @@ class User:
 
     def check_for_trust(self):
         '''After a user passes the evaluation threshold (50000 kudos)
-        All  the evaluating Kudos added to their total and they automatically become trusted
+        All the evaluating Kudos added to their total and they automatically become trusted
+        Suspicious users do not automatically pass evaluation
         '''
-        if self.evaluating_kudos >= 50000:
+        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not is_suspicious():
             self.modify_kudos(evaluating_kudos,"accumulated")
             self.evaluating_kudos = 0
             self.set_trusted(True)
-
 
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
@@ -856,7 +860,10 @@ class User:
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
             "trusted": self.trusted,
+            "suspicious": self.suspicious,
             "worker_count": self.count_workers(),
+            # unnecessary information, since the workers themselves wil be visible
+            # "public_workers": self.public_workers,
         }
         if self.public_workers or is_privileged:
             mk_dict = {
@@ -876,7 +883,7 @@ class User:
         # Anon is never considered suspicious
         if self.is_anon():
             return
-        if int(reason) in self.suspicions:
+        if int(reason) in self.suspicions and reason != Suspicions.UNREASONABLY_FAST:
             return
         self.suspicions.append(int(reason))
         self.suspicious += amount
@@ -889,6 +896,13 @@ class User:
     
     def count_workers(self):
         return(len(self.get_workers()))
+
+    def is_suspicious(self): 
+        if self.trusted:
+            return(False)       
+        if self.suspicious >= self.suspicion_threshold:
+            return(True)
+        return(False)
 
     def exceeding_ipaddr_restrictions(self, ipaddr):
         '''Checks that the ipaddr of the new worker does not have too many other workers

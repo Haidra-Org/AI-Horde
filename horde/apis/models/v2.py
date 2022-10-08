@@ -92,11 +92,12 @@ class Models:
             "performance": fields.String(description="The average performance of this worker in human readable form."),
             "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde."),
             "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
-            "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
+            "paused": fields.Boolean(example=False,description="(Privileged) When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
-            "owner": fields.String(example="username#1", description="The owner of this server. This is only visible is the owner has allowed it."),
+            "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
@@ -130,15 +131,16 @@ class Models:
             "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
             "id": fields.Integer(description="The user unique ID. It is always an integer."),
             "kudos": fields.Float(description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations."),
-            "evaluating_kudos": fields.Float(description="The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches 50000, they automatically become trusted."),
+            "evaluating_kudos": fields.Float(description="(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches 50000, they automatically become trusted."),
             "concurrency": fields.Integer(description="How many concurrent generations this user may request."),    
             "worker_invited": fields.Integer(description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
-            "worker_ids": fields.List(fields.String(description="Only visible to the user and mods, and when the user has explicitly allows it to be public.")),
+            "worker_ids": fields.List(fields.String(description="Privileged or public when the user has explicitly allows it to be public.")),
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
             # I need to pass these two via inheritabce, or they take over
             # "usage": fields.Nested(self.response_model_use_details),
             # "contributions": fields.Nested(self.response_model_contrib_details),
