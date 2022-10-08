@@ -516,7 +516,7 @@ class UserSingle(Resource):
     parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)", location="json")
     parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
-    parser.add_argument("worker_invite", type=bool, required=False, help="Set to true to allow this user to join a worker to the horde when in worker invite-only mode.", location="json")
+    parser.add_argument("worker_invite", type=int, required=False, help="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode.", location="json")
     parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
     parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
     parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")

@@ -7,6 +7,28 @@ from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspi
 import uuid, re
 from ...utils import is_profane
 from ... import raid
+from enum import IntEnum
+
+class Suspicions(IntEnum):
+    WORKER_NAME_LONG = 0
+    WORKER_NAME_EXTREME = 1
+    WORKER_PROFANITY = 2
+    UNSAFE_IP = 3
+    EXTREME_MAX_PIXELS = 4
+    UNREASONABLY_FAST = 5
+    USERNAME_LONG = 6
+    USERNAME_PROFANITY = 7
+
+suspicion_logs = {
+    Suspicions.WORKER_NAME_LONG: 'Worker Name too long',
+    Suspicions.WORKER_NAME_EXTREME: 'Worker Name extremely long',
+    Suspicions.WORKER_PROFANITY: 'Discovered profanity in worker name {}',
+    Suspicions.UNSAFE_IP: 'Worker using unsafe IP',
+    Suspicions.EXTREME_MAX_PIXELS: 'Worker claiming they can generate too many pixels',
+    Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({} MPS)',
+    Suspicions.USERNAME_LONG: 'Username too long',
+    Suspicions.USERNAME_PROFANITY: 'Profanity in username'
+}
 
 class WaitingPrompt:
     extra_priority = 0
@@ -278,6 +300,7 @@ class Worker:
             "generated": 0,
             "uptime": 0,
         }
+        self.suspicions = []
         self.db = db
 
     def create(self, user, name, **kwargs):
@@ -298,17 +321,21 @@ class Worker:
         self.suspicious = self.user.suspicious
         if len(self.name) > 100:
             if len(self.name) > 200:
-                self.report_suspicion(reason = 'Worker Name extremely long')
+                self.report_suspicion(reason = Suspicions.WORKER_NAME_EXTREMELY_LONG)
             self.name = self.name[:100]
-            self.report_suspicion(reason = 'Worker Name too long')
+            self.report_suspicion(reason = Suspicions.WORKER_NAME_LONG)
         if is_profane(self.name):
-            self.report_suspicion(reason = f"discovered profanity in worker name {self.name}")
+            self.report_suspicion(reason = Suspicions.WORKER_PROFANITY, formats = [self.name])
 
-    def report_suspicion(self, amount = 1, reason = None):
+    def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = []):
+        if int(reason) in self.suspicions:
+            return
+        self.suspicions.append(int(reason))
         self.suspicious += amount
-        self.user.report_suspicion(amount)
+        self.user.report_suspicion(amount, reason)
         if reason:
-            logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
+            reason_log = suspicion_logs[reason].format(*formats)
+            logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason_log}")
         if self.is_suspicious():
             self.paused = True
 
@@ -353,8 +380,11 @@ class Worker:
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
         if not kwargs.get("safe_ip", True):
-            if not self.user.worker_invited:
-                self.report_suspicion(reason = 'Worker using unsafe IP')
+            if not self.user.trusted:
+                self.report_suspicion(reason = Suspicions.UNSAFE_IP)
+        if kwargs.get("max_pixels", 512*512) > 2048 * 2048:
+            if not self.user.trusted:
+                self.report_suspicion(reason = Suspicions.EXTREME_MAX_PIXELS)
         if not self.is_stale() and not self.paused:
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -422,7 +452,7 @@ class Worker:
         self.fulfilments += 1
         self.performances.append(things_per_sec)
         if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
-            self.report_suspicion(reason = f'Generation unreasonably fast ({round(things_per_sec / thing_divisor,2)} MPS)')
+            self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -496,6 +526,7 @@ class Worker:
             "nsfw": self.nsfw,
             "blacklist": self.blacklist.copy(),
             "ipaddr": self.ipaddr,
+            "suspicions": self.suspicions,
         }
         return(ret_dict)
 
@@ -517,6 +548,10 @@ class Worker:
         self.nsfw = saved_dict.get("nsfw",True)
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
+        self.suspicions = saved_dict.get("suspicions", [])
+        for suspicion in self.suspicions:
+            self.suspicious += 1
+            logger.debug(f"Suspecting worker {self.name} for {self.suspicious} with reasons {self.suspicions}")
         self.check_for_bad_actor()
         if convert_flag == "prune_bad_worker" and not self.is_suspicious():
             self.db.workers[self.name] = self
@@ -638,6 +673,7 @@ class User:
             "amount": 0,
             "last_received": None,
         }
+        self.suspicions = []
         self.db = db
 
     def create_anon(self):
@@ -682,9 +718,9 @@ class User:
     def check_for_bad_actor(self):
         if len(self.username) > 30:
             self.username = self.username[:30]
-            self.report_suspicion(reason = "Username too long")
+            self.report_suspicion(reason = Suspicions.USERNAME_LONG)
         if is_profane(self.username):
-            self.report_suspicion(reason = "Profanity in username")
+            self.report_suspicion(reason = Suspicions.USERNAME_PROFANITY)
 
     # Checks that this user matches the specified API key
     def check_key(api_key):
@@ -812,12 +848,16 @@ class User:
             logger.debug(ret_dict)
         return(ret_dict)
 
-    def report_suspicion(self, amount = 1, reason = None):
+    def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = []):
         # Anon is never considered suspicious
         if self.is_anon():
             return
+        if int(reason) in self.suspicions:
+            return
+        self.suspicions.append(int(reason))
         self.suspicious += amount
         if reason:
+            reason_log = suspicion_logs[reason].format(*formats)
             logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
 
     def get_workers(self):
@@ -861,7 +901,7 @@ class User:
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
-            "suspicious": self.suspicious,
+            "suspicions": self.suspicions,
             "public_workers": self.public_workers,
             "trusted": self.trusted,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
@@ -885,7 +925,10 @@ class User:
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
         # I am putting int() here, to convert a boolean entry I had in the past
         self.worker_invited = int(saved_dict.get("worker_invited", 0))
-        self.suspicious = saved_dict.get("suspicious", 0)
+        self.suspicions = saved_dict.get("suspicions", [])
+        for suspicion in self.suspicions:
+            self.suspicious += 1
+            logger.debug(f"Suspecting user {self.get_unique_alias()} for {self.suspicious} with reasons {self.suspicions}")
         self.public_workers = saved_dict.get("public_workers", False)
         self.trusted = saved_dict.get("trusted", False)
         self.set_moderator(saved_dict.get("moderator", False))
@@ -1064,6 +1107,7 @@ class Database:
             self.write_files_to_disk()
             time.sleep(self.interval)
 
+    @logger.catch
     def write_files_to_disk(self):
         if not os.path.exists('db'):
             os.mkdir('db')

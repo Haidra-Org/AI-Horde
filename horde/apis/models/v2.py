@@ -147,7 +147,7 @@ class Models:
             "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
             "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
-            "worker_invited": fields.Integer(example=False,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
+            "worker_invited": fields.Integer(example=1,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
             "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
             "username": fields.String(example='username#1',description="The user's new username."),
