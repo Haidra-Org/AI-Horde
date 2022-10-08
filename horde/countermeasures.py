@@ -1,14 +1,19 @@
 import requests, os
 from . import logger, args
-from .redis_ctrl import get_ipaddr_db
+from .redis_ctrl import is_redis_up, get_ipaddr_db
 
-r = get_ipaddr_db()
+r = None
+if is_redis_up():
+	r = get_ipaddr_db()
 
 # Returns False if the IP is not false
 # Else return true
 # This function is a bit obscured with env vars to prevent defeat
 def is_ip_safe(ipaddr):
 	if args.allow_all_ips:
+		return(True)
+	# If we don't have the cache up, it's always OK
+	if not r:
 		return(True)
 	safety_threshold=0.99
 	timeout=2.00
