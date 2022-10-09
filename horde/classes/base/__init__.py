@@ -486,7 +486,7 @@ class Worker:
         return(False)
 
     # Should be extended by each specific horde
-    def get_details(self, is_privileged = False):
+    def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
         ret_dict = {
             "name": self.name,
@@ -502,9 +502,9 @@ class Worker:
             "trusted": self.user.trusted,
             "suspicious": self.suspicious,
         }
-        if is_privileged:
+        if details_privilege >= 2:
             ret_dict['paused'] = self.paused
-        if is_privileged or self.user.public_workers:
+        if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
         return(ret_dict)
 
@@ -848,7 +848,7 @@ class User:
         except ValueError:
             return(False)
 
-    def get_details(self, is_privileged = False):
+    def get_details(self, details_privilege = 0):
         ret_dict = {
             "username": self.get_unique_alias(),
             "id": self.id,
@@ -865,18 +865,18 @@ class User:
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }
-        if self.public_workers or is_privileged:
-            mk_dict = {
-                "amount": self.calculate_monthly_kudos(),
-                "last_received": self.monthly_kudos["last_received"]
-            }
-            ret_dict["monthly_kudos"] = mk_dict
+        if self.public_workers or details_privilege >= 1:
             workers_array = []
             for worker in self.get_workers():
                 workers_array.append(worker.id)
             ret_dict["worker_ids"] = workers_array
+        if details_privilege >= 2:
+            mk_dict = {
+                "amount": self.calculate_monthly_kudos(),
+                "last_received": self.monthly_kudos["last_received"]
+            }
             ret_dict["evaluating_kudos"] = self.evaluating_kudos
-            logger.debug(ret_dict)
+            ret_dict["monthly_kudos"] = mk_dict
         return(ret_dict)
 
     def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = []):

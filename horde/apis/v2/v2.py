@@ -399,7 +399,7 @@ class WorkerSingle(Resource):
         worker = db.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
-        is_privileged = False
+        details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
             admin = db.find_user_by_api_key(self.args['apikey'])
@@ -407,8 +407,8 @@ class WorkerSingle(Resource):
                 raise e.InvalidAPIKey('admin worker details')
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
-            is_privileged = True
-        return(worker.get_details(is_privileged),200)
+            details_privilege = 2
+        return(worker.get_details(details_privilege),200)
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
@@ -506,17 +506,20 @@ class UserSingle(Resource):
         user = db.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
-        is_privileged = False
+        details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
             admin = db.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('privileged user details')
-            if not admin.moderator and admin != user:
+            if admin.moderator:
+                details_privilege = 2
+            elif admin == user
+                details_privilege = 1
+            else:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
-            is_privileged = True
         ret_dict = {}
-        return(user.get_details(is_privileged),200)
+        return(user.get_details(details_privilege),200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
