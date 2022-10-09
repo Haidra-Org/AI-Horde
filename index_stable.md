@@ -42,7 +42,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 * The community has made the following
     * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
     * [Telegram Bot](https://t.me/CraiyonArtBot)
-    * [G.I.M.P Plugin](https://github.com/blueturtleai/gimp-stable-diffusion)
+    * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
     * [Browser Interface](https://diffusionui.com/b/stable_horde)
     * [Horde Leaderboard](https://aqualxx.github.io/Horde-Overseer/)
 
