@@ -29,7 +29,7 @@ class WaitingPrompt(WaitingPrompt):
             if "toggles" not in self.gen_payload:
                 self.gen_payload["toggles"] = [1, 4, 8]
             elif 8 not in self.gen_payload["toggles"]:
-                self.gen_payload.append(8)
+                self.gen_payload["toggles"].append(8)
 
 
 
