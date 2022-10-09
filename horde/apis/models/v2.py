@@ -163,6 +163,12 @@ class Models:
             "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
         })
 
+        self.response_model_newspiece = api.model('Newspiece', {
+            'date_published': fields.String(description="The date this newspiece was published"),
+            'newspiece': fields.String(description="The actual piece of news"),
+            'importance': fields.String(example='Information',description="How critical this piece of news is."),
+        })
+
         self.response_model_horde_modes = api.model('HordeModes', {
             "maintenance_mode": fields.Boolean(description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue."),
             "invite_only_mode": fields.Boolean(description="When True, this Horde will not only accept worker explicitly invited to join."),

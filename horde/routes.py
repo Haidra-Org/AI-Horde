@@ -8,7 +8,7 @@ from uuid import uuid4
 from . import logger, maintenance, args, HORDE
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
 from .classes import db
-from .classes import waiting_prompts,User
+from .classes import waiting_prompts,User,News
 import bleach
 from .utils import ConvertAmount, is_profane
 
@@ -55,6 +55,11 @@ This is the worker which has generated the most pixels for the horde.
 [Privacy Policy](/privacy)
 
 [Terms of Service](/terms)"""
+    news = ""
+    sorted_news =News().sorted_news()
+    for iter in range(len(sorted_news)):
+        news += f"* {sorted_news[iter]['newspiece']}\n"
+        if iter > 2: break
     totals = db.get_total_usage()
     wp_totals = waiting_prompts.count_totals()
     active_worker_count = db.count_active_workers()
@@ -78,6 +83,7 @@ This is the worker which has generated the most pixels for the horde.
         queued_things = queued_things.amount,
         queued_things_name = queued_things.prefix + raw_thing_name,
         maintenance_mode = maintenance.active,
+        news = news,
     )
 
     style = """<style>

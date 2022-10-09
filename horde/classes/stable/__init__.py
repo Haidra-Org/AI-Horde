@@ -112,3 +112,16 @@ class Database(Database):
     def new_stats(self):
         return(Stats(self))
 
+
+class News(News):
+
+    STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-06",
+            "newspiece": "We have a [new installation video](https://youtu.be/wJrp5lpByCc) for both the Stable Horde Client and the Stable horde worker.",
+            "importance": "Information"
+        },
+    ]
+
+    def get_news(self):
+        return(super().get_news() + self.STABLE_HORDE_NEWS)

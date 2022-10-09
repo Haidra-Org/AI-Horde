@@ -1,14 +1,12 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
 from ... import limiter, logger, maintenance, invite_only, raid, cm
-from ...classes import db
-from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
+from ...classes import db,processing_generations,waiting_prompts,Worker,User,WaitingPrompt,News
 from enum import Enum
 from .. import exceptions as e
 import os, time, json
 from .. import ModelsV2, ParsersV2
 from ...utils import is_profane
-
 
 api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
@@ -514,7 +512,7 @@ class UserSingle(Resource):
                 raise e.InvalidAPIKey('privileged user details')
             if admin.moderator:
                 details_privilege = 2
-            elif admin == user
+            elif admin == user:
                 details_privilege = 1
             else:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
@@ -638,6 +636,17 @@ class HordeLoad(Resource):
         load_dict = waiting_prompts.count_totals()
         load_dict["worker_count"] = db.count_active_workers()
         return(load_dict,200)
+
+class HordeNews(Resource):
+    @logger.catch
+    @api.marshal_with(models.response_model_newspiece, code=200, description='Horde News', as_list = True)
+    def get(self):
+        '''Read the latest happenings on the horde
+        '''
+        news = News()
+        logger.debug(news.sorted_news())
+        return(news.sorted_news(),200)
+    
 
 class HordeModes(Resource):
     get_parser = reqparse.RequestParser()

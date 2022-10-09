@@ -88,6 +88,11 @@ class HordeLoad(HordeLoad):
         load_dict["past_minute_megapixelsteps"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
+class HordeNews(HordeNews):
+    
+    def get_news(self):
+        return(horde_news + stable_horde_news)
+
 
 api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
@@ -103,3 +108,4 @@ api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeModes, "/status/modes")
 api.add_resource(HordeLoad, "/status/performance")
+api.add_resource(HordeNews, "/status/news")

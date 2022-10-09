@@ -4,6 +4,10 @@
 
 For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
 
+## Latest News
+
+{news}
+
 ## Stats 
 
 * Average Recent Performance: {avg_performance} {avg_thing_name} per second

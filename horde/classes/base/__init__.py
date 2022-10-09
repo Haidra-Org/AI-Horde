@@ -8,6 +8,7 @@ import uuid, re
 from ...utils import is_profane
 from ... import raid
 from enum import IntEnum
+from .news import News
 
 class Suspicions(IntEnum):
     WORKER_NAME_LONG = 0
