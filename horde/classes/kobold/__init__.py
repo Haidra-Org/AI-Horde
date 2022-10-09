@@ -30,7 +30,7 @@ class WaitingPrompt(WaitingPrompt):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
-        logger.info(f"New prompt by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total MPs")
+        logger.info(f"New prompt by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
 
     def new_procgen(self, worker):
         return(ProcessingGeneration(self, self._processing_generations, worker))

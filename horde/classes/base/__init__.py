@@ -26,7 +26,7 @@ suspicion_logs = {
     Suspicions.WORKER_PROFANITY: 'Discovered profanity in worker name {}',
     Suspicions.UNSAFE_IP: 'Worker using unsafe IP',
     Suspicions.EXTREME_MAX_PIXELS: 'Worker claiming they can generate too many pixels',
-    Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({} MPS)',
+    Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({})',
     Suspicions.USERNAME_LONG: 'Username too long',
     Suspicions.USERNAME_PROFANITY: 'Profanity in username'
 }
