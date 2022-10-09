@@ -287,11 +287,12 @@ class JobPop(Resource):
             if self.safe_ip == None:
                 raise e.TooManyNewIPs(self.worker_ip)
             if self.safe_ip == False:
-                # We allow max two workers in each unsafe IP from untrusted users. Any more will have to request it via discord
-                if db.count_workers_in_ipaddr(self.worker_ip) < 2:
-                    self.safe_ip = True
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and db.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
                 # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                elif not raid.active:
+                if not self.safe_ip and not raid.active:
                     raise e.UnsafeIP(self.worker_ip)
         if not self.worker:
             if is_profane(self.args['name']):

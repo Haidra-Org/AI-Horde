@@ -662,7 +662,7 @@ class User:
         self.concurrency = 30
         self.usage_multiplier = 1.0
         self.kudos = 0
-        self.same_ip_worker_threshold = 8
+        self.same_ip_worker_threshold = 3
         self.public_workers = False
         self.trusted = False
         self.evaluating_kudos = 0
