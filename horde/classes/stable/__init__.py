@@ -122,6 +122,11 @@ class News(News):
             "importance": "Information"
         },
         {
+            "date_published": "2022-10-10",
+            "newspiece": "You can now contribute a worker to the horde [via google colab](https://colab.research.google.com/github/harrisonvanderbyl/ravenbot-ai/blob/master/Horde.ipynb). Just fill-in your API key and run!",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-10-06",
             "newspiece": "We have a [new installation video](https://youtu.be/wJrp5lpByCc) for both the Stable Horde Client and the Stable horde worker.",
             "importance": "Information"
