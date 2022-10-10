@@ -501,10 +501,10 @@ class Worker:
             "info": self.info,
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
-            "suspicious": self.suspicious,
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
+            ret_dict['suspicious'] = self.suspicious,
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
         return(ret_dict)
