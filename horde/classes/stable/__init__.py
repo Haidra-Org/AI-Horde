@@ -117,6 +117,11 @@ class News(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2022-10-10",
+            "newspiece": "The [discord rewards bot](https://www.patreon.com/posts/new-kind-of-73097166) has been unleashed. Reward good contributions to the horde directly from the chat!",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-10-06",
             "newspiece": "We have a [new installation video](https://youtu.be/wJrp5lpByCc) for both the Stable Horde Client and the Stable horde worker.",
             "importance": "Information"
