@@ -790,8 +790,8 @@ class User:
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         '''
-        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not is_suspicious():
-            self.modify_kudos(evaluating_kudos,"accumulated")
+        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious():
+            self.modify_kudos(self.evaluating_kudos,"accumulated")
             self.evaluating_kudos = 0
             self.set_trusted(True)
 
