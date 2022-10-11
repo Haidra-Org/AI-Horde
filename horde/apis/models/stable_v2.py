@@ -23,7 +23,7 @@ class Models(v2.Models):
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False,enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
             'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
-            'realesrgan_model_name': fields.String(required=False),
+            # 'realesrgan_model_name': fields.String(required=False),
             # 'ddim_eta': fields.Float(required=False), 
             # 'batch_size': fields.Integer(required=False,example=1), 
             'cfg_scale': fields.Float(required=False,example=5.0, min=-40, max=30, multiple=0.5), 
