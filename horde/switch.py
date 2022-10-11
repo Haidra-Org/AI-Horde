@@ -1,4 +1,4 @@
-class Maintenance:
+class Switch:
     active = False
 
     def activate(self):
@@ -9,5 +9,3 @@ class Maintenance:
 
     def toggle(self,value):
         self.active = value
-
-

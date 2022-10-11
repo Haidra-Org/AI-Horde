@@ -31,6 +31,7 @@ class AsyncGenerate(AsyncGenerate):
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
             censor_nsfw=self.args["censor_nsfw"],
+            trusted_workers=self.args["trusted_workers"],
         )
     
 class SyncGenerate(SyncGenerate):
@@ -61,12 +62,19 @@ class SyncGenerate(SyncGenerate):
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
             censor_nsfw=self.args["censor_nsfw"],
+            trusted_workers=self.args["trusted_workers"],
         )
     
 class JobPop(JobPop):
 
     def check_in(self):
-        self.worker.check_in(self.args['max_pixels'], nsfw = self.args['nsfw'], blacklist = self.args['blacklist'])
+        self.worker.check_in(
+            self.args['max_pixels'], 
+            nsfw = self.args['nsfw'], 
+            blacklist = self.args['blacklist'], 
+            safe_ip = self.safe_ip,
+            ipaddr = self.worker_ip,
+        )
   
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
@@ -80,6 +88,11 @@ class HordeLoad(HordeLoad):
         load_dict["past_minute_megapixelsteps"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
+class HordeNews(HordeNews):
+    
+    def get_news(self):
+        return(horde_news + stable_horde_news)
+
 
 api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
@@ -89,8 +102,10 @@ api.add_resource(JobPop, "/generate/pop")
 api.add_resource(JobSubmit, "/generate/submit")
 api.add_resource(Users, "/users")
 api.add_resource(UserSingle, "/users/<string:user_id>")
+api.add_resource(FindUser, "/find_user")
 api.add_resource(Workers, "/workers")
 api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
+api.add_resource(HordeModes, "/status/modes")
 api.add_resource(HordeLoad, "/status/performance")
-api.add_resource(HordeMaintenance, "/status/maintenance")
+api.add_resource(HordeNews, "/status/news")

@@ -8,9 +8,9 @@ from uuid import uuid4
 from . import logger, maintenance, args, HORDE
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
 from .classes import db
-from .classes import waiting_prompts,User
+from .classes import waiting_prompts,User,News
 import bleach
-from .utils import ConvertAmount
+from .utils import ConvertAmount, is_profane
 
 dance_return_to = '/'
 
@@ -55,6 +55,11 @@ This is the worker which has generated the most pixels for the horde.
 [Privacy Policy](/privacy)
 
 [Terms of Service](/terms)"""
+    news = ""
+    sorted_news =News().sorted_news()
+    for iter in range(len(sorted_news)):
+        news += f"* {sorted_news[iter]['newspiece']}\n"
+        if iter > 1: break
     totals = db.get_total_usage()
     wp_totals = waiting_prompts.count_totals()
     active_worker_count = db.count_active_workers()
@@ -78,6 +83,7 @@ This is the worker which has generated the most pixels for the horde.
         queued_things = queued_things.amount,
         queued_things_name = queued_things.prefix + raw_thing_name,
         maintenance_mode = maintenance.active,
+        news = news,
     )
 
     style = """<style>
@@ -156,10 +162,14 @@ def register():
         api_key = secrets.token_urlsafe(16)
         if user:
             username = bleach.clean(request.form['username'])
+            if is_profane(username):
+                return render_template('bad_username.html', page_title="Bad Username")
             user.username = username
             user.api_key = api_key
         else:
             # Triggered when the user created a username without logging in
+            if is_profane(request.form['username']):
+                return render_template('bad_username.html', page_title="Bad Username")
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True

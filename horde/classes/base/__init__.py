@@ -1,14 +1,40 @@
 import json, os, sys
 from uuid import uuid4
 from datetime import datetime
-import threading, time
+import threading, time, dateutil.relativedelta
 from .. import logger, args
-from ...vars import thing_name,raw_thing_name,thing_divisor
-import uuid
+from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
+import uuid, re, random
+from ...utils import is_profane
+from ... import raid
+from enum import IntEnum
+from .news import News
+
+class Suspicions(IntEnum):
+    WORKER_NAME_LONG = 0
+    WORKER_NAME_EXTREME = 1
+    WORKER_PROFANITY = 2
+    UNSAFE_IP = 3
+    EXTREME_MAX_PIXELS = 4
+    UNREASONABLY_FAST = 5
+    USERNAME_LONG = 6
+    USERNAME_PROFANITY = 7
+
+suspicion_logs = {
+    Suspicions.WORKER_NAME_LONG: 'Worker Name too long',
+    Suspicions.WORKER_NAME_EXTREME: 'Worker Name extremely long',
+    Suspicions.WORKER_PROFANITY: 'Discovered profanity in worker name {}',
+    Suspicions.UNSAFE_IP: 'Worker using unsafe IP',
+    Suspicions.EXTREME_MAX_PIXELS: 'Worker claiming they can generate too many pixels',
+    Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({})',
+    Suspicions.USERNAME_LONG: 'Username too long',
+    Suspicions.USERNAME_PROFANITY: 'Profanity in username'
+}
 
 class WaitingPrompt:
     extra_priority = 0
     def __init__(self, db, wps, pgs, prompt, user, params, **kwargs):
+        self.tricked_workers = []
         self.db = db
         self._waiting_prompts = wps
         self._processing_generations = pgs
@@ -17,10 +43,12 @@ class WaitingPrompt:
         self.params = params
         self.total_usage = 0
         self.nsfw = kwargs.get("nsfw", False)
+        self.trusted_workers = kwargs.get("trusted_workers", True)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
         self.processing_gens = []
+        self.fake_gens = []
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
@@ -37,6 +65,9 @@ class WaitingPrompt:
     def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to the worker
         self.gen_payload = initial_dict
+    
+    def get_job_payload(self):
+        return(self.gen_payload)
 
     def activate(self):
         '''We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -59,9 +90,22 @@ class WaitingPrompt:
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
+        return(self.get_pop_payload(new_gen.id))
+
+    def fake_generation(self, worker):
+        new_gen = self.new_procgen(worker)
+        new_gen.fake = True
+        self.fake_gens.append(new_gen)
+        self.tricked_workers.append(worker)
+        return(self.get_pop_payload(new_gen.id))
+    
+    def tricked_worker(self, worker):
+        return(worker in self.tricked_workers)
+
+    def get_pop_payload(self, procgen_id):
         prompt_payload = {
-            "payload": self.gen_payload,
-            "id": new_gen.id,
+            "payload": self.get_job_payload(),
+            "id": procgen_id,
         }
         return(prompt_payload)
 
@@ -125,9 +169,6 @@ class WaitingPrompt:
         ret_dict["wait_time"] = round(wait_time)
         return(ret_dict)
 
-
-        return(ret_dict)
-
     def get_lite_status(self):
         '''Same as get_status(), but without the images to avoid unnecessary size'''
         ret_dict = self.get_status(True)
@@ -162,6 +203,8 @@ class WaitingPrompt:
     def delete(self):
         for gen in self.processing_gens:
             gen.delete()
+        for gen in self.fake_gens:
+            gen.delete()
         self._waiting_prompts.del_item(self)
         del self
 
@@ -179,6 +222,7 @@ class WaitingPrompt:
 class ProcessingGeneration:
     generation = None
     seed = None
+    fake = False
  
     def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
@@ -198,9 +242,14 @@ class ProcessingGeneration:
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
         self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
-        self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
-        self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
-        logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        if self.fake and self.worker.user != self.owner.user:
+            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+            logger.info(f"Fake Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        else:
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+            self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
+            logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
         return(self.kudos)
 
     def is_completed(self):
@@ -237,25 +286,28 @@ class ProcessingGeneration:
         return(ret_dict)
 
 class Worker:
-    last_reward_uptime = 0
+    suspicion_threshold = 3
     # Every how many seconds does this worker get a kudos reward
     uptime_reward_threshold = 600
-    # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
-    maintenance = False
-    # Paused is set by the admins to prevent that worker from seeing any more requests
-    # This can be used for stopping workers who misbhevave for example, without informing their owners
-    paused = False
-    # Extra comment about the worker, set by its owner
-    info = None
-    kudos_details = {
-        "generated": 0,
-        "uptime": 0,
-    }
 
     def __init__(self, db):
+        self.last_reward_uptime = 0
+        # Maintenance can be requested by the owner of the worker (to allow them to not pick up more requests)
+        self.maintenance = False
+        # Paused is set by the admins to prevent that worker from seeing any more requests
+        # This can be used for stopping workers who misbhevave for example, without informing their owners
+        self.paused = False
+        # Extra comment about the worker, set by its owner
+        self.info = None
+        self.suspicious = 0
+        self.kudos_details = {
+            "generated": 0,
+            "uptime": 0,
+        }
+        self.suspicions = []
         self.db = db
 
-    def create(self, user, name):
+    def create(self, user, name, **kwargs):
         self.user = user
         self.name = name
         self.id = str(uuid4())
@@ -264,7 +316,63 @@ class Worker:
         self.kudos = 0
         self.performances = []
         self.uptime = 0
-        self.db.register_new_worker(self)
+        self.check_for_bad_actor()
+        if not self.is_suspicious():
+            self.db.register_new_worker(self)
+
+    def check_for_bad_actor(self):
+        # Each worker starts at the suspicion level of its user
+        self.suspicious = self.user.suspicious
+        if len(self.name) > 100:
+            if len(self.name) > 200:
+                self.report_suspicion(reason = Suspicions.WORKER_NAME_EXTREMELY_LONG)
+            self.name = self.name[:100]
+            self.report_suspicion(reason = Suspicions.WORKER_NAME_LONG)
+        if is_profane(self.name):
+            self.report_suspicion(reason = Suspicions.WORKER_PROFANITY, formats = [self.name])
+
+    def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = []):
+        # Unreasonable Fast can be added multiple times and it increases suspicion each time
+        if int(reason) in self.suspicions and reason != Suspicions.UNREASONABLY_FAST:
+            return
+        self.suspicions.append(int(reason))
+        self.suspicious += amount
+        self.user.report_suspicion(amount, reason, formats)
+        if reason:
+            reason_log = suspicion_logs[reason].format(*formats)
+            logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason_log}")
+        if self.is_suspicious():
+            self.paused = True
+
+    def is_suspicious(self): 
+        if self.user.trusted:
+            return(False)       
+        if self.suspicious >= self.suspicion_threshold:
+            return(True)
+        return(False)
+
+    def set_name(self,new_name):
+        if self.name == new_name:
+            return("OK")        
+        if is_profane(new_name):
+            return("Profanity")
+        if len(new_name) > 100:
+            return("Too Long")
+        ret = self.db.update_worker_name(self, new_name)
+        if ret == 1:
+            return("Already Exists")
+        self.name = new_name
+        return("OK")
+
+    def set_info(self,new_info):
+        if self.info == new_info:
+            return("OK")
+        if is_profane(new_info):
+            return("Profanity")
+        if len(new_info) > 1000:
+            return("Too Long")
+        self.info = new_info
+        return("OK")
 
     # This should be overwriten by each specific horde
     def calculate_uptime_reward(self):
@@ -275,14 +383,21 @@ class Worker:
         self.model = kwargs.get("model")
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
-        if not self.is_stale():
+        self.ipaddr = kwargs.get("ipaddr", None)
+        if not kwargs.get("safe_ip", True):
+            if not self.user.trusted:
+                self.report_suspicion(reason = Suspicions.UNSAFE_IP)
+        if kwargs.get("max_pixels", 512*512) > 2048 * 2048:
+            if not self.user.trusted:
+                self.report_suspicion(reason = Suspicions.EXTREME_MAX_PIXELS)
+        if not self.is_stale() and not self.paused:
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
-                logger.debug(f"worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
+                logger.debug(f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
             # If the worker comes back from being stale, we just reset their last_reward_uptime
@@ -314,6 +429,14 @@ class Worker:
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False
             skipped_reason = 'nsfw'
+        if waiting_prompt.trusted_workers and not self.user.trusted:
+            is_matching = False
+            skipped_reason = 'untrusted'
+        # If the worker has been tricked once by this prompt, we don't want to resend it it
+        # as it may give up the jig
+        if waiting_prompt.tricked_worker(self):
+            is_matching = False
+            skipped_reason = 'secret'
         if any(word in waiting_prompt.prompt for word in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
@@ -333,6 +456,8 @@ class Worker:
         self.convert_contribution(raw_things)
         self.fulfilments += 1
         self.performances.append(things_per_sec)
+        if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
+            self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
         if len(self.performances) > 20:
             del self.performances[0]
 
@@ -365,7 +490,8 @@ class Worker:
         return(False)
 
     # Should be extended by each specific horde
-    def get_details(self, is_privileged = False):
+    @logger.catch
+    def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
         ret_dict = {
             "name": self.name,
@@ -378,9 +504,13 @@ class Worker:
             "maintenance_mode": self.maintenance,
             "info": self.info,
             "nsfw": self.nsfw,
+            "trusted": self.user.trusted,
         }
-        if is_privileged:
+        if details_privilege >= 2:
             ret_dict['paused'] = self.paused
+            ret_dict['suspicious'] = self.suspicious
+        if details_privilege >= 1 or self.user.public_workers:
+            ret_dict['owner'] = self.user.get_unique_alias()
         return(ret_dict)
 
     # Should be extended by each specific horde
@@ -402,6 +532,8 @@ class Worker:
             "info": self.info,
             "nsfw": self.nsfw,
             "blacklist": self.blacklist.copy(),
+            "ipaddr": self.ipaddr,
+            "suspicions": self.suspicions,
         }
         return(ret_dict)
 
@@ -422,7 +554,14 @@ class Worker:
         self.info = saved_dict.get("info",None)
         self.nsfw = saved_dict.get("nsfw",True)
         self.blacklist = saved_dict.get("blacklist",[])
-        self.db.workers[self.name] = self
+        self.ipaddr = saved_dict.get("ipaddr", None)
+        self.suspicions = saved_dict.get("suspicions", [])
+        for suspicion in self.suspicions:
+            self.suspicious += 1
+            logger.debug(f"Suspecting worker {self.name} for {self.suspicious} with reasons {self.suspicions}")
+        self.check_for_bad_actor()
+        if convert_flag == "prune_bad_worker" and not self.is_suspicious():
+            self.db.workers[self.name] = self
         if convert_flag == "kudos_fix":
             multiplier = 20
             # Average kudos in the kobold horde is much bigger
@@ -519,17 +658,32 @@ class GenerationsIndex(Index):
 
 
 class User:
+    suspicion_threshold = 3
+
     def __init__(self, db):
-        self.db = db
+        self.suspicious = 0
+        self.worker_invited = 0
+        self.moderator = False
+        self.concurrency = 30
+        self.usage_multiplier = 1.0
         self.kudos = 0
+        self.same_ip_worker_threshold = 3
+        self.public_workers = False
+        self.trusted = False
+        self.evaluating_kudos = 0
         self.kudos_details = {
             "accumulated": 0,
             "gifted": 0,
             "admin": 0,
             "received": 0,
+            "recurring": 0,
         }
-        self.concurrency = 30
-        self.usage_multiplier = 1.0
+        self.monthly_kudos = {
+            "amount": 0,
+            "last_received": None,
+        }
+        self.suspicions = []
+        self.db = db
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -539,6 +693,7 @@ class User:
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
         self.id = 0
+        self.public_workers = True
         self.contributions = {
             thing_name: 0,
             "fulfillments": 0
@@ -558,6 +713,7 @@ class User:
         self.invite_id = invite_id
         self.creation_date = datetime.now()
         self.last_active = datetime.now()
+        self.check_for_bad_actor()
         self.id = self.db.register_new_user(self)
         self.contributions = {
             thing_name: 0,
@@ -568,11 +724,38 @@ class User:
             "requests": 0
         }
 
+    def check_for_bad_actor(self):
+        if len(self.username) > 30:
+            self.username = self.username[:30]
+            self.report_suspicion(reason = Suspicions.USERNAME_LONG)
+        if is_profane(self.username):
+            self.report_suspicion(reason = Suspicions.USERNAME_PROFANITY)
+
     # Checks that this user matches the specified API key
     def check_key(api_key):
         if self.api_key and self.api_key == api_key:
             return(True)
         return(False)
+
+    def set_username(self,new_username):
+        if is_profane(new_username):
+            return("Profanity")
+        if len(new_username) > 30:
+            return("Too Long")
+        self.username = new_username
+        return("OK")
+
+    def set_trusted(self,is_trusted):
+        self.trusted = is_trusted
+        if self.trusted:
+            for worker in self.get_workers():
+                worker.paused = False
+
+    def set_moderator(self,is_moderator):
+        self.moderator = is_moderator
+        if self.moderator:
+            logger.warning(f"{self.username} Set as moderator")
+            self.set_trusted(True)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
@@ -584,11 +767,65 @@ class User:
 
     def record_contributions(self, raw_things, kudos):
         self.contributions["fulfillments"] += 1
-        self.modify_kudos(kudos,"accumulated")
+        # While a worker is untrusted, half of all generated kudos go for evaluation
+        if not self.trusted:
+            kudos_eval = round(kudos / 2)
+            kudos -= kudos_eval
+            self.evaluating_kudos += kudos_eval
+            self.modify_kudos(kudos,"accumulated")
+            self.check_for_trust()
+        else:
+            self.modify_kudos(kudos,"accumulated")
         self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
 
     def record_uptime(self, kudos):
-        self.modify_kudos(kudos,"accumulated")
+        # While a worker is untrusted, all uptime kudos go for evaluation
+        if not self.trusted:
+            self.evaluating_kudos += kudos
+            self.check_for_trust()
+        else:
+            self.modify_kudos(kudos,"accumulated")
+
+    def check_for_trust(self):
+        '''After a user passes the evaluation threshold (50000 kudos)
+        All the evaluating Kudos added to their total and they automatically become trusted
+        Suspicious users do not automatically pass evaluation
+        '''
+        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious():
+            self.modify_kudos(self.evaluating_kudos,"accumulated")
+            self.evaluating_kudos = 0
+            self.set_trusted(True)
+
+    def modify_monthly_kudos(self, monthly_kudos):
+        # We always give upfront the monthly kudos to the user once.
+        # If they already had some, we give the difference but don't change the date
+        if monthly_kudos > 0:
+            self.modify_kudos(monthly_kudos, "recurring")
+        if not self.monthly_kudos["last_received"]:
+            self.monthly_kudos["last_received"] = datetime.now()
+        self.monthly_kudos["amount"] += monthly_kudos
+        if self.monthly_kudos["amount"] < 0:
+            self.monthly_kudos["amount"] = 0
+
+    def receive_monthly_kudos(self):
+        kudos_amount = self.calculate_monthly_kudos()
+        if kudos_amount == 0:
+            return
+        if self.monthly_kudos["last_received"]:
+            has_month_passed = datetime.now() > self.monthly_kudos["last_received"] + dateutil.relativedelta.relativedelta(months=+6)
+        else:
+            # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
+            has_month_passed = True
+        if has_month_passed:
+            self.modify_kudos(kudos_amount, "recurring")
+            self.monthly_kudos["last_received"] = datetime.now()
+            logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
+
+    def calculate_monthly_kudos(self):
+        base_amount = self.monthly_kudos['amount']
+        if self.moderator:
+            base_amount += 100000
+        return(base_amount)
 
     def modify_kudos(self, kudos, action = 'accumulated'):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
@@ -616,7 +853,8 @@ class User:
         except ValueError:
             return(False)
 
-    def get_details(self):
+    @logger.catch
+    def get_details(self, details_privilege = 0):
         ret_dict = {
             "username": self.get_unique_alias(),
             "id": self.id,
@@ -625,12 +863,74 @@ class User:
             "usage": self.usage,
             "contributions": self.contributions,
             "concurrency": self.concurrency,
+            "worker_invited": self.worker_invited,
+            "moderator": self.moderator,
+            "trusted": self.trusted,
+            "suspicious": self.suspicious,
+            "worker_count": self.count_workers(),
+            # unnecessary information, since the workers themselves wil be visible
+            # "public_workers": self.public_workers,
         }
+        if self.public_workers or details_privilege >= 1:
+            workers_array = []
+            for worker in self.get_workers():
+                workers_array.append(worker.id)
+            ret_dict["worker_ids"] = workers_array
+        if details_privilege >= 2:
+            mk_dict = {
+                "amount": self.calculate_monthly_kudos(),
+                "last_received": self.monthly_kudos["last_received"]
+            }
+            ret_dict["evaluating_kudos"] = self.evaluating_kudos
+            ret_dict["monthly_kudos"] = mk_dict
         return(ret_dict)
 
+    def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = []):
+        # Anon is never considered suspicious
+        if self.is_anon():
+            return
+        if int(reason) in self.suspicions and reason != Suspicions.UNREASONABLY_FAST:
+            return
+        self.suspicions.append(int(reason))
+        self.suspicious += amount
+        if reason:
+            reason_log = suspicion_logs[reason].format(*formats)
+            logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
+
+    def get_workers(self):
+        return(self.db.find_workers_by_user(self))
+    
+    def count_workers(self):
+        return(len(self.get_workers()))
+
+    def is_suspicious(self): 
+        if self.trusted:
+            return(False)       
+        if self.suspicious >= self.suspicion_threshold:
+            return(True)
+        return(False)
+
+    def exceeding_ipaddr_restrictions(self, ipaddr):
+        '''Checks that the ipaddr of the new worker does not have too many other workers
+        to prevent easy spamming of new workers with a script
+        '''
+        ipcount = 0
+        for worker in self.get_workers():
+            if worker.ipaddr == ipaddr:
+                ipcount += 1
+        if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
+            return(True)
+        return(False)
 
     @logger.catch
     def serialize(self):
+        serialized_monthly_kudos = {
+            "amount": self.monthly_kudos["amount"],
+        }
+        if self.monthly_kudos["last_received"]:
+            serialized_monthly_kudos["last_received"] = self.monthly_kudos["last_received"].strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            serialized_monthly_kudos["last_received"] = None
         ret_dict = {
             "username": self.username,
             "oauth_id": self.oauth_id,
@@ -643,8 +943,15 @@ class User:
             "usage": self.usage.copy(),
             "usage_multiplier": self.usage_multiplier,
             "concurrency": self.concurrency,
+            "worker_invited": self.worker_invited,
+            "moderator": self.moderator,
+            "suspicions": self.suspicions,
+            "public_workers": self.public_workers,
+            "trusted": self.trusted,
             "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
+            "monthly_kudos": serialized_monthly_kudos,
+            "evaluating_kudos": self.evaluating_kudos,
         }
         return(ret_dict)
 
@@ -661,8 +968,23 @@ class User:
         self.usage = saved_dict["usage"]
         self.concurrency = saved_dict.get("concurrency", 30)
         self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
-        if self.api_key == '0000000000':
+        # I am putting int() here, to convert a boolean entry I had in the past
+        self.worker_invited = int(saved_dict.get("worker_invited", 0))
+        self.suspicions = saved_dict.get("suspicions", [])
+        for suspicion in self.suspicions:
+            self.suspicious += 1
+            logger.debug(f"Suspecting user {self.get_unique_alias()} for {self.suspicious} with reasons {self.suspicions}")
+        self.public_workers = saved_dict.get("public_workers", False)
+        self.trusted = saved_dict.get("trusted", False)
+        self.evaluating_kudos = saved_dict.get("evaluating_kudos", 0)
+        self.set_moderator(saved_dict.get("moderator", False))
+        serialized_monthly_kudos = saved_dict.get("monthly_kudos")
+        if serialized_monthly_kudos and serialized_monthly_kudos['last_received'] != None:
+            self.monthly_kudos['amount'] = serialized_monthly_kudos['amount']
+            self.monthly_kudos['last_received'] = datetime.strptime(serialized_monthly_kudos['last_received'],"%Y-%m-%d %H:%M:%S")
+        if self.is_anon():
             self.concurrency = 200
+            self.public_workers = True
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
         if convert_flag == "kudos_fix":
@@ -796,6 +1118,7 @@ class Database:
                     if not worker_dict:
                         logger.error("Found null worker on db load. Bypassing")
                         continue
+                    # This should not be possible. If its' there, it's a bad actor we want to remove
                     new_worker = self.new_worker()
                     new_worker.deserialize(worker_dict,convert_flag)
                     self.workers[new_worker.name] = new_worker
@@ -810,6 +1133,9 @@ class Database:
         thread = threading.Thread(target=self.write_files, args=())
         thread.daemon = True
         thread.start()
+        monthly_kudos_thread = threading.Thread(target=self.assign_monthly_kudos, args=())
+        monthly_kudos_thread.daemon = True
+        monthly_kudos_thread.start()
         logger.init_ok(f"Database Load", status="Completed")
 
     # I don't know if I'm doing this right,  but I'm using these so that I can extend them from the extended DB
@@ -827,6 +1153,7 @@ class Database:
             self.write_files_to_disk()
             time.sleep(self.interval)
 
+    @logger.catch
     def write_files_to_disk(self):
         if not os.path.exists('db'):
             os.mkdir('db')
@@ -845,6 +1172,14 @@ class Database:
             user_serialized_list.append(user.serialize())
         with open(self.USERS_FILE, 'w') as db:
             json.dump(user_serialized_list,db)
+
+    def assign_monthly_kudos(self):
+        logger.init_ok("Monthly Kudos Awards Thread", status="Started")
+        while True:
+            for user in self.users.values():
+                user.receive_monthly_kudos()
+            # Check once a day
+            time.sleep(86400)
 
     def get_top_contributor(self):
         top_contribution = 0
@@ -871,6 +1206,19 @@ class Database:
             if not worker.is_stale():
                 count += 1
         return(count)
+
+    def compile_workers_by_ip(self):
+        workers_per_ip = {}
+        for worker in self.workers.values():
+            if worker.ipaddr not in workers_per_ip:
+                workers_per_ip[worker.ipaddr] = []
+            workers_per_ip[worker.ipaddr].append(worker)
+        return(workers_per_ip)
+
+    def count_workers_in_ipaddr(self,ipaddr):
+        workers_per_ip = self.compile_workers_by_ip()
+        found_workers = workers_per_ip.get(ipaddr,[])
+        return(len(found_workers))
 
     def get_total_usage(self):
         totals = {
@@ -987,3 +1335,11 @@ class Database:
             if worker.user == user:
                 found_workers.append(worker)
         return(found_workers)
+    
+    def update_worker_name(self, worker, new_name):
+        if new_name in self.workers:
+            # If the name already exists, we return error code 1
+            return(1)
+        self.workers[new_name] = worker
+        del self.workers[worker.name]
+        logger.info(f'Worker renamed from {worker.name} to {new_name}')

@@ -4,8 +4,16 @@ from .argparser import args
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
 
-from .classes.maintenance import Maintenance
-maintenance = Maintenance()
+from . import countermeasures as cm
+
+from .switch import Switch
+maintenance = Switch()
+invite_only = Switch()
+if args.worker_invite:
+    invite_only.activate()
+raid = Switch()
+if args.raid:
+    raid.activate()
 
 from .limiter import limiter
 from flask import Flask, render_template, redirect, url_for, request, Blueprint
@@ -17,8 +25,9 @@ from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github
 import os
 
-HORDE.register_blueprint(apiv1)
 HORDE.register_blueprint(apiv2)
+if args.horde == 'kobold':
+    HORDE.register_blueprint(apiv1)
 
 @HORDE.before_request
 def limit_remote_addr():

@@ -13,6 +13,7 @@ class AsyncGenerate(AsyncGenerate):
             workers = self.args["workers"],
             models = self.args["models"],
             softprompts = self.args["softprompts"],
+            trusted_workers = self.args["trusted_workers"],
         )
 
     def get_size_too_big_message(self):
@@ -32,6 +33,7 @@ class SyncGenerate(SyncGenerate):
             workers = self.args["workers"],
             models = self.args["models"],
             softprompts = self.args["softprompts"],
+            trusted_workers = self.args["trusted_workers"],
         )
 
 class JobPop(JobPop):
@@ -43,7 +45,9 @@ class JobPop(JobPop):
             self.args['softprompts'],
             model = self.args['model'],
             nsfw = self.args['nsfw'],
-            blacklist = self.args['blacklist']
+            blacklist = self.args['blacklist'],
+            safe_ip = self.safe_ip,
+            ipaddr = self.worker_ip,
         )
 
 
@@ -96,9 +100,11 @@ api.add_resource(JobPop, "/generate/pop")
 api.add_resource(JobSubmit, "/generate/submit")
 api.add_resource(Users, "/users")
 api.add_resource(UserSingle, "/users/<string:user_id>")
+api.add_resource(FindUser, "/find_user")
 api.add_resource(Workers, "/workers")
 api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeLoad, "/status/performance")
-api.add_resource(HordeMaintenance, "/status/maintenance")
+api.add_resource(HordeModes, "/status/modes")
 api.add_resource(Models, "/status/models")
+api.add_resource(HordeNews, "/status/news")

@@ -16,6 +16,14 @@ class WaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
+        self.seed = None
+        if 'seed' in params:
+            self.seed = params.pop('seed')
+        self.seed_variation = None
+        self.generations_done = 0
+        if "seed_variation" in params:
+            self.seed_variation = params.pop("seed_variation")
+
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
@@ -25,13 +33,22 @@ class WaitingPrompt(WaitingPrompt):
         # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.steps
+        self.gen_payload["seed"] = self.seed
         if not self.nsfw and self.censor_nsfw:
             if "toggles" not in self.gen_payload:
                 self.gen_payload["toggles"] = [1, 4, 8]
             elif 8 not in self.gen_payload["toggles"]:
-                self.gen_payload.append(8)
+                self.gen_payload["toggles"].append(8)
 
-
+    def get_job_payload(self):
+        if self.seed_variation and self.generations_done > 0:
+            self.gen_payload["seed"] += self.seed_variation
+            while self.gen_payload["seed"] >= 2**32:
+                self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
+        else:
+            self.gen_payload["seed"] = self.seed_to_int(self.seed)
+            self.generations_done += 1
+        return(self.gen_payload)
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -42,6 +59,15 @@ class WaitingPrompt(WaitingPrompt):
     def new_procgen(self, worker):
         return(ProcessingGeneration(self, self._processing_generations, worker))
 
+    def seed_to_int(self, s = None):
+        if type(s) is int:
+            return s
+        if s is None or s == '':
+            return random.randint(0, 2**32 - 1)
+        n = abs(int(s) if s.isdigit() else random.Random(s).randint(0, 2**32 - 1))
+        while n >= 2**32:
+            n = n >> 32
+        return n
 
 class ProcessingGeneration(ProcessingGeneration):
 
@@ -61,7 +87,10 @@ class Worker(Worker):
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
         self.max_pixels = max_pixels
-        logger.debug(f"Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
+        paused_string = ''
+        if self.paused:
+            paused_string = '(Paused) '
+        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return(50)
@@ -109,3 +138,31 @@ class Database(Database):
     def new_stats(self):
         return(Stats(self))
 
+
+class News(News):
+
+    STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-11",
+            "newspiece": "A [new dedicated Web UI](https://aqualxx.github.io/stable-ui/) has enterred the scene!",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-10",
+            "newspiece": "The [discord rewards bot](https://www.patreon.com/posts/new-kind-of-73097166) has been unleashed. Reward good contributions to the horde directly from the chat!",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-10",
+            "newspiece": "You can now contribute a worker to the horde [via google colab](https://colab.research.google.com/github/harrisonvanderbyl/ravenbot-ai/blob/master/Horde.ipynb). Just fill-in your API key and run!",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-06",
+            "newspiece": "We have a [new installation video](https://youtu.be/wJrp5lpByCc) for both the Stable Horde Client and the Stable horde worker.",
+            "importance": "Information"
+        },
+    ]
+
+    def get_news(self):
+        return(super().get_news() + self.STABLE_HORDE_NEWS)

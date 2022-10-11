@@ -4,9 +4,9 @@ from ... import limiter
 from ...logger import logger
 from ...classes import db as _db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance
+from ... import maintenance, invite_only, raid, cm
 from enum import Enum
-import os, time
+import os, time, json
 
 
 api = Namespace('v1', 'API Version 1' )
@@ -230,6 +230,8 @@ class PromptPop(Resource):
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
+        if not cm.is_ip_safe(request.remote_addr):
+            return(f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.",403)
         skipped = {}
         user = _db.find_user_by_api_key(args['api_key'])
         if not user:
@@ -338,7 +340,7 @@ class AdminMaintenanceMode(Resource):
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
             return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminMaintenanceMode')}",401)
         logger.debug(maintenance)
         maintenance.toggle(args['active'])
@@ -416,14 +418,14 @@ class ServerSingle(Resource):
         ret_dict = {}
         # Both admins and owners can set the server to maintenance
         if args.maintenance != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != server.user:
                     return(f"{get_error(ServerErrors.NOT_OWNER, username = admin.get_unique_alias(), server_name = server.name)}",401)
             server.maintenance = args.maintenance
             ret_dict["maintenance"] = server.maintenance
         # Only admins can set a server as paused
         if args.paused != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyServer')}",401)
             server.paused = args.paused
             ret_dict["paused"] = server.paused
@@ -480,7 +482,7 @@ class UserSingle(Resource):
         admin = _db.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'PUT UserSingle')}",401)
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+        if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
             return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyUser')}",401)
         ret_dict = {}
         if args.kudos:

@@ -9,6 +9,7 @@ PromptsIndex = import_module(name=f'horde.classes.{args.horde}').PromptsIndex
 GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').GenerationsIndex
 User = import_module(name=f'horde.classes.{args.horde}').User
 Database = import_module(name=f'horde.classes.{args.horde}').Database
+News = import_module(name=f'horde.classes.{args.horde}').News
 
 # from .base import WaitingPrompt,ProcessingGeneration,Worker,PromptsIndex,GenerationsIndex,User,Database
 

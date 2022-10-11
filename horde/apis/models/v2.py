@@ -7,6 +7,7 @@ class Parsers:
     generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
     generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
     generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
+    generate_parser.add_argument("trusted_workers", type=bool, required=False, default=True, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
     generate_parser.add_argument("workers", type=list, required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
     # generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="Models", location="json")
@@ -56,6 +57,7 @@ class Models:
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept."),
+            'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not."),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
@@ -90,23 +92,27 @@ class Models:
             "performance": fields.String(description="The average performance of this worker in human readable form."),
             "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde."),
             "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
-            "paused": fields.Boolean(example=False,description="When True, this worker not be given any new requests."),
+            "paused": fields.Boolean(example=False,description="(Privileged) When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
-            "blacklist": fields.Boolean(default=[], description="Specifies the words that this worker will not accept in a prompt."),
+            "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
+            "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
             "maintenance": fields.Boolean(description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests."),
             "paused": fields.Boolean(description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests."),
             "info": fields.String(description="The new state of the 'info' var for this worker."),
+            "name": fields.String(description="The new name for this this worker."),
         })
 
         self.response_model_user_kudos_details = api.model('UserKudosDetails', {
             "accumulated": fields.Float(default=0,description="The ammount of Kudos accumulated or used for generating images."),
-            "gifted": fields.Float(default=0,description="The amount of Kudos this user has given to other users"),
-            "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins"),
-            "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users"),
+            "gifted": fields.Float(default=0,description="The amount of Kudos this user has given to other users."),
+            "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins."),
+            "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users."),
+            "recurring": fields.Float(default=0,description="The amount of Kudos this user has received from recurring rewards."),
         })
 
         self.response_model_contrib_details = api.model('ContributionsDetails', {
@@ -116,20 +122,40 @@ class Models:
             "requests": fields.Integer(description="How many images this user has requested")
         })
 
+        self.response_model_monthly_kudos = api.model('MonthlyKudos', {
+            "amount": fields.Integer(description="How much recurring Kudos this user receives monthly."),
+            "last_received": fields.DateTime(dt_format='rfc822',description="Last date this user received monthly Kudos."),
+        })
+
         self.response_model_user_details = api.model('UserDetails', {
             "username": fields.String(description="The user's unique Username. It is a combination of their chosen alias plus their ID."),
             "id": fields.Integer(description="The user unique ID. It is always an integer."),
-            "kudos": fields.Float(description="The amount of Kudos this user has. Can be negative. The amount of Kudos determines the priority when requesting image generations."),
+            "kudos": fields.Float(description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations."),
+            "evaluating_kudos": fields.Float(description="(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches 50000, they automatically become trusted."),
+            "concurrency": fields.Integer(description="How many concurrent generations this user may request."),    
+            "worker_invited": fields.Integer(description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
+            "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
-            "usage": fields.Nested(self.response_model_use_details),
-            "contributions": fields.Nested(self.response_model_contrib_details),
-            "concurrency": fields.Integer(description="How many concurrent image generations this user may request."),    
+            "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
+            "worker_ids": fields.List(fields.String(description="Privileged or public when the user has explicitly allows it to be public.")),
+            "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
+            "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
+            # I need to pass these two via inheritabce, or they take over
+            # "usage": fields.Nested(self.response_model_use_details),
+            # "contributions": fields.Nested(self.response_model_contrib_details),
         })
 
         self.response_model_user_modify = api.model('ModifyUser', {
             "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
             "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
+            "worker_invited": fields.Integer(example=1,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
+            "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
+            "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
+            "username": fields.String(example='username#1',description="The user's new username."),
+            "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
+            "trusted": fields.Boolean(description="The user's new trusted status"),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {
@@ -137,8 +163,16 @@ class Models:
             "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
         })
 
-        self.response_model_horde_maintenance_mode = api.model('HordeMaintenanceMode', {
+        self.response_model_newspiece = api.model('Newspiece', {
+            'date_published': fields.String(description="The date this newspiece was published"),
+            'newspiece': fields.String(description="The actual piece of news"),
+            'importance': fields.String(example='Information',description="How critical this piece of news is."),
+        })
+
+        self.response_model_horde_modes = api.model('HordeModes', {
             "maintenance_mode": fields.Boolean(description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue."),
+            "invite_only_mode": fields.Boolean(description="When True, this Horde will not only accept worker explicitly invited to join."),
+            "raid_mode": fields.Boolean(description="When True, this Horde will not always provide full information in order to throw off attackers."),
         })
 
         self.response_model_error = api.model('RequestError', {

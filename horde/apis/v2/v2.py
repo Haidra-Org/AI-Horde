@@ -1,12 +1,21 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter, logger, maintenance
-from ...classes import db
-from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
+from ... import limiter, logger, maintenance, invite_only, raid, cm
+from ...classes import db,processing_generations,waiting_prompts,Worker,User,WaitingPrompt,News
 from enum import Enum
 from .. import exceptions as e
-import os, time
+import os, time, json
 from .. import ModelsV2, ParsersV2
+from ...utils import is_profane
+
+# Not used yet
+authorizations = {
+    'apikey': {
+        'type': 'apiKey',
+        'in': 'header',
+        'name': 'apikey'
+    }
+}
 
 api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
@@ -16,23 +25,35 @@ handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
 handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
+handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
+handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
+handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
+handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
+handle_anon_forbidden = api.errorhandler(e.AnonForbidden)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
+handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_requests)
+handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
+handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
+handle_too_many_new_ips = api.errorhandler(e.TooManyNewIPs)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
+handle_request_expired = api.errorhandler(e.RequestExpired)(e.handle_bad_requests)
 handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
+handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 
-# Used to for the flas limiter, to limit requests per url paths
+# Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
-    return(request.path)
+    # logger.info(dir(request))
+    return(f"{request.remote_addr}@{request.method}@{request.path}")
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
@@ -78,6 +99,7 @@ class GenerateTemplate(Resource):
             self.args["params"],
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
+            trusted_workers=self.args["trusted_workers"],
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -96,8 +118,8 @@ class GenerateTemplate(Resource):
 
 class AsyncGenerate(GenerateTemplate):
 
-    # @api.expect(parsers.generate_parser)
-    @api.expect(models.input_model_request_generation)
+
+    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -112,7 +134,7 @@ class AsyncGenerate(GenerateTemplate):
         '''
         super().post()
         ret_dict = {"id":self.wp.id}
-        if not self.has_valid_workers():
+        if not self.has_valid_workers() and not raid.active:
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
@@ -122,7 +144,7 @@ class AsyncGenerate(GenerateTemplate):
 
 class SyncGenerate(GenerateTemplate):
 
-    @api.expect(models.input_model_request_generation)
+    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Images Generated')
     @api.response(400, 'Validation Error', models.response_model_error)
@@ -218,11 +240,9 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
+        self.worker_ip = request.remote_addr
         self.validate()
         self.check_in()
-        # Paused worker return silently
-        if self.worker.paused:
-            return({"id": None, "skipped": {}},200)
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
         self.priority_users = [self.user]
@@ -243,14 +263,23 @@ class JobPop(Resource):
             check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
-                self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
+                # We don't report on secret skipped reasons
+                # as they're typically countermeasures to raids
+                if skipped_reason != "secret":
+                    self.skipped[skipped_reason] =  self.skipped.get(skipped_reason,0) + 1
                 continue
             return(self.start_worker(wp), 200)
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):
-        ret = wp.start_generation(self.worker)
+        # Paused worker gives a fake prompt
+        # Unless the owner of the worker is the owner of the prompt
+        # Then we allow them to fulfil their own request
+        if self.worker.paused and wp.user != self.worker.user:
+            ret = wp.fake_generation(self.worker)
+        else:
+            ret = wp.start_generation(self.worker)
         return(ret)
 
     # We split this into its own function, so that it may be overriden and extended
@@ -260,7 +289,27 @@ class JobPop(Resource):
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
         self.worker = db.find_worker_by_name(self.args['name'])
+        self.safe_ip = True
+        if not self.worker or not self.worker.user.trusted:
+            self.safe_ip = cm.is_ip_safe(self.worker_ip)
+            if self.safe_ip == None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip == False:
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and db.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                if not self.safe_ip and not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
         if not self.worker:
+            if is_profane(self.args['name']):
+                raise e.Profanity(self.user.get_unique_alias(), self.args['name'], 'worker name')
+            worker_count = self.user.count_workers()
+            if invite_only.active and worker_count >= self.user.worker_invited:
+                raise e.WorkerInviteOnly(worker_count)
+            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+                raise e.TooManySameIPs(self.user.username)
             self.worker = Worker(db)
             self.worker.create(self.user, self.args['name'])
         if self.user != self.worker.user:
@@ -271,7 +320,7 @@ class JobPop(Resource):
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
-        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'])
+        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'], safe_ip = self.safe_ip, ipaddr = self.worker_ip)
 
 
 class JobSubmit(Resource):
@@ -298,7 +347,7 @@ class JobSubmit(Resource):
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
-            raise e.WrongCredentials(user.get_unique_alias(), self.args['name'])
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
         self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
         if self.kudos == 0:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
@@ -358,25 +407,26 @@ class WorkerSingle(Resource):
         worker = db.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
-        is_privileged = False
+        details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
             admin = db.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('admin worker details')
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-                raise e.NotAdmin(admin.get_unique_alias(), 'AdminWorkerDetails')
-            is_privileged = True
-        return(worker.get_details(is_privileged),200)
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
+            details_privilege = 2
+        return(worker.get_details(details_privilege),200)
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
-    put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details.", location="json")
+    put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")
+    put_parser.add_argument("name", type=str, required=False, help="When this is set, it will change the worker's name. No profanity allowed!", location="json")
 
 
-    decorators = [limiter.limit("30/minute")]
+    decorators = [limiter.limit("30/minute", key_func = get_request_path)]
     @api.expect(put_parser)
     @api.marshal_with(models.response_model_worker_modify, code=200, description='Modify Worker', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
@@ -400,30 +450,48 @@ class WorkerSingle(Resource):
         ret_dict = {}
         # Both admins and owners can set the worker to maintenance
         if self.args.maintenance != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.maintenance = self.args.maintenance
             ret_dict["maintenance"] = worker.maintenance
         # Only owners can set info notes
         if self.args.info != None:
-            if admin != worker.user:
+            if not admin.moderator and admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
-            worker.info = self.args.info
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            ret = worker.set_info(self.args.info)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.info, 'worker info')
+            if ret == "Too Long":
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, 'worker info')
             ret_dict["info"] = worker.info
-        # Only admins can set a worker as paused
+        # Only mods can set a worker as paused
         if self.args.paused != None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-                raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyWorker')
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
+        if self.args.name != None:
+            if not admin.moderator and admin != worker.user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            ret = worker.set_name(self.args.name)
+            if ret == "Profanity":
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'worker name')
+            if ret == "Too Long":
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.name), 100, 'worker name')
+            if ret == "Already Exists":
+                raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
+            ret_dict["name"] = worker.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
         return(ret_dict, 200)
 
 class Users(Resource):
-    decorators = [limiter.limit("2/minute")]
-    @logger.catch
+    decorators = [limiter.limit("3/minute")]
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
     def get(self):
         '''A List with the details and statistic of all registered users
@@ -433,8 +501,12 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
-    decorators = [limiter.limit("30/minute")]
-    @api.marshal_with(models.response_model_user_details, code=200, description='User Details')
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin, Mod or Owner API key", location='headers')
+
+    decorators = [limiter.limit("60/minute", key_func = get_request_path)]
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
         '''Details and statistics about a specific user
@@ -442,15 +514,34 @@ class UserSingle(Resource):
         user = db.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
-        return(user.get_details(),200)
+        details_privilege = 0
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            admin = db.find_user_by_api_key(self.args['apikey'])
+            if not admin:
+                raise e.InvalidAPIKey('privileged user details')
+            if admin.moderator:
+                details_privilege = 2
+            elif admin == user:
+                details_privilege = 1
+            else:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
+        ret_dict = {}
+        return(user.get_details(details_privilege),200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
     parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)", location="json")
     parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
+    parser.add_argument("worker_invite", type=int, required=False, help="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode.", location="json")
+    parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
+    parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
+    parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
+    parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
+    parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
 
-    decorators = [limiter.limit("30/minute")]
+    decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(parser)
     @api.marshal_with(models.response_model_user_modify, code=200, description='Modify User', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
@@ -467,22 +558,83 @@ class UserSingle(Resource):
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-            raise e.NotAdmin(admin.get_unique_alias(), 'AdminModifyUser')
         ret_dict = {}
-        if self.args.kudos:
+        if self.args.kudos != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
-        if self.args.concurrency:
-            user.concurrency = self.args.concurrency
-            ret_dict["concurrency"] = user.concurrency
-        if self.args.usage_multiplier:
+        if self.args.monthly_kudos != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
+            user.modify_monthly_kudos(self.args.monthly_kudos)
+            ret_dict["monthly_kudos"] = user.monthly_kudos['amount']
+        if self.args.usage_multiplier != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.usage_multiplier = self.args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
+        if self.args.moderator != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_moderator(self.args.moderator)
+            ret_dict["moderator"] = user.moderator
+        # Moderator Duties
+        if self.args.concurrency != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.concurrency = self.args.concurrency
+            ret_dict["concurrency"] = user.concurrency
+        if self.args.worker_invite != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.worker_invited = self.args.worker_invite
+            ret_dict["worker_invited"] = user.worker_invited
+        if self.args.trusted != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_trusted(self.args.trusted)
+            ret_dict["trusted"] = user.trusted
+        if self.args.public_workers != None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            user.public_workers = self.args.public_workers
+            ret_dict["public_workers"] = user.public_workers
+        if self.args.username != None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            ret = user.set_username(self.args.username)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.username, 'username')
+            if ret == "Too Long":
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, 'username')
+            ret_dict["username"] = user.username
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)
 
+
+class FindUser(Resource):
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="User API key we're looking for", location='headers')
+
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_user_details, code=200, description='Worker Details', skip_none=True)
+    @api.response(404, 'User Not Found', models.response_model_error)
+    def get(self):
+        '''Lookup user details based on their API key
+        This can be used to verify a user exists
+        '''
+        self.args = self.get_parser.parse_args()
+        user = db.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.UserNotFound(self.args.apikey, 'api_key')
+        return(user.get_details(),200)
 
 class HordeLoad(Resource):
     decorators = [limiter.limit("20/minute")]
@@ -495,41 +647,79 @@ class HordeLoad(Resource):
         load_dict["worker_count"] = db.count_active_workers()
         return(load_dict,200)
 
-class HordeMaintenance(Resource):
-    decorators = [limiter.limit("2/second")]
+class HordeNews(Resource):
     @logger.catch
-    @api.marshal_with(models.response_model_horde_maintenance_mode, code=200, description='Horde Maintenance')
+    @api.marshal_with(models.response_model_newspiece, code=200, description='Horde News', as_list = True)
+    def get(self):
+        '''Read the latest happenings on the horde
+        '''
+        news = News()
+        logger.debug(news.sorted_news())
+        return(news.sorted_news(),200)
+    
+
+class HordeModes(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
+
+    decorators = [limiter.limit("2/second")]
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_horde_modes, code=200, description='Horde Maintenance', skip_none=True)
     def get(self):
         '''Horde Maintenance Mode Status
-        Use this endpoint to quicky determine if this horde is in maintenance.
+        Use this endpoint to quicky determine if this horde is in maintenance, invite_only or raid mode.
         '''
         ret_dict = {
-            "maintenance_mode": maintenance.active
+            "maintenance_mode": maintenance.active,
+            "invite_only_mode": invite_only.active,
+            
         }
+        is_privileged = False
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            admin = db.find_user_by_api_key(self.args['apikey'])
+            if not admin:
+                raise e.InvalidAPIKey('admin worker details')
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
+            ret_dict["raid_mode"] = raid.active
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
-    parser.add_argument("active", type=bool, required=True, help="Star or stop maintenance mode", location="json")
+    parser.add_argument("maintenance", type=bool, required=False, help="Start or stop maintenance mode", location="json")
+    parser.add_argument("invite_only", type=bool, required=False, help="Start or stop worker invite-only mode", location="json")
+    parser.add_argument("raid", type=bool, required=False, help="Start or stop raid mode", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
-    @api.marshal_with(models.response_model_admin_maintenance, code=200, description='Maintenance Mode Set')
+    @api.marshal_with(models.response_model_horde_modes, code=200, description='Maintenance Mode Set', skip_none=True)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(402, 'Access Denied', models.response_model_error)
     def put(self):
-        '''Change Horde Maintenance Mode 
-        Endpoint for admins to (un)set the horde into maintenance.
-        When in maintenance no new requests for generation will be accepted
-        but requests currently in the queue will be completed.
+        '''Change Horde Modes
+        Endpoint for admins to (un)set the horde into maintenance, invite_only or raid modes.
         '''
         self.args = self.parser.parse_args()
         admin = db.find_user_by_api_key(self.args['apikey'])
         if not admin:
-            raise e.InvalidAPIKey('Admin action: ' + 'AdminMaintenanceMode')
-        if not os.getenv("ADMINS") or admin.get_unique_alias() not in os.getenv("ADMINS"):
-            raise e.NotAdmin(admin.get_unique_alias(), 'AdminMaintenanceMode')
-        maintenance.toggle(self.args['active'])
-        return({"maintenance_mode": maintenance.active}, 200)
-
-
+            raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
+        ret_dict = {}
+        if self.args.maintenance != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
+            maintenance.toggle(self.args.maintenance)
+            ret_dict["maintenance_mode"] = maintenance.active
+        if self.args.invite_only != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
+            invite_only.toggle(self.args.invite_only)
+            ret_dict["invite_only_mode"] = invite_only.active
+        if self.args.raid != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
+            raid.toggle(self.args.raid)
+            ret_dict["raid_mode"] = raid.active
+        if not len(ret_dict):
+            raise e.NoValidActions("No mod change selected!")
+        return(ret_dict, 200)

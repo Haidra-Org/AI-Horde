@@ -4,6 +4,9 @@
 
 For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for image generation: [Stable Horde](https://stablehorde.net)
 
+## Latest News
+
+{news}
 
 ## Stats 
 
