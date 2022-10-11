@@ -16,14 +16,14 @@ class WaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
+        self.seed = None
+        if 'seed' in params:
+            self.seed = params.pop('seed')
         self.seed_variation = None
         self.generations_done = 0
         if "seed_variation" in params:
             self.seed_variation = params.pop("seed_variation")
-        if 'seed' in params:
-            self.seed = self.seed_to_int(params.pop('seed'))
-        else:
-            self.seed = self.seed_to_int()
+
         self.prepare_job_payload(params)
 
     def prepare_job_payload(self, initial_dict = {}):
@@ -46,6 +46,7 @@ class WaitingPrompt(WaitingPrompt):
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
         else:
+            self.gen_payload["seed"] = self.seed_to_int(self.seed)
             self.generations_done += 1
         return(self.gen_payload)
 
