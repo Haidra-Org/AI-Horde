@@ -143,6 +143,11 @@ class News(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2022-10-11",
+            "newspiece": "A [new dedicated Web UI](https://aqualxx.github.io/stable-ui/) has enterred the scene!",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-10-10",
             "newspiece": "The [discord rewards bot](https://www.patreon.com/posts/new-kind-of-73097166) has been unleashed. Reward good contributions to the horde directly from the chat!",
             "importance": "Information"

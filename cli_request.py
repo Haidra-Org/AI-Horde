@@ -20,7 +20,7 @@ args = arg_parser.parse_args()
 
 
 filename = "horde_generation.png"
-api_key = 0000000000
+api_key = "0000000000"
 # You can fill these in to avoid putting them as args all the time
 imgen_params = {
     # You can put extra SD webui params here if you wish

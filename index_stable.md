@@ -25,7 +25,9 @@ First [Register an account](/register) which will generate for you an API key. S
 
 ### GUI
 
-We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
+* We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
+* We have also a dedicated [Web UI](https://aqualxx.github.io/stable-ui/), with even less requirements.
+* And a second [Web UI](https://diffusionui.com/b/stable_horde)!
 
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
@@ -47,7 +49,6 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
     * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
     * [Telegram Bot](https://t.me/CraiyonArtBot)
     * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
-    * [Browser Interface](https://diffusionui.com/b/stable_horde)
     * [Horde Leaderboard](https://aqualxx.github.io/Horde-Overseer/)
 
 
@@ -70,5 +71,6 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 These are the people who made this sotware possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
+* [Hlky and the stable-diffusion-webui developers](https://github.com/sd-webui/stable-diffusion-webui) - Worker backend code.
 
 And of course, everyone contributing their SD to the horde!
