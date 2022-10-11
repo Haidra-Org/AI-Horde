@@ -21,18 +21,18 @@ class Models(v2.Models):
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
-            'sampler_name': fields.String(enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
-            'toggles': fields.List(fields.Integer,example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
-            'realesrgan_model_name': fields.String,
-            'ddim_eta': fields.Float, 
-            'batch_size': fields.Integer(example=1), 
-            'cfg_scale': fields.Float(example=5.0), 
-            'seed': fields.String(description="The seed to use to generete this request"),
-            'height': fields.Integer(example=512,description="The height of the image to generate"), 
-            'width': fields.Integer(example=512,description="The width of the image to generate"), 
-            'fp': fields.Integer(example=512), 
-            'variant_amount': fields.Float, 
-            'variant_seed': fields.Integer
+            'sampler_name': fields.String(required=False,enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
+            'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
+            'realesrgan_model_name': fields.String(required=False),
+            # 'ddim_eta': fields.Float(required=False), 
+            # 'batch_size': fields.Integer(required=False,example=1), 
+            'cfg_scale': fields.Float(required=False,example=5.0, min=-40, max=30, multiple=0.5), 
+            'seed': fields.String(required=False,description="The seed to use to generete this request"),
+            'height': fields.Integer(required=False,example=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
+            'width': fields.Integer(required=False,example=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
+            # 'fp': fields.Integer(required=False,example=512), 
+            'variant_amount': fields.Float(required=False, min = 1), 
+            'variant_seed': fields.Integer(required=False)
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
@@ -40,8 +40,8 @@ class Models(v2.Models):
             'n_iter': fields.Integer(example=1, description="The amount of images to generate"), 
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
-            'steps': fields.Integer(example=50), 
-            'n': fields.Integer(example=1, description="The amount of images to generate"), 
+            'steps': fields.Integer(example=50, min = 1, max=100), 
+            'n': fields.Integer(example=1, description="The amount of images to generate", min = 1, max=20), 
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
@@ -52,11 +52,11 @@ class Models(v2.Models):
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True)
         })
         self.input_model_request_generation = api.model('GenerationInput', {
-            'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
-            'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
+            'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),
+            'params': fields.Nested(self.input_model_generation_payload, skip_none=True),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
             'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
-            'censor_nsfw': fields.Boolean(description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
+            'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
