@@ -490,6 +490,7 @@ class Worker:
         return(False)
 
     # Should be extended by each specific horde
+    @logger.catch
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
         ret_dict = {
@@ -507,7 +508,7 @@ class Worker:
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
-            ret_dict['suspicious'] = self.suspicious,
+            ret_dict['suspicious'] = self.suspicious
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
         return(ret_dict)
@@ -852,6 +853,7 @@ class User:
         except ValueError:
             return(False)
 
+    @logger.catch
     def get_details(self, details_privilege = 0):
         ret_dict = {
             "username": self.get_unique_alias(),
