@@ -30,9 +30,10 @@ class Models(v2.Models):
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
             'height': fields.Integer(required=False,example=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
             'width': fields.Integer(required=False,example=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
+            'seed_variation': fields.Integer(required=False, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
             # 'fp': fields.Integer(required=False,example=512), 
-            'variant_amount': fields.Float(required=False, min = 1), 
-            'variant_seed': fields.Integer(required=False)
+            # 'variant_amount': fields.Float(required=False, min = 1), 
+            # 'variant_seed': fields.Integer(required=False)
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),

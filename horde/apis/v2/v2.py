@@ -8,6 +8,15 @@ import os, time, json
 from .. import ModelsV2, ParsersV2
 from ...utils import is_profane
 
+# Not used yet
+authorizations = {
+    'apikey': {
+        'type': 'apiKey',
+        'in': 'header',
+        'name': 'apikey'
+    }
+}
+
 api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
 parsers = ParsersV2()
@@ -108,7 +117,7 @@ class GenerateTemplate(Resource):
 
 class AsyncGenerate(GenerateTemplate):
 
-    # @api.expect(parsers.generate_parser)
+
     @api.expect(models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)

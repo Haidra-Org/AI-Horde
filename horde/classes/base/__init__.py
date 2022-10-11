@@ -4,7 +4,7 @@ from datetime import datetime
 import threading, time, dateutil.relativedelta
 from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
-import uuid, re
+import uuid, re, random
 from ...utils import is_profane
 from ... import raid
 from enum import IntEnum
@@ -65,6 +65,9 @@ class WaitingPrompt:
     def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to the worker
         self.gen_payload = initial_dict
+    
+    def get_job_payload(self):
+        return(self.gen_payload)
 
     def activate(self):
         '''We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -101,7 +104,7 @@ class WaitingPrompt:
 
     def get_pop_payload(self, procgen_id):
         prompt_payload = {
-            "payload": self.gen_payload,
+            "payload": self.get_job_payload(),
             "id": procgen_id,
         }
         return(prompt_payload)
