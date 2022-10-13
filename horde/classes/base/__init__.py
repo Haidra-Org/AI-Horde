@@ -422,6 +422,7 @@ class Worker:
         if self.is_stale():
             # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
+            return([is_matching,skipped_reason])
         # If the request specified only specific workers to fulfill it, and we're not one of them, we skip
         if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
             is_matching = False
