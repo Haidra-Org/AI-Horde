@@ -16,7 +16,6 @@ class WaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.max_length * self.n / thing_divisor,2)
         self.models = kwargs.get("models", 'ReadOnly')
-        logger.debug(self.models)
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
 
@@ -72,6 +71,7 @@ class Worker(Worker):
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
         if len(waiting_prompt.models) >= 1 and self.model not in waiting_prompt.models:
+            logger.debug([len(waiting_prompt.models),self.model,waiting_prompt.models])
             is_matching = False
             skipped_reason = 'models'
         if self.max_content_length < waiting_prompt.max_content_length:
