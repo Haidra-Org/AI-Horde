@@ -156,3 +156,16 @@ class Database(Database):
     def new_stats(self):
         return(Stats(self))
 
+
+class News(News):
+
+    KOBOLDAI_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-13",
+            "newspiece": "KoboldAI Has been upgraded to the new countermeasures",
+            "importance": "Information"
+        },
+    ]
+
+    def get_news(self):
+        return(super().get_news() + self.KOBOLDAI_HORDE_NEWS)
