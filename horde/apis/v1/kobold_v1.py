@@ -94,10 +94,10 @@ class SyncGenerate(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from")
     parser.add_argument("api_key", type=str, required=True, help="The API Key corresponding to a registered user")
-    parser.add_argument("models", type=str, action='append', required=False, default=[], help="The acceptable models with which to generate")
+    parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate")
     parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the KoboldAI server")
-    parser.add_argument("servers", type=str, action='append', required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
-    parser.add_argument("softprompts", type=str, action='append', required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
+    parser.add_argument("servers", type=list, required=False, default=[], help="If specified, only the server with this ID will be able to generate this prompt")
+    parser.add_argument("softprompts", type=list, required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request")
     # Not implemented yet
     parser.add_argument("world_info", type=str, required=False, help="If specified, only servers who can load this this world info will generate this request")
     @api.expect(parser)
