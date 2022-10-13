@@ -70,9 +70,7 @@ class Worker(Worker):
         can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
-        if self.is_stale():
-            # We don't consider stale workers in the request, so we don't need to report a reason
-            is_matching = False
+        if not is_matching:
             return([is_matching,skipped_reason])
         if len(waiting_prompt.models) >= 1 and self.model not in waiting_prompt.models:
             logger.debug([len(waiting_prompt.models),self.model,waiting_prompt.models])
