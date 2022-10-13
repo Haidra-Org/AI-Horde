@@ -4,6 +4,11 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2022-10-10",
+            "newspiece": "The [discord rewards bot](https://www.patreon.com/posts/new-kind-of-73097166) has been unleashed. Reward good contributions to the horde directly from the chat!",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-10-09",
             "newspiece": "The horde now includes News functionality. Also [In the API!](/api/v2/status/news)",
             "importance": "Information"
