@@ -7,7 +7,7 @@ from .redis_ctrl import is_redis_up, ger_limiter_url
 limiter = None
 # Very basic DOS prevention
 logger.init("Limiter Cache", status="Connecting")
-if False:
+if is_redis_up():
 # if is_redis_up():
     try:
         limiter = Limiter(
