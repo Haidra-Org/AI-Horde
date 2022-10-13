@@ -6,10 +6,10 @@ class Parsers(v2.Parsers):
     def __init__(self):
         self.generate_parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate", location="json")
         self.generate_parser.add_argument("softprompts", type=list, required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request", location="json")
-        self.job_pop_parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
-        self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate")
-        self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
-        self.job_pop_parser.add_argument("softprompts", type=list, required=False, default=[], help="The available softprompt files on this worker for the currently running model")
+        self.job_pop_parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI", location="json")
+        self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate", location="json")
+        self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
+        self.job_pop_parser.add_argument("softprompts", type=list, required=False, default=[], help="The available softprompt files on this worker for the currently running model", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=False, default='', help="The seed of the generation", location="json")
 
 class Models(v2.Models):
@@ -30,8 +30,8 @@ class Models(v2.Models):
             'frmtrmblln': fields.Boolean(example=False,description="Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines in the output with one newline."),
             'frmtrmspch': fields.Boolean(example=False,description="Output formatting option. When enabled, removes #/@%}{+=~|\^<> from the output."),
             'frmttriminc': fields.Boolean(example=False,description="Output formatting option. When enabled, removes some characters from the end of the output such that the output doesn't end in the middle of a sentence. If the output is less than one sentence long, does nothing."),
-            'max_context_length': fields.Integer(default=1024, example=1024, description="Maximum number of tokens to send to the model."), 
-            'max_length': fields.Integer(default=80, example=80, description="Number of tokens to generate."), 
+            'max_context_length': fields.Integer(min=80, max=2048, example=1024, description="Maximum number of tokens to send to the model."), 
+            'max_length': fields.Integer(min=16, max=512, description="Number of tokens to generate."), 
             'rep_pen': fields.Float(description="Base repetition penalty value."), 
             'rep_pen_range': fields.Integer(description="Repetition penalty range."), 
             'rep_pen_slope': fields.Float(description="Repetition penalty slope."), 

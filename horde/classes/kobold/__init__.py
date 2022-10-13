@@ -64,13 +64,17 @@ class Worker(Worker):
         logger.debug(f"Worker {self.name} checked-in, offering model {self.model} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
     def calculate_uptime_reward(self):
-        return(round(self.db.stats.calculate_model_multiplier(self.model) / 2.75, 2))
+        return(round(self.db.stats.calculate_model_multiplier(self.model) * 25 / 2.75, 2))
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
+        logger.debug([self.name, self.is_stale()])
+        if not is_matching:
+            return([is_matching,skipped_reason])
         if len(waiting_prompt.models) >= 1 and self.model not in waiting_prompt.models:
+            logger.debug([len(waiting_prompt.models),self.model,waiting_prompt.models])
             is_matching = False
             skipped_reason = 'models'
         if self.max_content_length < waiting_prompt.max_content_length:
@@ -156,3 +160,16 @@ class Database(Database):
     def new_stats(self):
         return(Stats(self))
 
+
+class News(News):
+
+    KOBOLDAI_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-13",
+            "newspiece": "KoboldAI Has been upgraded to the new countermeasures",
+            "importance": "Information"
+        },
+    ]
+
+    def get_news(self):
+        return(super().get_news() + self.KOBOLDAI_HORDE_NEWS)
