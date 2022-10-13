@@ -119,6 +119,7 @@ class SyncGenerate(Resource):
         wp_count = waiting_prompts.count_waiting_requests(user)
         if wp_count >= user.concurrency:
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
+        logger.debug(args["models"])
         wp = WaitingPrompt(
             _db,
             waiting_prompts,

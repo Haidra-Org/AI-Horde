@@ -64,7 +64,7 @@ class Worker(Worker):
         logger.debug(f"Worker {self.name} checked-in, offering model {self.model} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
     def calculate_uptime_reward(self):
-        return(round(self.db.stats.calculate_model_multiplier(self.model) / 2.75, 2))
+        return(round(self.db.stats.calculate_model_multiplier(self.model) * 25 / 2.75, 2))
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
