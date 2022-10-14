@@ -91,22 +91,23 @@ class WaitingPrompt:
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
-        return(self.get_pop_payload(new_gen.id))
+        return(self.get_pop_payload(new_gen))
 
     def fake_generation(self, worker):
         new_gen = self.new_procgen(worker)
         new_gen.fake = True
         self.fake_gens.append(new_gen)
         self.tricked_workers.append(worker)
-        return(self.get_pop_payload(new_gen.id))
+        return(self.get_pop_payload(new_gen))
     
     def tricked_worker(self, worker):
         return(worker in self.tricked_workers)
 
-    def get_pop_payload(self, procgen_id):
+    def get_pop_payload(self, procgen):
         prompt_payload = {
             "payload": self.get_job_payload(),
-            "id": procgen_id,
+            "id": procgen.id,
+            "model": procgen.model,
         }
         return(prompt_payload)
 
@@ -230,7 +231,13 @@ class ProcessingGeneration:
         self.id = str(uuid4())
         self.owner = owner
         self.worker = worker
-        self.models = worker.models
+        # If there has been no explicit model requested by the user, we just choose the first available from the worker
+        self.model = self.worker.models[0]
+        # If we reached this point, it means there is at least 1 matching model between worker and client
+        # so we pick the first one.
+        for model in self.owner.models:
+            if model in self.worker.models:
+                self.model = model
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
 
@@ -242,7 +249,7 @@ class ProcessingGeneration:
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
-        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_names = self.models)
+        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
         if self.fake and self.worker.user != self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)

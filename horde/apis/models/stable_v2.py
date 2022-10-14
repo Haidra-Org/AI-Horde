@@ -51,7 +51,7 @@ class Models(v2.Models):
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
-            'models': fields.List(fields.String(description="Which models are allowed to be used for this request")),
+            'model': fields.String(description="Which of the available models to use for this request"),
         })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),

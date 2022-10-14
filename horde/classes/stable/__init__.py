@@ -85,6 +85,7 @@ class ProcessingGeneration(ProcessingGeneration):
             "seed": self.seed,
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
+            "model": self.model,
         }
         return(ret_dict)
 

@@ -57,6 +57,7 @@ class Models(v2.Models):
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
             'softprompt': fields.String(description="The soft prompt requested for this generation"),
+            'model': fields.String(description="Which of the available models to use for this request"),
         })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),

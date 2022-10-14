@@ -28,7 +28,7 @@ class AsyncGenerate(AsyncGenerate):
             self.args["prompt"],
             self.user,
             self.params,
-            workers = self.models,
+            workers = self.workers,
             nsfw = self.args["nsfw"],
             censor_nsfw = self.args["censor_nsfw"],
             trusted_workers = self.args["trusted_workers"],

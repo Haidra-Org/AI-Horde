@@ -51,6 +51,7 @@ class ProcessingGeneration(ProcessingGeneration):
             "seed": self.seed, # This is not displayed at the moment, but hopefully in the future
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
+            "model": self.model,
         }
         return(ret_dict)
 
@@ -140,7 +141,7 @@ class Database(Database):
 
     def convert_things_to_kudos(self, tokens, **kwargs):
         logger.debug(kwargs)
-        multiplier = self.stats.calculate_model_multiplier(kwargs['model_names'][0])
+        multiplier = self.stats.calculate_model_multiplier(kwargs['model_name'])
         # We want a 2.7B model at 80 tokens to be worth around 10 kudos
         kudos = round(tokens * multiplier / 21, 2)
         return(kudos)
