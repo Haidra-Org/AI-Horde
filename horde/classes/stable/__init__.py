@@ -15,6 +15,7 @@ class WaitingPrompt(WaitingPrompt):
         self.things = self.width * self.height * self.steps
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.models = kwargs.get("models", ['ReadOnly'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
         if 'seed' in params:
@@ -90,7 +91,7 @@ class Worker(Worker):
         paused_string = ''
         if self.paused:
             paused_string = '(Paused) '
-        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
+        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering models {self.models} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return(50)
@@ -99,6 +100,8 @@ class Worker(Worker):
         can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
+        if not is_matching:
+            return([is_matching,skipped_reason])
         if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
             is_matching = False
             skipped_reason = 'max_pixels'

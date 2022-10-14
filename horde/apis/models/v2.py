@@ -10,7 +10,7 @@ class Parsers:
     generate_parser.add_argument("trusted_workers", type=bool, required=False, default=True, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
     generate_parser.add_argument("workers", type=list, required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
-    # generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="Models", location="json")
+    generate_parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate", location="json")
 
     # The parser for RequestPop
     job_pop_parser = reqparse.RequestParser()
@@ -19,6 +19,8 @@ class Parsers:
     job_pop_parser.add_argument("priority_usernames", type=list, required=False, default=[], help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
     job_pop_parser.add_argument("blacklist", type=list, required=False, default=[], help="Specifies the words that this worker will not accept in a prompt.", location="json")
+    job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specified the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
+    job_pop_parser.add_argument("models", type=list, required=True, help="The models currently available on this worker", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
@@ -58,6 +60,7 @@ class Models:
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept."),
             'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not."),
+            'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides."),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
@@ -98,6 +101,8 @@ class Models:
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
+            'models': fields.List(fields.String(description="Which models this worker if offerring")),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
@@ -177,4 +182,8 @@ class Models:
 
         self.response_model_error = api.model('RequestError', {
             'message': fields.String(description="The error message for this status code."),
+        })
+        self.response_model_model = api.model('Model', {
+            'name': fields.String(description="The Name of a model available by workers in this horde."),
+            'count': fields.Integer(description="How many of workers in this horde are running this model."),
         })

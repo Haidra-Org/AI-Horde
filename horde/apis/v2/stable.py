@@ -32,6 +32,7 @@ class AsyncGenerate(AsyncGenerate):
             nsfw=self.args["nsfw"],
             censor_nsfw=self.args["censor_nsfw"],
             trusted_workers=self.args["trusted_workers"],
+            models = self.args["models"],
         )
     
 class SyncGenerate(SyncGenerate):
@@ -63,6 +64,7 @@ class SyncGenerate(SyncGenerate):
             nsfw=self.args["nsfw"],
             censor_nsfw=self.args["censor_nsfw"],
             trusted_workers=self.args["trusted_workers"],
+            models = self.args["models"],
         )
     
 class JobPop(JobPop):
@@ -72,6 +74,7 @@ class JobPop(JobPop):
             self.args['max_pixels'], 
             nsfw = self.args['nsfw'], 
             blacklist = self.args['blacklist'], 
+            models = self.args['models'], 
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
         )

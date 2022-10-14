@@ -4,9 +4,7 @@ from . import v2
 
 class Parsers(v2.Parsers):
     def __init__(self):
-        self.generate_parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate", location="json")
         self.generate_parser.add_argument("softprompts", type=list, required=False, default=[''], help="If specified, only servers who can load this softprompt will generate this request", location="json")
-        self.job_pop_parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI", location="json")
         self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate", location="json")
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
         self.job_pop_parser.add_argument("softprompts", type=list, required=False, default=[], help="The available softprompt files on this worker for the currently running model", location="json")
@@ -50,7 +48,6 @@ class Models(v2.Models):
         self.input_model_generation_payload = api.inherit('ModelGenerationInputKobold', self.root_model_generation_payload_kobold, {
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundKobold', self.response_model_generations_skipped, {
-            'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides."),
             'max_content_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher max_content_length than what this worker provides."),
             'max_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded more generated tokens that what this worker can provide."),
             'matching_softprompt': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded an available soft-prompt which this worker does not have."),
@@ -64,11 +61,11 @@ class Models(v2.Models):
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),
             'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
-            'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
-            'models': fields.List(fields.String(description="Specify which models are allowed to service this request")),
             'softprompts': fields.List(fields.String(description="Specify which softpompts need to be used to service this request")),
             'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers censor text."),
+            'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
+            'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {
             "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
@@ -91,9 +88,5 @@ class Models(v2.Models):
             "queued_tokens": fields.Float(description="The amount of tokens in waiting and processing requests currently in this Horde"),
             "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute"),
             "worker_count": fields.Integer(description="How many workers are actively processing text generations in this Horde in the past 5 minutes"),
-        })
-        self.response_model_model = api.model('Model', {
-            'name': fields.String(description="The Name of a model available by workers in this horde."),
-            'count': fields.Integer(description="How many of workers in this horde are running this model."),
         })
         

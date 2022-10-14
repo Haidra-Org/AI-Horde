@@ -50,7 +50,8 @@ class Models(v2.Models):
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
-            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True)
+            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
+            'models': fields.List(fields.String(description="Which models are allowed to be used for this request")),
         })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),
@@ -59,6 +60,7 @@ class Models(v2.Models):
             'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
+            'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),

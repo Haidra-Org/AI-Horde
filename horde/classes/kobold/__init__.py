@@ -15,7 +15,7 @@ class WaitingPrompt(WaitingPrompt):
         self.things = self.max_length
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.max_length * self.n / thing_divisor,2)
-        self.models = kwargs.get("models", 'ReadOnly')
+        self.models = kwargs.get("models", ['ReadOnly'])
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
 
@@ -61,22 +61,17 @@ class Worker(Worker):
         self.max_length = max_length
         self.max_content_length = max_content_length
         self.softprompts = softprompts
-        logger.debug(f"Worker {self.name} checked-in, offering model {self.model} at {self.max_length} max tokens and {self.max_content_length} max content length.")
+        logger.debug(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
     def calculate_uptime_reward(self):
-        return(round(self.db.stats.calculate_model_multiplier(self.model) * 25 / 2.75, 2))
+        return(round(self.db.stats.calculate_model_multiplier(self.models[0]) * 25 / 2.75, 2))
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
-        logger.debug([self.name, self.is_stale()])
         if not is_matching:
             return([is_matching,skipped_reason])
-        if len(waiting_prompt.models) >= 1 and self.model not in waiting_prompt.models:
-            logger.debug([len(waiting_prompt.models),self.model,waiting_prompt.models])
-            is_matching = False
-            skipped_reason = 'models'
         if self.max_content_length < waiting_prompt.max_content_length:
             is_matching = False
             skipped_reason = 'max_content_length'
@@ -100,7 +95,6 @@ class Worker(Worker):
 
     def get_details(self, is_privileged = False):
         ret_dict = super().get_details(is_privileged)
-        ret_dict["model"] = self.model
         ret_dict["max_length"] = self.max_length
         ret_dict["max_content_length"] = self.max_content_length
         return(ret_dict)
@@ -108,7 +102,6 @@ class Worker(Worker):
     @logger.catch
     def serialize(self):
         ret_dict = super().serialize()
-        ret_dict["model"] = self.model
         ret_dict["max_length"] = self.max_length
         ret_dict["max_content_length"] = self.max_content_length
         return(ret_dict)
@@ -116,7 +109,6 @@ class Worker(Worker):
     @logger.catch
     def deserialize(self, saved_dict, convert_flag = None):
         super().deserialize(saved_dict, convert_flag)
-        self.model = saved_dict["model"]
         self.max_length = saved_dict["max_length"]
         self.max_content_length = saved_dict["max_content_length"]
 
@@ -148,7 +140,7 @@ class Database(Database):
 
     def convert_things_to_kudos(self, tokens, **kwargs):
         logger.debug(kwargs)
-        multiplier = self.stats.calculate_model_multiplier(kwargs['model_name'])
+        multiplier = self.stats.calculate_model_multiplier(kwargs['model_names'][0])
         # We want a 2.7B model at 80 tokens to be worth around 10 kudos
         kudos = round(tokens * multiplier / 21, 2)
         return(kudos)

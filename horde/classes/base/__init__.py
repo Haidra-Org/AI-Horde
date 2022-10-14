@@ -59,6 +59,7 @@ class WaitingPrompt:
         self.n = params.pop('n', 1)
         # This specific per horde so it should be set in the extended class
         self.things = 0
+        self.models = kwargs.get("models", ['ReadOnly'])
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(params)
 
@@ -229,7 +230,7 @@ class ProcessingGeneration:
         self.id = str(uuid4())
         self.owner = owner
         self.worker = worker
-        self.model = worker.model
+        self.models = worker.models
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
 
@@ -241,7 +242,7 @@ class ProcessingGeneration:
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
-        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
+        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_names = self.models)
         if self.fake and self.worker.user != self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
@@ -380,7 +381,7 @@ class Worker:
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
-        self.model = kwargs.get("model")
+        self.models = kwargs.get("models")
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
@@ -441,6 +442,10 @@ class Worker:
         if any(word in waiting_prompt.prompt for word in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
+        if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
+            logger.debug([len(waiting_prompt.models),self.models,waiting_prompt.models])
+            is_matching = False
+            skipped_reason = 'models'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
@@ -506,6 +511,7 @@ class Worker:
             "info": self.info,
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
+            "models": self.models,
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
@@ -535,6 +541,7 @@ class Worker:
             "blacklist": self.blacklist.copy(),
             "ipaddr": self.ipaddr,
             "suspicions": self.suspicions,
+            "models": self.models,
         }
         return(ret_dict)
 
@@ -557,6 +564,7 @@ class Worker:
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
         self.suspicions = saved_dict.get("suspicions", [])
+        self.models = saved_dict.get("models")
         for suspicion in self.suspicions:
             self.suspicious += 1
             logger.debug(f"Suspecting worker {self.name} for {self.suspicious} with reasons {self.suspicions}")
@@ -1292,8 +1300,9 @@ class Database:
                 "name": worker.model,
                 "count": 0,
             }
-            models_dict[worker.model] = models_dict.get(worker.model, mode_dict_template)
-            models_dict[worker.model]["count"] += 1
+            for model_name in worker.models:
+                models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
+                models_dict[model_name]["count"] += 1
         return(list(models_dict.values()))
 
     def transfer_kudos(self, source_user, dest_user, amount):
