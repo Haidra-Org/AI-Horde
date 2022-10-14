@@ -21,15 +21,15 @@ class Models(v2.Models):
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
-            'sampler_name': fields.String(required=False,enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
+            'sampler_name': fields.String(required=False, default='k_euler',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
             'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
             # 'realesrgan_model_name': fields.String(required=False),
             # 'ddim_eta': fields.Float(required=False), 
             # 'batch_size': fields.Integer(required=False,example=1), 
-            'cfg_scale': fields.Float(required=False,example=5.0, min=-40, max=30, multiple=0.5), 
+            'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
-            'height': fields.Integer(required=False,example=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
-            'width': fields.Integer(required=False,example=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
+            'height': fields.Integer(required=False,default=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
+            'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
             # 'fp': fields.Integer(required=False,example=512), 
             # 'variant_amount': fields.Float(required=False, min = 1), 
@@ -37,8 +37,8 @@ class Models(v2.Models):
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
-            'ddim_steps': fields.Integer(example=50), 
-            'n_iter': fields.Integer(example=1, description="The amount of images to generate"), 
+            'ddim_steps': fields.Integer(default=30), 
+            'n_iter': fields.Integer(default=1, description="The amount of images to generate"), 
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(example=50, min = 1, max=100), 
