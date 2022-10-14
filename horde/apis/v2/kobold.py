@@ -3,16 +3,19 @@ from .v2 import *
 class AsyncGenerate(AsyncGenerate):
     
     def initiate_waiting_prompt(self):
+        self.softprompts = ['']
+        if self.args.softprompts:
+            self.softprompts = self.args.softprompts
         self.wp = WaitingPrompt(
             db,
             waiting_prompts,
             processing_generations,
             self.args["prompt"],
             self.user,
-            self.args["params"],
-            workers = self.args["workers"],
-            models = self.args["models"],
-            softprompts = self.args["softprompts"],
+            self.params,
+            workers = self.workers,
+            models = self.models,
+            softprompts = self.softprompts,
             trusted_workers = self.args["trusted_workers"],
         )
 
@@ -23,29 +26,39 @@ class AsyncGenerate(AsyncGenerate):
 class SyncGenerate(SyncGenerate):
 
     def initiate_waiting_prompt(self):
+        self.softprompts = ['']
+        if self.args.softprompts:
+            self.softprompts = self.args.softprompts
         self.wp = WaitingPrompt(
             db,
             waiting_prompts,
             processing_generations,
             self.args["prompt"],
             self.user,
-            self.args["params"],
-            workers = self.args["workers"],
-            models = self.args["models"],
-            softprompts = self.args["softprompts"],
+            self.params,
+            workers = self.workers,
+            models = self.models,
+            softprompts = self.softpompts,
             trusted_workers = self.args["trusted_workers"],
         )
 
 class JobPop(JobPop):
 
     def check_in(self):
+        self.softprompts = []
+        if self.args.softprompts:
+            self.softprompts = self.args.softprompts
+        models = self.models
+        # To adjust the below once I updated the KAI server to use "models" arg
+        if self.args.model:
+            models = [self.args.model]
         self.worker.check_in(
             self.args['max_length'],
             self.args['max_content_length'],
-            self.args['softprompts'],
-            model = self.args['model'],
+            self.softprompts,
+            models = models,
             nsfw = self.args['nsfw'],
-            blacklist = self.args['blacklist'],
+            blacklist = self.blacklist,
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
         )

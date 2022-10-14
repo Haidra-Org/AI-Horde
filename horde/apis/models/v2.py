@@ -6,24 +6,26 @@ class Parsers:
     generate_parser = reqparse.RequestParser()
     generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
     generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
-    generate_parser.add_argument("params", type=dict, required=False, default={}, help="Extra generate params to send to the worker", location="json")
-    generate_parser.add_argument("trusted_workers", type=bool, required=False, default=True, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
-    generate_parser.add_argument("workers", type=list, required=False, default=[], help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
+    generate_parser.add_argument("params", type=dict, required=False, help="Extra generate params to send to the worker", location="json")
+    generate_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
+    generate_parser.add_argument("workers", type=list, required=False, help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
-    # generate_parser.add_argument("models", type=str, action='append', required=False, default=[], help="Models", location="json")
+    generate_parser.add_argument("models", type=list, required=False, help="The acceptable models with which to generate", location="json")
 
     # The parser for RequestPop
     job_pop_parser = reqparse.RequestParser()
     job_pop_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
     job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
-    job_pop_parser.add_argument("priority_usernames", type=list, required=False, default=[], help="The usernames which get priority use on this worker", location="json")
+    job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
-    job_pop_parser.add_argument("blacklist", type=list, required=False, default=[], help="Specifies the words that this worker will not accept in a prompt.", location="json")
+    job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
+    job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
+    job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specified the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
     job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
-    job_submit_parser.add_argument("generation", type=str, required=False, default=[], help="The generated output", location="json")
+    job_submit_parser.add_argument("generation", type=str, required=True, help="The generated output", location="json")
 
 
 class Models:
@@ -38,6 +40,7 @@ class Models:
             'processing': fields.Integer(description="The amount of still processing images in this request"),
             'waiting': fields.Integer(description="The amount of images waiting to be picked up by a worker"),
             'done': fields.Boolean(description="True when all images in this request are done. Else False."),
+            'faulted': fields.Boolean(default=False,description="True when this request caused an internal server error and cannot be completed."),
             'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all images in this request"),
             'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
         })
@@ -55,9 +58,11 @@ class Models:
         })
         self.response_model_generations_skipped = api.model('NoValidRequestFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
+            'performance': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept."),
             'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not."),
+            'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides."),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
@@ -82,7 +87,14 @@ class Models:
             'generated': fields.Float(description="How much Kudos this worker has received for generating images"),
             'uptime': fields.Integer(description="How much Kudos this worker has received for staying online longer"),
         })
-
+        self.input_model_job_pop = api.model('PopInput', {
+            'name': fields.String(description="The Name of the Worker"),
+            'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
+            'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
+            'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
+            'models': fields.List(fields.String(description="Which models this worker is serving")),
+            'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
+        })
         self.response_model_worker_details = api.model('WorkerDetails', {
             "name": fields.String(description="The Name given to this worker."),
             "id": fields.String(description="The UUID of this worker."),
@@ -98,6 +110,7 @@ class Models:
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
+            'models': fields.List(fields.String(description="Which models this worker if offerring")),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
@@ -177,4 +190,12 @@ class Models:
 
         self.response_model_error = api.model('RequestError', {
             'message': fields.String(description="The error message for this status code."),
+        })
+        self.response_model_model = api.model('Model', {
+            'name': fields.String(description="The Name of a model available by workers in this horde."),
+            'count': fields.Integer(description="How many of workers in this horde are running this model."),
+        })
+        self.response_model_deleted_worker = api.model('Model', {
+            'deleted_id': fields.String(description="The ID of the deleted worker"),
+            'deleted_name': fields.String(description="The Name of the deleted worker"),
         })

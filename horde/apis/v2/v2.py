@@ -29,11 +29,13 @@ handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
 handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
 handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
+handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
 handle_anon_forbidden = api.errorhandler(e.AnonForbidden)(e.handle_bad_requests)
+handle_not_trusted = api.errorhandler(e.NotTrusted)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
 handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
@@ -60,13 +62,24 @@ class GenerateTemplate(Resource):
 
     def post(self):
         self.args = parsers.generate_parser.parse_args()
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.params = {}
+        if self.args.params:
+            self.params = self.args.params
+        self.models = []
+        if self.args.models:
+            self.models = self.args.models
+        self.workers = []
+        if self.args.workers:
+            self.workers = self.args.workers
         self.username = 'Anonymous'
         self.user = None
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
         for worker in db.workers.values():
-            if len(self.args.workers) and worker.id not in self.args.workers:
+            if len(self.workers) and worker.id not in self.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
@@ -76,11 +89,11 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
         if maintenance.active:
-            raise e.MaintenanceMode('SyncGenerate')
+            raise e.MaintenanceMode('Generate')
         if self.args.apikey:
             self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
-            raise e.InvalidAPIKey('async generation')
+            raise e.InvalidAPIKey('generation')
         self.username = self.user.get_unique_alias()
         if self.args['prompt'] == '':
             raise e.MissingPrompt(self.username)
@@ -96,7 +109,7 @@ class GenerateTemplate(Resource):
             processing_generations,
             self.args["prompt"],
             self.user,
-            self.args["params"],
+            self.params,
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
             trusted_workers=self.args["trusted_workers"],
@@ -109,7 +122,7 @@ class GenerateTemplate(Resource):
     def has_valid_workers(self):
         worker_found = False
         for worker in db.workers.values():
-            if len(self.args.workers) and worker.id not in self.args.workers:
+            if len(self.workers) and worker.id not in self.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
@@ -231,7 +244,7 @@ class AsyncCheck(Resource):
 class JobPop(Resource):
 
     decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser)
+    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
     @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
@@ -240,6 +253,17 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.blacklist = []
+        if self.args.blacklist:
+            self.blacklist = self.args.blacklist
+        self.priority_usernames = []
+        if self.args.priority_usernames:
+            self.priority_usernames = self.args.priority_usernames
+        self.models = []
+        if self.args.models:
+            self.models = self.args.models
         self.worker_ip = request.remote_addr
         self.validate()
         self.check_in()
@@ -247,7 +271,7 @@ class JobPop(Resource):
         self.prioritized_wp = []
         self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        for priority_username in self.args.priority_usernames:
+        for priority_username in self.priority_usernames:
             priority_user = db.find_user_by_username(priority_username)
             if priority_user:
                self.priority_users.append(priority_user)
@@ -394,7 +418,7 @@ class Workers(Resource):
 class WorkerSingle(Resource):
 
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
+    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Worker Details', skip_none=True)
@@ -419,7 +443,7 @@ class WorkerSingle(Resource):
         return(worker.get_details(details_privilege),200)
 
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
+    put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
     put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")
@@ -488,6 +512,40 @@ class WorkerSingle(Resource):
             ret_dict["name"] = worker.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
+        return(ret_dict, 200)
+
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+
+
+    @api.expect(delete_parser)
+    @api.marshal_with(models.response_model_deleted_worker, code=200, description='Delete Worker')
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(402, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Worker Not Found', models.response_model_error)
+    def delete(self, worker_id = ''):
+        '''Delete the worker entry
+        This will delete the worker and their statistics. Will not affect the kudos generated by that worker for their owner.
+        Only the worker's owner and an admin can use this endpoint.
+        This action is unrecoverable!
+        '''
+        worker = db.find_worker_by_id(worker_id)
+        if not worker:
+            raise e.WorkerNotFound(worker_id)
+        self.args = self.delete_parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
+        if not admin:
+            raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
+        if not admin.moderator and admin != worker.user:
+            raise e.NotModerator(admin.get_unique_alias(), 'DELETE WorkerSingle')
+        if admin.is_anon():
+            raise e.AnonForbidden()
+        logger.warning(f'{admin.get_unique_alias()} deleted worker: {worker.name}')
+        ret_dict = {
+            'deleted_id': worker.id,
+            'deleted_name': worker.name,
+        }
+        worker.delete()
         return(ret_dict, 200)
 
 class Users(Resource):
@@ -634,7 +692,7 @@ class FindUser(Resource):
         user = db.find_user_by_api_key(self.args.apikey)
         if not user:
             raise e.UserNotFound(self.args.apikey, 'api_key')
-        return(user.get_details(),200)
+        return(user.get_details(1),200)
 
 class HordeLoad(Resource):
     decorators = [limiter.limit("20/minute")]

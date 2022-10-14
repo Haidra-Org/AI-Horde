@@ -2,8 +2,10 @@ from ..base import *
 
 class WaitingPrompt(WaitingPrompt):
 
+    @logger.catch
     def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
+        self.jobs = self.n 
         self.steps = params.pop('steps', 50)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
@@ -11,13 +13,20 @@ class WaitingPrompt(WaitingPrompt):
             self.n = 20
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
+        self.use_gfpgan = params.get("use_gfpgan", False)
+        self.use_real_esrgan = params.get("use_real_esrgan", False)
+        self.use_ldsr = params.get("use_ldsr", False)
+        self.use_upscaling = params.get("use_upscaling", False)
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.width * self.height * self.steps
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.source_image = kwargs.get("source_image", None)
+        self.models = kwargs.get("models", ['ReadOnly'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
-        if 'seed' in params:
+        if 'seed' in params and params['seed'] != None:
+            # logger.warning([self,'seed' in params, params])
             self.seed = params.pop('seed')
         self.seed_variation = None
         self.generations_done = 0
@@ -26,6 +35,7 @@ class WaitingPrompt(WaitingPrompt):
 
         self.prepare_job_payload(params)
 
+    @logger.catch
     def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = initial_dict
@@ -34,21 +44,52 @@ class WaitingPrompt(WaitingPrompt):
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.steps
         self.gen_payload["seed"] = self.seed
-        if not self.nsfw and self.censor_nsfw:
-            if "toggles" not in self.gen_payload:
-                self.gen_payload["toggles"] = [1, 4, 8]
-            elif 8 not in self.gen_payload["toggles"]:
-                self.gen_payload["toggles"].append(8)
 
-    def get_job_payload(self):
+    @logger.catch
+    def get_job_payload(self,procgen):
         if self.seed_variation and self.generations_done > 0:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
         else:
+            # logger.error(self.seed)
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
             self.generations_done += 1
+        if procgen.worker.bridge_version == 2:
+            self.gen_payload["use_gfpgan"] = self.use_gfpgan
+            self.gen_payload["use_real_esrgan"] = self.use_real_esrgan
+            self.gen_payload["use_ldsr"] = self.use_ldsr
+            self.gen_payload["use_upscaling"] = self.use_upscaling
+            # if not self.nsfw and self.censor_nsfw:
+            #     self.gen_payload["use_nsfw_censor"] = True
+        else:
+            # These parameters are not used in bridge v1
+            for v2_param in ["use_gfpgan","use_real_esrgan","use_ldsr","use_upscaling"]:
+                if v2_param in self.gen_payload:
+                    del self.gen_payload[v2_param]
+            if not self.nsfw and self.censor_nsfw:
+                if "toggles" not in self.gen_payload:
+                    self.gen_payload["toggles"] = [1, 4, 8]
+                elif 8 not in self.gen_payload["toggles"]:
+                    self.gen_payload["toggles"].append(8)
         return(self.gen_payload)
+
+    def get_pop_payload(self, procgen):
+        # This prevents from sending a payload with an ID when there has been an exception inside get_job_payload()
+        payload = self.get_job_payload(procgen)
+        if payload:
+            prompt_payload = {
+                "payload": payload,
+                "id": procgen.id,
+                "model": procgen.model,
+            }
+            if self.source_image and procgen.worker.bridge_version > 2:
+                prompt_payload["source_image"] = self.source_image
+        else:
+            prompt_payload = {}
+            self.faulted = True
+        # logger.debug([payload,prompt_payload])
+        return(prompt_payload)
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -64,10 +105,19 @@ class WaitingPrompt(WaitingPrompt):
             return s
         if s is None or s == '':
             return random.randint(0, 2**32 - 1)
-        n = abs(int(s) if s.isdigit() else random.Random(s).randint(0, 2**32 - 1))
+        n = abs(int(s) if s.isdigit() else int.from_bytes(s.encode(), 'little'))
         while n >= 2**32:
             n = n >> 32
+        # logger.debug([s,n])
         return n
+
+    def record_usage(self, raw_things, kudos):
+        '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
+        img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
+        '''
+        if self.source_image:
+            kudos = kudos * 1.5
+        super().record_usage(raw_things, kudos)
 
 class ProcessingGeneration(ProcessingGeneration):
 
@@ -78,6 +128,7 @@ class ProcessingGeneration(ProcessingGeneration):
             "seed": self.seed,
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
+            "model": self.model,
         }
         return(ret_dict)
 
@@ -90,7 +141,7 @@ class Worker(Worker):
         paused_string = ''
         if self.paused:
             paused_string = '(Paused) '
-        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering {self.max_pixels} max pixels")
+        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering models {self.models} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return(50)
@@ -99,9 +150,18 @@ class Worker(Worker):
         can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
+        if not is_matching:
+            return([is_matching,skipped_reason])
         if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
             is_matching = False
             skipped_reason = 'max_pixels'
+        if waiting_prompt.source_image and self.bridge_version < 2:
+            is_matching = False
+            skipped_reason = 'worker_id'
+        # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
+        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler') in ['DDIM', 'PLMS'] and self.bridge_version == 3:
+            is_matching = False
+            skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
     def get_details(self, is_privileged = False):
@@ -142,6 +202,21 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-17",
+            "newspiece": "We now have [a Krita plugin](https://github.com/blueturtleai/krita-stable-diffusion).",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-17",
+            "newspiece": "Img2img on the horde is now on pilot for trusted users.",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-16",
+            "newspiece": "Yet [another Web UI](https://tinybots.net/artbot) has appeared.",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-10-11",
             "newspiece": "A [new dedicated Web UI](https://aqualxx.github.io/stable-ui/) has enterred the scene!",

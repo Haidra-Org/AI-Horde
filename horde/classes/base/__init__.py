@@ -1,7 +1,7 @@
 import json, os, sys
 from uuid import uuid4
 from datetime import datetime
-import threading, time, dateutil.relativedelta
+import threading, time, dateutil.relativedelta, bleach
 from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re, random
@@ -43,7 +43,7 @@ class WaitingPrompt:
         self.params = params
         self.total_usage = 0
         self.nsfw = kwargs.get("nsfw", False)
-        self.trusted_workers = kwargs.get("trusted_workers", True)
+        self.trusted_workers = kwargs.get("trusted_workers", False)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
@@ -51,14 +51,18 @@ class WaitingPrompt:
         self.fake_gens = []
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
+        self.faulted = False
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 1200
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
+        # We store the original amount of jobs requested as well
+        self.jobs = self.n 
         # This specific per horde so it should be set in the extended class
         self.things = 0
+        self.models = kwargs.get("models", ['ReadOnly'])
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(params)
 
@@ -66,7 +70,7 @@ class WaitingPrompt:
         # This is what we send to the worker
         self.gen_payload = initial_dict
     
-    def get_job_payload(self):
+    def get_job_payload(self,procgen):
         return(self.gen_payload)
 
     def activate(self):
@@ -90,22 +94,23 @@ class WaitingPrompt:
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
-        return(self.get_pop_payload(new_gen.id))
+        return(self.get_pop_payload(new_gen))
 
     def fake_generation(self, worker):
         new_gen = self.new_procgen(worker)
         new_gen.fake = True
         self.fake_gens.append(new_gen)
         self.tricked_workers.append(worker)
-        return(self.get_pop_payload(new_gen.id))
+        return(self.get_pop_payload(new_gen))
     
     def tricked_worker(self, worker):
         return(worker in self.tricked_workers)
 
-    def get_pop_payload(self, procgen_id):
+    def get_pop_payload(self, procgen):
         prompt_payload = {
-            "payload": self.get_job_payload(),
-            "id": procgen_id,
+            "payload": self.get_job_payload(procgen),
+            "id": procgen.id,
+            "model": procgen.model,
         }
         return(prompt_payload)
 
@@ -114,6 +119,8 @@ class WaitingPrompt:
         return(ProcessingGeneration(self, self._processing_generations, worker))
 
     def is_completed(self):
+        if self.faulted:
+            return(True)
         if self.needs_gen():
             return(False)
         for procgen in self.processing_gens:
@@ -141,6 +148,7 @@ class WaitingPrompt:
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         ret_dict["done"] = self.is_completed()
+        ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
         if not lite:
             ret_dict["generations"] = []
@@ -229,7 +237,16 @@ class ProcessingGeneration:
         self.id = str(uuid4())
         self.owner = owner
         self.worker = worker
-        self.model = worker.model
+        # If there has been no explicit model requested by the user, we just choose the first available from the worker
+        if len(self.worker.models):
+            self.model = self.worker.models[0]
+        else:
+            self.model = ''
+        # If we reached this point, it means there is at least 1 matching model between worker and client
+        # so we pick the first one.
+        for model in self.owner.models:
+            if model in self.worker.models:
+                self.model = model
         self.start_time = datetime.now()
         self._processing_generations.add_item(self)
 
@@ -306,6 +323,7 @@ class Worker:
         }
         self.suspicions = []
         self.db = db
+        self.bridge_version = 1
 
     def create(self, user, name, **kwargs):
         self.user = user
@@ -361,7 +379,7 @@ class Worker:
         ret = self.db.update_worker_name(self, new_name)
         if ret == 1:
             return("Already Exists")
-        self.name = new_name
+        self.name = bleach.clean(new_name)
         return("OK")
 
     def set_info(self,new_info):
@@ -371,7 +389,7 @@ class Worker:
             return("Profanity")
         if len(new_info) > 1000:
             return("Too Long")
-        self.info = new_info
+        self.info = bleach.clean(new_info)
         return("OK")
 
     # This should be overwriten by each specific horde
@@ -380,10 +398,11 @@ class Worker:
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
-        self.model = kwargs.get("model")
+        self.models = kwargs.get("models")
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
+        self.bridge_version = kwargs.get("bridge_version", 1)
         if not kwargs.get("safe_ip", True):
             if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
@@ -441,6 +460,13 @@ class Worker:
         if any(word in waiting_prompt.prompt for word in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
+        if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
+            is_matching = False
+            skipped_reason = 'models'
+        # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
+        if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
+            is_matching = False
+            skipped_reason = 'performance'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
@@ -490,6 +516,11 @@ class Worker:
             return(True)
         return(False)
 
+    def delete(self):
+        self.db.delete_worker(self)
+        del self
+
+
     # Should be extended by each specific horde
     @logger.catch
     def get_details(self, details_privilege = 0):
@@ -506,6 +537,7 @@ class Worker:
             "info": self.info,
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
+            "models": self.models,
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
@@ -535,6 +567,7 @@ class Worker:
             "blacklist": self.blacklist.copy(),
             "ipaddr": self.ipaddr,
             "suspicions": self.suspicions,
+            "models": self.models,
         }
         return(ret_dict)
 
@@ -557,6 +590,8 @@ class Worker:
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
         self.suspicions = saved_dict.get("suspicions", [])
+        old_model = saved_dict.get("model")
+        self.models = saved_dict.get("models", [old_model])
         for suspicion in self.suspicions:
             self.suspicious += 1
             logger.debug(f"Suspecting worker {self.name} for {self.suspicious} with reasons {self.suspicions}")
@@ -743,7 +778,7 @@ class User:
             return("Profanity")
         if len(new_username) > 30:
             return("Too Long")
-        self.username = new_username
+        self.username = bleach.clean(new_username)
         return("OK")
 
     def set_trusted(self,is_trusted):
@@ -762,11 +797,13 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, raw_things, kudos):
+        self.last_active = datetime.now()
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
         self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
 
     def record_contributions(self, raw_things, kudos):
+        self.last_active = datetime.now()
         self.contributions["fulfillments"] += 1
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted:
@@ -780,6 +817,7 @@ class User:
         self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
 
     def record_uptime(self, kudos):
+        self.last_active = datetime.now()
         # While a worker is untrusted, all uptime kudos go for evaluation
         if not self.trusted:
             self.evaluating_kudos += kudos
@@ -922,6 +960,26 @@ class User:
         if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
             return(True)
         return(False)
+
+    def is_stale(self):
+        # Stale users have to be inactive for a month
+        days_threshold = 30
+        days_inactive = (datetime.now() - self.last_active).days
+        if days_inactive < days_threshold:
+            return(False)
+        # Stale user have to have little accumulated kudos. 
+        # The longer a user account is inactive. the more kudos they need to have stored to not be deleted
+        # logger.debug([days_inactive,self.kudos, 10 * (days_inactive - days_threshold)])
+        if self.kudos > 10 * (days_inactive - days_threshold):
+            return(False)
+        # Anonymous cannot be stale
+        if self.is_anon():
+            return(False)
+        if self.moderator:
+            return(False)
+        if self.trusted:
+            return(False)
+        return(True)
 
     @logger.catch
     def serialize(self):
@@ -1104,6 +1162,8 @@ class Database:
                         continue
                     new_user = self.new_user()
                     new_user.deserialize(user_dict,convert_flag)
+                    if new_user.is_stale():
+                        logger.warning(f"(Dry-Run) Deleting stale user {new_user.get_unique_alias()}")
                     self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
                         self.last_user_id = new_user.id
@@ -1242,6 +1302,9 @@ class Database:
         self.workers[worker.name] = worker
         logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
 
+    def delete_worker(self,worker):
+        del self.workers[worker.name]
+
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
             return(None)
@@ -1288,12 +1351,13 @@ class Database:
         for worker in self.workers.values():
             if worker.is_stale():
                 continue
-            mode_dict_template = {
-                "name": worker.model,
-                "count": 0,
-            }
-            models_dict[worker.model] = models_dict.get(worker.model, mode_dict_template)
-            models_dict[worker.model]["count"] += 1
+            for model_name in worker.models:
+                mode_dict_template = {
+                    "name": model_name,
+                    "count": 0,
+                }
+                models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
+                models_dict[model_name]["count"] += 1
         return(list(models_dict.values()))
 
     def transfer_kudos(self, source_user, dest_user, amount):

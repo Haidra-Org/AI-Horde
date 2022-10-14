@@ -27,9 +27,9 @@ First [Register an account](/register) which will generate for you an API key. S
 
 * We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
-   * [Stable UI](https://aqualxx.github.io/stable-ui/)
-   * [Diffusion UI](https://diffusionui.com/b/stable_horde)
-   * [Art Bot](https://tinybots.net/artbot)
+    * [Stable UI](https://aqualxx.github.io/stable-ui/)
+    * [Diffusion UI](https://diffusionui.com/b/stable_horde)
+    * [Art Bot](https://tinybots.net/artbot)
 
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
@@ -51,6 +51,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
     * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
     * [Telegram Bot](https://t.me/CraiyonArtBot)
     * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
+    * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)
     * [Horde Leaderboard](https://aqualxx.github.io/Horde-Overseer/)
 
 

@@ -41,6 +41,11 @@ class NameAlreadyExists(wze.BadRequest):
         self.specific = f"The specified worker name '{new_worker_name}' is already taken!"
         self.log = f"User '{username}' tried to change worker name from {old_worker_name} to {new_worker_name}. Aborting!"
 
+class ImageValidationFailed(wze.BadRequest):
+    def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
+        self.specific = f"Image validation failed. {message}"
+        self.log = f"Source image validation failed for img2img"
+
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
@@ -69,6 +74,11 @@ class NotOwner(wze.Forbidden):
 class AnonForbidden(wze.Forbidden):
     def __init__(self):
         self.specific = "Anonymous user is forbidden from performing this operation"
+        self.log = None
+
+class NotTrusted(wze.Forbidden):
+    def __init__(self):
+        self.specific = "Only Trusted users are allowed to perform this operation"
         self.log = None
 
 class WorkerMaintenance(wze.Forbidden):
@@ -140,7 +150,7 @@ class NoValidWorkers(wze.ServiceUnavailable):
         self.specific = f"No active worker found to fulfill this request. Please Try again later..."
         self.log = f"No active worker found to match the request from '{username}'. Aborting!"
 
-class MaintenanceMode(wze.ServiceUnavailable):
+class MaintenanceMode(wze.BadRequest):
     retry_after = 60
     def __init__(self, endpoint):
         self.specific = f"Horde has enterred maintenance mode. Please try again later."
