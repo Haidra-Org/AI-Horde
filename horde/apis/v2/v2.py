@@ -634,7 +634,7 @@ class FindUser(Resource):
         user = db.find_user_by_api_key(self.args.apikey)
         if not user:
             raise e.UserNotFound(self.args.apikey, 'api_key')
-        return(user.get_details(),200)
+        return(user.get_details(1),200)
 
 class HordeLoad(Resource):
     decorators = [limiter.limit("20/minute")]
