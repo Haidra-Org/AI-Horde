@@ -13,9 +13,10 @@ arg_parser.add_argument('--api_key', type=str, action='store', required=False, h
 arg_parser.add_argument('-f', '--filename', type=str, action='store', required=False, help="The filename to use to save the images. If more than 1 image is generated, the number of generation will be prepended")
 arg_parser.add_argument('-v', '--verbosity', action='count', default=0, help="The default logging level is ERROR or higher. This value increases the amount of logging seen in your screen")
 arg_parser.add_argument('-q', '--quiet', action='count', default=0, help="The default logging level is ERROR or higher. This value decreases the amount of logging seen in your screen")
-arg_parser.add_argument('--horde', action="store", required=False, type=str, default="https://koboldai.net", help="Use a different horde")
+arg_parser.add_argument('--horde', action="store", required=False, type=str, default="https://stablehorde.net", help="Use a different horde")
 arg_parser.add_argument('--nsfw', action="store_true", default=False, required=False, help="Mark the request as NSFW. Only servers which allow NSFW will pick it up")
 arg_parser.add_argument('--censor_nsfw', action="store_true", default=False, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.")
+arg_parser.add_argument('--trusted_workers', action="store_true", default=False, required=False, help="If true, the request will be sent only to trusted workers.")
 args = arg_parser.parse_args()
 
 
@@ -45,6 +46,7 @@ def generate():
         "params": final_imgen_params,
         "nsfw": args.nsfw if args.nsfw else crd.submit_dict.get("nsfw", False),
         "censor_nsfw": args.censor_nsfw if args.censor_nsfw else crd.submit_dict.get("censor_nsfw", True),
+        "trusted_workers": args.trusted_workers if args.trusted_workers else crd.submit_dict.get("trusted_workers", True),
     }
     headers = {"apikey": final_api_key}
     logger.debug(final_submit_dict)
