@@ -49,6 +49,7 @@ class WaitingPrompt(WaitingPrompt):
         else:
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
             self.generations_done += 1
+        logger.debug(self.gen_payload)
         return(self.gen_payload)
 
     def activate(self):
