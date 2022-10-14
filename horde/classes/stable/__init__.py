@@ -2,6 +2,7 @@ from ..base import *
 
 class WaitingPrompt(WaitingPrompt):
 
+    @logger.catch
     def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
         self.steps = params.pop('steps', 50)
@@ -18,7 +19,8 @@ class WaitingPrompt(WaitingPrompt):
         self.models = kwargs.get("models", ['ReadOnly'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
-        if 'seed' in params:
+        if 'seed' in params and params['seed'] != None:
+            # logger.warning([self,'seed' in params, params])
             self.seed = params.pop('seed')
         self.seed_variation = None
         self.generations_done = 0
@@ -27,6 +29,7 @@ class WaitingPrompt(WaitingPrompt):
 
         self.prepare_job_payload(params)
 
+    @logger.catch
     def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = initial_dict
@@ -41,15 +44,17 @@ class WaitingPrompt(WaitingPrompt):
             elif 8 not in self.gen_payload["toggles"]:
                 self.gen_payload["toggles"].append(8)
 
+    @logger.catch
     def get_job_payload(self):
         if self.seed_variation and self.generations_done > 0:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
         else:
+            # logger.error(self.seed)
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
             self.generations_done += 1
-        logger.debug(self.gen_payload)
+        # logger.debug(self.gen_payload)
         return(self.gen_payload)
 
     def activate(self):

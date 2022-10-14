@@ -4,15 +4,15 @@ class AsyncGenerate(AsyncGenerate):
     
     def validate(self):
         super().validate()
-        if self.args["params"].get("height",512)%64:
+        if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("height",512) <= 0:
+        if self.params.get("height",512) <= 0:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("width",512)%64:
+        if self.params.get("width",512)%64:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("width",512) <= 0:
+        if self.params.get("width",512) <= 0:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("steps",50) > 100:
+        if self.params.get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
 
     def get_size_too_big_message(self):
@@ -27,28 +27,28 @@ class AsyncGenerate(AsyncGenerate):
             processing_generations,
             self.args["prompt"],
             self.user,
-            self.args["params"],
-            workers=self.args["workers"],
-            nsfw=self.args["nsfw"],
-            censor_nsfw=self.args["censor_nsfw"],
-            trusted_workers=self.args["trusted_workers"],
-            models = self.args["models"],
+            self.params,
+            workers = self.models,
+            nsfw = self.args["nsfw"],
+            censor_nsfw = self.args["censor_nsfw"],
+            trusted_workers = self.args["trusted_workers"],
+            models = self.models,
         )
     
 class SyncGenerate(SyncGenerate):
 
     def validate(self):
         super().validate()
-        if self.args["params"].get("height",512)%64:
+        if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("height",512) <= 0:
+        if self.params.get("height",512) <= 0:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("width",512)%64:
+        if self.params.get("width",512)%64:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("width",512) <= 0:
+        if self.params.get("width",512) <= 0:
             raise e.InvalidSize(self.username)
-        if self.args["params"].get("steps",50) > 100:
-            raise e.TooManySteps(self.username, self.args['params']['steps'])
+        if self.params.get("steps",50) > 100:
+            raise e.TooManySteps(self.username, self.params['steps'])
 
     
     # We split this into its own function, so that it may be overriden
@@ -59,12 +59,12 @@ class SyncGenerate(SyncGenerate):
             processing_generations,
             self.args["prompt"],
             self.user,
-            self.args["params"],
-            workers=self.args["workers"],
-            nsfw=self.args["nsfw"],
-            censor_nsfw=self.args["censor_nsfw"],
-            trusted_workers=self.args["trusted_workers"],
-            models = self.args["models"],
+            self.params,
+            workers = self.workers,
+            nsfw = self.args["nsfw"],
+            censor_nsfw = self.args["censor_nsfw"],
+            trusted_workers = self.args["trusted_workers"],
+            models = self.models,
         )
     
 class JobPop(JobPop):
@@ -73,8 +73,8 @@ class JobPop(JobPop):
         self.worker.check_in(
             self.args['max_pixels'], 
             nsfw = self.args['nsfw'], 
-            blacklist = self.args['blacklist'], 
-            models = self.args['models'], 
+            blacklist = self.blacklist, 
+            models = self.models, 
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
         )

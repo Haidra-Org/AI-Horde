@@ -60,13 +60,24 @@ class GenerateTemplate(Resource):
 
     def post(self):
         self.args = parsers.generate_parser.parse_args()
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.params = {}
+        if self.args.params:
+            self.params = self.args.params
+        self.models = []
+        if self.args.models:
+            self.models = self.args.models
+        self.workers = []
+        if self.args.workers:
+            self.workers = self.args.workers
         self.username = 'Anonymous'
         self.user = None
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
         for worker in db.workers.values():
-            if len(self.args.workers) and worker.id not in self.args.workers:
+            if len(self.workers) and worker.id not in self.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
@@ -96,7 +107,7 @@ class GenerateTemplate(Resource):
             processing_generations,
             self.args["prompt"],
             self.user,
-            self.args["params"],
+            self.params,
             workers=self.args["workers"],
             nsfw=self.args["nsfw"],
             trusted_workers=self.args["trusted_workers"],
@@ -109,7 +120,7 @@ class GenerateTemplate(Resource):
     def has_valid_workers(self):
         worker_found = False
         for worker in db.workers.values():
-            if len(self.args.workers) and worker.id not in self.args.workers:
+            if len(self.workers) and worker.id not in self.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
                 worker_found = True
@@ -240,6 +251,17 @@ class JobPop(Resource):
         This endpoint is used by registered workers only
         '''
         self.args = parsers.job_pop_parser.parse_args()
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.blacklist = []
+        if self.args.blacklist:
+            self.blacklist = self.args.blacklist
+        self.priority_usernames = []
+        if self.args.priority_usernames:
+            self.priority_usernames = self.args.priority_usernames
+        self.models = []
+        if self.args.models:
+            self.models = self.args.models
         self.worker_ip = request.remote_addr
         self.validate()
         self.check_in()
@@ -247,7 +269,7 @@ class JobPop(Resource):
         self.prioritized_wp = []
         self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        for priority_username in self.args.priority_usernames:
+        for priority_username in self.priority_usernames:
             priority_user = db.find_user_by_username(priority_username)
             if priority_user:
                self.priority_users.append(priority_user)
