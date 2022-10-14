@@ -1,7 +1,7 @@
 import json, os, sys
 from uuid import uuid4
 from datetime import datetime
-import threading, time, dateutil.relativedelta
+import threading, time, dateutil.relativedelta, bleach
 from .. import logger, args
 from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re, random
@@ -361,7 +361,7 @@ class Worker:
         ret = self.db.update_worker_name(self, new_name)
         if ret == 1:
             return("Already Exists")
-        self.name = new_name
+        self.name = bleach.clean(new_name)
         return("OK")
 
     def set_info(self,new_info):
@@ -371,7 +371,7 @@ class Worker:
             return("Profanity")
         if len(new_info) > 1000:
             return("Too Long")
-        self.info = new_info
+        self.info = bleach.clean(new_info)
         return("OK")
 
     # This should be overwriten by each specific horde
@@ -743,7 +743,7 @@ class User:
             return("Profanity")
         if len(new_username) > 30:
             return("Too Long")
-        self.username = new_username
+        self.username = bleach.clean(new_username)
         return("OK")
 
     def set_trusted(self,is_trusted):
