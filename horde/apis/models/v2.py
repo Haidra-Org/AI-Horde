@@ -19,7 +19,7 @@ class Parsers:
     job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
     job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
-    job_pop_parser.add_argument("models", type=list, required=True, help="The models currently available on this worker", location="json")
+    job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
     job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specified the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
 
     job_submit_parser = reqparse.RequestParser()
