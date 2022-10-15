@@ -232,7 +232,10 @@ class ProcessingGeneration:
         self.owner = owner
         self.worker = worker
         # If there has been no explicit model requested by the user, we just choose the first available from the worker
-        self.model = self.worker.models[0]
+        if len(self.worker.models):
+            self.model = self.worker.models[0]
+        else:
+            self.model = ''
         # If we reached this point, it means there is at least 1 matching model between worker and client
         # so we pick the first one.
         for model in self.owner.models:
