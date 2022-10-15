@@ -77,6 +77,7 @@ class JobPop(JobPop):
             models = self.models, 
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
+            bridge_version = self.args["bridge_version"],
         )
   
 class HordeLoad(HordeLoad):

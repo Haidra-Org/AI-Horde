@@ -67,7 +67,7 @@ class WaitingPrompt:
         # This is what we send to the worker
         self.gen_payload = initial_dict
     
-    def get_job_payload(self):
+    def get_job_payload(self,procgen):
         return(self.gen_payload)
 
     def activate(self):
@@ -105,7 +105,7 @@ class WaitingPrompt:
 
     def get_pop_payload(self, procgen):
         prompt_payload = {
-            "payload": self.get_job_payload(),
+            "payload": self.get_job_payload(procgen),
             "id": procgen.id,
             "model": procgen.model,
         }
@@ -392,6 +392,7 @@ class Worker:
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
+        self.bridge_version = kwargs.get("bridge_version", 1)
         if not kwargs.get("safe_ip", True):
             if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)

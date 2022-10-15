@@ -242,7 +242,7 @@ class AsyncCheck(Resource):
 class JobPop(Resource):
 
     decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser)
+    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
     @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)

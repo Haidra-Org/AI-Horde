@@ -19,8 +19,8 @@ class Parsers:
     job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
     job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
-    job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specified the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
     job_pop_parser.add_argument("models", type=list, required=True, help="The models currently available on this worker", location="json")
+    job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specified the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
@@ -85,7 +85,14 @@ class Models:
             'generated': fields.Float(description="How much Kudos this worker has received for generating images"),
             'uptime': fields.Integer(description="How much Kudos this worker has received for staying online longer"),
         })
-
+        self.input_model_job_pop = api.model('PopInput', {
+            'name': fields.String(description="The Name of the Worker"),
+            'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
+            'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
+            'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
+            'models': fields.List(fields.String(description="Which models this worker is serving")),
+            'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
+        })
         self.response_model_worker_details = api.model('WorkerDetails', {
             "name": fields.String(description="The Name given to this worker."),
             "id": fields.String(description="The UUID of this worker."),
@@ -100,7 +107,6 @@ class Models:
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
-            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
             'models': fields.List(fields.String(description="Which models this worker if offerring")),
         })

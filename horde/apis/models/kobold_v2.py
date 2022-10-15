@@ -59,6 +59,11 @@ class Models(v2.Models):
             'softprompt': fields.String(description="The soft prompt requested for this generation"),
             'model': fields.String(description="Which of the available models to use for this request"),
         })
+        self.input_model_job_pop = api.inherit('PopInputKobold', self.input_model_job_pop, {
+            'max_length': fields.Integer(default=512,description="The maximum amount of tokens this worker can generate"), 
+            'max_content_length': fields.Integer(default=2048,description="The max amount of context to submit to this AI for sampling."), 
+            'softprompts': fields.List(fields.String(description="The available softprompt files on this worker for the currently running model")),
+        })
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),
             'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
