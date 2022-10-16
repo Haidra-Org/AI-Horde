@@ -104,6 +104,14 @@ class WaitingPrompt(WaitingPrompt):
             n = n >> 32
         return n
 
+    def record_usage(self, raw_things, kudos):
+        '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
+        img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
+        '''
+        if self.source_image:
+            kudos = kudos * 1.5
+        super().record_usage(raw_things, kudos)
+
 class ProcessingGeneration(ProcessingGeneration):
 
     def get_details(self):
