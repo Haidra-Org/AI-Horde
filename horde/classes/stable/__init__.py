@@ -59,7 +59,7 @@ class WaitingPrompt(WaitingPrompt):
             self.gen_payload["use_ldsr"] = self.use_ldsr
             self.gen_payload["use_upscaling"] = self.use_upscaling
             if not self.nsfw and self.censor_nsfw:
-                self.gen_payload["use_nsfw_censor"] = self.use_nsfw_censor
+                self.gen_payload["use_nsfw_censor"] = True
         else:
             # These parameters are not used in bridge v1
             for v2_param in ["use_gfpgan","use_real_esrgan","use_ldsr","use_upscaling"]:
