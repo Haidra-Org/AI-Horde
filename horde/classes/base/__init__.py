@@ -43,7 +43,7 @@ class WaitingPrompt:
         self.params = params
         self.total_usage = 0
         self.nsfw = kwargs.get("nsfw", False)
-        self.trusted_workers = kwargs.get("trusted_workers", True)
+        self.trusted_workers = kwargs.get("trusted_workers", False)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
         # The generations that have been created already
