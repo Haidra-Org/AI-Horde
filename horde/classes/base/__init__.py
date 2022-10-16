@@ -580,7 +580,8 @@ class Worker:
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
         self.suspicions = saved_dict.get("suspicions", [])
-        self.models = saved_dict.get("models")
+        old_model = saved_dict.get("model")
+        self.models = saved_dict.get("models", [old_model])
         for suspicion in self.suspicions:
             self.suspicious += 1
             logger.debug(f"Suspecting worker {self.name} for {self.suspicious} with reasons {self.suspicions}")
