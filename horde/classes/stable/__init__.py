@@ -147,6 +147,9 @@ class Worker(Worker):
         if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
             is_matching = False
             skipped_reason = 'max_pixels'
+        if waiting_prompt.source_image and self.bridge_version < 2:
+            is_matching = False
+            skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
     def get_details(self, is_privileged = False):
