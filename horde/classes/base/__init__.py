@@ -786,11 +786,13 @@ class User:
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, raw_things, kudos):
+        self.last_active = datetime.now()
         self.usage["requests"] += 1
         self.modify_kudos(-kudos,"accumulated")
         self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
 
     def record_contributions(self, raw_things, kudos):
+        self.last_active = datetime.now()
         self.contributions["fulfillments"] += 1
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted:
@@ -804,6 +806,7 @@ class User:
         self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
 
     def record_uptime(self, kudos):
+        self.last_active = datetime.now()
         # While a worker is untrusted, all uptime kudos go for evaluation
         if not self.trusted:
             self.evaluating_kudos += kudos
@@ -946,6 +949,26 @@ class User:
         if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
             return(True)
         return(False)
+
+    def is_stale(self):
+        # Stale users have to be inactive for a month
+        days_threshold = 30
+        days_inactive = (datetime.now() - self.last_active).days
+        if days_inactive < days_threshold:
+            return(False)
+        # Stale user have to have little accumulated kudos. 
+        # The longer a user account is inactive. the more kudos they need to have stored to not be deleted
+        # logger.debug([days_inactive,self.kudos, 10 * (days_inactive - days_threshold)])
+        if self.kudos > 10 * (days_inactive - days_threshold):
+            return(False)
+        # Anonymous cannot be stale
+        if self.is_anon():
+            return(False)
+        if self.moderator:
+            return(False)
+        if self.trusted:
+            return(False)
+        return(True)
 
     @logger.catch
     def serialize(self):
@@ -1128,6 +1151,8 @@ class Database:
                         continue
                     new_user = self.new_user()
                     new_user.deserialize(user_dict,convert_flag)
+                    if new_user.is_stale():
+                        logger.warning(f"(Dry-Run) Deleting stale user {new_user.get_unique_alias()}")
                     self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
                         self.last_user_id = new_user.id
