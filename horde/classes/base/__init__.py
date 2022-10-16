@@ -506,6 +506,11 @@ class Worker:
             return(True)
         return(False)
 
+    def delete(self):
+        self.db.delete_worker(self)
+        del self
+
+
     # Should be extended by each specific horde
     @logger.catch
     def get_details(self, details_privilege = 0):
@@ -1260,6 +1265,9 @@ class Database:
     def register_new_worker(self, worker):
         self.workers[worker.name] = worker
         logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
+
+    def delete_worker(self,worker):
+        del self.workers[worker.name]
 
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:

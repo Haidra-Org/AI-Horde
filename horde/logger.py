@@ -97,6 +97,7 @@ config = {
     ],
 }
 logger.configure(**config)
+logger.add("horde.log", retention="7 days", level=30)
 logger.disable("__main__")
 logger.warning("disabled")
 logger.enable("")

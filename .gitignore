@@ -133,3 +133,4 @@ db/*
 cliRequestsData.py
 *horde_generation*.png
 test_commands.txt
+horde.log
