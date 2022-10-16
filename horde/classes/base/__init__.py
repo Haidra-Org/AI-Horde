@@ -317,6 +317,7 @@ class Worker:
         }
         self.suspicions = []
         self.db = db
+        self.bridge_version = 1
 
     def create(self, user, name, **kwargs):
         self.user = user
