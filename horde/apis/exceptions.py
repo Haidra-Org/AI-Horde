@@ -71,6 +71,11 @@ class AnonForbidden(wze.Forbidden):
         self.specific = "Anonymous user is forbidden from performing this operation"
         self.log = None
 
+class NotTrusted(wze.Forbidden):
+    def __init__(self):
+        self.specific = "Only Trusted users are allowed to perform this operation"
+        self.log = None
+
 class WorkerMaintenance(wze.Forbidden):
     def __init__(self, worker_id):
         self.specific = f"worker {worker_id} has been put into maintenance by its owner"

@@ -4,6 +4,9 @@ class AsyncGenerate(AsyncGenerate):
     
     def validate(self):
         super().validate()
+        # Temporary exception. During trial period only trusted users can use img2img
+        if self.args.source_image and not self.user.trusted:
+            raise e.NotTrusted
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:
@@ -40,6 +43,9 @@ class SyncGenerate(SyncGenerate):
 
     def validate(self):
         super().validate()
+        # Temporary exception. During trial period only trusted users can use img2img
+        if self.args.source_image and not self.user.trusted:
+            raise e.NotTrusted
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:

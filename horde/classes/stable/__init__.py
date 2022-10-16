@@ -82,7 +82,6 @@ class WaitingPrompt(WaitingPrompt):
         }
         if self.source_image and procgen.worker.bridge_version > 1:
             prompt_payload["source_image"] = self.source_image
-            logger.debug(len(prompt_payload["source_image"]))
         return(prompt_payload)
 
     def activate(self):
