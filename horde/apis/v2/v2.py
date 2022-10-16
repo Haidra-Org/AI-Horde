@@ -88,11 +88,11 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
         if maintenance.active:
-            raise e.MaintenanceMode('SyncGenerate')
+            raise e.MaintenanceMode('Generate')
         if self.args.apikey:
             self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
-            raise e.InvalidAPIKey('async generation')
+            raise e.InvalidAPIKey('generation')
         self.username = self.user.get_unique_alias()
         if self.args['prompt'] == '':
             raise e.MissingPrompt(self.username)

@@ -145,7 +145,7 @@ class NoValidWorkers(wze.ServiceUnavailable):
         self.specific = f"No active worker found to fulfill this request. Please Try again later..."
         self.log = f"No active worker found to match the request from '{username}'. Aborting!"
 
-class MaintenanceMode(wze.ServiceUnavailable):
+class MaintenanceMode(wze.BadRequest):
     retry_after = 60
     def __init__(self, endpoint):
         self.specific = f"Horde has enterred maintenance mode. Please try again later."
