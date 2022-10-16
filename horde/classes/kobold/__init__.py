@@ -64,6 +64,7 @@ class Worker(Worker):
         self.softprompts = softprompts
         logger.debug(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
+    @logger.catch
     def calculate_uptime_reward(self):
         return(round(self.db.stats.calculate_model_multiplier(self.models[0]) * 25 / 2.75, 2))
 
