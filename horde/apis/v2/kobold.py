@@ -48,7 +48,7 @@ class JobPop(JobPop):
         self.softprompts = []
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
-        logger.info(elf.args)
+        logger.info(self.args)
         self.worker.check_in(
             self.args['max_length'],
             self.args['max_content_length'],
