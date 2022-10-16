@@ -59,8 +59,8 @@ class WaitingPrompt(WaitingPrompt):
             self.gen_payload["use_real_esrgan"] = self.use_real_esrgan
             self.gen_payload["use_ldsr"] = self.use_ldsr
             self.gen_payload["use_upscaling"] = self.use_upscaling
-            if not self.nsfw and self.censor_nsfw:
-                self.gen_payload["use_nsfw_censor"] = True
+            # if not self.nsfw and self.censor_nsfw:
+            #     self.gen_payload["use_nsfw_censor"] = True
         else:
             # These parameters are not used in bridge v1
             for v2_param in ["use_gfpgan","use_real_esrgan","use_ldsr","use_upscaling"]:
@@ -80,7 +80,7 @@ class WaitingPrompt(WaitingPrompt):
             "id": procgen.id,
             "model": procgen.model,
         }
-        if self.source_image and procgen.worker.bridge_version > 1:
+        if self.source_image and procgen.worker.bridge_version > 2:
             prompt_payload["source_image"] = self.source_image
         return(prompt_payload)
 
