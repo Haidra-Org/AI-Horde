@@ -151,7 +151,7 @@ class Worker(Worker):
             is_matching = False
             skipped_reason = 'worker_id'
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
-        if waiting_prompt.gen_payload['sampler_name'] in ['DDIM', 'PLMS'] and self.bridge_version == 3:
+        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler') in ['DDIM', 'PLMS'] and self.bridge_version == 3:
             is_matching = False
             skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
