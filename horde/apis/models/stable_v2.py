@@ -25,7 +25,7 @@ class Models(v2.Models):
             'sampler_name': fields.String(required=False, default='k_euler',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
             'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
             'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
-            'denoising_strength': fields.Float(required=False,default=0.75, min=0, max=1.0, multiple=0.01), 
+            'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0, multiple=0.01), 
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
             'height': fields.Integer(required=False,default=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
             'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
