@@ -150,6 +150,10 @@ class Worker(Worker):
         if waiting_prompt.source_image and self.bridge_version < 2:
             is_matching = False
             skipped_reason = 'worker_id'
+        # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
+        if waiting_prompt.gen_payload['sampler_name'] in ['DDIM', 'PLMS'] and self.bridge_version == 3:
+            is_matching = False
+            skipped_reason = 'worker_id'
         return([is_matching,skipped_reason])
 
     def get_details(self, is_privileged = False):

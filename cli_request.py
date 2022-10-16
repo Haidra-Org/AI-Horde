@@ -40,8 +40,9 @@ def generate():
         "height": args.height if args.height else crd.imgen_params.get('height',512),
         "steps": args.steps if args.steps else crd.imgen_params.get('steps',50),
     }
-    if "denoising_strength" in crd.imgen_params:
-        final_imgen_params["denoising_strength"] = crd.imgen_params["denoising_strength"]
+    for p in ["denoising_strength", 'sampler_name']:
+        if p in crd.imgen_params:
+            final_imgen_params[p] = crd.imgen_params[p]
 
     final_submit_dict = {
         "prompt": args.prompt if args.prompt else crd.submit_dict.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
