@@ -5,6 +5,7 @@ from . import v2
 class Parsers(v2.Parsers):
     def __init__(self):
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
+        self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
 
@@ -24,6 +25,7 @@ class Models(v2.Models):
             'sampler_name': fields.String(required=False, default='k_euler',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
             'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
             'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
+            'denoising_strength': fields.Float(required=False,default=0.75, min=0, max=1.0, multiple=0.01), 
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
             'height': fields.Integer(required=False,default=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
             'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
@@ -52,6 +54,7 @@ class Models(v2.Models):
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
             'model': fields.String(description="Which of the available models to use for this request"),
+            'source_image': fields.String(description="The Base64-encoded webp to use for img2img"),
         })
         self.input_model_job_pop = api.inherit('PopInputStable', self.input_model_job_pop, {
             'max_pixels': fields.Integer(default=512*512,description="The maximum amount of pixels this worker can generate"), 
@@ -65,6 +68,7 @@ class Models(v2.Models):
             'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
+            'source_image': fields.String(required=False,description="The Base64-encoded webp to use for img2img"),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),

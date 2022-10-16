@@ -17,6 +17,7 @@ arg_parser.add_argument('--horde', action="store", required=False, type=str, def
 arg_parser.add_argument('--nsfw', action="store_true", default=False, required=False, help="Mark the request as NSFW. Only servers which allow NSFW will pick it up")
 arg_parser.add_argument('--censor_nsfw', action="store_true", default=False, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.")
 arg_parser.add_argument('--trusted_workers', action="store_true", default=False, required=False, help="If true, the request will be sent only to trusted workers.")
+arg_parser.add_argument('--source_image', action="store", required=False, type=str, help="When a file path is provided, will be used as the source for img2img")
 args = arg_parser.parse_args()
 
 
@@ -38,8 +39,9 @@ def generate():
         "width": args.width if args.width else crd.imgen_params.get('width',512),
         "height": args.height if args.height else crd.imgen_params.get('height',512),
         "steps": args.steps if args.steps else crd.imgen_params.get('steps',50),
-        # You can put extra params here if you wish
     }
+    if "denoising_strength" in crd.imgen_params:
+        final_imgen_params["denoising_strength"] = crd.imgen_params["denoising_strength"]
 
     final_submit_dict = {
         "prompt": args.prompt if args.prompt else crd.submit_dict.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
@@ -48,6 +50,14 @@ def generate():
         "censor_nsfw": args.censor_nsfw if args.censor_nsfw else crd.submit_dict.get("censor_nsfw", True),
         "trusted_workers": args.trusted_workers if args.trusted_workers else crd.submit_dict.get("trusted_workers", True),
     }
+    final_src_img = args.source_image if args.source_image else crd.source_image
+    if final_src_img:
+        final_src_img = Image.open(final_src_img)
+        buffer = BytesIO()
+        # We send as WebP to avoid using all the horde bandwidth
+        final_src_img.save(buffer, format="WebP", quality=90)
+        final_submit_dict["source_image"] = base64.b64encode(buffer.getvalue()).decode("utf8")
+    # final_submit_dict["source_image"] = 'Test'
     headers = {"apikey": final_api_key}
     logger.debug(final_submit_dict)
     submit_req = requests.post(f'{args.horde}/api/v2/generate/async', json = final_submit_dict, headers = headers)

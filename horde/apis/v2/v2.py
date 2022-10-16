@@ -416,7 +416,7 @@ class Workers(Resource):
 class WorkerSingle(Resource):
 
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
+    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Worker Details', skip_none=True)
@@ -441,7 +441,7 @@ class WorkerSingle(Resource):
         return(worker.get_details(details_privilege),200)
 
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument("apikey", type=str, required=True, help="The Admin or Owner API key", location='headers')
+    put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
     put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")

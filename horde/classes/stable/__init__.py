@@ -20,6 +20,7 @@ class WaitingPrompt(WaitingPrompt):
         self.things = self.width * self.height * self.steps
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.source_image = kwargs.get("source_image", None)
         self.models = kwargs.get("models", ['ReadOnly'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
@@ -72,6 +73,17 @@ class WaitingPrompt(WaitingPrompt):
                     self.gen_payload["toggles"].append(8)
         # logger.debug(self.gen_payload)
         return(self.gen_payload)
+
+    def get_pop_payload(self, procgen):
+        prompt_payload = {
+            "payload": self.get_job_payload(procgen),
+            "id": procgen.id,
+            "model": procgen.model,
+        }
+        if self.source_image and procgen.worker.bridge_version > 1:
+            prompt_payload["source_image"] = self.source_image
+            logger.debug(len(prompt_payload["source_image"]))
+        return(prompt_payload)
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
