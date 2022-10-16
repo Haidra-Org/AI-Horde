@@ -1341,7 +1341,6 @@ class Database:
         for worker in self.workers.values():
             if worker.is_stale():
                 continue
-            logger.info([worker.name, worker.models])
             for model_name in worker.models:
                 mode_dict_template = {
                     "name": model_name,

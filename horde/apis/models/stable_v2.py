@@ -7,6 +7,7 @@ class Parsers(v2.Parsers):
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
+        self.job_pop_parser.add_argument("model", type=list, required=False, help="The model currently available on this worker", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
 
 class Models(v2.Models):
