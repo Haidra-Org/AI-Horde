@@ -8,6 +8,7 @@ class Parsers(v2.Parsers):
         self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate", location="json")
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
         self.job_pop_parser.add_argument("softprompts", type=list, required=False, help="The available softprompt files on this worker for the currently running model", location="json")
+        # To remove the below once I updated the KAI server to use "models"
         self.job_pop_parser.add_argument("model", type=str, required=False, help="The model currently available on this worker", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=False, default='', help="The seed of the generation", location="json")
 

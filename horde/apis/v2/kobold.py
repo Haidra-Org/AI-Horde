@@ -48,12 +48,15 @@ class JobPop(JobPop):
         self.softprompts = []
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
-        logger.info(self.args)
+        models = self.models
+        # To adjust the below once I updated the KAI server to use "models" arg
+        if self.args.model:
+            models = [self.args.model]
         self.worker.check_in(
             self.args['max_length'],
             self.args['max_content_length'],
             self.softprompts,
-            models = [self.args.model],
+            models = models,
             nsfw = self.args['nsfw'],
             blacklist = self.blacklist,
             safe_ip = self.safe_ip,
