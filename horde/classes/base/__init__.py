@@ -1340,11 +1340,11 @@ class Database:
         for worker in self.workers.values():
             if worker.is_stale():
                 continue
-            mode_dict_template = {
-                "name": worker.model,
-                "count": 0,
-            }
             for model_name in worker.models:
+                mode_dict_template = {
+                    "name": model_name,
+                    "count": 0,
+                }
                 models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
                 models_dict[model_name]["count"] += 1
         return(list(models_dict.values()))

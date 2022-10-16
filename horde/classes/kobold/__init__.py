@@ -120,7 +120,10 @@ class Stats(Stats):
 
     def calculate_model_multiplier(self, model_name):
         # To avoid doing this calculations all the time
-        multiplier = self.model_mulitpliers.get(model_name)
+        if not len(model_name):
+            multiplier = 1
+        else:
+            multiplier = self.model_mulitpliers.get(model_name)
         if multiplier:
             return(multiplier)
         try:
