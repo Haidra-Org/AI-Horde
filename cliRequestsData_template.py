@@ -1,12 +1,12 @@
 filename = "horde_generation.png"
 api_key = "0000000000"
-source_img = None
+source_image = None
 # You can fill these in to avoid putting them as args all the time
 imgen_params = {
     "n": 1,
     "width": 64*8,
     "height":64*8,
-    "steps": 50,
+    "steps": 30,
     "denoising_strength": 0.6,
     "sampler_name": "k_lms",
     # Uncomment the below line to pass a specific seed
