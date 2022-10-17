@@ -48,24 +48,64 @@ You can optionally specify only specific servers to generate for you. Grab one o
 
 # Joining the horde
 
-1. Go to this fork of the [stable diffusion webui](https://github.com/sd-webui/stable-diffusion-webui) and follow the install instructions as normal with a few differences:
-1. (Optional step) Before you run webui.sh or webui.cmd. If you do not do this step, you will contribute anonymously.
-   * Make a copy of `scripts/bridgeData_template.py` into `scripts/bridgeData.py`. 
-   * Edit `scripts/bridgeData.py` and put details for your server such as the API key you've received, so that you can receive Kudos. 
-1. Start the software with webui.(cmd|sh) as usual and add the `--bridge` argument
-   * Linux: `webui.sh --bridge`
-   * Windows: `webui.cmd --bridge`
+Anyone can convert their own GPU into a worker which generates images for other people in the horde and gains kudos for doing so. To do so, they need to run a software we call the Horde Bridge, which bridges your Stable Diffusion installation to the Horde via REST API.
 
-# Joining the horde with multiple GPUs
+We have prepared a very simple installation procedure for running the bridge on each OS.
+
+If this is the first time you run the bridge, afterwards continue to the "Initial Setup" section below
+
+## Windows Steps
+1. Go to [this repository](https://github.com/sd-webui/nataili) and download [the zipped version](https://github.com/sd-webui/nataili/archive/refs/heads/main.zip)
+1. Extract it to any folder of your choice
+1. Run `horde-bridge.cmd` by double-clicking on it from your explorer of from a `cmd` terminal.
+
+## Linux Steps
+Open a bash terminal and run these commands (just copy-paste them all together)
+
+```bash
+git clone https://github.com/sd-webui/nataili.git
+cd nataili
+horde-bridge.sh
+```
+
+## Initial Setup
+
+The very first time you run the bridge, after it downloads all the python dependencies, it will take you through a small interactive setup. Simply follow the instructions as you see on the terminal and type your answer to the prompts.
+
+In order for your worker to work, it needs to download a stable diffusion model. To do that, you will need to register a free account at https://huggingface.co. You will need to put your username and password for it when prompted.
+
+Once your models are downloaded, it will ask you to setup your bridgheData.py. Allow it to do so and it will exit. At that point, open `bridgeData.py` with a text editor such as notepad or nano, and simply fill in at least:
+   * Your worker name
+   * Your stable horde API key
+
+Read the comments in this file and fill in the other fields as wanted. 
+
+The simply rerun the `horde-bridge` script and the worker will start accepting job commissions and sending them to the horde
+
+## Updates
+
+The stable horde workers are under constant improvement. In case there is more recent code to use follow these steps to update
+
+1. Open a `powershell`, `cmd` or `bash` terminal depending on your OS
+1. navigate to the folder you have the nataili repository installed
+1. run `git pull`
+
+Afterwards run the `horde-bridge` script for your OS as usual.
+
+## Stopping
+
+To stop the bridge, in the terminal in which it's running, simply press `Ctrl+C` together
+
+## (Re)Starting
+
+In case the bridge is stopped, you can start it by simply running the `horde-bridge` script for your OS
+
+## Joining the horde with multiple GPUs
 
 To use multiple GPUs as with NVLINK workers, each has to start their own webui instance. For linux, you just need to limit the run to a specific card:
 
 ```
-CUDA_VISIBLE_DEVICES=0 ./webui.sh --bridge -n "My awesome instance #1"
-CUDA_VISIBLE_DEVICES=1 ./webui.sh --bridge -n "My awesome instance #2"
+CUDA_VISIBLE_DEVICES=0 ./horde-bridge.sh --bridge -n "My awesome instance #1"
+CUDA_VISIBLE_DEVICES=1 ./horde-bridge.sh --bridge -n "My awesome instance #2"
 ```
 etc
-
-## Advanced Usage: Local + Horde SD
-
-TBD
