@@ -42,8 +42,8 @@ class NameAlreadyExists(wze.BadRequest):
         self.log = f"User '{username}' tried to change worker name from {old_worker_name} to {new_worker_name}. Aborting!"
 
 class ImageValidationFailed(wze.BadRequest):
-    def __init__(self):
-        self.specific = f"Image validation failed. Please ensure the image format sent for img2img is accurate."
+    def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
+        self.specific = f"Image validation failed. {message}"
         self.log = f"Source image validation failed for img2img"
 
 class InvalidAPIKey(wze.Unauthorized):
