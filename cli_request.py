@@ -58,7 +58,7 @@ def generate():
         # We send as WebP to avoid using all the horde bandwidth
         final_src_img.save(buffer, format="Png", quality=90)
         final_submit_dict["source_image"] = base64.b64encode(buffer.getvalue()).decode("utf8")
-    final_submit_dict["source_image"] = 'Test'
+    # final_submit_dict["source_image"] = 'Test'
     headers = {"apikey": final_api_key}
     logger.debug(final_submit_dict)
     submit_req = requests.post(f'{args.horde}/api/v2/generate/async', json = final_submit_dict, headers = headers)
