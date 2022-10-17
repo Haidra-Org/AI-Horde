@@ -195,6 +195,16 @@ class News(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2022-10-17",
+            "newspiece": "Img2img on the horde is now on pilot for trusted users.",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-16",
+            "newspiece": "Yet [another Web UI](https://tinybots.net/artbot) has appeared.",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-10-11",
             "newspiece": "A [new dedicated Web UI](https://aqualxx.github.io/stable-ui/) has enterred the scene!",
             "importance": "Information"

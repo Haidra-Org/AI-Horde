@@ -41,6 +41,11 @@ class NameAlreadyExists(wze.BadRequest):
         self.specific = f"The specified worker name '{new_worker_name}' is already taken!"
         self.log = f"User '{username}' tried to change worker name from {old_worker_name} to {new_worker_name}. Aborting!"
 
+class ImageValidationFailed(wze.BadRequest):
+    def __init__(self):
+        self.specific = f"Image validation failed. Please ensure the image format sent for img2img is accurate."
+        self.log = f"Source image validation failed for img2img"
+
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"

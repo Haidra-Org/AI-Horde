@@ -1,12 +1,31 @@
 from .v2 import *
+import base64
+from io import BytesIO
+from PIL import Image
+
+
+def convert_source_image_to_webp(source_image_b64):
+    '''Convert img2img sources to 90% compressed webp, to avoid wasting bandwidth, while still supporting all types'''
+    try:
+        if source_image_b64 == None:
+            return(source_image_b64)
+        base64_bytes = source_image_b64.encode('utf-8')
+        img_bytes = base64.b64decode(base64_bytes)
+        image = Image.open(BytesIO(img_bytes))
+        buffer = BytesIO()
+        image.save(buffer, format="WebP", quality=90)
+        return(base64.b64encode(buffer.getvalue()).decode("utf8"))
+    except:
+        raise e.ImageValidationFailed
 
 class AsyncGenerate(AsyncGenerate):
     
     def validate(self):
         super().validate()
         # Temporary exception. During trial period only trusted users can use img2img
-        if self.args.source_image and not self.user.trusted:
-            raise e.NotTrusted
+        if self.args.source_image:
+            if not self.user.trusted:
+                raise e.NotTrusted
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:
@@ -36,7 +55,7 @@ class AsyncGenerate(AsyncGenerate):
             censor_nsfw = self.args["censor_nsfw"],
             trusted_workers = self.args["trusted_workers"],
             models = self.models,
-            source_image = self.args.source_image,
+            source_image = convert_source_image_to_webp(self.args.source_image),
         )
     
 class SyncGenerate(SyncGenerate):
@@ -72,7 +91,7 @@ class SyncGenerate(SyncGenerate):
             censor_nsfw = self.args["censor_nsfw"],
             trusted_workers = self.args["trusted_workers"],
             models = self.models,
-            source_image = self.args.source_image,
+            source_image = convert_source_image_to_webp(self.args.source_image),
         )
     
 class JobPop(JobPop):
