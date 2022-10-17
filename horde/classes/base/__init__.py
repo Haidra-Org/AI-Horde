@@ -58,6 +58,8 @@ class WaitingPrompt:
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
+        # We store the original amount of jobs requested as well
+        self.jobs = self.n 
         # This specific per horde so it should be set in the extended class
         self.things = 0
         self.models = kwargs.get("models", ['ReadOnly'])
@@ -459,9 +461,12 @@ class Worker:
             is_matching = False
             skipped_reason = 'blacklist'
         if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
-            logger.debug([len(waiting_prompt.models),self.models,waiting_prompt.models])
             is_matching = False
             skipped_reason = 'models'
+        # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
+        if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
+            is_matching = False
+            skipped_reason = 'performance'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable

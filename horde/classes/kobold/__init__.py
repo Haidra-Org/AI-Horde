@@ -4,6 +4,7 @@ class WaitingPrompt(WaitingPrompt):
 
     def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
+        self.jobs = self.n 
         self.steps = params.pop('steps', 50)
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
