@@ -204,6 +204,11 @@ class News(News):
     STABLE_HORDE_NEWS = [
         {
             "date_published": "2022-10-17",
+            "newspiece": "We now have [a Krita plugin](https://github.com/blueturtleai/krita-stable-diffusion).",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-17",
             "newspiece": "Img2img on the horde is now on pilot for trusted users.",
             "importance": "Information"
         },
