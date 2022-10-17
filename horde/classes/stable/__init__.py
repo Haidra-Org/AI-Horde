@@ -71,17 +71,23 @@ class WaitingPrompt(WaitingPrompt):
                     self.gen_payload["toggles"] = [1, 4, 8]
                 elif 8 not in self.gen_payload["toggles"]:
                     self.gen_payload["toggles"].append(8)
-        # logger.debug(self.gen_payload)
         return(self.gen_payload)
 
     def get_pop_payload(self, procgen):
-        prompt_payload = {
-            "payload": self.get_job_payload(procgen),
-            "id": procgen.id,
-            "model": procgen.model,
-        }
-        if self.source_image and procgen.worker.bridge_version > 2:
-            prompt_payload["source_image"] = self.source_image
+        # This prevents from sending a payload with an ID when there has been an exception inside get_job_payload()
+        payload = self.get_job_payload(procgen)
+        if payload:
+            prompt_payload = {
+                "payload": payload,
+                "id": procgen.id,
+                "model": procgen.model,
+            }
+            if self.source_image and procgen.worker.bridge_version > 2:
+                prompt_payload["source_image"] = self.source_image
+        else:
+            prompt_payload = {}
+            self.faulted = True
+        # logger.debug([payload,prompt_payload])
         return(prompt_payload)
 
     def activate(self):
@@ -98,9 +104,10 @@ class WaitingPrompt(WaitingPrompt):
             return s
         if s is None or s == '':
             return random.randint(0, 2**32 - 1)
-        n = abs(int(s) if s.isdigit() else random.Random(s).randint(0, 2**32 - 1))
+        n = abs(int(s) if s.isdigit() else int.from_bytes(s.encode(), 'little'))
         while n >= 2**32:
             n = n >> 32
+        # logger.debug([s,n])
         return n
 
     def record_usage(self, raw_things, kudos):

@@ -40,6 +40,7 @@ class Models:
             'processing': fields.Integer(description="The amount of still processing images in this request"),
             'waiting': fields.Integer(description="The amount of images waiting to be picked up by a worker"),
             'done': fields.Boolean(description="True when all images in this request are done. Else False."),
+            'faulted': fields.Boolean(default=False,description="True when this request caused an internal server error and cannot be completed."),
             'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all images in this request"),
             'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
         })

@@ -40,7 +40,7 @@ def generate():
         "height": args.height if args.height else crd.imgen_params.get('height',512),
         "steps": args.steps if args.steps else crd.imgen_params.get('steps',50),
     }
-    for p in ["denoising_strength", 'sampler_name']:
+    for p in ["denoising_strength", 'sampler_name', 'seed']:
         if p in crd.imgen_params:
             final_imgen_params[p] = crd.imgen_params[p]
 
@@ -82,6 +82,11 @@ def generate():
             return
         results_json = retrieve_req.json()
         # logger.debug(results_json)
+        if results_json['faulted']:
+            if "source_image" in final_submit_dict:
+                final_submit_dict["source_image"] = f"img2img request with size: {len(final_submit_dict['source_image'])}"
+            logger.error(f"Something went wrong when generating the request. Please contact the horde administrator with your request details: {final_submit_dict}")
+            return
         results = results_json['generations']
         for iter in range(len(results)):
             b64img = results[iter]["img"]

@@ -51,6 +51,7 @@ class WaitingPrompt:
         self.fake_gens = []
         self.last_process_time = datetime.now()
         self.workers = kwargs.get("workers", [])
+        self.faulted = False
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 1200
 
@@ -116,6 +117,8 @@ class WaitingPrompt:
         return(ProcessingGeneration(self, self._processing_generations, worker))
 
     def is_completed(self):
+        if self.faulted:
+            return(True)
         if self.needs_gen():
             return(False)
         for procgen in self.processing_gens:
@@ -143,6 +146,7 @@ class WaitingPrompt:
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         ret_dict["done"] = self.is_completed()
+        ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
         if not lite:
             ret_dict["generations"] = []
