@@ -50,6 +50,7 @@ def generate():
         "nsfw": args.nsfw if args.nsfw else crd.submit_dict.get("nsfw", False),
         "censor_nsfw": args.censor_nsfw if args.censor_nsfw else crd.submit_dict.get("censor_nsfw", True),
         "trusted_workers": args.trusted_workers if args.trusted_workers else crd.submit_dict.get("trusted_workers", True),
+        "models": crd.submit_dict.get("models", ["stable_diffusion"])
     }
     final_src_img = args.source_image if args.source_image else crd.source_image
     if final_src_img:
