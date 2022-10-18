@@ -1,6 +1,6 @@
 # Stable Horde
 
-<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Stable Diffusion workers](https://github.com/db0/stable-diffusion-webui). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md)!
+<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Stable Diffusion workers](https://github.com/sd-webui/nataili). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md)!
 
 For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
 
@@ -11,7 +11,7 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 ## Stats 
 
 * Average Recent Performance: {avg_performance} {avg_thing_name} per second
-* Total GPS generated: {total_things} {total_things_name}
+* Total generated: {total_things} {total_things_name}
 * Total requests fulfilled: {total_fulfillments}{total_fulfillments_char}
 * Active [Workers](/api/v2/workers): {active_workers}
 * Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}

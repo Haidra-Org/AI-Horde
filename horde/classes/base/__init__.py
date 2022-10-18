@@ -43,6 +43,8 @@ class WaitingPrompt:
         self.params = params
         self.total_usage = 0
         self.nsfw = kwargs.get("nsfw", False)
+        self.ipaddr = kwargs.get("ipaddr", None)
+        self.safe_ip = True
         self.trusted_workers = kwargs.get("trusted_workers", False)
         self.extract_params(params, **kwargs)
         self.id = str(uuid4())
@@ -94,6 +96,7 @@ class WaitingPrompt:
         self.processing_gens.append(new_gen)
         self.n -= 1
         self.refresh()
+        logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
         return(self.get_pop_payload(new_gen))
 
     def fake_generation(self, worker):
@@ -257,7 +260,7 @@ class ProcessingGeneration:
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        things_per_sec = self.owner.db.stats.record_fulfilment(self.owner.things, self.start_time)
+        things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
         if self.fake and self.worker.user != self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
@@ -296,9 +299,10 @@ class ProcessingGeneration:
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''
         ret_dict = {
-            "gen": procgen.generation,
-            "worker_id": procgen.worker.id,
-            "worker_name": procgen.worker.name,
+            "gen": self.generation,
+            "worker_id": self.worker.id,
+            "worker_name": self.worker.name,
+            "model": self.model,
         }
         return(ret_dict)
 
@@ -463,17 +467,18 @@ class Worker:
         if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
             is_matching = False
             skipped_reason = 'models'
-        # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
-        if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
-            is_matching = False
-            skipped_reason = 'performance'
+        # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
+        # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
+        # if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
+        #     is_matching = False
+        #     skipped_reason = 'performance'
         return([is_matching,skipped_reason])
 
     # We split it to its own function to make it extendable
     def convert_contribution(self,raw_things):
         self.contributions = round(self.contributions + raw_things/thing_divisor,2)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def record_contribution(self, raw_things, kudos, things_per_sec):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
@@ -522,7 +527,7 @@ class Worker:
 
 
     # Should be extended by each specific horde
-    @logger.catch
+    @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
         ret_dict = {
@@ -547,7 +552,7 @@ class Worker:
         return(ret_dict)
 
     # Should be extended by each specific horde
-    @logger.catch
+    @logger.catch(reraise=True)
     def serialize(self):
         ret_dict = {
             "oauth_id": self.user.oauth_id,
@@ -571,7 +576,7 @@ class Worker:
         }
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def deserialize(self, saved_dict, convert_flag = None):
         self.user = self.db.find_user_by_oauth_id(saved_dict["oauth_id"])
         self.name = saved_dict["name"]
@@ -782,12 +787,17 @@ class User:
         return("OK")
 
     def set_trusted(self,is_trusted):
+        # Anonymous can never be trusted
+        if self.is_anon():
+            return
         self.trusted = is_trusted
         if self.trusted:
             for worker in self.get_workers():
                 worker.paused = False
 
     def set_moderator(self,is_moderator):
+        if self.is_anon():
+            return
         self.moderator = is_moderator
         if self.moderator:
             logger.warning(f"{self.username} Set as moderator")
@@ -806,7 +816,7 @@ class User:
         self.last_active = datetime.now()
         self.contributions["fulfillments"] += 1
         # While a worker is untrusted, half of all generated kudos go for evaluation
-        if not self.trusted:
+        if not self.trusted and not self.is_anon():
             kudos_eval = round(kudos / 2)
             kudos -= kudos_eval
             self.evaluating_kudos += kudos_eval
@@ -819,7 +829,7 @@ class User:
     def record_uptime(self, kudos):
         self.last_active = datetime.now()
         # While a worker is untrusted, all uptime kudos go for evaluation
-        if not self.trusted:
+        if not self.trusted and not self.is_anon():
             self.evaluating_kudos += kudos
             self.check_for_trust()
         else:
@@ -830,7 +840,7 @@ class User:
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         '''
-        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious():
+        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious() and not self.is_anon():
             self.modify_kudos(self.evaluating_kudos,"accumulated")
             self.evaluating_kudos = 0
             self.set_trusted(True)
@@ -875,7 +885,7 @@ class User:
     def ensure_kudos_positive(self):
         if self.kudos < 0 and self.is_anon():
             self.kudos = 0
-        elif self.kudos < 1 and self.is_pseudonymus():
+        elif self.kudos < 1 and self.is_pseudonymous():
             self.kudos = 1
         elif self.kudos < 2:
             self.kudos = 2
@@ -885,14 +895,14 @@ class User:
             return(True)
         return(False)
 
-    def is_pseudonymus(self):
+    def is_pseudonymous(self):
         try:
             uuid.UUID(str(self.oauth_id))
             return(True)
         except ValueError:
             return(False)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         ret_dict = {
             "username": self.get_unique_alias(),
@@ -906,6 +916,7 @@ class User:
             "moderator": self.moderator,
             "trusted": self.trusted,
             "suspicious": self.suspicious,
+            "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
@@ -981,7 +992,7 @@ class User:
             return(False)
         return(True)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def serialize(self):
         serialized_monthly_kudos = {
             "amount": self.monthly_kudos["amount"],
@@ -1014,7 +1025,7 @@ class User:
         }
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def deserialize(self, saved_dict, convert_flag = None):
         self.username = saved_dict["username"]
         self.oauth_id = saved_dict["oauth_id"]
@@ -1054,10 +1065,23 @@ class User:
             self.kudos = recalc_kudos + self.kudos_details.get('admin',0) + self.kudos_details.get('received',0) - self.kudos_details.get('gifted',0)
             self.kudos_details['accumulated'] = recalc_kudos
         self.ensure_kudos_positive()
+        duplicate_user = self.db.find_user_by_id(self.id)
+        if duplicate_user:
+            if duplicate_user.get_unique_alias() != self.get_unique_alias():
+                logger.error(f"mismatching duplicate IDs found! {self.get_unique_alias()} != {duplicate_user.get_unique_alias()}. Please cleanup manually!")
+            else:
+                logger.warning(f"found duplicate ID: {self.get_unique_alias()}")
+                duplicate_user.kudos += self.kudos
+                if duplicate_user.last_active < self.last_active:
+                    logger.warning(f"Merging {self.oauth_id} into {duplicate_user.oauth_id}")
+                    duplicate_user.oauth_id = self.oauth_id
+                return(True)
+
 
 
 class Stats:
     worker_performances = []
+    model_performances = {}
     fulfillments = []
 
     def __init__(self, db, convert_flag = None, interval = 60):
@@ -1065,7 +1089,7 @@ class Stats:
         self.interval = interval
         self.last_pruning = datetime.now()
 
-    def record_fulfilment(self, things, starting_time):
+    def record_fulfilment(self, things, starting_time, model):
         seconds_taken = (datetime.now() - starting_time).seconds
         if seconds_taken == 0:
             things_per_sec = 1
@@ -1074,6 +1098,11 @@ class Stats:
         if len(self.worker_performances) >= 10:
             del self.worker_performances[0]
         self.worker_performances.append(things_per_sec)
+        if model not in self.model_performances:
+            self.model_performances[model] = []
+        self.model_performances[model].append(things_per_sec)
+        if len(self.model_performances[model]) >= 10:
+            del self.model_performances[model][0]
         fulfillment_dict = {
             raw_thing_name: things,
             "start_time": starting_time,
@@ -1102,7 +1131,13 @@ class Stats:
         avg = sum(self.worker_performances) / len(self.worker_performances)
         return(round(avg,1))
 
-    @logger.catch
+    def get_model_avg(self, model):
+        if len(self.model_performances.get(model,[])) == 0:
+            return(0)
+        avg = sum(self.model_performances[model]) / len(self.model_performances[model])
+        return(round(avg,1))
+
+    @logger.catch(reraise=True)
     def serialize(self):
         serialized_fulfillments = []
         for fulfillment in self.fulfillments.copy():
@@ -1114,17 +1149,19 @@ class Stats:
             serialized_fulfillments.append(json_fulfillment)
         ret_dict = {
             "worker_performances": self.worker_performances,
+            "model_performances": self.model_performances,
             "fulfillments": serialized_fulfillments,
         }
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def deserialize(self, saved_dict, convert_flag = None):
         # Convert old key
         if "server_performances" in saved_dict:
             self.worker_performances = saved_dict["server_performances"]
         else:
             self.worker_performances = saved_dict["worker_performances"]
+        self.model_performances = saved_dict.get("model_performances", {})
         deserialized_fulfillments = []
         for fulfillment in saved_dict.get("fulfillments", []):
             class_fulfillment = {
@@ -1147,6 +1184,8 @@ class Database:
         self.stats = self.new_stats()
         self.USERS_FILE = "db/users.json"
         self.users = {}
+        # I'm setting this quickly here so that we do not crash when trying to detect duplicate IDs, during user deserialization
+        self.anon = None
         # Increments any time a new user is added
         # Is appended to usernames, to ensure usernames never conflict
         self.last_user_id = 0
@@ -1161,7 +1200,9 @@ class Database:
                         logger.error("Found null user on db load. Bypassing")
                         continue
                     new_user = self.new_user()
-                    new_user.deserialize(user_dict,convert_flag)
+                    error = new_user.deserialize(user_dict,convert_flag)
+                    if error:
+                        continue
                     if new_user.is_stale():
                         logger.warning(f"(Dry-Run) Deleting stale user {new_user.get_unique_alias()}")
                     self.users[new_user.oauth_id] = new_user
@@ -1214,7 +1255,7 @@ class Database:
             self.write_files_to_disk()
             time.sleep(self.interval)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def write_files_to_disk(self):
         if not os.path.exists('db'):
             os.mkdir('db')
@@ -1323,7 +1364,7 @@ class Database:
     def find_user_by_id(self, user_id):
         for user in self.users.values():
             # The arguments passed to the URL are always strings
-            if str(user.id) == user_id:
+            if str(user.id) == str(user_id):
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
                 return(user)
@@ -1351,10 +1392,14 @@ class Database:
         for worker in self.workers.values():
             if worker.is_stale():
                 continue
+            model_name = None
+            if not worker.models: continue
             for model_name in worker.models:
+                if not model_name: continue
                 mode_dict_template = {
                     "name": model_name,
                     "count": 0,
+                    "performance": self.stats.get_model_avg(model_name),
                 }
                 models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
                 models_dict[model_name]["count"] += 1

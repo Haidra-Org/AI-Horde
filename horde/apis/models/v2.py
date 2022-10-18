@@ -10,7 +10,6 @@ class Parsers:
     generate_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
     generate_parser.add_argument("workers", type=list, required=False, help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
     generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
-    generate_parser.add_argument("models", type=list, required=False, help="The acceptable models with which to generate", location="json")
 
     # The parser for RequestPop
     job_pop_parser = reqparse.RequestParser()
@@ -34,6 +33,7 @@ class Models:
         self.response_model_generation_result = api.model('Generation', {
             'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
             'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
+            'model': fields.String(title="Generation Model", description="The model which generated this image"),
         })
         self.response_model_wp_status_lite = api.model('RequestStatusCheck', {
             'finished': fields.Integer(description="The amount of finished images in this request"),
@@ -154,6 +154,7 @@ class Models:
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
+            "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             # I need to pass these two via inheritabce, or they take over
             # "usage": fields.Nested(self.response_model_use_details),
             # "contributions": fields.Nested(self.response_model_contrib_details),
@@ -163,7 +164,7 @@ class Models:
             "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
             "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
-            "worker_invited": fields.Integer(example=1,description="This userWhether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
+            "worker_invited": fields.Integer(example=1,description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
             "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
             "username": fields.String(example='username#1',description="The user's new username."),
@@ -191,11 +192,12 @@ class Models:
         self.response_model_error = api.model('RequestError', {
             'message': fields.String(description="The error message for this status code."),
         })
-        self.response_model_model = api.model('Model', {
+        self.response_model_active_model = api.model('ActiveModel', {
             'name': fields.String(description="The Name of a model available by workers in this horde."),
             'count': fields.Integer(description="How many of workers in this horde are running this model."),
+            'performance': fields.Float(description="The average speed of generation for this model"),
         })
-        self.response_model_deleted_worker = api.model('Model', {
+        self.response_model_deleted_worker = api.model('DeletedWorker', {
             'deleted_id': fields.String(description="The ID of the deleted worker"),
             'deleted_name': fields.String(description="The Name of the deleted worker"),
         })

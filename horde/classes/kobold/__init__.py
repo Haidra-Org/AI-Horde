@@ -31,7 +31,7 @@ class WaitingPrompt(WaitingPrompt):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
-        logger.info(f"New prompt by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
+        logger.info(f"New prompt with ID {self.id} by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
 
     def new_procgen(self, worker):
         return(ProcessingGeneration(self, self._processing_generations, worker))
@@ -65,7 +65,7 @@ class Worker(Worker):
         self.softprompts = softprompts
         logger.debug(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def calculate_uptime_reward(self):
         return(round(self.db.stats.calculate_model_multiplier(self.models[0]) * 25 / 2.75, 2))
 
@@ -102,14 +102,14 @@ class Worker(Worker):
         ret_dict["max_content_length"] = self.max_content_length
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def serialize(self):
         ret_dict = super().serialize()
         ret_dict["max_length"] = self.max_length
         ret_dict["max_content_length"] = self.max_content_length
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def deserialize(self, saved_dict, convert_flag = None):
         super().deserialize(saved_dict, convert_flag)
         self.max_length = saved_dict["max_length"]

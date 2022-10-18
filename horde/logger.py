@@ -76,6 +76,7 @@ logger.level("INIT", no=31, color="<white>")
 logger.level("INIT_OK", no=31, color="<green>")
 logger.level("INIT_WARN", no=31, color="<yellow>")
 logger.level("INIT_ERR", no=31, color="<red>")
+logger.level("AUDIT", no=19, color="<blue>")
 # Messages contain important information without which this application might not be able to be used
 # As such, they have the highest priority
 logger.level("MESSAGE", no=61, color="<green>")
@@ -87,6 +88,7 @@ logger.__class__.init_ok = partialmethod(logger.__class__.log, "INIT_OK")
 logger.__class__.init_warn = partialmethod(logger.__class__.log, "INIT_WARN")
 logger.__class__.init_err = partialmethod(logger.__class__.log, "INIT_ERR")
 logger.__class__.message = partialmethod(logger.__class__.log, "MESSAGE")
+logger.__class__.audit = partialmethod(logger.__class__.log, "AUDIT")
 
 config = {
     "handlers": [
@@ -97,7 +99,7 @@ config = {
     ],
 }
 logger.configure(**config)
-logger.add("horde.log", retention="7 days", level=30)
+logger.add("horde.log", retention="7 days", level=19)
 logger.disable("__main__")
 logger.warning("disabled")
 logger.enable("")

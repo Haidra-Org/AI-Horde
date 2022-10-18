@@ -15,7 +15,7 @@ else:
 
 def set_safe(ipaddr, is_safe):
 	'''Stores the safety of the IP in redis temporarily'''
-	r.setex(ipaddr, timedelta(hours=6), int(is_safe))
+	r.setex(ipaddr, timedelta(hours=24), int(is_safe))
 	return(is_safe)
 
 def get_safe(ipaddr):
@@ -34,7 +34,7 @@ def is_ip_safe(ipaddr):
 	# If we don't have the cache up, it's always OK
 	if not r:
 		return(True)
-	safety_threshold=0.99
+	safety_threshold=0.95
 	timeout=2.00
 	is_safe = get_safe(ipaddr)
 	if is_safe == None:

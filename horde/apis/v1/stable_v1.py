@@ -47,7 +47,7 @@ class ServerErrors(Enum):
     MAINTENANCE_MODE = 10
     NOT_OWNER = 11
 
-@logger.catch
+@logger.catch(reraise=True)
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_API_KEY:
         logger.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
@@ -157,7 +157,7 @@ class SyncGenerate(Resource):
 
 class AsyncStatus(Resource):
     decorators = [limiter.limit("2/minute", key_func = get_request_path)]
-    @logger.catch
+    @logger.catch(reraise=True)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
@@ -173,7 +173,7 @@ class AsyncStatus(Resource):
 class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
     decorators = [limiter.limit("10/second")]
-    @logger.catch
+    @logger.catch(reraise=True)
     def get(self, id = ''):
         wp = waiting_prompts.get_item(id)
         if not wp:
@@ -353,7 +353,7 @@ class AdminMaintenanceMode(Resource):
         return({"maintenance_mode": maintenance.active}, 200)
 
 class Servers(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     def get(self):
         servers_ret = []
         for server in _db.workers.values():
@@ -375,7 +375,7 @@ class Servers(Resource):
         return(servers_ret,200)
 
 class ServerSingle(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     def get(self, server_id = ''):
         server = _db.find_worker_by_id(server_id)
         if server:
@@ -453,7 +453,7 @@ class ServerSingle(Resource):
 
 
 class Users(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     def get(self):
         user_dict = {}
         for user in _db.users.values():
@@ -469,7 +469,7 @@ class Users(Resource):
 
 
 class UserSingle(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     def get(self, user_id = ''):
         logger.debug(user_id)
         user = _db.find_user_by_id(user_id)
@@ -519,7 +519,7 @@ class UserSingle(Resource):
 
 
 class HordeLoad(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     def get(self):
         load_dict = waiting_prompts.count_totals()
         load_dict["megapixelsteps_per_min"] = _db.stats.get_things_per_min()

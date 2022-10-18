@@ -54,7 +54,11 @@ class AsyncGenerate(AsyncGenerate):
         # Temporary exception. During trial period only trusted users can use img2img
         if self.args.source_image:
             if not self.user.trusted:
-                raise e.NotTrusted
+                self.safe_ip = cm.is_ip_safe(self.user_ip)
+                # We allow unsafe IPs when being rate limited as they're only temporary
+                if self.safe_ip == False:
+                    self.safe_ip = False
+                    raise e.NotTrusted
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:
@@ -65,6 +69,8 @@ class AsyncGenerate(AsyncGenerate):
             raise e.InvalidSize(self.username)
         if self.params.get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
+        if len(self.args['prompt'].split()) > 80:
+            raise e.InvalidPromptSize(self.username)
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
@@ -85,6 +91,7 @@ class AsyncGenerate(AsyncGenerate):
             trusted_workers = self.args["trusted_workers"],
             models = self.models,
             source_image = convert_source_image_to_webp(self.args.source_image),
+            ipaddr = self.user_ip,
         )
     
 class SyncGenerate(SyncGenerate):
@@ -92,8 +99,13 @@ class SyncGenerate(SyncGenerate):
     def validate(self):
         super().validate()
         # Temporary exception. During trial period only trusted users can use img2img
-        if self.args.source_image and not self.user.trusted:
-            raise e.NotTrusted
+        if self.args.source_image:
+            if not self.user.trusted:
+                self.safe_ip = cm.is_ip_safe(self.user_ip)
+                # We allow unsafe IPs when being rate limited as they're only temporary
+                if self.safe_ip == False:
+                    self.safe_ip = False
+                    raise e.NotTrusted
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:
@@ -104,6 +116,8 @@ class SyncGenerate(SyncGenerate):
             raise e.InvalidSize(self.username)
         if self.params.get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.params['steps'])
+        if len(self.args['prompt'].split()) > 80:
+            raise e.InvalidPromptSize(self.username)
 
     
     # We split this into its own function, so that it may be overriden
@@ -121,6 +135,7 @@ class SyncGenerate(SyncGenerate):
             trusted_workers = self.args["trusted_workers"],
             models = self.models,
             source_image = convert_source_image_to_webp(self.args.source_image),
+            ipaddr = self.user_ip,
         )
     
 class JobPop(JobPop):
@@ -134,12 +149,14 @@ class JobPop(JobPop):
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
             bridge_version = self.args["bridge_version"],
+            allow_img2img = self.args["allow_img2img"],
+            allow_unsafe_ipaddr = self.args["allow_unsafe_ipaddr"],
         )
   
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
     # When we extend the actual method, we need to re-apply the decorators
-    @logger.catch
+    @logger.catch(reraise=True)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
     def get(self):
         '''Details about the current performance of this Horde
@@ -168,4 +185,5 @@ api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
 api.add_resource(HordeModes, "/status/modes")
 api.add_resource(HordeLoad, "/status/performance")
+api.add_resource(Models, "/status/models")
 api.add_resource(HordeNews, "/status/news")

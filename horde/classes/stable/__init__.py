@@ -2,7 +2,7 @@ from ..base import *
 
 class WaitingPrompt(WaitingPrompt):
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def extract_params(self, params, **kwargs):
         self.n = params.pop('n', 1)
         self.jobs = self.n 
@@ -22,7 +22,7 @@ class WaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.source_image = kwargs.get("source_image", None)
-        self.models = kwargs.get("models", ['ReadOnly'])
+        self.models = kwargs.get("models", ['stable_diffusion'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
         if 'seed' in params and params['seed'] != None:
@@ -35,7 +35,7 @@ class WaitingPrompt(WaitingPrompt):
 
         self.prepare_job_payload(params)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = initial_dict
@@ -45,7 +45,7 @@ class WaitingPrompt(WaitingPrompt):
         self.gen_payload["ddim_steps"] = self.steps
         self.gen_payload["seed"] = self.seed
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
         if self.seed_variation and self.generations_done > 0:
             self.gen_payload["seed"] += self.seed_variation
@@ -55,7 +55,7 @@ class WaitingPrompt(WaitingPrompt):
             # logger.error(self.seed)
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
             self.generations_done += 1
-        if procgen.worker.bridge_version == 2:
+        if procgen.worker.bridge_version >= 2:
             self.gen_payload["use_gfpgan"] = self.use_gfpgan
             self.gen_payload["use_real_esrgan"] = self.use_real_esrgan
             self.gen_payload["use_ldsr"] = self.use_ldsr
@@ -72,6 +72,8 @@ class WaitingPrompt(WaitingPrompt):
                     self.gen_payload["toggles"] = [1, 4, 8]
                 elif 8 not in self.gen_payload["toggles"]:
                     self.gen_payload["toggles"].append(8)
+            if "denoising_strength" in self.gen_payload:
+                del self.gen_payload["denoising_strength"]
         return(self.gen_payload)
 
     def get_pop_payload(self, procgen):
@@ -95,7 +97,10 @@ class WaitingPrompt(WaitingPrompt):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
-        logger.info(f"New prompt by {self.user.get_unique_alias()}: w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
+        prompt_type = "txt2img"
+        if self.source_image:
+            prompt_type = "img2img"
+        logger.info(f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
 
     def new_procgen(self, worker):
         return(ProcessingGeneration(self, self._processing_generations, worker))
@@ -138,6 +143,10 @@ class Worker(Worker):
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
         self.max_pixels = max_pixels
+        self.allow_img2img = kwargs.get('allow_img2img', True)
+        self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
+        if len(self.models) == 0:
+            self.models = ['stable_diffusion']
         paused_string = ''
         if self.paused:
             paused_string = '(Paused) '
@@ -157,29 +166,44 @@ class Worker(Worker):
             skipped_reason = 'max_pixels'
         if waiting_prompt.source_image and self.bridge_version < 2:
             is_matching = False
-            skipped_reason = 'worker_id'
+            skipped_reason = 'img2img'
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
         if waiting_prompt.gen_payload.get('sampler_name', 'k_euler') in ['DDIM', 'PLMS'] and self.bridge_version == 3:
             is_matching = False
             skipped_reason = 'worker_id'
+        if waiting_prompt.source_image and not self.allow_img2img:
+            is_matching = False
+            skipped_reason = 'img2img'
+        if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
+            is_matching = False
+            skipped_reason = 'unsafe_ip'
         return([is_matching,skipped_reason])
 
     def get_details(self, is_privileged = False):
         ret_dict = super().get_details(is_privileged)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
+        allow_img2img = self.allow_img2img
+        if self.bridge_version < 3: allow_img2img = False
+        ret_dict["img2img"] = allow_img2img
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def serialize(self):
         ret_dict = super().serialize()
         ret_dict["max_pixels"] = self.max_pixels
+        ret_dict["allow_img2img"] = self.allow_img2img
+        ret_dict["allow_unsafe_ipaddr"] = self.allow_unsafe_ipaddr
         return(ret_dict)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def deserialize(self, saved_dict, convert_flag = None):
         super().deserialize(saved_dict, convert_flag)
+        if not self.models or len(self.models) == 0 or None in self.models:
+            self.models = ['stable_diffusion']
         self.max_pixels = saved_dict["max_pixels"]
+        self.allow_img2img = saved_dict.get("allow_img2img", True)
+        self.allow_unsafe_ipaddr = saved_dict.get("allow_unsafe_ipaddr", True)
         if convert_flag == 'pixelsteps':
             self.contributions = round(self.contributions / 50,2)
 
@@ -202,6 +226,16 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-21",
+            "newspiece": "Image 2 Image is now available for everyone!",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-20",
+            "newspiece": "Stable Diffusion 1.5 is now available!",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-10-17",
             "newspiece": "We now have [a Krita plugin](https://github.com/blueturtleai/krita-stable-diffusion).",

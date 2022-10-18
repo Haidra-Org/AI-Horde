@@ -32,6 +32,10 @@ If you do not want to login even with a pseudonymous account, you can use this s
 
 The point of registering is to track your usage and your contributions. The more you contribute to the Horde, the more priority you have. [Read about this here](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/)
 
+# Community
+
+If you have any questions or feedback, we have a vibrant community on [discord](https://discord.gg/3DxrhksKzn)
+
 # Horde-Specific Information
 
 Please see the individual readmes for each specific mode supported by the AI Horde.

@@ -6,7 +6,10 @@ class Parsers(v2.Parsers):
     def __init__(self):
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
+        self.generate_parser.add_argument("models", type=list, required=False, default=['stable_diffusion'], help="The acceptable models with which to generate", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
+        self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
+        self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
 
 class Models(v2.Models):
@@ -23,7 +26,7 @@ class Models(v2.Models):
         })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False, default='k_euler',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
-            'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Special Toggles used in the SD Webui. To be documented."), 
+            'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Obsolete Toggles used in the SD Webui. To be removed. Do not modify unless you know what you're doing."), 
             'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
             'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0, multiple=0.01), 
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
@@ -48,6 +51,8 @@ class Models(v2.Models):
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
+            'unsafe_ip': fields.Integer(description="How many waiting requests were skipped because they came from an unsafe IP"),
+            'img2img': fields.Integer(description="How many waiting requests were skipped because they requested img2img"),
         })
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
@@ -58,6 +63,8 @@ class Models(v2.Models):
         })
         self.input_model_job_pop = api.inherit('PopInputStable', self.input_model_job_pop, {
             'max_pixels': fields.Integer(default=512*512,description="The maximum amount of pixels this worker can generate"), 
+            'allow_img2img': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests"),
+            'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
         })
 
         self.input_model_request_generation = api.model('GenerationInput', {
@@ -73,6 +80,7 @@ class Models(v2.Models):
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),
             "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
+            'img2img': fields.Boolean(default=True,description="If True, this worker supports and allows img2img requests."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),

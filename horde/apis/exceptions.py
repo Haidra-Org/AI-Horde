@@ -21,6 +21,11 @@ class InvalidSize(wze.BadRequest):
         self.specific = "Invalid size. The image dimentions have to be multiples of 64."
         self.log = f"User '{username}' sent an invalid size. Aborting!"
 
+class InvalidPromptSize(wze.BadRequest):
+    def __init__(self, username):
+        self.specific = "Invalid prompt. It can contain a maximum of 80 words."
+        self.log = f"User '{username}' sent an invalid size. Aborting!"
+
 class TooManySteps(wze.BadRequest):
     def __init__(self, username, steps):
         self.specific = "Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps."

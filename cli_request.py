@@ -30,7 +30,7 @@ imgen_params = {
 submit_dict = {
 }
 
-@logger.catch
+@logger.catch(reraise=True)
 def generate():
     final_filename = args.filename if args.filename else crd.filename
     final_api_key = args.api_key if args.api_key else crd.api_key
@@ -40,7 +40,7 @@ def generate():
         "height": args.height if args.height else crd.imgen_params.get('height',512),
         "steps": args.steps if args.steps else crd.imgen_params.get('steps',50),
     }
-    for p in ["denoising_strength", 'sampler_name', 'seed']:
+    for p in ["denoising_strength", 'sampler_name', 'seed', 'cfg_scale']:
         if p in crd.imgen_params:
             final_imgen_params[p] = crd.imgen_params[p]
 

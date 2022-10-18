@@ -105,7 +105,7 @@ In case the bridge is stopped, you can start it by simply running the `horde-bri
 To use multiple GPUs as with NVLINK workers, each has to start their own webui instance. For linux, you just need to limit the run to a specific card:
 
 ```
-CUDA_VISIBLE_DEVICES=0 ./horde-bridge.sh --bridge -n "My awesome instance #1"
-CUDA_VISIBLE_DEVICES=1 ./horde-bridge.sh --bridge -n "My awesome instance #2"
+CUDA_VISIBLE_DEVICES=0 ./horde-bridge.sh -n "My awesome instance #1"
+CUDA_VISIBLE_DEVICES=1 ./horde-bridge.sh -n "My awesome instance #2"
 ```
 etc

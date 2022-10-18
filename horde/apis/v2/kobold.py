@@ -86,7 +86,7 @@ class JobPop(JobPop):
 class HordeLoad(HordeLoad):
     decorators = [limiter.limit("2/second")]
     # When we extend the actual method, we need to re-apply the decorators
-    @logger.catch
+    @logger.catch(reraise=True)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
     def get(self):
         '''Details about the current performance of this Horde
@@ -94,16 +94,6 @@ class HordeLoad(HordeLoad):
         load_dict = super().get()[0]
         load_dict["past_minute_tokens"] = db.stats.get_things_per_min()
         return(load_dict,200)
-
-class Models(Resource):
-    decorators = [limiter.limit("30/minute")]
-    @logger.catch
-    @api.marshal_with(models.response_model_model, code=200, description='List All Active Models', as_list=True)
-    def get(self):
-        '''Returns a list of models active currently in this horde
-        '''
-        return(db.get_available_models(),200)
-
 
 api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")

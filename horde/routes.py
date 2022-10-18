@@ -14,7 +14,7 @@ from .utils import ConvertAmount, is_profane
 
 dance_return_to = '/'
 
-@logger.catch
+@logger.catch(reraise=True)
 @HORDE.route('/')
 def index():
     with open(f'index_{args.horde}.md') as index_file:
@@ -108,7 +108,7 @@ This is the worker which has generated the most pixels for the horde.
     return(head + markdown(findex + top_contributors + policies))
 
 
-@logger.catch
+@logger.catch(reraise=True)
 def get_oauth_id():
     google_data = None
     discord_data = None
@@ -145,7 +145,7 @@ def get_oauth_id():
     return(oauth_id)
 
 
-@logger.catch
+@logger.catch(reraise=True)
 @HORDE.route('/register', methods=['GET', 'POST'])
 def register():
     api_key = None
@@ -188,7 +188,7 @@ def register():
                            oauth_id=oauth_id)
 
 
-@logger.catch
+@logger.catch(reraise=True)
 @HORDE.route('/transfer', methods=['GET', 'POST'])
 def transfer():
     src_api_key = None

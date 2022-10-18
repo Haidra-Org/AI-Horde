@@ -24,6 +24,7 @@ parsers = ParsersV2()
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
+handle_invalid_prompt_size = api.errorhandler(e.InvalidPromptSize)(e.handle_bad_requests)
 handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
 handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
 handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
@@ -75,6 +76,9 @@ class GenerateTemplate(Resource):
             self.workers = self.args.workers
         self.username = 'Anonymous'
         self.user = None
+        self.user_ip = request.remote_addr
+        # For now this is checked on validate()
+        self.safe_ip = True
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
@@ -344,7 +348,11 @@ class JobPop(Resource):
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
-        self.worker.check_in(nsfw = self.args['nsfw'], blacklist = self.args['blacklist'], safe_ip = self.safe_ip, ipaddr = self.worker_ip)
+        self.worker.check_in(
+            nsfw = self.args['nsfw'], 
+            blacklist = self.args['blacklist'], 
+            safe_ip = self.safe_ip, 
+            ipaddr = self.worker_ip)
 
 
 class JobSubmit(Resource):
@@ -402,7 +410,7 @@ class TransferKudos(Resource):
         return({"transfered": kudos}, 200)
 
 class Workers(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True, skip_none=True)
     def get(self):
         '''A List with the details of all registered and active workers
@@ -694,9 +702,20 @@ class FindUser(Resource):
             raise e.UserNotFound(self.args.apikey, 'api_key')
         return(user.get_details(1),200)
 
+
+class Models(Resource):
+    decorators = [limiter.limit("30/minute")]
+    @logger.catch(reraise=True)
+    @api.marshal_with(models.response_model_active_model, code=200, description='List All Active Models', as_list=True)
+    def get(self):
+        '''Returns a list of models active currently in this horde
+        '''
+        return(db.get_available_models(),200)
+
+
 class HordeLoad(Resource):
     decorators = [limiter.limit("20/minute")]
-    @logger.catch
+    @logger.catch(reraise=True)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
         '''Details about the current performance of this Horde
@@ -706,7 +725,7 @@ class HordeLoad(Resource):
         return(load_dict,200)
 
 class HordeNews(Resource):
-    @logger.catch
+    @logger.catch(reraise=True)
     @api.marshal_with(models.response_model_newspiece, code=200, description='Horde News', as_list = True)
     def get(self):
         '''Read the latest happenings on the horde
