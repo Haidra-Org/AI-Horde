@@ -23,7 +23,7 @@ I have provided a small python script with which you can use to call the horde.
 
 You can use `./cli_requests.py -h` to see the command line arguments to use
 
-You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
+You can make a copy of `cliRequestsData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
 
 ## REST API
 
