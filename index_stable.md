@@ -52,6 +52,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
     * [Telegram Bot](https://t.me/CraiyonArtBot)
     * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
     * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)
+    * [npm SDK](https://github.com/ZeldaFan0225/stable_horde)
     * [Horde Leaderboard](https://aqualxx.github.io/Horde-Overseer/)
 
 
