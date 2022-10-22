@@ -250,6 +250,7 @@ class JobPop(Resource):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
     @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
+    @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
@@ -361,7 +362,7 @@ class JobSubmit(Resource):
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
     @api.response(400, 'Generation Already Submitted', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(402, 'Access Denied', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     @api.response(404, 'Request Not Found', models.response_model_error)
     def post(self):
         '''Submit a generated image.
@@ -430,6 +431,8 @@ class WorkerSingle(Resource):
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Worker Details', skip_none=True)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     @api.response(404, 'Worker Not Found', models.response_model_error)
     def get(self, worker_id = ''):
         '''Details of a registered worker
@@ -463,7 +466,7 @@ class WorkerSingle(Resource):
     @api.marshal_with(models.response_model_worker_modify, code=200, description='Modify Worker', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(402, 'Access Denied', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     @api.response(404, 'Worker Not Found', models.response_model_error)
     def put(self, worker_id = ''):
         '''Put the worker into maintenance or pause mode
@@ -529,7 +532,7 @@ class WorkerSingle(Resource):
     @api.expect(delete_parser)
     @api.marshal_with(models.response_model_deleted_worker, code=200, description='Delete Worker')
     @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(402, 'Access Denied', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     @api.response(404, 'Worker Not Found', models.response_model_error)
     def delete(self, worker_id = ''):
         '''Delete the worker entry
@@ -612,7 +615,7 @@ class UserSingle(Resource):
     @api.marshal_with(models.response_model_user_modify, code=200, description='Modify User', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(402, 'Access Denied', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     @api.response(404, 'Worker Not Found', models.response_model_error)
     def put(self, user_id = ''):
         '''Endpoint for horde admins to perform operations on users
@@ -772,7 +775,7 @@ class HordeModes(Resource):
     @api.expect(parser)
     @api.marshal_with(models.response_model_horde_modes, code=200, description='Maintenance Mode Set', skip_none=True)
     @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(402, 'Access Denied', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def put(self):
         '''Change Horde Modes
         Endpoint for admins to (un)set the horde into maintenance, invite_only or raid modes.
