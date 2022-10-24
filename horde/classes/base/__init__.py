@@ -915,7 +915,6 @@ class User:
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
             "trusted": self.trusted,
-            "suspicious": self.suspicious,
             "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
             # unnecessary information, since the workers themselves wil be visible
@@ -933,6 +932,7 @@ class User:
             }
             ret_dict["evaluating_kudos"] = self.evaluating_kudos
             ret_dict["monthly_kudos"] = mk_dict
+            ret_dict["suspicious"] = self.suspicious
         return(ret_dict)
 
     def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = []):
