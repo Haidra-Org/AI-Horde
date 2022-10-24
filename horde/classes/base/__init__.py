@@ -175,8 +175,12 @@ class WaitingPrompt:
             avg_things_per_sec = 1
         wait_time = queued_things / avg_things_per_sec
         # We add the expected running time of our processing gens
+        highest_expected_time_left = 0
         for procgen in self.processing_gens:
-            wait_time += procgen.get_expected_time_left()
+            expected_time_left = procgen.get_expected_time_left()
+            if expected_time_left > highest_expected_time_left:
+                highest_expected_time_left = expected_time_left
+        wait_time += highest_expected_time_left
         ret_dict["wait_time"] = round(wait_time)
         return(ret_dict)
 

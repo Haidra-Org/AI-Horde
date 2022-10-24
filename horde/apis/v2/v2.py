@@ -232,7 +232,7 @@ class AsyncStatus(Resource):
 
 class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
-    decorators = [limiter.limit("10/second")]
+    decorators = [limiter.limit("10/second", key_func = get_request_path)]
     @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
     @api.response(404, 'Request Not found', models.response_model_error)
     def get(self, id = ''):

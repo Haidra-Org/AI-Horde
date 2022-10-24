@@ -227,6 +227,11 @@ class News(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2022-10-24",
+            "newspiece": "The Stable Horde Client has been renamed to [Lucid Creations](https://dbzer0.itch.io/lucid-creations) and has a new version and UI out which supports multiple models and img2img!",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-10-22",
             "newspiece": "We have [a new npm SDK](https://github.com/ZeldaFan0225/stable_horde) for integrating into the Stable Horde.",
             "importance": "Information"

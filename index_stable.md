@@ -25,7 +25,7 @@ First [Register an account](/register) which will generate for you an API key. S
 
 ### GUI
 
-* We provide [a client interface](https://dbzer0.itch.io/stable-horde-client) requiring no installation and no technical expertise
+* We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
     * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [Diffusion UI](https://diffusionui.com/b/stable_horde)

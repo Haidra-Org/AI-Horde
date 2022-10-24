@@ -72,7 +72,7 @@ horde-bridge.sh
 
 The very first time you run the bridge, after it downloads all the python dependencies, it will take you through a small interactive setup. Simply follow the instructions as you see on the terminal and type your answer to the prompts.
 
-In order for your worker to work, it needs to download a stable diffusion model. To do that, you will need to register a free account at https://huggingface.co. You will need to put your username and password for it when prompted.
+In order for your worker to work, it needs to download a stable diffusion model. To do that, you will need to register a free account at https://huggingface.co. You will need to put your username and password for it when prompted. You will also need to accept the license of the model you're about to download, so after logging in to huggingface, visit https://huggingface.co/runwayml/stable-diffusion-v1-5 and accept the license presented within.
 
 Once your models are downloaded, it will ask you to setup your bridgheData.py. Allow it to do so and it will exit. At that point, open `bridgeData.py` with a text editor such as notepad or nano, and simply fill in at least:
    * Your worker name
@@ -86,9 +86,22 @@ The simply rerun the `horde-bridge` script and the worker will start accepting j
 
 The stable horde workers are under constant improvement. In case there is more recent code to use follow these steps to update
 
+### git
+
+Use this approach if you cloned the original repository using `git clone`
+
 1. Open a `powershell`, `cmd` or `bash` terminal depending on your OS
 1. navigate to the folder you have the nataili repository installed
 1. run `git pull`
+
+Afterwards run the `horde-bridge` script for your OS as usual.
+
+### zip
+
+Use this approach if you downloaded the git repository as a zip file and extracted it somewhere.
+
+1. Download the repository from github as a zip file
+1. Extract its contents into the same the folder you have the nataili repository installed, overwriting any existing files
 
 Afterwards run the `horde-bridge` script for your OS as usual.
 
