@@ -69,7 +69,7 @@ class AsyncGenerate(AsyncGenerate):
             raise e.InvalidSize(self.username)
         if self.params.get("steps",50) > 100:
             raise e.TooManySteps(self.username, self.args['params']['steps'])
-        if len(self.args['prompt'].split()) > 80:
+        if len(self.args['prompt'].split()) > 500:
             raise e.InvalidPromptSize(self.username)
 
     def get_size_too_big_message(self):

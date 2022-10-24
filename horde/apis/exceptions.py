@@ -23,7 +23,7 @@ class InvalidSize(wze.BadRequest):
 
 class InvalidPromptSize(wze.BadRequest):
     def __init__(self, username):
-        self.specific = "Invalid prompt. It can contain a maximum of 80 words."
+        self.specific = "Too large prompt. Please reduce the amount of tokens contained."
         self.log = f"User '{username}' sent an invalid size. Aborting!"
 
 class TooManySteps(wze.BadRequest):
