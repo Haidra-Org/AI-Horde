@@ -6,6 +6,11 @@ class MissingPrompt(wze.BadRequest):
         self.specific = "You cannot specify an empty prompt."
         self.log = f"User '{username}' sent an empty prompt. Aborting!"
 
+class CorruptPrompt(wze.BadRequest):
+    def __init__(self, username, ip, prompt):
+        self.specific = "This prompt appears to violate our terms of service and will be reported. Please contact us if you think this is an error."
+        self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
+
 class KudosValidationError(wze.BadRequest):
     def __init__(self, username, error_message):
         self.specific = error_message
@@ -50,6 +55,11 @@ class ImageValidationFailed(wze.BadRequest):
     def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
         self.specific = f"Image validation failed. {message}"
         self.log = f"Source image validation failed for img2img"
+
+class SourceMaskUnnecessary(wze.BadRequest):
+    def __init__(self):
+        self.specific = f"Please do not pass a source_mask unless you also specify source_processing as 'inpainting' or 'outpainting'"
+        self.log = f"Tried to pass source_mask with img2img"
 
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):

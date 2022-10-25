@@ -22,7 +22,6 @@ def convert_source_image_to_webp(source_image_b64):
         buffer = BytesIO()
         quality = 100
         # We adjust the amount of compression based on the starting image to avoid running out of bandwidth
-        logger.debug([resolution,resolution_threshold])
         if resolution > resolution_threshold * 0.9:
             quality = 50
         elif resolution > resolution_threshold * 0.8:
@@ -59,6 +58,8 @@ class AsyncGenerate(AsyncGenerate):
                 if self.safe_ip == False:
                     self.safe_ip = False
                     raise e.NotTrusted
+        if self.args.source_mask and self.args.source_processing == 'img2img':
+            raise e.SourceMaskUnnecessary
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:
@@ -91,6 +92,8 @@ class AsyncGenerate(AsyncGenerate):
             trusted_workers = self.args["trusted_workers"],
             models = self.models,
             source_image = convert_source_image_to_webp(self.args.source_image),
+            source_processing = self.args.source_processing,
+            source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
         )
     
@@ -106,6 +109,8 @@ class SyncGenerate(SyncGenerate):
                 if self.safe_ip == False:
                     self.safe_ip = False
                     raise e.NotTrusted
+        if self.args.source_mask and self.args.source_processing == 'img2img':
+            raise e.SourceMaskUnnecessary
         if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
         if self.params.get("height",512) <= 0:
@@ -135,6 +140,8 @@ class SyncGenerate(SyncGenerate):
             trusted_workers = self.args["trusted_workers"],
             models = self.models,
             source_image = convert_source_image_to_webp(self.args.source_image),
+            source_processing = self.args.source_processing,
+            source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
         )
     
@@ -150,6 +157,7 @@ class JobPop(JobPop):
             ipaddr = self.worker_ip,
             bridge_version = self.args["bridge_version"],
             allow_img2img = self.args["allow_img2img"],
+            allow_painting = self.args["allow_painting"],
             allow_unsafe_ipaddr = self.args["allow_unsafe_ipaddr"],
         )
   

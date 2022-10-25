@@ -131,6 +131,6 @@ dmypy.json
 
 db/*
 cliRequestsData.py
-*horde_generation*.png
+*horde_generation*
 test_commands.txt
 horde.log

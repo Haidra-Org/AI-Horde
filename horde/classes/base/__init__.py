@@ -19,6 +19,7 @@ class Suspicions(IntEnum):
     UNREASONABLY_FAST = 5
     USERNAME_LONG = 6
     USERNAME_PROFANITY = 7
+    CORRUPT_PROMPT = 8
 
 suspicion_logs = {
     Suspicions.WORKER_NAME_LONG: 'Worker Name too long',
@@ -28,7 +29,8 @@ suspicion_logs = {
     Suspicions.EXTREME_MAX_PIXELS: 'Worker claiming they can generate too many pixels',
     Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({})',
     Suspicions.USERNAME_LONG: 'Username too long',
-    Suspicions.USERNAME_PROFANITY: 'Profanity in username'
+    Suspicions.USERNAME_PROFANITY: 'Profanity in username',
+    Suspicions.CORRUPT_PROMPT: 'Corrupt Prompt detected'
 }
 
 class WaitingPrompt:
@@ -671,6 +673,19 @@ class PromptsIndex(Index):
         ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
         return(ret_dict)
 
+    def count_things_per_model(self):
+        things_per_model = {}
+        org = self.organize_by_model()
+        for model in org:
+            for wp in org[model]:
+                current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+                if current_wp_queue > 0:
+                    things_per_model[model] = things_per_model.get(model,0) + wp.things
+            things_per_model[model] = round(things_per_model.get(model,0),2)
+        return(things_per_model)
+
+                
+
 
     def get_waiting_wp_by_kudos(self):
         sorted_wp_list = sorted(self._index.values(), key=lambda x: x.get_priority(), reverse=True)
@@ -696,11 +711,28 @@ class PromptsIndex(Index):
                 return(iter, things_ahead_in_queue, n_ahead_in_queue)
         # -1 means the WP is done and not in the queue
         return(-1,0,0)
-                
+
+    def organize_by_model(self):
+        org = {}
+        for wp in self._index.values():
+            # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
+            # This will inflate the overall expected times, but it shouldn't be by much.
+            # I don't see a way to do this calculation more accurately though
+            for model in wp.models:
+                if not model in org:
+                    org[model] = []
+                org[model].append(wp)
+        return(org)    
 
 class GenerationsIndex(Index):
-    pass
-
+    
+    def organize_by_model():
+        org = {}
+        for procgen in self._index.values():
+            if not procgen.model in org:
+                org[model] = []
+            org[model].append(procgen)
+        return(org)
 
 class User:
     suspicion_threshold = 3
@@ -1391,7 +1423,7 @@ class Database:
                 return(worker)
         return(None)
 
-    def get_available_models(self):
+    def get_available_models(self, waiting_prompts):
         models_dict = {}
         for worker in self.workers.values():
             if worker.is_stale():
@@ -1404,9 +1436,24 @@ class Database:
                     "name": model_name,
                     "count": 0,
                     "performance": self.stats.get_model_avg(model_name),
+                    "queued": 0,
+                    "eta": 0,
                 }
                 models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
                 models_dict[model_name]["count"] += 1
+        things_per_model = waiting_prompts.count_things_per_model()
+        for model_name in things_per_model:
+            # This shouldn't happen, but I'm checking anyway
+            if model_name not in models_dict:
+                # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
+                continue
+            models_dict[model_name]['queued'] = things_per_model[model_name]
+            total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
+            # We don't want a division by zero when there's no workers for this model.
+            if total_performance_on_model > 0:
+                models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
+            else:
+                models_dict[model_name]['eta'] = -1
         return(list(models_dict.values()))
 
     def transfer_kudos(self, source_user, dest_user, amount):

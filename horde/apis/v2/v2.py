@@ -1,10 +1,10 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
 from ... import limiter, logger, maintenance, invite_only, raid, cm
-from ...classes import db,processing_generations,waiting_prompts,Worker,User,WaitingPrompt,News
+from ...classes import db,processing_generations,waiting_prompts,Worker,User,WaitingPrompt,News,Suspicions
 from enum import Enum
 from .. import exceptions as e
-import os, time, json
+import os, time, json, re
 from .. import ModelsV2, ParsersV2
 from ...utils import is_profane
 
@@ -22,6 +22,7 @@ models = ModelsV2(api)
 parsers = ParsersV2()
 
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
+handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
 handle_invalid_prompt_size = api.errorhandler(e.InvalidPromptSize)(e.handle_bad_requests)
@@ -31,6 +32,7 @@ handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
 handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.handle_bad_requests)
+handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
@@ -104,6 +106,15 @@ class GenerateTemplate(Resource):
         wp_count = waiting_prompts.count_waiting_requests(self.user)
         if wp_count >= self.user.concurrency:
             raise e.TooManyPrompts(self.username, wp_count)
+        if os.getenv("BLACKLIST"):
+            prompt_suspicion = 0
+            for seek in json.loads(os.getenv("BLACKLIST")):
+                if re.search(seek,self.args["prompt"], re.IGNORECASE):
+                    prompt_suspicion += 1
+            if prompt_suspicion >= 2:
+                self.user.report_suspicion(2,Suspicions.CORRUPT_PROMPT)
+                raise e.CorruptPrompt(self.username, self.user_ip, self.args["prompt"])
+
     
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
@@ -408,7 +419,7 @@ class TransferKudos(Resource):
         error = ret[1]
         if error != 'OK':
             raise e.KudosValidationError(user.get_unique_alias(), error)
-        return({"transfered": kudos}, 200)
+        return({"transferred": kudos}, 200)
 
 class Workers(Resource):
     @logger.catch(reraise=True)
@@ -565,7 +576,9 @@ class Users(Resource):
     def get(self):
         '''A List with the details and statistic of all registered users
         '''
-        users_list = [user.get_details() for user in db.users.values()]
+        # To avoid the the dict changing size while we're iterating it
+        all_users = list(db.users.values())
+        users_list = [user.get_details() for user in all_users]
         return(users_list,200)
 
 
@@ -707,13 +720,12 @@ class FindUser(Resource):
 
 
 class Models(Resource):
-    decorators = [limiter.limit("30/minute")]
     @logger.catch(reraise=True)
     @api.marshal_with(models.response_model_active_model, code=200, description='List All Active Models', as_list=True)
     def get(self):
         '''Returns a list of models active currently in this horde
         '''
-        return(db.get_available_models(),200)
+        return(db.get_available_models(waiting_prompts),200)
 
 
 class HordeLoad(Resource):

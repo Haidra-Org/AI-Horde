@@ -1,5 +1,6 @@
 from .. import logger, args
 from importlib import import_module
+from horde.classes.base import Suspicions
 
 # Should figure out an elegant way to do this with a for loop
 WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
@@ -10,6 +11,7 @@ GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').Generations
 User = import_module(name=f'horde.classes.{args.horde}').User
 Database = import_module(name=f'horde.classes.{args.horde}').Database
 News = import_module(name=f'horde.classes.{args.horde}').News
+
 
 # from .base import WaitingPrompt,ProcessingGeneration,Worker,PromptsIndex,GenerationsIndex,User,Database
 

@@ -6,7 +6,7 @@ Information specific to the Text generation
 
 ## REST API
 
-[Full Documentation](https://koboldai.net/api/v1)
+[Full Documentation](https://koboldai.net/api)
 
 ### Specifying servers
 

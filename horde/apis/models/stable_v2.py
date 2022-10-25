@@ -6,9 +6,12 @@ class Parsers(v2.Parsers):
     def __init__(self):
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
+        self.generate_parser.add_argument("source_processing", type=str, default="img2img", required=False, help="If source_image is provided, specifies how to process it.", location="json")
+        self.generate_parser.add_argument("source_mask", type=str, required=False, help="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel", location="json")
         self.generate_parser.add_argument("models", type=list, required=False, default=['stable_diffusion'], help="The acceptable models with which to generate", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
         self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
+        self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
 
@@ -53,6 +56,7 @@ class Models(v2.Models):
             'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
             'unsafe_ip': fields.Integer(description="How many waiting requests were skipped because they came from an unsafe IP"),
             'img2img': fields.Integer(description="How many waiting requests were skipped because they requested img2img"),
+            'painting': fields.Integer(description="How many waiting requests were skipped because they requested inpainting/outpainting"),
         })
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
@@ -60,10 +64,13 @@ class Models(v2.Models):
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
             'model': fields.String(description="Which of the available models to use for this request"),
             'source_image': fields.String(description="The Base64-encoded webp to use for img2img"),
+            'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
+            'source_mask': fields.String(description="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel"),
         })
         self.input_model_job_pop = api.inherit('PopInputStable', self.input_model_job_pop, {
             'max_pixels': fields.Integer(default=512*512,description="The maximum amount of pixels this worker can generate"), 
             'allow_img2img': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests"),
+            'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
         })
 
@@ -75,12 +82,15 @@ class Models(v2.Models):
             'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
-            'source_image': fields.String(required=False,description="The Base64-encoded webp to use for img2img"),
+            'source_image': fields.String(required=False, description="The Base64-encoded webp to use for img2img"),
+            'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
+            'source_mask': fields.String(description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel"),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
-            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this workr can generate"),
+            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
             "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
             'img2img': fields.Boolean(default=True,description="If True, this worker supports and allows img2img requests."),
+            'painting': fields.Boolean(default=True,description="If True, this worker supports and allows inpainting requests."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),

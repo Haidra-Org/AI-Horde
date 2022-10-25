@@ -22,6 +22,8 @@ class WaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.source_image = kwargs.get("source_image", None)
+        self.source_processing = kwargs.get("source_processing", 'img2img')
+        self.source_mask = kwargs.get("source_mask", None)
         self.models = kwargs.get("models", ['stable_diffusion'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
@@ -87,6 +89,10 @@ class WaitingPrompt(WaitingPrompt):
             }
             if self.source_image and procgen.worker.bridge_version > 2:
                 prompt_payload["source_image"] = self.source_image
+            if procgen.worker.bridge_version > 3:
+                prompt_payload["source_processing"] = self.source_processing
+                if self.source_processing != 'img2img' and self.source_mask:
+                    prompt_payload["source_mask"] = self.source_mask
         else:
             prompt_payload = {}
             self.faulted = True
@@ -99,7 +105,7 @@ class WaitingPrompt(WaitingPrompt):
         super().activate()
         prompt_type = "txt2img"
         if self.source_image:
-            prompt_type = "img2img"
+            prompt_type = self.source_processing
         logger.info(f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): w:{self.width} * h:{self.height} * s:{self.steps} * n:{self.n} == {self.total_usage} Total MPs")
 
     def new_procgen(self, worker):
@@ -144,6 +150,7 @@ class Worker(Worker):
         super().check_in(**kwargs)
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get('allow_img2img', True)
+        self.allow_painting = kwargs.get('allow_painting', True)
         self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
         if len(self.models) == 0:
             self.models = ['stable_diffusion']
@@ -167,13 +174,34 @@ class Worker(Worker):
         if waiting_prompt.source_image and self.bridge_version < 2:
             is_matching = False
             skipped_reason = 'img2img'
+        if waiting_prompt.source_processing != 'img2img':
+            if self.bridge_version < 4:
+                is_matching = False
+                skipped_reason = 'painting'
+            if "stable_diffusion_inpainting" not in self.models:
+                is_matching = False
+                skipped_reason = 'models'
+        # If the only model loaded is the inpainting one, we skip the worker when this kind of work is not required
+        if waiting_prompt.source_processing not in ['inpainting','outpainting'] and self.models == ["stable_diffusion_inpainting"]:
+                is_matching = False
+                skipped_reason = 'models'
+        if waiting_prompt.source_processing != 'img2img' and self.bridge_version < 4:
+            is_matching = False
+            skipped_reason = 'painting'
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
-        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler') in ['DDIM', 'PLMS'] and self.bridge_version == 3:
+        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler') in ['DDIM', 'PLMS'] and self.bridge_version >= 3:
             is_matching = False
             skipped_reason = 'worker_id'
         if waiting_prompt.source_image and not self.allow_img2img:
             is_matching = False
             skipped_reason = 'img2img'
+        # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
+        if not waiting_prompt.source_image and (self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]):
+            is_matching = False
+            skipped_reason = 'models'
+        if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
+            is_matching = False
+            skipped_reason = 'painting'
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             is_matching = False
             skipped_reason = 'unsafe_ip'
@@ -186,6 +214,9 @@ class Worker(Worker):
         allow_img2img = self.allow_img2img
         if self.bridge_version < 3: allow_img2img = False
         ret_dict["img2img"] = allow_img2img
+        allow_painting = self.allow_painting
+        if self.bridge_version < 4: allow_painting = False
+        ret_dict["painting"] = allow_painting
         return(ret_dict)
 
     @logger.catch(reraise=True)
@@ -193,6 +224,7 @@ class Worker(Worker):
         ret_dict = super().serialize()
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["allow_img2img"] = self.allow_img2img
+        ret_dict["allow_painting"] = self.allow_painting
         ret_dict["allow_unsafe_ipaddr"] = self.allow_unsafe_ipaddr
         return(ret_dict)
 
@@ -203,6 +235,7 @@ class Worker(Worker):
             self.models = ['stable_diffusion']
         self.max_pixels = saved_dict["max_pixels"]
         self.allow_img2img = saved_dict.get("allow_img2img", True)
+        self.allow_painting = saved_dict.get("allow_painting", True)
         self.allow_unsafe_ipaddr = saved_dict.get("allow_unsafe_ipaddr", True)
         if convert_flag == 'pixelsteps':
             self.contributions = round(self.contributions / 50,2)
@@ -226,6 +259,16 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-10-29",
+            "newspiece": "Inpainting is now available on the stable horde! Many kudos to [blueturtle](https://github.com/blueturtleai) for the support!",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-10-25",
+            "newspiece": "Another [Discord Bot for Stable Horde integration](https://github.com/ZeldaFan0225/Stable_Horde_Discord) has appeared!",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-10-24",
             "newspiece": "The Stable Horde Client has been renamed to [Lucid Creations](https://dbzer0.itch.io/lucid-creations) and has a new version and UI out which supports multiple models and img2img!",

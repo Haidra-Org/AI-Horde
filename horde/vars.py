@@ -22,7 +22,7 @@ google_verification_strings = {
 }
 
 suspicion_thresholds = {
-    "stable": 7,
+    "stable": 20,
     "kobold": 100,
 }
 icon = {

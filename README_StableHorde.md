@@ -27,7 +27,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 ## REST API
 
-[Full Documentation](https://stablehorde.net/api/v1)
+[Full Documentation](https://stablehorde.net/api)
 
 ![](api_screenshot.png)
 

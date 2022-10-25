@@ -18,51 +18,110 @@ arg_parser.add_argument('--nsfw', action="store_true", default=False, required=F
 arg_parser.add_argument('--censor_nsfw', action="store_true", default=False, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.")
 arg_parser.add_argument('--trusted_workers', action="store_true", default=False, required=False, help="If true, the request will be sent only to trusted workers.")
 arg_parser.add_argument('--source_image', action="store", required=False, type=str, help="When a file path is provided, will be used as the source for img2img")
+arg_parser.add_argument('--source_processing', action="store", required=False, type=str, help="Can either be img2img, inpainting, or outpainting")
+arg_parser.add_argument('--source_mask', action="store", required=False, type=str, help="When a file path is provided, will be used as the mask source for inpainting/outpainting")
 args = arg_parser.parse_args()
 
 
-filename = "horde_generation.png"
-api_key = "0000000000"
-# You can fill these in to avoid putting them as args all the time
-imgen_params = {
-    # You can put extra SD webui params here if you wish
-}
-submit_dict = {
-}
+class RequestData(object):
+    def __init__(self):
+            self.api_key = "0000000000"
+            self.filename = "horde_generation.png"
+            self.imgen_params = {
+                "n": 1,
+                "width": 64*8,
+                "height":64*8,
+                "steps": 50,
+                "sampler_name": "k_euler",
+                "cfg_scale": 7.5,
+                "denoising_strength": 0.6,
+            }
+            self.submit_dict = {
+                "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
+                "api_key": "0000000000",
+                "nsfw": False,
+                "censor_nsfw": False,
+                "trusted_workers": False,
+                "models": ["stable_diffusion"]
+            }
+            self.source_image = None
+            self.source_processing = "img2img"
+            self.source_mask = None
+
+    def get_submit_dict(self):
+        submit_dict = self.submit_dict.copy()
+        submit_dict["params"] = self.imgen_params
+        submit_dict["source_processing"] = self.source_processing
+        if self.source_image: 
+            final_src_img = Image.open(self.source_image)
+            buffer = BytesIO()
+            # We send as WebP to avoid using all the horde bandwidth
+            final_src_img.save(buffer, format="Webp", quality=95)
+            submit_dict["source_image"] = base64.b64encode(buffer.getvalue()).decode("utf8")
+        if self.source_mask: 
+            final_src_mask = Image.open(self.source_mask)
+            buffer = BytesIO()
+            # We send as WebP to avoid using all the horde bandwidth
+            final_src_mask.save(buffer, format="Webp", quality=95)
+            submit_dict["source_mask"] = base64.b64encode(buffer.getvalue()).decode("utf8")
+        return(submit_dict)
+    
+def load_request_data():
+    request_data = RequestData()
+    try:
+        import cliRequestsData as crd
+        try:
+            request_data.api_key = crd.api_key
+        except AttributeError:
+            pass
+        try:
+            request_data.filename = crd.filename
+        except AttributeError:
+            pass
+        try:
+            for p in crd.imgen_params:
+                request_data.imgen_params[p] = crd.imgen_params[p]
+        except AttributeError:
+            pass
+        try:
+            for s in crd.submit_dict:
+                request_data.submit_dict[s] = crd.submit_dict[s]
+        except AttributeError:
+            pass
+        try:
+            request_data.source_image = crd.source_image
+        except AttributeError:
+            pass
+        try:
+            request_data.source_processing = crd.source_processing
+        except AttributeError:
+            pass
+        try:
+            request_data.source_mask = crd.source_mask
+        except AttributeError:
+            pass
+    except:
+        logger.warning("cliRequestData.py could not be loaded. Using defaults with anonymous account")
+    if args.api_key: request_data.api_key = args.api_key 
+    if args.filename: request_data.filename = args.filename 
+    if args.amount: request_data.imgen_params["n"] = args.amount 
+    if args.width: request_data.imgen_params["width"] = args.width 
+    if args.height: request_data.imgen_params["height"] = args.height 
+    if args.steps: request_data.imgen_params["steps"] = args.steps 
+    if args.prompt: request_data.submit_dict["prompt"] = args.prompt 
+    if args.nsfw: request_data.submit_dict["nsfw"] = args.nsfw 
+    if args.censor_nsfw: request_data.submit_dict["censor_nsfw"] = args.censor_nsfw 
+    if args.trusted_workers: request_data.submit_dict["trusted_workers"] = args.trusted_workers 
+    return(request_data)
+
 
 @logger.catch(reraise=True)
 def generate():
-    final_filename = args.filename if args.filename else crd.filename
-    final_api_key = args.api_key if args.api_key else crd.api_key
-    final_imgen_params = {
-        "n": args.amount if args.amount else crd.imgen_params.get('n',1),
-        "width": args.width if args.width else crd.imgen_params.get('width',512),
-        "height": args.height if args.height else crd.imgen_params.get('height',512),
-        "steps": args.steps if args.steps else crd.imgen_params.get('steps',50),
-    }
-    for p in ["denoising_strength", 'sampler_name', 'seed', 'cfg_scale']:
-        if p in crd.imgen_params:
-            final_imgen_params[p] = crd.imgen_params[p]
-
-    final_submit_dict = {
-        "prompt": args.prompt if args.prompt else crd.submit_dict.get('prompt',"a horde of cute stable robots in a sprawling server room repairing a massive mainframe"),
-        "params": final_imgen_params,
-        "nsfw": args.nsfw if args.nsfw else crd.submit_dict.get("nsfw", False),
-        "censor_nsfw": args.censor_nsfw if args.censor_nsfw else crd.submit_dict.get("censor_nsfw", True),
-        "trusted_workers": args.trusted_workers if args.trusted_workers else crd.submit_dict.get("trusted_workers", True),
-        "models": crd.submit_dict.get("models", ["stable_diffusion"])
-    }
-    final_src_img = args.source_image if args.source_image else crd.source_image
-    if final_src_img:
-        final_src_img = Image.open(final_src_img)
-        buffer = BytesIO()
-        # We send as WebP to avoid using all the horde bandwidth
-        final_src_img.save(buffer, format="Webp", quality=95)
-        final_submit_dict["source_image"] = base64.b64encode(buffer.getvalue()).decode("utf8")
+    request_data = load_request_data()
     # final_submit_dict["source_image"] = 'Test'
-    headers = {"apikey": final_api_key}
-    logger.debug(final_submit_dict)
-    submit_req = requests.post(f'{args.horde}/api/v2/generate/async', json = final_submit_dict, headers = headers)
+    headers = {"apikey": request_data.api_key}
+    # logger.debug(request_data.get_submit_dict())
+    submit_req = requests.post(f'{args.horde}/api/v2/generate/async', json = request_data.get_submit_dict(), headers = headers)
     if submit_req.ok:
         submit_results = submit_req.json()
         logger.debug(submit_results)
@@ -94,8 +153,9 @@ def generate():
             base64_bytes = b64img.encode('utf-8')
             img_bytes = base64.b64decode(base64_bytes)
             img = Image.open(BytesIO(img_bytes))
+            final_filename = request_data.filename
             if len(results) > 1:
-                final_filename = f"{iter}_{filename}"
+                final_filename = f"{iter}_{request_data.filename}"
             img.save(final_filename)
             logger.info(f"Saved {final_filename}")
     else:
