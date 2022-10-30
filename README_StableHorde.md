@@ -23,7 +23,7 @@ I have provided a small python script with which you can use to call the horde.
 
 You can use `./cli_requests.py -h` to see the command line arguments to use
 
-You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
+You can make a copy of `cliRequestsData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
 
 ## REST API
 
@@ -74,7 +74,7 @@ The very first time you run the bridge, after it downloads all the python depend
 
 In order for your worker to work, it needs to download a stable diffusion model. To do that, you will need to register a free account at https://huggingface.co. You will need to put your username and password for it when prompted. You will also need to accept the license of the model you're about to download, so after logging in to huggingface, visit https://huggingface.co/runwayml/stable-diffusion-v1-5 and accept the license presented within.
 
-Once your models are downloaded, it will ask you to setup your bridgheData.py. Allow it to do so and it will exit. At that point, open `bridgeData.py` with a text editor such as notepad or nano, and simply fill in at least:
+Once your models are downloaded, it will ask you to setup your bridgeData.py. Allow it to do so and it will exit. At that point, open `bridgeData.py` with a text editor such as notepad or nano, and simply fill in at least:
    * Your worker name
    * Your stable horde API key
 

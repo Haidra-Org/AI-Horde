@@ -12,13 +12,13 @@ For more questions, check the [FAQ](FAQ.md)
 
 # Registering
 
-To use the horde you need to have a registered amount, or use anonymous mode.
+To use the horde you need to have a registered account, or use anonymous mode.
 
 To register an account, go to the Horde you want to use:
    * [Stable Horde Registration](https://stablehorde.net/register)
    * [KoboldAI Horde Registration](https://koboldai.net/register)
 
-and login with one of the available services. Once you do you'll see a form where you can put a username. Add one in and it will automatically store a user object for you and provide an API key to identify you. **Note that the different hordes not share databses**, so even if you use the same authentication, you'll get a different user.
+and login with one of the available services. Once you do you'll see a form where you can put a username. Add one in and it will automatically store a user object for you and provide an API key to identify you. **Note that the different hordes do not share databases**, so even if you use the same authentication, you'll get a different user.
 
 Store this API key and use it for your client or bridge.
 
@@ -26,9 +26,9 @@ By logging in first, you can change your username and API key at any time.
 Be aware that the account is unique per authentication service, so even if you use the same email for discord and google, your user ID will be different for each!
 We don't store any identifiable information other than the ID string sent by the oauth for your user. We only use this for user uniqueness, and no other purpose.
 
-If you want, you can also create a pseudonymous account, without logging in with oauth. However *we will not maintain such accounts*. If you lose access to it, you'll have to make a new one. If someone copies your API Key, they can impersonate. You cannot change the username or API key anymore etc. If you don't want these risks, login to one of the available services instead.
+If you want, you can also create a pseudonymous account, without logging in with oauth. However *we will not maintain such accounts*. If you lose access to it, you'll have to make a new one. If someone copies your API Key, they can impersonate you. You cannot change the username or API key anymore etc. If you don't want these risks, login to one of the available services instead.
 
-If you do not want to login even with a pseudonymous account, you can use this service anonymously by using '0000000000' as you API key. However your usage and contributions will be not be tracked. Be aware that if this service gets too overloaded, anonymous mode might be turned off!
+If you do not want to login even with a pseudonymous account, you can use this service anonymously by using '0000000000' as your API key. However your usage and contributions will be not be tracked. Be aware that if this service gets too overloaded, anonymous mode might be turned off!
 
 The point of registering is to track your usage and your contributions. The more you contribute to the Horde, the more priority you have. [Read about this here](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/)
 

@@ -467,7 +467,7 @@ class Worker:
         if waiting_prompt.tricked_worker(self):
             is_matching = False
             skipped_reason = 'secret'
-        if any(word in waiting_prompt.prompt for word in self.blacklist):
+        if any(word.lower() in waiting_prompt.prompt for word.lower() in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
         if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
