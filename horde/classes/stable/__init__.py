@@ -13,14 +13,12 @@ class WaitingPrompt(WaitingPrompt):
             self.n = 20
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
+        self.sampler = params.get('sampler_name', 'k_euler')
         self.use_gfpgan = params.get("use_gfpgan", False)
         self.use_real_esrgan = params.get("use_real_esrgan", False)
         self.use_ldsr = params.get("use_ldsr", False)
         self.use_upscaling = params.get("use_upscaling", False)
-        # To avoid unnecessary calculations, we do it once here.
-        self.things = self.width * self.height * self.steps
         # The total amount of to pixelsteps requested.
-        self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.source_image = kwargs.get("source_image", None)
         self.source_processing = kwargs.get("source_processing", 'img2img')
         self.source_mask = kwargs.get("source_mask", None)
@@ -34,8 +32,11 @@ class WaitingPrompt(WaitingPrompt):
         self.generations_done = 0
         if "seed_variation" in params:
             self.seed_variation = params.pop("seed_variation")
-
         self.prepare_job_payload(params)
+        # To avoid unnecessary calculations, we do it once here.
+        self.things = self.width * self.height * self.get_accurate_steps()
+        self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.calculate_kudos()
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict = {}):
@@ -62,8 +63,8 @@ class WaitingPrompt(WaitingPrompt):
             self.gen_payload["use_real_esrgan"] = self.use_real_esrgan
             self.gen_payload["use_ldsr"] = self.use_ldsr
             self.gen_payload["use_upscaling"] = self.use_upscaling
-            # if not self.nsfw and self.censor_nsfw:
-            #     self.gen_payload["use_nsfw_censor"] = True
+            if not self.nsfw and self.censor_nsfw:
+                self.gen_payload["use_nsfw_censor"] = True
         else:
             # These parameters are not used in bridge v1
             for v2_param in ["use_gfpgan","use_real_esrgan","use_ldsr","use_upscaling"]:
@@ -130,6 +131,56 @@ class WaitingPrompt(WaitingPrompt):
             kudos = kudos * 1.5
         super().record_usage(raw_things, kudos)
 
+    # We can calculate the kudos in advance as they model doesn't affect them
+    def calculate_kudos(self):
+        result = pow((self.width * self.height) - (64*64), 1.75) / pow((1024*1024) - (64*64), 1.75)
+        # We need to calculate the steps, without affecting the actual steps requested
+        # because some samplers are effectively doubling their steps
+        steps = self.get_accurate_steps()
+        self.kudos = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
+
+    def requires_upfront_kudos(self):
+        '''Returns True if this wp requires that the user already has the required kudos to fulfil it
+        else returns False
+        '''
+        if self.get_accurate_steps() > 100:
+            return(True)
+        if self.width * self.height > 1024*1024:
+            return(True)
+        return(False)
+
+    def get_accurate_steps(self):
+        steps = self.steps
+        if self.sampler in ['k_heun', "k_dpm_2", "k_dpm_2_a"]:
+            # These three sampler do double steps per iteration, so they're at half the speed
+            # So we adjust the things to take that into account
+            steps *= 2
+        if self.source_image and self.source_processing == "img2img":
+            # 0.8 is the default on nataili
+            steps *= self.gen_payload.get("denoising_strength",0.8)
+        return(steps)
+
+    def set_job_ttl(self):
+        # default is 2 minutes. Then we scale up based on resolution.
+        # This will be more accurate with a newer formula
+        self.job_ttl = 100
+        if self.width * self.height > 2048*2048:
+            self.job_ttl = 600
+        elif self.width * self.height > 1024*1024:
+            self.job_ttl = 240
+        elif self.width * self.height > 728*728:
+            self.job_ttl = 150
+        elif self.width * self.height >= 512*512:
+            self.job_ttl = 120
+
+    def log_faulted_job(self):
+        '''Extendable function to log why a request was aborted'''
+        source_processing = 'txt2img'
+        if self.source_image:
+            source_processing = self.source_processing
+        logger.warning(f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
+
+
 class ProcessingGeneration(ProcessingGeneration):
 
     def get_details(self):
@@ -143,11 +194,18 @@ class ProcessingGeneration(ProcessingGeneration):
         }
         return(ret_dict)
 
+    def get_gen_kudos(self):
+        # We have pre-calculated them as they don't change per worker
+        return(self.owner.kudos)
+
 
 class Worker(Worker):
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
+        if kwargs.get("max_pixels", 512*512) > 2048 * 2048:
+            if not self.user.trusted:
+                self.report_suspicion(reason = Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
@@ -205,6 +263,14 @@ class Worker(Worker):
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             is_matching = False
             skipped_reason = 'unsafe_ip'
+        # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
+        if not self.user.trusted:
+            # if waiting_prompt.user.is_anon():
+            #     is_matching = False
+            #     skipped_reason = 'untrusted'
+            if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
+                is_matching = False
+                skipped_reason = 'untrusted'
         return([is_matching,skipped_reason])
 
     def get_details(self, is_privileged = False):
@@ -242,12 +308,6 @@ class Worker(Worker):
 
 class Database(Database):
 
-    def convert_things_to_kudos(self, pixelsteps, **kwargs):
-        # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
-        kudos = round(pixelsteps / (512*512*5),2)
-        # logger.info([pixels,multiplier,kudos])
-        return(kudos)
-
     def new_worker(self):
         return(Worker(self))
     def new_user(self):
@@ -259,6 +319,11 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-11-02",
+            "newspiece": "The horde can now generate images up to 3072x3072 and 500 steps! However you need to already have the kudos to burn to do so!",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-10-29",
             "newspiece": "Inpainting is now available on the stable horde! Many kudos to [blueturtle](https://github.com/blueturtleai) for the support!",

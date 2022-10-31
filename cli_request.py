@@ -143,6 +143,7 @@ def generate():
         results_json = retrieve_req.json()
         # logger.debug(results_json)
         if results_json['faulted']:
+            final_submit_dict = request_data.get_submit_dict()
             if "source_image" in final_submit_dict:
                 final_submit_dict["source_image"] = f"img2img request with size: {len(final_submit_dict['source_image'])}"
             logger.error(f"Something went wrong when generating the request. Please contact the horde administrator with your request details: {final_submit_dict}")

@@ -31,6 +31,7 @@ submit_dict = {
 # Uncomment this line to try img2img
 # Change the filename to your own image
 # source_image = './db0.jpg'
-# Uncomment these two lines to try inpainting. If the source_mask is not provided, the image sent has to have areas already erased-to-alpha
+# Uncomment these three lines to try inpainting. If the source_mask is not provided, the image sent has to have areas already erased-to-alpha
+# source_image = './inpaint_original.png'
 # source_processing = 'inpainting'
-# source_mask = './db0.jpg'
+# source_mask = './inpaint_mask.png'

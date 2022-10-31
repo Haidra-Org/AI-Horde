@@ -81,6 +81,6 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 These are the people who made this sotware possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
-* [Hlky and the stable-diffusion-webui developers](https://github.com/sd-webui/stable-diffusion-webui) - Worker backend code.
+* [Sygic-Dev](https://github.com/Sygil-Dev) - Worker backend code.
 
 And of course, everyone contributing their SD to the horde!

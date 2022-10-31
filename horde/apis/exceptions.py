@@ -124,6 +124,11 @@ class TooManyNewIPs(wze.Forbidden):
         self.specific = f"We are getting too many new workers from unknown IPs. To prevent abuse, please try again later. If this persists, please contact us on discord https://discord.gg/3DxrhksKzn "
         self.log = f"Too many new IPs to check: {ipaddr}. Asked to retry"
 
+class KudosUpfront(wze.Forbidden):
+    def __init__(self, kudos_required, username):
+        self.specific = f"For requests over 1024x1024 or over 100 steps, the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
+        self.log = f"{username} attempted request for {kudos_required} kudos without having enough."
+
 class InvalidProcGen(wze.NotFound):
     def __init__(self, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} does not exist."
@@ -159,7 +164,7 @@ class TooManyPrompts(wze.TooManyRequests):
         self.specific = f"Parallel requests exceeded user limit ({count}). Please try again later or request to increase your concurrency."
         self.log = f"User '{username}' has already requested too many parallel requests ({count}). Aborting!"
 
-class NoValidWorkers(wze.ServiceUnavailable):
+class NoValidWorkers(wze.BadRequest):
     retry_after = 600
     def __init__(self, username):
         self.specific = f"No active worker found to fulfill this request. Please Try again later..."
@@ -170,7 +175,6 @@ class MaintenanceMode(wze.BadRequest):
     def __init__(self, endpoint):
         self.specific = f"Horde has enterred maintenance mode. Please try again later."
         self.log = f"Rejecting endpoint '{endpoint}' because horde in maintenance mode."
-
 
 def handle_bad_requests(error):
     '''Namespace error handler'''

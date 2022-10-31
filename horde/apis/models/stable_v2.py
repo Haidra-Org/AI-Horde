@@ -33,8 +33,8 @@ class Models(v2.Models):
             'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
             'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0, multiple=0.01), 
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
-            'height': fields.Integer(required=False,default=512,description="The height of the image to generate", min=64, max=1024, multiple=64), 
-            'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=1024, multiple=64), 
+            'height': fields.Integer(required=False,default=512,description="The height of the image to generate", min=64, max=3072, multiple=64), 
+            'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
             'use_gfpgan': fields.Boolean(description="Set to true to process the generated image with GFPGAN (face correction)"),
             'use_real_esrgan': fields.Boolean(description="Set to true to process the generated image with RealESRGAN"),
@@ -49,7 +49,7 @@ class Models(v2.Models):
             'use_nsfw_censor': fields.Boolean(description="When true will apply NSFW censoring model on the generation"),
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
-            'steps': fields.Integer(example=50, min = 1, max=100), 
+            'steps': fields.Integer(example=50, min = 1, max=500), 
             'n': fields.Integer(example=1, description="The amount of images to generate", min = 1, max=20), 
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {

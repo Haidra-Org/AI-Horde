@@ -51,25 +51,16 @@ class AsyncGenerate(AsyncGenerate):
     def validate(self):
         super().validate()
         # Temporary exception. During trial period only trusted users can use img2img
-        if self.args.source_image:
-            if not self.user.trusted:
-                self.safe_ip = cm.is_ip_safe(self.user_ip)
-                # We allow unsafe IPs when being rate limited as they're only temporary
-                if self.safe_ip == False:
-                    self.safe_ip = False
+        if not self.user.trusted:
+            self.safe_ip = cm.is_ip_safe(self.user_ip)
+            # We allow unsafe IPs when being rate limited as they're only temporary
+            if self.safe_ip == None:
+                self.safe_ip = True
+                # We actually block img2img from unsafe IPs for now.
+                if self.args.source_image:
                     raise e.NotTrusted
         if self.args.source_mask and self.args.source_processing == 'img2img':
             raise e.SourceMaskUnnecessary
-        if self.params.get("height",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.params.get("height",512) <= 0:
-            raise e.InvalidSize(self.username)
-        if self.params.get("width",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.params.get("width",512) <= 0:
-            raise e.InvalidSize(self.username)
-        if self.params.get("steps",50) > 100:
-            raise e.TooManySteps(self.username, self.args['params']['steps'])
         if len(self.args['prompt'].split()) > 500:
             raise e.InvalidPromptSize(self.username)
 
@@ -96,6 +87,12 @@ class AsyncGenerate(AsyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
         )
+        if self.wp.requires_upfront_kudos():
+            required_kudos = self.wp.kudos * self.wp.n
+            if required_kudos > self.user.kudos:
+                raise e.KudosUpfront(required_kudos, self.username)
+            else:
+                logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
     
 class SyncGenerate(SyncGenerate):
 
@@ -111,16 +108,7 @@ class SyncGenerate(SyncGenerate):
                     raise e.NotTrusted
         if self.args.source_mask and self.args.source_processing == 'img2img':
             raise e.SourceMaskUnnecessary
-        if self.params.get("height",512)%64:
             raise e.InvalidSize(self.username)
-        if self.params.get("height",512) <= 0:
-            raise e.InvalidSize(self.username)
-        if self.params.get("width",512)%64:
-            raise e.InvalidSize(self.username)
-        if self.params.get("width",512) <= 0:
-            raise e.InvalidSize(self.username)
-        if self.params.get("steps",50) > 100:
-            raise e.TooManySteps(self.username, self.params['steps'])
         if len(self.args['prompt'].split()) > 80:
             raise e.InvalidPromptSize(self.username)
 
@@ -144,6 +132,13 @@ class SyncGenerate(SyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
         )
+        if self.wp.requires_upfront_kudos():
+            required_kudos = self.wp.kudos * self.wp.n
+            if required_kudos > self.user.kudos:
+                raise e.KudosUpfront(required_kudos, self.username)
+            else:
+                logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
+
     
 class JobPop(JobPop):
 

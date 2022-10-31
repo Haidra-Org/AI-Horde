@@ -44,6 +44,7 @@ handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_reque
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
 handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
 handle_too_many_new_ips = api.errorhandler(e.TooManyNewIPs)(e.handle_bad_requests)
+handle_kudos_upfront = api.errorhandler(e.KudosUpfront)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
@@ -54,6 +55,11 @@ handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_reques
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
+
+regex_blacklists = []
+if os.getenv("BLACKLIST1"):
+    for blacklist in ["BLACKLIST1","BLACKLIST2"]:
+        regex_blacklists.append(re.compile(os.getenv(blacklist), re.IGNORECASE))
 
 # Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
@@ -104,16 +110,19 @@ class GenerateTemplate(Resource):
         if self.args['prompt'] == '':
             raise e.MissingPrompt(self.username)
         wp_count = waiting_prompts.count_waiting_requests(self.user)
+        if len(self.workers):
+            for worker_id in self.workers:
+                if not db.find_worker_by_id(worker_id):
+                    raise e.WorkerNotFound(worker_id)
         if wp_count >= self.user.concurrency:
             raise e.TooManyPrompts(self.username, wp_count)
-        if os.getenv("BLACKLIST"):
-            prompt_suspicion = 0
-            for seek in json.loads(os.getenv("BLACKLIST")):
-                if re.search(seek,self.args["prompt"], re.IGNORECASE):
-                    prompt_suspicion += 1
-            if prompt_suspicion >= 2:
-                self.user.report_suspicion(2,Suspicions.CORRUPT_PROMPT)
-                raise e.CorruptPrompt(self.username, self.user_ip, self.args["prompt"])
+        prompt_suspicion = 0
+        for blacklist in regex_blacklists:
+            if blacklist.search(self.args["prompt"]):
+                prompt_suspicion += 1
+        if prompt_suspicion >= 2:
+            self.user.report_suspicion(2,Suspicions.CORRUPT_PROMPT)
+            raise e.CorruptPrompt(self.username, self.user_ip, self.args["prompt"])
 
     
     # We split this into its own function, so that it may be overriden
@@ -134,16 +143,6 @@ class GenerateTemplate(Resource):
     def activate_waiting_prompt(self):
         self.wp.activate()
 
-    def has_valid_workers(self):
-        worker_found = False
-        for worker in db.workers.values():
-            if len(self.workers) and worker.id not in self.workers:
-                continue
-            if worker.can_generate(self.wp)[0]:
-                worker_found = True
-                break
-        return(worker_found)
-
 class AsyncGenerate(GenerateTemplate):
 
 
@@ -162,7 +161,7 @@ class AsyncGenerate(GenerateTemplate):
         '''
         super().post()
         ret_dict = {"id":self.wp.id}
-        if not self.has_valid_workers() and not raid.active:
+        if not self.wp.has_valid_workers() and not raid.active:
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
@@ -199,7 +198,7 @@ class SyncGenerate(GenerateTemplate):
     # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue
     def activate_waiting_prompt(self):
         # We don't want to keep synchronous requests up unless there's someone who can fulfill them
-        if not self.has_valid_workers():
+        if not self.wp.has_valid_workers():
             # We don't need to call .delete() on the wp because it's not activated yet
             # And therefore not added to the waiting_prompt dict.
             raise e.NoValidWorkers(self.username)
@@ -292,7 +291,8 @@ class JobPop(Resource):
             if priority_user:
                self.priority_users.append(priority_user)
         for priority_user in self.priority_users:
-            for wp in waiting_prompts.get_all():
+            wp_list = waiting_prompts.get_all()
+            for wp in wp_list:
                 if wp.user == priority_user and wp.needs_gen():
                     self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
@@ -309,6 +309,9 @@ class JobPop(Resource):
                     self.skipped[skipped_reason] =  self.skipped.get(skipped_reason,0) + 1
                 continue
             return(self.start_worker(wp), 200)
+        # We report maintenance exception only if we couldn't find any jobs
+        if self.worker.maintenance:
+            raise e.WorkerMaintenance(self.worker.id)
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension
@@ -354,8 +357,6 @@ class JobPop(Resource):
             self.worker.create(self.user, self.args['name'])
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.args['name'])
-        if self.worker.maintenance:
-            raise e.WorkerMaintenance(self.worker.id)
     
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
@@ -393,7 +394,7 @@ class JobSubmit(Resource):
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
         self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
-        if self.kudos == 0:
+        if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 
 

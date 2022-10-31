@@ -20,6 +20,7 @@ class Suspicions(IntEnum):
     USERNAME_LONG = 6
     USERNAME_PROFANITY = 7
     CORRUPT_PROMPT = 8
+    TOO_MANY_JOBS_ABORTED = 9
 
 suspicion_logs = {
     Suspicions.WORKER_NAME_LONG: 'Worker Name too long',
@@ -30,7 +31,8 @@ suspicion_logs = {
     Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({})',
     Suspicions.USERNAME_LONG: 'Username too long',
     Suspicions.USERNAME_PROFANITY: 'Profanity in username',
-    Suspicions.CORRUPT_PROMPT: 'Corrupt Prompt detected'
+    Suspicions.CORRUPT_PROMPT: 'Corrupt Prompt detected',
+    Suspicions.TOO_MANY_JOBS_ABORTED: 'Too many jobs aborted in a short amount of time'
 }
 
 class WaitingPrompt:
@@ -58,6 +60,9 @@ class WaitingPrompt:
         self.faulted = False
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
         self.stale_time = 1200
+        self.set_job_ttl()
+        # How many kudos this request consumed until now
+        self.consumed_kudos = 0
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params, **kwargs):
@@ -129,7 +134,7 @@ class WaitingPrompt:
         if self.needs_gen():
             return(False)
         for procgen in self.processing_gens:
-            if not procgen.is_completed():
+            if not procgen.is_completed() and not procgen.is_faulted():
                 return(False)
         return(True)
 
@@ -137,10 +142,13 @@ class WaitingPrompt:
         ret_dict = {
             "finished": 0,
             "processing": 0,
+            "restarted": 0,
         }
         for procgen in self.processing_gens:
             if procgen.is_completed():
                 ret_dict["finished"] += 1
+            elif procgen.is_faulted():
+                ret_dict["restarted"] += 1
             else:
                 ret_dict["processing"] += 1
         return(ret_dict)
@@ -184,6 +192,8 @@ class WaitingPrompt:
                 highest_expected_time_left = expected_time_left
         wait_time += highest_expected_time_left
         ret_dict["wait_time"] = round(wait_time)
+        ret_dict["kudos"] = self.consumed_kudos
+        ret_dict["is_possible"] = self.has_valid_workers()
         return(ret_dict)
 
     def get_lite_status(self):
@@ -205,10 +215,27 @@ class WaitingPrompt:
         This avoids me having to extend this just to change a var name
         '''
         self.user.record_usage(raw_things, kudos)
+        self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()
 
     def check_for_stale(self):
         while True:
+            # The below check if any jobs have been running too long and aborts them
+            faulted_requests = 0
+            for gen in self.processing_gens:
+                # We don't want to recheck if we've faulted already
+                if self.faulted:
+                    break
+                if gen.is_stale(self.job_ttl):
+                    # If the request took too long to complete, we cancel it and add it to the retry
+                    gen.abort()
+                    self.n += 1
+                if gen.is_faulted():
+                    faulted_requests += 1
+                # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
+                if faulted_requests >= 3:
+                    self.faulted = True
+                    self.log_faulted_job()
             if self._waiting_prompts.is_deleted(self):
                 break
             if self.is_stale():
@@ -217,8 +244,14 @@ class WaitingPrompt:
             time.sleep(10)
             self.extra_priority += 50
 
+    def log_faulted_job(self):
+        '''Extendable function to log why a request was aborted'''
+        logger.warning(f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
+
     def delete(self):
         for gen in self.processing_gens:
+            if not self.faulted:
+                gen.cancel()
             gen.delete()
         for gen in self.fake_gens:
             gen.delete()
@@ -236,10 +269,27 @@ class WaitingPrompt:
     def get_priority(self):
         return(self.user.kudos + self.extra_priority)
 
+    def set_job_ttl(self):
+        '''Returns how many seconds each job request should stay waiting before considering it stale and cancelling it
+        This function should be overriden by the invididual hordes depending on how the calculating ttl
+        '''
+        self.job_ttl = 150
+
+    def has_valid_workers(self):
+        worker_found = False
+        for worker in self.db.workers.values():
+            if len(self.workers) and worker.id not in self.workers:
+                continue
+            if worker.can_generate(self)[0]:
+                worker_found = True
+                break
+        return(worker_found)
+
 class ProcessingGeneration:
     generation = None
     seed = None
     fake = False
+    faulted = False
  
     def __init__(self, owner, pgs, worker):
         self._processing_generations = pgs
@@ -261,13 +311,13 @@ class ProcessingGeneration:
 
     # We allow the seed to not be sent
     def set_generation(self, generation, **kwargs):
-        if self.is_completed():
+        if self.is_completed() or self.is_faulted():
             return(0)
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
-        self.kudos = self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model)
+        self.kudos = self.get_gen_kudos()
         if self.fake and self.worker.user != self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
@@ -278,8 +328,49 @@ class ProcessingGeneration:
             logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
         return(self.kudos)
 
+    def cancel(self):
+        '''Cancelling requests in progress still rewards/burns the relevant amount of kudos'''
+        if self.is_completed() or self.is_faulted():
+            return
+        self.faulted = True
+        things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
+        self.kudos = self.get_gen_kudos()
+        if self.fake and self.worker.user != self.owner.user:
+            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+            logger.info(f"Fake Cancelled Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        else:
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
+            self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
+            logger.info(f"Cancelled Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        return(self.kudos)
+    
+    def abort(self):
+        '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
+        if self.is_completed() or self.is_faulted():
+            return        
+        self.faulted = True
+        self.worker.log_aborted_job()
+        logger.info(f"Aborted Stale Generation from by worker: {self.worker.name}")
+
+    # Overridable function
+    def get_gen_kudos(self):
+        return(self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
+
     def is_completed(self):
         if self.generation:
+            return(True)
+        return(False)
+
+    def is_faulted(self):
+        if self.faulted:
+            return(True)
+        return(False)
+
+    def is_stale(self, ttl):
+        if self.is_completed() or self.is_faulted():
+            return(False)
+        if (datetime.now() - self.start_time).seconds > ttl:
             return(True)
         return(False)
 
@@ -327,6 +418,11 @@ class Worker:
         # Extra comment about the worker, set by its owner
         self.info = None
         self.suspicious = 0
+        # Jobs which started but never completed by the worker. We only store this as a metric
+        self.uncompleted_jobs = 0
+        # Jobs which were started but never completed in the last hour. Used only to mark for suspicion and not otherwise reported.
+        self.aborted_jobs = 0
+        self.last_aborted_job = datetime.now()
         self.kudos_details = {
             "generated": 0,
             "uptime": 0,
@@ -361,7 +457,7 @@ class Worker:
 
     def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = []):
         # Unreasonable Fast can be added multiple times and it increases suspicion each time
-        if int(reason) in self.suspicions and reason != Suspicions.UNREASONABLY_FAST:
+        if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
             return
         self.suspicions.append(int(reason))
         self.suspicious += amount
@@ -408,7 +504,9 @@ class Worker:
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
-        self.models = kwargs.get("models")
+        self.models = [bleach.clean(model_name) for model_name in kwargs.get("models")]
+        # We don't allow more workers to claim they can server more than 20 models atm (to prevent abuse)
+        del self.models[20:]
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
@@ -416,10 +514,7 @@ class Worker:
         if not kwargs.get("safe_ip", True):
             if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
-        if kwargs.get("max_pixels", 512*512) > 2048 * 2048:
-            if not self.user.trusted:
-                self.report_suspicion(reason = Suspicions.EXTREME_MAX_PIXELS)
-        if not self.is_stale() and not self.paused:
+        if not self.is_stale() and not self.paused and not self.maintenance:
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
@@ -445,9 +540,13 @@ class Worker:
             return(f"{round(self.uptime/60/60/24,2)} days")
 
     def can_generate(self, waiting_prompt):
-        # takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it
+        '''Takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it'''
         is_matching = True
         skipped_reason = None
+        # Workers in maintenance are still allowed to generate for their owner
+        if self.maintenance and waiting_prompt.user != self.user:
+            is_matching = False
+            return([is_matching,skipped_reason])
         if self.is_stale():
             # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
@@ -467,7 +566,7 @@ class Worker:
         if waiting_prompt.tricked_worker(self):
             is_matching = False
             skipped_reason = 'secret'
-        if any(word.lower() in waiting_prompt.prompt for word.lower() in self.blacklist):
+        if any(word.lower() in waiting_prompt.prompt.lower() for word in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
         if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
@@ -511,6 +610,17 @@ class Worker:
             ret_num = 1
         return(ret_num)
 
+    def log_aborted_job(self):
+        # If the last aborted job was an hour ago, we reset the counter
+        if (datetime.now() - self.last_aborted_job).seconds > 3600:
+            self.aborted_jobs = 0
+        self.aborted_jobs += 1
+        self.last_aborted_job = datetime.now()
+        if self.aborted_jobs > 5:
+            self.report_suspicion(reason = Suspicions.TOO_MANY_JOBS_ABORTED)
+            self.aborted_jobs = 0
+        self.uncompleted_jobs += 1
+
     def get_performance(self):
         if len(self.performances):
             ret_str = f'{round(sum(self.performances) / len(self.performances) / thing_divisor,1)} {thing_name} per second'
@@ -531,7 +641,6 @@ class Worker:
         self.db.delete_worker(self)
         del self
 
-
     # Should be extended by each specific horde
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
@@ -540,6 +649,7 @@ class Worker:
             "name": self.name,
             "id": self.id,
             "requests_fulfilled": self.fulfilments,
+            "uncompleted_jobs": self.uncompleted_jobs,
             "kudos_rewards": self.kudos,
             "kudos_details": self.kudos_details,
             "performance": self.get_performance(),
@@ -565,6 +675,7 @@ class Worker:
             "name": self.name,
             "contributions": self.contributions,
             "fulfilments": self.fulfilments,
+            "uncompleted_jobs": self.uncompleted_jobs,
             "kudos": self.kudos,
             "kudos_details": self.kudos_details.copy(),
             "performances": self.performances.copy(),
@@ -588,6 +699,7 @@ class Worker:
         self.name = saved_dict["name"]
         self.contributions = saved_dict["contributions"]
         self.fulfilments = saved_dict["fulfilments"]
+        self.uncompleted_jobs = saved_dict.get("uncompleted_jobs",0)
         self.kudos = saved_dict.get("kudos",0)
         self.kudos_details = saved_dict.get("kudos_details",self.kudos_details)
         self.performances = saved_dict.get("performances",[])
@@ -636,7 +748,7 @@ class Index:
         del self._index[item.id]
 
     def get_all(self):
-        return(self._index.values())
+        return(list(self._index.values()))
 
     def is_deleted(self,item):
         if item.id in self._index:
@@ -714,7 +826,9 @@ class PromptsIndex(Index):
 
     def organize_by_model(self):
         org = {}
-        for wp in self._index.values():
+        # We make a list here to prevent iterating when the list changes
+        all_wps = list(self._index.values())
+        for wp in all_wps:
             # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
             # This will inflate the overall expected times, but it shouldn't be by much.
             # I don't see a way to do this calculation more accurately though
@@ -781,7 +895,7 @@ class User:
         }
         # We allow anonymous users more leeway for the max amount of concurrent requests
         # This is balanced by their lower priority
-        self.concurrency = 200
+        self.concurrency = 500
 
     def create(self, username, oauth_id, api_key, invite_id):
         self.username = username
@@ -975,7 +1089,7 @@ class User:
         # Anon is never considered suspicious
         if self.is_anon():
             return
-        if int(reason) in self.suspicions and reason != Suspicions.UNREASONABLY_FAST:
+        if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
             return
         self.suspicions.append(int(reason))
         self.suspicious += amount
@@ -1089,7 +1203,7 @@ class User:
             self.monthly_kudos['amount'] = serialized_monthly_kudos['amount']
             self.monthly_kudos['last_received'] = datetime.strptime(serialized_monthly_kudos['last_received'],"%Y-%m-%d %H:%M:%S")
         if self.is_anon():
-            self.concurrency = 200
+            self.concurrency = 500
             self.public_workers = True
         self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
         self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
@@ -1457,6 +1571,12 @@ class Database:
         return(list(models_dict.values()))
 
     def transfer_kudos(self, source_user, dest_user, amount):
+        if source_user.is_suspicious():
+            return([0,'Something went wrong when sending kudos. Please contact the mods.'])
+        if dest_user.is_suspicious():
+            return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
+        if amount < 0:
+            return([0,'Nice try...'])
         if amount > source_user.kudos:
             return([0,'Not enough kudos.'])
         source_user.modify_kudos(-amount, 'gifted')

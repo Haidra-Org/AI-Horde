@@ -36,13 +36,16 @@ class Models:
             'model': fields.String(title="Generation Model", description="The model which generated this image"),
         })
         self.response_model_wp_status_lite = api.model('RequestStatusCheck', {
-            'finished': fields.Integer(description="The amount of finished images in this request"),
-            'processing': fields.Integer(description="The amount of still processing images in this request"),
-            'waiting': fields.Integer(description="The amount of images waiting to be picked up by a worker"),
-            'done': fields.Boolean(description="True when all images in this request are done. Else False."),
-            'faulted': fields.Boolean(default=False,description="True when this request caused an internal server error and cannot be completed."),
-            'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all images in this request"),
+            'finished': fields.Integer(description="The amount of finished jobs in this request"),
+            'processing': fields.Integer(description="The amount of still processing jobs in this request"),
+            'restarted': fields.Integer(description="The amount of jobs that timed out and had to be restarted or were reported as failed by a worker"),
+            'waiting': fields.Integer(description="The amount of jobs waiting to be picked up by a worker"),
+            'done': fields.Boolean(description="True when all jobs in this request are done. Else False."),
+            'faulted': fields.Boolean(default=False,description="True when this request caused an internal server error and could not be completed."),
+            'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all jobs in this request"),
             'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
+            "kudos": fields.Float(description="The amount of total Kudos this request has consumed until now."),
+            "is_possible": fields.Boolean(default=True,description="If False, this request will not be able to be completed with the pool of workers currently available"),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatus', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
@@ -92,7 +95,7 @@ class Models:
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
             'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
-            'models': fields.List(fields.String(description="Which models this worker is serving")),
+            'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
         })
         self.response_model_worker_details = api.model('WorkerDetails', {
@@ -110,6 +113,7 @@ class Models:
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
+            "uncompleted_jobs": fields.Integer(example=0,description="How many jobs this worker has left uncompleted after it started them."),
             'models': fields.List(fields.String(description="Which models this worker if offerring")),
         })
 
