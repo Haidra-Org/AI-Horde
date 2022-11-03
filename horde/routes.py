@@ -5,7 +5,7 @@ from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from markdown import markdown
 from uuid import uuid4
-from . import logger, maintenance, args, HORDE
+from . import logger, maintenance, args, HORDE, cache
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
 from .classes import db
 from .classes import waiting_prompts,User,News
@@ -16,6 +16,7 @@ dance_return_to = '/'
 
 @logger.catch(reraise=True)
 @HORDE.route('/')
+@cache.cached()
 def index():
     with open(f'index_{args.horde}.md') as index_file:
         index = index_file.read()

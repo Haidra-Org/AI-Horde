@@ -67,7 +67,6 @@ class AsyncGenerate(AsyncGenerate):
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
 
-    
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
@@ -157,9 +156,9 @@ class JobPop(JobPop):
         )
   
 class HordeLoad(HordeLoad):
-    decorators = [limiter.limit("2/second")]
     # When we extend the actual method, we need to re-apply the decorators
     @logger.catch(reraise=True)
+    @cache.cached(timeout=2)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
     def get(self):
         '''Details about the current performance of this Horde
@@ -170,6 +169,7 @@ class HordeLoad(HordeLoad):
 
 class HordeNews(HordeNews):
     
+    @cache.cached(timeout=300)
     def get_news(self):
         return(horde_news + stable_horde_news)
 
@@ -190,3 +190,5 @@ api.add_resource(HordeModes, "/status/modes")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(Models, "/status/models")
 api.add_resource(HordeNews, "/status/news")
+api.add_resource(Teams, "/teams")
+api.add_resource(TeamSingle, "/teams/<string:team_id>")

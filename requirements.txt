@@ -2,6 +2,7 @@ werkzeug==2.1.2
 Flask
 flask-restx
 flask_limiter
+Flask-Caching   
 waitress
 requests >= 2.27
 Markdown

@@ -109,3 +109,8 @@ class Models(v2.Models):
             "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
             "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
         })
+        self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
+            "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
+            "performance": fields.Float(description="The average performance of the workers in this team, in megapixelsteps per second."),
+            "speed": fields.Float(description="The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second."),
+        })

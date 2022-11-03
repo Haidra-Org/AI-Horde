@@ -47,9 +47,9 @@ class TooLong(wze.BadRequest):
         self.log = f"User '{username}' tried to submit {chars} chars for {text_type}. Aborting!"
 
 class NameAlreadyExists(wze.BadRequest):
-    def __init__(self, username, old_worker_name, new_worker_name):
-        self.specific = f"The specified worker name '{new_worker_name}' is already taken!"
-        self.log = f"User '{username}' tried to change worker name from {old_worker_name} to {new_worker_name}. Aborting!"
+    def __init__(self, username, old_name, new_name, object_type = 'worker'):
+        self.specific = f"The specified {object_type} name '{new_name}' is already taken!"
+        self.log = f"User '{username}' tried to change {object_type} name from {old_name} to {new_name}. Aborting!"
 
 class ImageValidationFailed(wze.BadRequest):
     def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
@@ -143,6 +143,11 @@ class WorkerNotFound(wze.NotFound):
     def __init__(self, worker_id):
         self.specific = f"Worker with ID '{worker_id}' not found."
         self.log = f"Attempted to retrieve worker with non-existent ID '{worker_id}'"
+
+class TeamNotFound(wze.NotFound):
+    def __init__(self, team_id):
+        self.specific = f"Team with ID '{team_id}' not found."
+        self.log = f"Attempted to retrieve team with non-existent ID '{team_id}'"
 
 class UserNotFound(wze.NotFound):
     def __init__(self, user_id, lookup_type = 'ID'):

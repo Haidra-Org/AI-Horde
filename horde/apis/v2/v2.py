@@ -1,7 +1,7 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter, logger, maintenance, invite_only, raid, cm
-from ...classes import db,processing_generations,waiting_prompts,Worker,User,WaitingPrompt,News,Suspicions
+from ... import limiter, logger, maintenance, invite_only, raid, cm, cache
+from ...classes import db,processing_generations,waiting_prompts,Worker,User,Team,WaitingPrompt,News,Suspicions
 from enum import Enum
 from .. import exceptions as e
 import os, time, json, re
@@ -48,6 +48,7 @@ handle_kudos_upfront = api.errorhandler(e.KudosUpfront)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
+handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
 handle_request_expired = api.errorhandler(e.RequestExpired)(e.handle_bad_requests)
@@ -144,7 +145,6 @@ class GenerateTemplate(Resource):
         self.wp.activate()
 
 class AsyncGenerate(GenerateTemplate):
-
 
     @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
@@ -244,6 +244,7 @@ class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
     decorators = [limiter.limit("10/second", key_func = get_request_path)]
     @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
+    # @cache.cached(timeout=0.5)
     @api.response(404, 'Request Not found', models.response_model_error)
     def get(self, id = ''):
         '''Retrieve the status of an Asynchronous generation request without images.
@@ -424,13 +425,14 @@ class TransferKudos(Resource):
 
 class Workers(Resource):
     @logger.catch(reraise=True)
+    @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True, skip_none=True)
     def get(self):
         '''A List with the details of all registered and active workers
         '''
         workers_ret = []
         # I could do this with a comprehension, but this is clearer to understand
-        for worker in db.workers.values():
+        for worker in list(db.workers.values()):
             if worker.is_stale():
                 continue
             workers_ret.append(worker.get_details())
@@ -442,6 +444,7 @@ class WorkerSingle(Resource):
     get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
 
     @api.expect(get_parser)
+    @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Worker Details', skip_none=True)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
@@ -471,10 +474,11 @@ class WorkerSingle(Resource):
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
     put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")
     put_parser.add_argument("name", type=str, required=False, help="When this is set, it will change the worker's name. No profanity allowed!", location="json")
+    put_parser.add_argument("team", type=str, required=False, help="The team ID towards which this worker contributes kudos.", location="json")
 
 
     decorators = [limiter.limit("30/minute", key_func = get_request_path)]
-    @api.expect(put_parser)
+    @api.expect(put_parser, models.input_model_worker_modify, validate=True)
     @api.marshal_with(models.response_model_worker_modify, code=200, description='Modify Worker', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -533,6 +537,20 @@ class WorkerSingle(Resource):
             if ret == "Already Exists":
                 raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
             ret_dict["name"] = worker.name
+        if self.args.team != None:
+            if not admin.moderator and admin != worker.user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            if self.args.team == '':
+                worker.set_team(None)
+                ret_dict["team"] = 'None'
+            else:
+                team = db.find_team_by_id(self.args.team)
+                if not team:
+                    raise e.TeamNotFound(self.args.team)
+                ret = worker.set_team(team)
+                ret_dict["team"] = team.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
         return(ret_dict, 200)
@@ -572,7 +590,8 @@ class WorkerSingle(Resource):
         return(ret_dict, 200)
 
 class Users(Resource):
-    decorators = [limiter.limit("3/minute")]
+    decorators = [limiter.limit("30/minute")]
+    @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
     def get(self):
         '''A List with the details and statistic of all registered users
@@ -589,6 +608,7 @@ class UserSingle(Resource):
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
+    @cache.cached(timeout=3)
     @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
@@ -623,9 +643,11 @@ class UserSingle(Resource):
     parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
     parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
     parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
+    parser.add_argument("contact", type=str, required=False, location="json")
+    parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
-    @api.expect(parser)
+    @api.expect(parser, models.input_model_user_details, validate=True)
     @api.marshal_with(models.response_model_user_modify, code=200, description='Modify User', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -642,6 +664,7 @@ class UserSingle(Resource):
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         ret_dict = {}
+        # Admin Access
         if self.args.kudos != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
@@ -662,7 +685,7 @@ class UserSingle(Resource):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_moderator(self.args.moderator)
             ret_dict["moderator"] = user.moderator
-        # Moderator Duties
+        # Moderator Access
         if self.args.concurrency != None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
@@ -678,6 +701,12 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_trusted(self.args.trusted)
             ret_dict["trusted"] = user.trusted
+        if self.args.reset_suspicion != None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.reset_suspicion()
+            ret_dict["new_suspicion"] = user.suspicious
+        # User Access
         if self.args.public_workers != None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
@@ -696,6 +725,15 @@ class UserSingle(Resource):
             if ret == "Too Long":
                 raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, 'username')
             ret_dict["username"] = user.username
+        if self.args.contact != None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            ret = user.set_contact(self.args.contact)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.contact, 'worker contact')
+            ret_dict["contact"] = user.contact
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)
@@ -722,6 +760,7 @@ class FindUser(Resource):
 
 class Models(Resource):
     @logger.catch(reraise=True)
+    @cache.cached(timeout=2)
     @api.marshal_with(models.response_model_active_model, code=200, description='List All Active Models', as_list=True)
     def get(self):
         '''Returns a list of models active currently in this horde
@@ -730,8 +769,9 @@ class Models(Resource):
 
 
 class HordeLoad(Resource):
-    decorators = [limiter.limit("20/minute")]
+    # decorators = [limiter.limit("20/minute")]
     @logger.catch(reraise=True)
+    @cache.cached(timeout=2)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
         '''Details about the current performance of this Horde
@@ -742,6 +782,7 @@ class HordeLoad(Resource):
 
 class HordeNews(Resource):
     @logger.catch(reraise=True)
+    @cache.cached(timeout=300)
     @api.marshal_with(models.response_model_newspiece, code=200, description='Horde News', as_list = True)
     def get(self):
         '''Read the latest happenings on the horde
@@ -755,8 +796,8 @@ class HordeModes(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
 
-    decorators = [limiter.limit("2/second")]
     @api.expect(get_parser)
+    @cache.cached(timeout=50)
     @api.marshal_with(models.response_model_horde_modes, code=200, description='Horde Maintenance', skip_none=True)
     def get(self):
         '''Horde Maintenance Mode Status
@@ -802,6 +843,8 @@ class HordeModes(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
+            for wp in waiting_prompts.get_all():
+                wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = maintenance.active
         if self.args.invite_only != None:
             if not admin.moderator:
@@ -815,4 +858,162 @@ class HordeModes(Resource):
             ret_dict["raid_mode"] = raid.active
         if not len(ret_dict):
             raise e.NoValidActions("No mod change selected!")
+        return(ret_dict, 200)
+
+class Teams(Resource):
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=10)
+    @api.marshal_with(models.response_model_team_details, code=200, description='Teams List', as_list=True, skip_none=True)
+    def get(self):
+        '''A List with the details of all teams
+        '''
+        teams_ret = []
+        # I could do this with a comprehension, but this is clearer to understand
+        for team in list(db.teams.values()):
+            teams_ret.append(team.get_details())
+        return(teams_ret,200)
+
+    put_parser = reqparse.RequestParser()
+    put_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
+    put_parser.add_argument("name", type=str, required=True, location="json")
+    put_parser.add_argument("info", type=str, required=False, location="json")
+
+
+    decorators = [limiter.limit("30/minute", key_func = get_request_path)]
+    @api.expect(put_parser, models.input_model_team_create, validate=True)
+    @api.marshal_with(models.response_model_team_modify, code=200, description='Create Team', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def put(self, team_id = ''):
+        '''Create a new team.
+        Only trusted users can create new teams.
+        '''
+        self.args = self.put_parser.parse_args()
+        user = db.find_user_by_api_key(self.args['apikey'])
+        if not user:
+            raise e.InvalidAPIKey('User action: ' + 'PUT Teams')
+        if user.is_anon():
+            raise e.AnonForbidden()
+        if not user.trusted:
+            raise e.NotTrusted
+        ret_dict = {}
+        team = Team(db)
+        ret = team.set_name(self.args.name)
+        if ret == "Profanity":
+            raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'team name')
+        if ret == "Already Exists":
+            raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
+        ret_dict["name"] = team.name
+        if self.args.info != None:
+            ret = team.set_info(self.args.info)
+            if ret == "Profanity":
+                raise e.Profanity(user.get_unique_alias(), self.args.info, 'team info')
+            ret_dict["info"] = team.info
+        team.create(user)
+        ret_dict["id"] = team.id
+        return(ret_dict, 200)
+
+
+class TeamSingle(Resource):
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+
+    @api.expect(get_parser)
+    @cache.cached(timeout=3)
+    @api.marshal_with(models.response_model_team_details, code=200, description='Team Details', skip_none=True)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Team Not Found', models.response_model_error)
+    def get(self, team_id = ''):
+        '''Details of a worker Team'''
+        team = db.find_team_by_id(team_id)
+        if not team:
+            raise e.TeamNotFound(team_id)
+        details_privilege = 0
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            admin = db.find_user_by_api_key(self.args['apikey'])
+            if not admin:
+                raise e.InvalidAPIKey('admin team details')
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorTeamDetails')
+            details_privilege = 2
+        return(team.get_details(details_privilege),200)
+
+    patch_parser = reqparse.RequestParser()
+    patch_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Creator API key", location='headers')
+    patch_parser.add_argument("name", type=str, required=False, location="json")
+    patch_parser.add_argument("info", type=str, required=False, location="json")
+
+
+    decorators = [limiter.limit("30/minute", key_func = get_request_path)]
+    @api.expect(patch_parser, models.input_model_team_modify, validate=True)
+    @api.marshal_with(models.response_model_team_modify, code=200, description='Modify Team', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Team Not Found', models.response_model_error)
+    def patch(self, team_id = ''):
+        '''Update a Team's information
+        '''
+        team = db.find_team_by_id(team_id)
+        if not team:
+            raise e.TeamNotFound(team_id)
+        self.args = self.patch_parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
+        if not admin:
+            raise e.InvalidAPIKey('User action: ' + 'PATCH TeamSingle')
+        ret_dict = {}
+        # Only creators can set info notes
+        if self.args.info != None:
+            if not admin.moderator and admin != team.user:
+                raise e.NotOwner(admin.get_unique_alias(), team.name)
+            ret = team.set_info(self.args.info)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.info, 'team info')
+            ret_dict["info"] = team.info
+        if self.args.name != None:
+            if not admin.moderator and admin != team.user:
+                raise e.NotModerator(admin.get_unique_alias(), 'PATCH TeamSingle')
+            ret = team.set_name(self.args.name)
+            if ret == "Profanity":
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'team name')
+            if ret == "Already Exists":
+                raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
+            ret_dict["name"] = team.name
+        if not len(ret_dict):
+            raise e.NoValidActions("No team modification selected!")
+        return(ret_dict, 200)
+
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+
+
+    @api.expect(delete_parser)
+    @api.marshal_with(models.response_model_deleted_team, code=200, description='Delete Team')
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Team Not Found', models.response_model_error)
+    def delete(self, team_id = ''):
+        '''Delete the team entry
+        Only the team's creator or a horde moderator can use this endpoint.
+        This action is unrecoverable!
+        '''
+        team = db.find_team_by_id(team_id)
+        if not team:
+            raise e.TeamNotFound(team_id)
+        self.args = self.delete_parser.parse_args()
+        admin = db.find_user_by_api_key(self.args['apikey'])
+        if not admin:
+            raise e.InvalidAPIKey('User action: ' + 'DELETE TeamSingle')
+        if not admin.moderator and admin != team.user:
+            raise e.NotModerator(admin.get_unique_alias(), 'DELETE TeamSingle')
+        logger.warning(f'{admin.get_unique_alias()} deleted team: {team.name}')
+        ret_dict = {
+            'deleted_id': team.id,
+            'deleted_name': team.name,
+        }
+        team.delete()
         return(ret_dict, 200)

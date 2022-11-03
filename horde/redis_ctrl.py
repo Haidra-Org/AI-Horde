@@ -7,6 +7,7 @@ address = f"redis://{hostname}:{port}"
 
 limiter_db = 1
 ipaddr_db = 2
+cache_db = 3
 
 def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -14,6 +15,9 @@ def is_redis_up() -> bool:
 
 def ger_limiter_url():
     return(f"{address}/{limiter_db}")
+
+def ger_cache_url():
+    return(f"{address}/{cache_db}")
 
 def get_ipaddr_db():
     rdb = redis.Redis(

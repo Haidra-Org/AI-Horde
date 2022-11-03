@@ -163,15 +163,15 @@ class WaitingPrompt(WaitingPrompt):
     def set_job_ttl(self):
         # default is 2 minutes. Then we scale up based on resolution.
         # This will be more accurate with a newer formula
-        self.job_ttl = 100
+        self.job_ttl = 150
         if self.width * self.height > 2048*2048:
-            self.job_ttl = 600
+            self.job_ttl = 800
         elif self.width * self.height > 1024*1024:
-            self.job_ttl = 240
+            self.job_ttl = 400
         elif self.width * self.height > 728*728:
-            self.job_ttl = 150
+            self.job_ttl = 260
         elif self.width * self.height >= 512*512:
-            self.job_ttl = 120
+            self.job_ttl = 200
 
     def log_faulted_job(self):
         '''Extendable function to log why a request was aborted'''

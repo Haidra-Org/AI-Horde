@@ -169,7 +169,7 @@ class WaitingPrompt:
                 if procgen.is_completed():
                     ret_dict["generations"].append(procgen.get_details())
         queue_pos, queued_things, queued_n = self.get_own_queue_stats()
-        # We increment the priority by 1, because it starts at 0
+        # We increment the priority by 1, because it starts at -1
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
         active_workers = self.db.count_active_workers()
@@ -184,6 +184,9 @@ class WaitingPrompt:
         if avg_things_per_sec == 0:
             avg_things_per_sec = 1
         wait_time = queued_things / avg_things_per_sec
+        # someone said wait_time can be -1. I don't believe them, but I check anyway
+        if wait_time < 0:
+            wait_time = 0
         # We add the expected running time of our processing gens
         highest_expected_time_left = 0
         for procgen in self.processing_gens:
@@ -258,6 +261,12 @@ class WaitingPrompt:
         self._waiting_prompts.del_item(self)
         del self
 
+    def abort_for_maintenance(self):
+        '''sets all waiting requests to 0, so that all clients pick them up once the client gen is completed'''
+        if self.is_completed():
+            return
+        self.n = 0
+
     def refresh(self):
         self.last_process_time = datetime.now()
 
@@ -318,7 +327,7 @@ class ProcessingGeneration:
         self.seed = kwargs.get('seed', None)
         things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
-        if self.fake and self.worker.user != self.owner.user:
+        if self.fake and self.worker.user == self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
             logger.info(f"Fake Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
@@ -335,7 +344,7 @@ class ProcessingGeneration:
         self.faulted = True
         things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
-        if self.fake and self.worker.user != self.owner.user:
+        if self.fake and self.worker.user == self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
             logger.info(f"Fake Cancelled Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
@@ -417,6 +426,8 @@ class Worker:
         self.paused = False
         # Extra comment about the worker, set by its owner
         self.info = None
+        # The worker's team, set by its owner
+        self.team = None
         self.suspicious = 0
         # Jobs which started but never completed by the worker. We only store this as a metric
         self.uncompleted_jobs = 0
@@ -468,7 +479,13 @@ class Worker:
         if self.is_suspicious():
             self.paused = True
 
-    def is_suspicious(self): 
+    def reset_suspicion(self):
+        '''Clears the worker's suspicion and resets their reasons'''
+        self.suspicions = []
+        self.suspicious = 0
+
+    def is_suspicious(self):
+        # Trusted users are never suspicious
         if self.user.trusted:
             return(False)       
         if self.suspicious >= self.suspicion_threshold:
@@ -498,6 +515,10 @@ class Worker:
         self.info = bleach.clean(new_info)
         return("OK")
 
+    def set_team(self,new_team):
+        self.team = new_team
+        return("OK")
+
     # This should be overwriten by each specific horde
     def calculate_uptime_reward(self):
         return(100)
@@ -518,6 +539,8 @@ class Worker:
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
+                if self.team:
+                    self.team.record_uptime(self.uptime - self.last_reward_uptime)
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
@@ -581,7 +604,10 @@ class Worker:
 
     # We split it to its own function to make it extendable
     def convert_contribution(self,raw_things):
-        self.contributions = round(self.contributions + raw_things/thing_divisor,2)
+        converted = round(raw_things/thing_divisor,2)
+        self.contributions = round(self.contributions + converted,2)
+        # We reurn the converted amount as well in case we need it
+        return(converted)
 
     @logger.catch(reraise=True)
     def record_contribution(self, raw_things, kudos, things_per_sec):
@@ -590,8 +616,10 @@ class Worker:
         '''
         self.user.record_contributions(raw_things = raw_things, kudos = kudos)
         self.modify_kudos(kudos,'generated')
-        self.convert_contribution(raw_things)
+        converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
+        if self.team:
+            self.team.record_contribution(converted_amount, kudos)
         self.performances.append(things_per_sec)
         if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
             self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
@@ -601,14 +629,6 @@ class Worker:
     def modify_kudos(self, kudos, action = 'generated'):
         self.kudos = round(self.kudos + kudos, 2)
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2) 
-
-    def get_performance_average(self):
-        if len(self.performances):
-            ret_num = sum(self.performances) / len(self.performances)
-        else:
-            # Always sending at least 1 thing per second, to avoid divisions by zero
-            ret_num = 1
-        return(ret_num)
 
     def log_aborted_job(self):
         # If the last aborted job was an hour ago, we reset the counter
@@ -620,6 +640,14 @@ class Worker:
             self.report_suspicion(reason = Suspicions.TOO_MANY_JOBS_ABORTED)
             self.aborted_jobs = 0
         self.uncompleted_jobs += 1
+
+    def get_performance_average(self):
+        if len(self.performances):
+            ret_num = sum(self.performances) / len(self.performances)
+        else:
+            # Always sending at least 1 thing per second, to avoid divisions by zero
+            ret_num = 1
+        return(ret_num)
 
     def get_performance(self):
         if len(self.performances):
@@ -659,12 +687,14 @@ class Worker:
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
             "models": self.models,
+            "team": self.team.id if self.team else 'None',
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
             ret_dict['suspicious'] = self.suspicious
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
+            ret_dict['contact'] = self.user.contact
         return(ret_dict)
 
     # Should be extended by each specific horde
@@ -690,6 +720,7 @@ class Worker:
             "ipaddr": self.ipaddr,
             "suspicions": self.suspicions,
             "models": self.models,
+            "team": self.team.id if self.team else None,
         }
         return(ret_dict)
 
@@ -709,6 +740,9 @@ class Worker:
         self.maintenance = saved_dict.get("maintenance",False)
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
+        team_id = saved_dict.get("team",None)
+        if team_id:
+            self.team = self.db.find_team_by_id(team_id)
         self.nsfw = saved_dict.get("nsfw",True)
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
@@ -731,7 +765,6 @@ class Worker:
             self.kudos_details['generated'] = recalc_kudos
             self.user.kudos_details['accumulated'] += self.kudos_details['uptime']
             self.user.kudos += self.kudos_details['uptime']
-
 
 
 class Index:
@@ -759,14 +792,14 @@ class PromptsIndex(Index):
 
     def count_waiting_requests(self, user):
         count = 0
-        for wp in self._index.values():
+        for wp in list(self._index.values()):
             if wp.user == user and not wp.is_completed():
                 count += wp.n
         return(count)
 
     def count_total_waiting_generations(self):
         count = 0
-        for wp in self._index.values():
+        for wp in list(self._index.values()):
             count += wp.n + wp.count_processing_gens()["processing"]
         return(count)
 
@@ -776,7 +809,7 @@ class PromptsIndex(Index):
             "queued_requests": 0,
             queued_thing: 0,
         }
-        for wp in self._index.values():
+        for wp in list(self._index.values()):
             current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
             ret_dict["queued_requests"] += current_wp_queue
             if current_wp_queue > 0:
@@ -795,9 +828,6 @@ class PromptsIndex(Index):
                     things_per_model[model] = things_per_model.get(model,0) + wp.things
             things_per_model[model] = round(things_per_model.get(model,0),2)
         return(things_per_model)
-
-                
-
 
     def get_waiting_wp_by_kudos(self):
         sorted_wp_list = sorted(self._index.values(), key=lambda x: x.get_priority(), reverse=True)
@@ -874,6 +904,7 @@ class User:
             "last_received": None,
         }
         self.suspicions = []
+        self.contact = None
         self.db = db
 
     def create_anon(self):
@@ -934,6 +965,14 @@ class User:
         if len(new_username) > 30:
             return("Too Long")
         self.username = bleach.clean(new_username)
+        return("OK")
+
+    def set_contact(self,new_contact):
+        if self.contact == new_contact:
+            return("OK")
+        if is_profane(new_contact):
+            return("Profanity")
+        self.contact = bleach.clean(new_contact)
         return("OK")
 
     def set_trusted(self,is_trusted):
@@ -1075,6 +1114,7 @@ class User:
             for worker in self.get_workers():
                 workers_array.append(worker.id)
             ret_dict["worker_ids"] = workers_array
+            ret_dict['contact'] = self.contact
         if details_privilege >= 2:
             mk_dict = {
                 "amount": self.calculate_monthly_kudos(),
@@ -1096,6 +1136,15 @@ class User:
         if reason:
             reason_log = suspicion_logs[reason].format(*formats)
             logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
+
+    def reset_suspicion(self):
+        '''Clears the user's suspicion and resets their reasons'''
+        if self.is_anon():
+            return
+        self.suspicions = []
+        self.suspicious = 0
+        for worker in self.db.find_workers_by_user(self):
+            worker.reset_suspicion()
 
     def get_workers(self):
         return(self.db.find_workers_by_user(self))
@@ -1172,6 +1221,7 @@ class User:
             "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
             "monthly_kudos": serialized_monthly_kudos,
             "evaluating_kudos": self.evaluating_kudos,
+            "contact": self.contact,
         }
         return(ret_dict)
 
@@ -1191,6 +1241,7 @@ class User:
         # I am putting int() here, to convert a boolean entry I had in the past
         self.worker_invited = int(saved_dict.get("worker_invited", 0))
         self.suspicions = saved_dict.get("suspicions", [])
+        self.contact = saved_dict.get("contact",None)
         for suspicion in self.suspicions:
             self.suspicious += 1
             logger.debug(f"Suspecting user {self.get_unique_alias()} for {self.suspicious} with reasons {self.suspicions}")
@@ -1216,17 +1267,149 @@ class User:
             self.kudos_details['accumulated'] = recalc_kudos
         self.ensure_kudos_positive()
         duplicate_user = self.db.find_user_by_id(self.id)
-        if duplicate_user:
+        if duplicate_user and duplicate_user != self:
             if duplicate_user.get_unique_alias() != self.get_unique_alias():
                 logger.error(f"mismatching duplicate IDs found! {self.get_unique_alias()} != {duplicate_user.get_unique_alias()}. Please cleanup manually!")
             else:
-                logger.warning(f"found duplicate ID: {self.get_unique_alias()}")
+                logger.warning(f"found duplicate ID: {[self,duplicate_user,self.get_unique_alias(),self.id,duplicate_user.id,duplicate_user.get_unique_alias()]}")
                 duplicate_user.kudos += self.kudos
                 if duplicate_user.last_active < self.last_active:
                     logger.warning(f"Merging {self.oauth_id} into {duplicate_user.oauth_id}")
                     duplicate_user.oauth_id = self.oauth_id
                 return(True)
 
+
+class Team:
+    def __init__(self, db):
+        self.contributions = 0
+        self.fulfilments = 0
+        self.kudos = 0
+        self.uptime = 0
+        self.db = db
+        self.info = ''
+        self.name = ''
+
+    def create(self, user):
+        self.id = str(uuid4())
+        self.set_owner(user)
+        self.creation_date = datetime.now()
+        self.last_active = datetime.now()
+        self.db.register_new_team(self)
+
+    def get_performance(self):
+        all_performances = []
+        for worker in self.db.find_workers_by_team(self):
+            all_performances.append(worker.get_performance_average())
+        if len(all_performances):
+            perf_avg = round(sum(all_performances) / len(all_performances) / thing_divisor,1)
+            perf_total = round(sum(all_performances) / thing_divisor,1)
+        else:
+            perf_avg = 0
+            perf_total = 0
+        return(perf_avg,perf_total)
+
+    def get_all_models(self):
+        all_models = {}
+        for worker in self.db.find_workers_by_team(self):
+            for model_name in worker.models:
+                all_models[model_name] = all_models.get(model_name,0) + 1
+        model_list = []
+        for model in all_models:
+            minfo = {
+                "name": model,
+                "count": all_models[model]
+            }
+            model_list.append(minfo)
+        return(model_list)
+
+    def set_name(self,new_name):
+        if self.name == new_name:
+            return("OK")        
+        if is_profane(new_name):
+            return("Profanity")
+        self.name = bleach.clean(new_name)
+        existing_team = self.db.find_team_by_name(self.name)
+        if existing_team and existing_team != self:
+            return("Already Exists")
+        return("OK")
+
+    def set_info(self, new_info):
+        if self.info == new_info:
+            return("OK")
+        if is_profane(new_info):
+            return("Profanity")
+        self.info = bleach.clean(new_info)
+        return("OK")
+
+    def set_owner(self, new_owner):
+        self.user = new_owner
+
+    def delete(self):
+        for worker in self.db.find_workers_by_team(self):
+            worker.set_team(None)
+        self.db.delete_team(self)
+        del self
+
+    def record_uptime(self, seconds):
+        self.uptime += seconds
+        self.last_active = datetime.now()
+    
+    def record_contribution(self, contributions, kudos):
+        self.contributions = round(self.contributions + contributions, 2)
+        self.fulfilments += 1
+        self.kudos = round(self.kudos + kudos, 2)
+        self.last_active = datetime.now()
+
+   # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def get_details(self, details_privilege = 0):
+        '''We display these in the workers list json'''
+        worker_list = [{"id": worker.id, "name":worker.name} for worker in self.db.find_workers_by_team(self)]
+        perf_avg, perf_total = self.get_performance()
+        ret_dict = {
+            "name": self.name,
+            "id": self.id,
+            "creator": self.user,
+            "contributions": self.contributions,
+            "requests_fulfilled": self.fulfilments,
+            "kudos": self.kudos,
+            "performance": perf_avg,
+            "speed": perf_total,
+            "uptime": self.uptime,
+            "info": self.info,
+            "worker_count": len(worker_list),
+            "workers": worker_list,
+            "models": self.get_all_models(),
+        }
+        return(ret_dict)
+
+    # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def serialize(self):
+        ret_dict = {
+            "oauth_id": self.user.oauth_id,
+            "name": self.name,
+            "contributions": self.contributions,
+            "fulfilments": self.fulfilments,
+            "kudos": self.kudos,
+            "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
+            "id": self.id,
+            "uptime": self.uptime,
+            "info": self.info,
+        }
+        return(ret_dict)
+
+    @logger.catch(reraise=True)
+    def deserialize(self, saved_dict, convert_flag = None):
+        self.user = self.db.find_user_by_oauth_id(saved_dict["oauth_id"])
+        self.name = saved_dict["name"]
+        self.contributions = saved_dict["contributions"]
+        self.fulfilments = saved_dict["fulfilments"]
+        self.kudos = saved_dict.get("kudos",0)
+        self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
+        self.id = saved_dict["id"]
+        self.uptime = saved_dict.get("uptime",0)
+        self.info = saved_dict.get("info",None)
 
 
 class Stats:
@@ -1334,6 +1517,8 @@ class Database:
         self.stats = self.new_stats()
         self.USERS_FILE = "db/users.json"
         self.users = {}
+        self.TEAMS_FILE = "db/teams.json"
+        self.teams = {}
         # I'm setting this quickly here so that we do not crash when trying to detect duplicate IDs, during user deserialization
         self.anon = None
         # Increments any time a new user is added
@@ -1354,7 +1539,8 @@ class Database:
                     if error:
                         continue
                     if new_user.is_stale():
-                        logger.warning(f"(Dry-Run) Deleting stale user {new_user.get_unique_alias()}")
+                        # logger.warning(f"(Dry-Run) Deleting stale user {new_user.get_unique_alias()}")
+                        pass
                     self.users[new_user.oauth_id] = new_user
                     if new_user.id > self.last_user_id:
                         self.last_user_id = new_user.id
@@ -1363,6 +1549,16 @@ class Database:
             self.anon = User(self)
             self.anon.create_anon()
             self.users[self.anon.oauth_id] = self.anon
+        if os.path.isfile(self.TEAMS_FILE):
+            with open(self.TEAMS_FILE) as db:
+                serialized_teams = json.load(db)
+                for team_dict in serialized_teams:
+                    if not team_dict:
+                        logger.error("Found null team on db load. Bypassing")
+                        continue
+                    new_team = self.new_team()
+                    new_team.deserialize(team_dict,convert_flag)
+                    self.teams[new_team.id] = new_team
         if os.path.isfile(self.WORKERS_FILE):
             with open(self.WORKERS_FILE) as db:
                 serialized_workers = json.load(db)
@@ -1398,13 +1594,20 @@ class Database:
         return(User(self))
     def new_stats(self):
         return(Stats(self))
+    def new_team(self):
+        return(Team(self))
 
     def write_files(self):
+        time.sleep(4)
         logger.init_ok("Database Store Thread", status="Started")
         while True:
             self.write_files_to_disk()
             time.sleep(self.interval)
 
+    def initiate_save(self):
+        pass
+        # TODO: change the time.slep above to a counter and this function will adjust it to 10 seconds or less
+    
     @logger.catch(reraise=True)
     def write_files_to_disk(self):
         if not os.path.exists('db'):
@@ -1424,8 +1627,14 @@ class Database:
             user_serialized_list.append(user.serialize())
         with open(self.USERS_FILE, 'w') as db:
             json.dump(user_serialized_list,db)
+        teams_serialized_list = []
+        for team in self.teams.copy().values():
+            teams_serialized_list.append(team.serialize())
+        with open(self.TEAMS_FILE, 'w') as db:
+            json.dump(teams_serialized_list,db)
 
     def assign_monthly_kudos(self):
+        time.sleep(2)
         logger.init_ok("Monthly Kudos Awards Thread", status="Started")
         while True:
             for user in self.users.values():
@@ -1482,19 +1691,21 @@ class Database:
             totals["fulfilments"] += worker.fulfilments
         return(totals)
 
-
     def register_new_user(self, user):
         self.last_user_id += 1
         self.users[user.oauth_id] = user
         logger.info(f'New user created: {user.username}#{self.last_user_id}')
         return(self.last_user_id)
+        self.initiate_save()
 
     def register_new_worker(self, worker):
         self.workers[worker.name] = worker
         logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
+        self.initiate_save()
 
     def delete_worker(self,worker):
         del self.workers[worker.name]
+        self.initiate_save()
 
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
@@ -1502,7 +1713,7 @@ class Database:
         return(self.users.get(oauth_id))
 
     def find_user_by_username(self, username):
-        for user in self.users.values():
+        for user in list(self.users.values()):
             ulist = username.split('#')
             # This approach handles someone cheekily putting # in their username
             if user.username == "#".join(ulist[:-1]) and user.id == int(ulist[-1]):
@@ -1512,7 +1723,7 @@ class Database:
         return(None)
 
     def find_user_by_id(self, user_id):
-        for user in self.users.values():
+        for user in list(self.users.values()):
             # The arguments passed to the URL are always strings
             if str(user.id) == str(user_id):
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
@@ -1521,7 +1732,7 @@ class Database:
         return(None)
 
     def find_user_by_api_key(self,api_key):
-        for user in self.users.values():
+        for user in list(self.users.values()):
             if user.api_key == api_key:
                 if user == self.anon and not self.ALLOW_ANONYMOUS:
                     return(None)
@@ -1532,10 +1743,51 @@ class Database:
         return(self.workers.get(worker_name))
 
     def find_worker_by_id(self,worker_id):
-        for worker in self.workers.values():
+        for worker in list(self.workers.values()):
             if worker.id == worker_id:
                 return(worker)
         return(None)
+
+    def find_workers_by_user(self, user):
+        found_workers = []
+        for worker in list(self.workers.values()):
+            if worker.user == user:
+                found_workers.append(worker)
+        return(found_workers)
+    
+    def find_workers_by_team(self, team):
+        found_workers = []
+        for worker in list(self.workers.values()):
+            if worker.team == team:
+                found_workers.append(worker)
+        return(found_workers)
+    
+    def update_worker_name(self, worker, new_name):
+        if new_name in self.workers:
+            # If the name already exists, we return error code 1
+            return(1)
+        self.workers[new_name] = worker
+        del self.workers[worker.name]
+        logger.info(f'Worker renamed from {worker.name} to {new_name}')
+
+    def register_new_team(self, team):
+        self.teams[team.id] = team
+        logger.info(f'New team created: {team.name} by {team.user.get_unique_alias()}')
+        self.initiate_save()
+
+    def find_team_by_id(self,team_id):
+        return(self.teams.get(team_id))
+
+    def find_team_by_name(self,team_name):
+        for team in list(self.teams.values()):
+            if team.name.lower() == team_name.lower():
+                return(team)
+        return(None)
+
+    def delete_team(self, team):
+        del self.teams[team.id]
+        self.initiate_save()
+
 
     def get_available_models(self, waiting_prompts):
         models_dict = {}
@@ -1609,18 +1861,3 @@ class Database:
         kudos = round(things,2)
         return(kudos)
 
-
-    def find_workers_by_user(self, user):
-        found_workers = []
-        for worker in self.workers.values():
-            if worker.user == user:
-                found_workers.append(worker)
-        return(found_workers)
-    
-    def update_worker_name(self, worker, new_name):
-        if new_name in self.workers:
-            # If the name already exists, we return error code 1
-            return(1)
-        self.workers[new_name] = worker
-        del self.workers[worker.name]
-        logger.info(f'Worker renamed from {worker.name} to {new_name}')

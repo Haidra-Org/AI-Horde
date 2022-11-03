@@ -9,6 +9,7 @@ Worker = import_module(name=f'horde.classes.{args.horde}').Worker
 PromptsIndex = import_module(name=f'horde.classes.{args.horde}').PromptsIndex
 GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').GenerationsIndex
 User = import_module(name=f'horde.classes.{args.horde}').User
+Team = import_module(name=f'horde.classes.{args.horde}').Team
 Database = import_module(name=f'horde.classes.{args.horde}').Database
 News = import_module(name=f'horde.classes.{args.horde}').News
 

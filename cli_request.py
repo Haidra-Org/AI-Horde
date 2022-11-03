@@ -135,7 +135,7 @@ def generate():
             chk_results = chk_req.json()
             logger.info(chk_results)
             is_done = chk_results['done']
-            time.sleep(1)
+            time.sleep(0.8)
         retrieve_req = requests.get(f'{args.horde}/api/v2/generate/status/{req_id}')
         if not retrieve_req.ok:
             logger.error(retrieve_req.text)
