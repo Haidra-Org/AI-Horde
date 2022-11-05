@@ -8,6 +8,8 @@ address = f"redis://{hostname}:{port}"
 limiter_db = 1
 ipaddr_db = 2
 cache_db = 3
+ipaddr_supicion_db = 4
+ipaddr_timeout_db = 5
 
 def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -24,4 +26,18 @@ def get_ipaddr_db():
         host=hostname,
         port=port,
         db = ipaddr_db)
+    return(rdb)
+
+def get_ipaddr_suspicion_db():
+    rdb = redis.Redis(
+        host=hostname,
+        port=port,
+        db = ipaddr_supicion_db)
+    return(rdb)
+
+def get_ipaddr_timeout_db():
+    rdb = redis.Redis(
+        host=hostname,
+        port=port,
+        db = ipaddr_timeout_db)
     return(rdb)

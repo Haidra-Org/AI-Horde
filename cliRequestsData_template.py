@@ -10,6 +10,7 @@ imgen_params = {
     "denoising_strength": 0.6,
     "sampler_name": "k_euler",
     "cfg_scale": 7.5,
+    "karras": True,
     # Uncomment the below line to pass a specific seed
     # "seed": "the little seed that could",
     # You can put extra SD webui params here if you wish

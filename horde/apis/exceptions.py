@@ -58,8 +58,13 @@ class ImageValidationFailed(wze.BadRequest):
 
 class SourceMaskUnnecessary(wze.BadRequest):
     def __init__(self):
-        self.specific = f"Please do not pass a source_mask unless you also specify source_processing as 'inpainting' or 'outpainting'"
-        self.log = f"Tried to pass source_mask with img2img"
+        self.specific = f"Please do not pass a source_mask unless you are sending a source_image as well"
+        self.log = f"Tried to pass source_mask with txt2img"
+
+class UnsupportedSampler(wze.BadRequest):
+    def __init__(self):
+        self.specific = f"This sampler is not supported in this mode the moment"
+        self.log = None
 
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
@@ -118,6 +123,11 @@ class UnsafeIP(wze.Forbidden):
     def __init__(self, ipaddr):
         self.specific = f"Due to abuse prevention, we cannot accept more workers from your IP address. Please contact us on Discord if you feel this is a mistake."
         self.log = f"Worker attempted to pop from unsafe IP: {ipaddr}"
+
+class TimeoutIP(wze.Forbidden):
+    def __init__(self, ipaddr, ttl):
+        self.specific = f"Due to abuse prevention, your IP address has been put into timeout for {ttl} more seconds. Please try again later, or contact us on discord if you think this was an error."
+        self.log = f"Client attempted to generate from {ipaddr} while in {ttl} seconds timeout"
 
 class TooManyNewIPs(wze.Forbidden):
     def __init__(self, ipaddr):

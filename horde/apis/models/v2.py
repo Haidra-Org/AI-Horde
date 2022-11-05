@@ -29,12 +29,6 @@ class Parsers:
 
 class Models:
     def __init__(self,api):
-
-        self.response_model_generation_result = api.model('Generation', {
-            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
-            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
-            'model': fields.String(title="Generation Model", description="The model which generated this image"),
-        })
         self.response_model_wp_status_lite = api.model('RequestStatusCheck', {
             'finished': fields.Integer(description="The amount of finished jobs in this request"),
             'processing': fields.Integer(description="The amount of still processing jobs in this request"),
@@ -46,6 +40,23 @@ class Models:
             'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
             "kudos": fields.Float(description="The amount of total Kudos this request has consumed until now."),
             "is_possible": fields.Boolean(default=True,description="If False, this request will not be able to be completed with the pool of workers currently available"),
+        })
+        self.response_model_worker_details_lite = api.model('WorkerDetailsLite', {
+            "name": fields.String(description="The Name given to this worker."),
+            "id": fields.String(description="The UUID of this worker."),
+        })
+        self.response_model_team_details_lite = api.model('TeamDetailsLite', {
+            "name": fields.String(description="The Name given to this team."),
+            "id": fields.String(description="The UUID of this team."),
+        })
+        self.response_model_active_model_lite = api.model('ActiveModelLite', {
+            'name': fields.String(description="The Name of a model available by workers in this horde."),
+            'count': fields.Integer(description="How many of workers in this horde are running this model."),
+        })
+        self.response_model_generation_result = api.model('Generation', {
+            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
+            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
+            'model': fields.String(title="Generation Model", description="The model which generated this image"),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatus', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
@@ -60,12 +71,13 @@ class Models:
             'seed': fields.String(description="The seed to use to generete this request"),
         })
         self.response_model_generations_skipped = api.model('NoValidRequestFound', {
-            'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
-            'performance': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker"),
-            'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."),
-            'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept."),
-            'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not."),
-            'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides."),
+            'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
+            'performance': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
+            'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide.", min=0),
+            'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept.", min=0),
+            'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
+            'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides.", min=0),
+            'bridge_version': fields.Integer(example=0,description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).", min=0),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
@@ -98,10 +110,6 @@ class Models:
             'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
         })
-        self.response_model_worker_details_lite = api.model('WorkerDetailsLite', {
-            "name": fields.String(description="The Name given to this worker."),
-            "id": fields.String(description="The UUID of this worker."),
-        })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
             "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),
             "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total."),
@@ -117,7 +125,7 @@ class Models:
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
             "uncompleted_jobs": fields.Integer(example=0,description="How many jobs this worker has left uncompleted after it started them."),
             'models': fields.List(fields.String(description="Which models this worker if offerring")),
-            "team": fields.String(example="Direct Action", description="The team ID towards which this worker contributes kudos. It an empty string ('') is passed, it will leave the worker without a team."),
+            'team': fields.Nested(self.response_model_team_details_lite, "The Team to which this worker is dedicated."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",min_length=5,max_length=500),
         })
 
@@ -126,7 +134,7 @@ class Models:
             "paused": fields.Boolean(description="(Mods only) Set to true to pause this worker."),
             "info": fields.String(description="You can optionally provide a server note which will be seen in the server details. No profanity allowed!",min_length=2,max_length=1000),
             "name": fields.String(description="When this is set, it will change the worker's name. No profanity allowed!",min_length=5,max_length=100),
-            "team": fields.String(example="0bed257b-e57c-4327-ac64-40cdfb1ac5e6", description="The team towards which this worker contributes kudos. No profanity allowed!",min_length=3,max_length=100),
+            "team": fields.String(example="0bed257b-e57c-4327-ac64-40cdfb1ac5e6", description="The team towards which this worker contributes kudos.  It an empty string ('') is passed, it will leave the worker without a team. No profanity allowed!", max_length=36),
         })
 
         self.response_model_worker_modify = api.model('ModifyWorker', {
@@ -226,10 +234,6 @@ class Models:
         self.response_model_error = api.model('RequestError', {
             'message': fields.String(description="The error message for this status code."),
         })
-        self.response_model_active_model_lite = api.model('ActiveModelLite', {
-            'name': fields.String(description="The Name of a model available by workers in this horde."),
-            'count': fields.Integer(description="How many of workers in this horde are running this model."),
-        })
         self.response_model_active_model = api.inherit('ActiveModel', self.response_model_active_model_lite, {
             'performance': fields.Float(description="The average speed of generation for this model"),
             'queued': fields.Float(description="The amount waiting to be generated by this model"),
@@ -239,14 +243,12 @@ class Models:
             'deleted_id': fields.String(description="The ID of the deleted worker"),
             'deleted_name': fields.String(description="The Name of the deleted worker"),
         })
-        self.response_model_team_details = api.model('TeamDetails', {
-            "name": fields.String(description="The Name given to this team."),
+        self.response_model_team_details = api.inherit('TeamDetails', self.response_model_team_details_lite, {
             "info": fields.String(description="Extra information or comments about this team provided by its owner.", example="Anarchy is emergent order.", default=None),
-            "id": fields.String(description="The UUID of this team."),
             "requests_fulfilled": fields.Integer(description="How many images this team's workers have generated."),
             "kudos": fields.Float(description="How many Kudos the workers in this team have been rewarded while part of this team."),
             "uptime": fields.Integer(description="The total amount of time workers have stayed online while on this team"),
-            "creater": fields.String(example="db0#1", description="The alias of the user which created this team."),
+            "creator": fields.String(example="db0#1", description="The alias of the user which created this team."),
             "worker_count": fields.Integer(example=10,description="How many workers have been dedicated to this team"),
             'workers': fields.List(fields.Nested(self.response_model_worker_details_lite)),
             'models': fields.List(fields.Nested(self.response_model_active_model_lite)),
@@ -267,5 +269,11 @@ class Models:
             'id': fields.String(description="The ID of the team"),
             'name': fields.String(description="The Name of the team"),
             'info': fields.String(description="The Info of the team"),
+        })
+        self.input_model_delete_ip_timeout = api.model('DeleteTimeoutIPInput', {
+            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address to remove from timeout",min_length=7, max_length=15),
+        })
+        self.response_model_simple_response = api.model('SimpleResponse', {
+            "message": fields.String(default='OK',required=True, description="The result of this operation"),
         })
 

@@ -184,9 +184,6 @@ class WaitingPrompt:
         if avg_things_per_sec == 0:
             avg_things_per_sec = 1
         wait_time = queued_things / avg_things_per_sec
-        # someone said wait_time can be -1. I don't believe them, but I check anyway
-        if wait_time < 0:
-            wait_time = 0
         # We add the expected running time of our processing gens
         highest_expected_time_left = 0
         for procgen in self.processing_gens:
@@ -342,7 +339,8 @@ class ProcessingGeneration:
         if self.is_completed() or self.is_faulted():
             return
         self.faulted = True
-        things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
+        # We  don't want cancelled requests to raise suspicion
+        things_per_sec = self.worker.get_performance_average()
         self.kudos = self.get_gen_kudos()
         if self.fake and self.worker.user == self.owner.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
@@ -526,8 +524,8 @@ class Worker:
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
         self.models = [bleach.clean(model_name) for model_name in kwargs.get("models")]
-        # We don't allow more workers to claim they can server more than 20 models atm (to prevent abuse)
-        del self.models[20:]
+        # We don't allow more workers to claim they can server more than 30 models atm (to prevent abuse)
+        del self.models[30:]
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
@@ -540,7 +538,7 @@ class Worker:
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 if self.team:
-                    self.team.record_uptime(self.uptime - self.last_reward_uptime)
+                    self.team.record_uptime(self.uptime_reward_threshold)
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.user.record_uptime(kudos)
@@ -687,7 +685,7 @@ class Worker:
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
             "models": self.models,
-            "team": self.team.id if self.team else 'None',
+            "team": {"id": self.team.id,"name": self.team.name} if self.team else 'None',
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
@@ -1074,10 +1072,10 @@ class User:
     def ensure_kudos_positive(self):
         if self.kudos < 0 and self.is_anon():
             self.kudos = 0
-        elif self.kudos < 1 and self.is_pseudonymous():
-            self.kudos = 1
-        elif self.kudos < 2:
-            self.kudos = 2
+        elif self.kudos < 51 and self.is_pseudonymous():
+            self.kudos = 51
+        elif self.kudos < 102:
+            self.kudos = 102
 
     def is_anon(self):
         if self.oauth_id == 'anon':
@@ -1369,7 +1367,7 @@ class Team:
         ret_dict = {
             "name": self.name,
             "id": self.id,
-            "creator": self.user,
+            "creator": self.user.get_unique_alias(),
             "contributions": self.contributions,
             "requests_fulfilled": self.fulfilments,
             "kudos": self.kudos,

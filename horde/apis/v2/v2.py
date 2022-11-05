@@ -4,7 +4,7 @@ from ... import limiter, logger, maintenance, invite_only, raid, cm, cache
 from ...classes import db,processing_generations,waiting_prompts,Worker,User,Team,WaitingPrompt,News,Suspicions
 from enum import Enum
 from .. import exceptions as e
-import os, time, json, re
+import os, time, json, re, bleach
 from .. import ModelsV2, ParsersV2
 from ...utils import is_profane
 
@@ -33,6 +33,7 @@ handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_reques
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.handle_bad_requests)
 handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(e.handle_bad_requests)
+handle_unsupported_sampler = api.errorhandler(e.UnsupportedSampler)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
@@ -43,6 +44,7 @@ handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_r
 handle_too_many_same_ips = api.errorhandler(e.TooManySameIPs)(e.handle_bad_requests)
 handle_worker_invite_only = api.errorhandler(e.WorkerInviteOnly)(e.handle_bad_requests)
 handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
+handle_timeout_ip = api.errorhandler(e.TimeoutIP)(e.handle_bad_requests)
 handle_too_many_new_ips = api.errorhandler(e.TooManyNewIPs)(e.handle_bad_requests)
 handle_kudos_upfront = api.errorhandler(e.KudosUpfront)(e.handle_bad_requests)
 handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
@@ -57,10 +59,14 @@ handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_reques
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 
-regex_blacklists = []
-if os.getenv("BLACKLIST1"):
-    for blacklist in ["BLACKLIST1","BLACKLIST2"]:
-        regex_blacklists.append(re.compile(os.getenv(blacklist), re.IGNORECASE))
+regex_blacklists1 = []
+regex_blacklists2 = []
+if os.getenv("BLACKLIST1A"):
+    for blacklist in ["BLACKLIST1A","BLACKLIST1B"]:
+        regex_blacklists1.append(re.compile(os.getenv(blacklist), re.IGNORECASE))
+if os.getenv("BLACKLIST2A"):
+    for blacklist in ["BLACKLIST2A"]:
+        regex_blacklists2.append(re.compile(os.getenv(blacklist), re.IGNORECASE))
 
 # Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
@@ -117,13 +123,23 @@ class GenerateTemplate(Resource):
                     raise e.WorkerNotFound(worker_id)
         if wp_count >= self.user.concurrency:
             raise e.TooManyPrompts(self.username, wp_count)
+        ip_timeout = cm.retrieve_timeout(self.user_ip)
+        if ip_timeout:
+            raise e.TimeoutIP(self.user_ip, ip_timeout)
         prompt_suspicion = 0
-        for blacklist in regex_blacklists:
-            if blacklist.search(self.args["prompt"]):
-                prompt_suspicion += 1
+        if "###" in self.args.prompt:
+            prompt, negprompt = self.args.prompt.split("###", 1)
+        else:
+            prompt = self.args.prompt
+        for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
+            for blacklist in blacklist_regex:
+                if blacklist.search(prompt):
+                    prompt_suspicion += 1
+                    break
         if prompt_suspicion >= 2:
-            self.user.report_suspicion(2,Suspicions.CORRUPT_PROMPT)
-            raise e.CorruptPrompt(self.username, self.user_ip, self.args["prompt"])
+            self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
+            cm.report_suspicion(self.user_ip)
+            raise e.CorruptPrompt(self.username, self.user_ip, prompt)
 
     
     # We split this into its own function, so that it may be overriden
@@ -307,7 +323,11 @@ class JobPop(Resource):
                 # We don't report on secret skipped reasons
                 # as they're typically countermeasures to raids
                 if skipped_reason != "secret":
-                    self.skipped[skipped_reason] =  self.skipped.get(skipped_reason,0) + 1
+                    self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
+                continue
+            # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
+            # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
+            if not wp.needs_gen():
                 continue
             return(self.start_worker(wp), 200)
         # We report maintenance exception only if we couldn't find any jobs
@@ -332,7 +352,8 @@ class JobPop(Resource):
         self.user = db.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
-        self.worker = db.find_worker_by_name(self.args['name'])
+        self.worker_name = bleach.clean(self.args['name'])
+        self.worker = db.find_worker_by_name(self.worker_name)
         self.safe_ip = True
         if not self.worker or not self.worker.user.trusted:
             self.safe_ip = cm.is_ip_safe(self.worker_ip)
@@ -347,17 +368,17 @@ class JobPop(Resource):
                 if not self.safe_ip and not raid.active:
                     raise e.UnsafeIP(self.worker_ip)
         if not self.worker:
-            if is_profane(self.args['name']):
-                raise e.Profanity(self.user.get_unique_alias(), self.args['name'], 'worker name')
+            if is_profane(self.worker_name):
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
             worker_count = self.user.count_workers()
             if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
             self.worker = Worker(db)
-            self.worker.create(self.user, self.args['name'])
+            self.worker.create(self.user, self.worker_name)
         if self.user != self.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.args['name'])
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
     
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
@@ -873,23 +894,23 @@ class Teams(Resource):
             teams_ret.append(team.get_details())
         return(teams_ret,200)
 
-    put_parser = reqparse.RequestParser()
-    put_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
-    put_parser.add_argument("name", type=str, required=True, location="json")
-    put_parser.add_argument("info", type=str, required=False, location="json")
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
+    post_parser.add_argument("name", type=str, required=True, location="json")
+    post_parser.add_argument("info", type=str, required=False, location="json")
 
 
     decorators = [limiter.limit("30/minute", key_func = get_request_path)]
-    @api.expect(put_parser, models.input_model_team_create, validate=True)
+    @api.expect(post_parser, models.input_model_team_create, validate=True)
     @api.marshal_with(models.response_model_team_modify, code=200, description='Create Team', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
-    def put(self, team_id = ''):
+    def post(self, team_id = ''):
         '''Create a new team.
         Only trusted users can create new teams.
         '''
-        self.args = self.put_parser.parse_args()
+        self.args = self.post_parser.parse_args()
         user = db.find_user_by_api_key(self.args['apikey'])
         if not user:
             raise e.InvalidAPIKey('User action: ' + 'PUT Teams')
@@ -1017,3 +1038,29 @@ class TeamSingle(Resource):
         }
         team.delete()
         return(ret_dict, 200)
+
+
+class OperationsIP(Resource):
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
+    delete_parser.add_argument("ipaddr", type=str, required=True, location="json")
+
+    @api.expect(delete_parser, models.input_model_delete_ip_timeout, validate=True)
+    @api.marshal_with(models.response_model_simple_response, code=200, description='Operation Completed', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def delete(self, team_id = ''):
+        '''Remove an IP from timeout.
+        Only usable by horde moderators
+        '''
+        self.args = self.delete_parser.parse_args()
+        mod = db.find_user_by_api_key(self.args['apikey'])
+        if not mod:
+            raise e.InvalidAPIKey('User action: ' + 'DELETE OperationsIP')
+        if not mod.moderator:
+            raise e.NotModerator(mod.get_unique_alias(), 'DELETE OperationsIP')
+        cm.delete_timeout(self.args.ipaddr)
+        return({"message":'OK'}, 200)
+
+        

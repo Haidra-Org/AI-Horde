@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.4
+
+* Tweaked Blacklist
+* Added 4 new samplers. Cannot use new samplers on img2img yet
+* added Karras
+* Extra check to avoid two workers picking up the same job
+* Source mask can now be sent to img2img
+* Added IP timeout for Corrupted Prompts
+
 ## v2.3
 
 

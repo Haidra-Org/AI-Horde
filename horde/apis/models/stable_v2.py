@@ -28,7 +28,7 @@ class Models(v2.Models):
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
-            'sampler_name': fields.String(required=False, default='k_euler',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "DDIM", "PLMS"]), 
+            'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]), 
             'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Obsolete Toggles used in the SD Webui. To be removed. Do not modify unless you know what you're doing."), 
             'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
             'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0, multiple=0.01), 
@@ -37,6 +37,7 @@ class Models(v2.Models):
             'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
             'use_gfpgan': fields.Boolean(description="Set to true to process the generated image with GFPGAN (face correction)"),
+            'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
             'use_real_esrgan': fields.Boolean(description="Set to true to process the generated image with RealESRGAN"),
             'use_ldsr': fields.Boolean(description="Set to true to process the generated image with LDSR"),
             'use_upscaling': fields.Boolean(description="Set to true to upscale the image"),

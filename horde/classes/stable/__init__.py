@@ -92,7 +92,7 @@ class WaitingPrompt(WaitingPrompt):
                 prompt_payload["source_image"] = self.source_image
             if procgen.worker.bridge_version > 3:
                 prompt_payload["source_processing"] = self.source_processing
-                if self.source_processing != 'img2img' and self.source_mask:
+                if self.source_mask:
                     prompt_payload["source_mask"] = self.source_mask
         else:
             prompt_payload = {}
@@ -151,7 +151,7 @@ class WaitingPrompt(WaitingPrompt):
 
     def get_accurate_steps(self):
         steps = self.steps
-        if self.sampler in ['k_heun', "k_dpm_2", "k_dpm_2_a"]:
+        if self.sampler in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
             # These three sampler do double steps per iteration, so they're at half the speed
             # So we adjust the things to take that into account
             steps *= 2
@@ -247,9 +247,12 @@ class Worker(Worker):
             is_matching = False
             skipped_reason = 'painting'
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
-        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler') in ['DDIM', 'PLMS'] and self.bridge_version >= 3:
+        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a') in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"] and self.bridge_version < 5:
             is_matching = False
-            skipped_reason = 'worker_id'
+            skipped_reason = 'bridge_version'
+        if waiting_prompt.gen_payload.get('karras', False) and self.bridge_version < 6:
+            is_matching = False
+            skipped_reason = 'bridge_version'
         if waiting_prompt.source_image and not self.allow_img2img:
             is_matching = False
             skipped_reason = 'img2img'
@@ -319,6 +322,11 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-11-05",
+            "newspiece": "Workers can now [join teams](https://www.patreon.com/posts/teams-74247978) to get aggregated stats.",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-11-02",
             "newspiece": "The horde can now generate images up to 3072x3072 and 500 steps! However you need to already have the kudos to burn to do so!",
