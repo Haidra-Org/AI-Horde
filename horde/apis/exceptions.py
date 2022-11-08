@@ -135,8 +135,8 @@ class TooManyNewIPs(wze.Forbidden):
         self.log = f"Too many new IPs to check: {ipaddr}. Asked to retry"
 
 class KudosUpfront(wze.Forbidden):
-    def __init__(self, kudos_required, username):
-        self.specific = f"For requests over 1024x1024 or over 100 steps, the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
+    def __init__(self, kudos_required, username, res):
+        self.specific = f"Due to heavy demand, for requests over {res}x{res} or over 50 steps (25 for k_heun and k_dpm_2*), the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
         self.log = f"{username} attempted request for {kudos_required} kudos without having enough."
 
 class InvalidProcGen(wze.NotFound):
@@ -175,9 +175,9 @@ class RequestExpired(wze.Gone):
         self.log = f"Request from '{username}' took too long to complete and has been cancelled."
 
 class TooManyPrompts(wze.TooManyRequests):
-    def __init__(self, username, count):
-        self.specific = f"Parallel requests exceeded user limit ({count}). Please try again later or request to increase your concurrency."
-        self.log = f"User '{username}' has already requested too many parallel requests ({count}). Aborting!"
+    def __init__(self, username, count, concurrency):
+        self.specific = f"Parallel requests ({count}) exceeded user limit ({concurrency}). Please try again later or request to increase your concurrency."
+        self.log = f"User '{username}' has already requested too many parallel requests ({count}/{concurrency}). Aborting!"
 
 class NoValidWorkers(wze.BadRequest):
     retry_after = 600

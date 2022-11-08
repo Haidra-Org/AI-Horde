@@ -322,16 +322,11 @@ class ProcessingGeneration:
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
+        self.things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
-        if self.fake and self.worker.user == self.owner.user:
-            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
-            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
-            logger.info(f"Fake Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
-        else:
-            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
-            self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
-            logger.info(f"New Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        self.cancelled = False
+        thread = threading.Thread(target=self.record, args=())
+        thread.start()        
         return(self.kudos)
 
     def cancel(self):
@@ -340,25 +335,33 @@ class ProcessingGeneration:
             return
         self.faulted = True
         # We  don't want cancelled requests to raise suspicion
-        things_per_sec = self.worker.get_performance_average()
+        self.things_per_sec = self.worker.get_performance_average()
         self.kudos = self.get_gen_kudos()
-        if self.fake and self.worker.user == self.owner.user:
-            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
-            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
-            logger.info(f"Fake Cancelled Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
-        else:
-            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = things_per_sec)
-            self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
-            logger.info(f"Cancelled Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        self.cancelled = True
+        thread = threading.Thread(target=self.record, args=())
+        thread.start()   
         return(self.kudos)
     
+    def record(self):
+        cancel_txt = ""
+        if self.cancelled:
+            cancel_txt = " Cancelled"
+        if self.fake and self.worker.user == self.owner.user:
+            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = self.things_per_sec)
+            logger.info(f"Fake{cancel_txt} Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+        else:
+            self.worker.record_contribution(raw_things = self.owner.things, kudos = self.kudos, things_per_sec = self.things_per_sec)
+            self.owner.record_usage(raw_things = self.owner.things, kudos = self.kudos)
+            logger.info(f"New{cancel_txt} Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+
     def abort(self):
         '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
         if self.is_completed() or self.is_faulted():
             return        
         self.faulted = True
         self.worker.log_aborted_job()
-        logger.info(f"Aborted Stale Generation from by worker: {self.worker.name}")
+        logger.info(f"Aborted Stale Generation from by worker: {self.worker.name} ({self.worker.id})")
 
     # Overridable function
     def get_gen_kudos(self):
@@ -439,6 +442,7 @@ class Worker:
         self.suspicions = []
         self.db = db
         self.bridge_version = 1
+        self.threads = 1
 
     def create(self, user, name, **kwargs):
         self.user = user
@@ -530,6 +534,7 @@ class Worker:
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
+        self.threads = kwargs.get("threads", 1)
         if not kwargs.get("safe_ip", True):
             if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
@@ -679,12 +684,14 @@ class Worker:
             "kudos_rewards": self.kudos,
             "kudos_details": self.kudos_details,
             "performance": self.get_performance(),
+            "threads": self.threads,
             "uptime": self.uptime,
             "maintenance_mode": self.maintenance,
             "info": self.info,
             "nsfw": self.nsfw,
             "trusted": self.user.trusted,
             "models": self.models,
+            "online": not self.is_stale(),
             "team": {"id": self.team.id,"name": self.team.name} if self.team else 'None',
         }
         if details_privilege >= 2:
@@ -712,6 +719,7 @@ class Worker:
             "uptime": self.uptime,
             "paused": self.paused,
             "maintenance": self.maintenance,
+            "threads": self.threads,
             "info": self.info,
             "nsfw": self.nsfw,
             "blacklist": self.blacklist.copy(),
@@ -736,6 +744,7 @@ class Worker:
         self.id = saved_dict["id"]
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
+        self.threads = saved_dict.get("threads",1)
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
         team_id = saved_dict.get("team",None)
@@ -904,6 +913,7 @@ class User:
         self.suspicions = []
         self.contact = None
         self.db = db
+        self.min_kudos = 0
 
     def create_anon(self):
         self.username = 'Anonymous'
@@ -935,6 +945,7 @@ class User:
         self.last_active = datetime.now()
         self.check_for_bad_actor()
         self.id = self.db.register_new_user(self)
+        self.set_min_kudos()
         self.contributions = {
             thing_name: 0,
             "fulfillments": 0
@@ -943,6 +954,14 @@ class User:
             thing_name: 0,
             "requests": 0
         }
+
+    def set_min_kudos(self):
+        if self.is_anon(): 
+            self.min_kudos = -50
+        elif self.is_pseudonymous():
+            self.min_kudos = 14
+        else:
+            self.min_kudos = 25
 
     def check_for_bad_actor(self):
         if len(self.username) > 30:
@@ -1070,12 +1089,8 @@ class User:
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
 
     def ensure_kudos_positive(self):
-        if self.kudos < 0 and self.is_anon():
-            self.kudos = 0
-        elif self.kudos < 51 and self.is_pseudonymous():
-            self.kudos = 51
-        elif self.kudos < 102:
-            self.kudos = 102
+        if self.kudos < self.min_kudos:
+            self.kudos = self.min_kudos
 
     def is_anon(self):
         if self.oauth_id == 'anon':
@@ -1088,6 +1103,17 @@ class User:
             return(True)
         except ValueError:
             return(False)
+
+    def get_concurrency(self, models_requested = [], models_dict = {}):
+        if not self.is_anon():
+            return(self.concurrency)
+        allowed_concurrency = 0
+        for model_name in models_requested:
+            # We allow 10 concurrency per worker serving that model
+            allowed_concurrency += models_dict.get(model_name,{"count":0})["count"] * 10
+        # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
+        return(allowed_concurrency)
+            
 
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
@@ -1263,6 +1289,7 @@ class User:
             recalc_kudos =  (self.contributions['fulfillments'] - self.usage['requests']) * multiplier
             self.kudos = recalc_kudos + self.kudos_details.get('admin',0) + self.kudos_details.get('received',0) - self.kudos_details.get('gifted',0)
             self.kudos_details['accumulated'] = recalc_kudos
+        self.set_min_kudos()
         self.ensure_kudos_positive()
         duplicate_user = self.db.find_user_by_id(self.id)
         if duplicate_user and duplicate_user != self:
@@ -1297,6 +1324,8 @@ class Team:
     def get_performance(self):
         all_performances = []
         for worker in self.db.find_workers_by_team(self):
+            if worker.is_stale():
+                continue
             all_performances.append(worker.get_performance_average())
         if len(all_performances):
             perf_avg = round(sum(all_performances) / len(all_performances) / thing_divisor,1)
@@ -1362,7 +1391,7 @@ class Team:
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
-        worker_list = [{"id": worker.id, "name":worker.name} for worker in self.db.find_workers_by_team(self)]
+        worker_list = [{"id": worker.id, "name":worker.name, "online": not worker.is_stale()} for worker in self.db.find_workers_by_team(self)]
         perf_avg, perf_total = self.get_performance()
         ret_dict = {
             "name": self.name,
@@ -1663,7 +1692,7 @@ class Database:
         count = 0
         for worker in self.workers.values():
             if not worker.is_stale():
-                count += 1
+                count += worker.threads
         return(count)
 
     def compile_workers_by_ip(self):
@@ -1786,8 +1815,7 @@ class Database:
         del self.teams[team.id]
         self.initiate_save()
 
-
-    def get_available_models(self, waiting_prompts):
+    def get_available_models(self, waiting_prompts, lite_dict=False):
         models_dict = {}
         for worker in self.workers.values():
             if worker.is_stale():
@@ -1804,8 +1832,11 @@ class Database:
                     "eta": 0,
                 }
                 models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
-                models_dict[model_name]["count"] += 1
+                models_dict[model_name]["count"] += worker.threads
+        if lite_dict:
+            return(models_dict)
         things_per_model = waiting_prompts.count_things_per_model()
+        # If we request a lite_dict, we only want worker count per model and a dict format
         for model_name in things_per_model:
             # This shouldn't happen, but I'm checking anyway
             if model_name not in models_dict:
@@ -1827,7 +1858,7 @@ class Database:
             return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
         if amount < 0:
             return([0,'Nice try...'])
-        if amount > source_user.kudos:
+        if amount > source_user.kudos - source_user.min_kudos:
             return([0,'Not enough kudos.'])
         source_user.modify_kudos(-amount, 'gifted')
         dest_user.modify_kudos(amount, 'received')

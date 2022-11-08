@@ -19,7 +19,8 @@ class Parsers:
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
     job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
     job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
-    job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specified the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
+    job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
+    job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
@@ -44,6 +45,7 @@ class Models:
         self.response_model_worker_details_lite = api.model('WorkerDetailsLite', {
             "name": fields.String(description="The Name given to this worker."),
             "id": fields.String(description="The UUID of this worker."),
+            "online": fields.Boolean(description="True if the worker has checked-in the past 5 minutes."),
         })
         self.response_model_team_details_lite = api.model('TeamDetailsLite', {
             "name": fields.String(description="The Name given to this team."),
@@ -109,12 +111,14 @@ class Models:
             'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
             'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
+            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde"),
         })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
             "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),
             "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total."),
             "kudos_details": fields.Nested(self.response_model_worker_kudos_details),
             "performance": fields.String(description="The average performance of this worker in human readable form."),
+            "threads": fields.Integer(description="How many threads this worker is running."),
             "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde."),
             "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
             "paused": fields.Boolean(example=False,description="(Privileged) When True, this worker not be given any new requests."),

@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.5
+
+### Features
+
+The horde workers can now run multiple threads. The horde has been adjusted to show proper speed when workers have multiple threads.
+
+### Countermeasures
+
+* Anon user has a different concurrency per model. Anon can only queue 10 images per worker serving that model. That means anon cannot request images for models that don't have any workers! I had to add this countermeasure because I noticed someone queueing 500 images on a model that had very few workers, therefore choking the whole queue for other anon usage.
+* Lowered limits before upfront kudos are required. 
+   * Now the resolution threshold is based on how many concurrent requests are currently in the queue to a min of 576x576 which will remain always available without kudos.
+   * steps threshold lowered to 50
+   * pseudonymous users start with 14 kudos, which will allow them to always have a bit more kudos to do some extra steps or resolution.
+   * oauth users start with 25 kudos, which will allow them to always even more kudos to do some extra steps or resolution compared to pseudonymous.
+* request status check is now cached for 1 second to reduce server load.
+* pseudonymous and oauth users cannot transfer their starting kudos baseline.
+
+
+### API
+
+Please check the API documentation for each new field.
+
+* The new online key for workers will allow to mark which workers are currently online for each team
+* Team performance now only takes into account online workers
+
+### Model `WorkerDetailsLite`
+
+Used in `/v2/worker/{worker_id}`, `/v2/teams`, `/v2/teams/{team_id}` etc
+
+* Added 'online' key
+
+### Model `WorkerDetailsStable`
+
+Used in `/v2/worker/` and `/v2/worker/{worker_id}`
+
+* Added 'threads' key
+
+
 ## v2.4
 
 * Tweaked Blacklist

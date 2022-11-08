@@ -143,11 +143,17 @@ class WaitingPrompt(WaitingPrompt):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
         '''
-        if self.get_accurate_steps() > 100:
-            return(True)
-        if self.width * self.height > 1024*1024:
-            return(True)
-        return(False)
+        queue = self._waiting_prompts.count_totals()["queued_requests"]
+        max_res = 1124 - round(queue * 0.9)
+        if max_res < 576:
+            max_res = 576
+        if max_res > 1024:
+            max_res = 1024
+        if self.get_accurate_steps() > 50:
+            return(True,max_res)
+        if self.width * self.height > max_res*max_res:
+            return(True,max_res)
+        return(False,max_res)
 
     def get_accurate_steps(self):
         steps = self.steps
@@ -322,6 +328,11 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-11-05",
+            "newspiece": "Due to suddenly increased demand, we have adjusted how much requests accounts can request before needing to have the kudos upfront. More than 50 steps will require kudos and the max resolution will be adjusted based on the current horde demand.",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-11-05",
             "newspiece": "Workers can now [join teams](https://www.patreon.com/posts/teams-74247978) to get aggregated stats.",

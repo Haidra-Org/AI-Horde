@@ -57,10 +57,11 @@ class JobPop(JobPop):
             self.args['max_content_length'],
             self.softprompts,
             models = models,
-            nsfw = self.args['nsfw'],
+            nsfw = self.args.nsfw,
             blacklist = self.blacklist,
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
+            threads = self.args.threads,
         )
 
 

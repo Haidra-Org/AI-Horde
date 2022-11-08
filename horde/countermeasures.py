@@ -48,7 +48,7 @@ def is_ip_safe(ipaddr):
 	# If we don't have the cache up, it's always OK
 	if not ip_r:
 		return(True)
-	safety_threshold=0.95
+	safety_threshold=0.93
 	timeout=2.00
 	is_safe = get_safe(ipaddr)
 	if is_safe == None:

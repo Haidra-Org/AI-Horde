@@ -97,7 +97,7 @@ class GenerateTemplate(Resource):
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
-        for worker in db.workers.values():
+        for worker in list(db.workers.values()):
             if len(self.workers) and worker.id not in self.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
@@ -121,8 +121,12 @@ class GenerateTemplate(Resource):
             for worker_id in self.workers:
                 if not db.find_worker_by_id(worker_id):
                     raise e.WorkerNotFound(worker_id)
-        if wp_count >= self.user.concurrency:
-            raise e.TooManyPrompts(self.username, wp_count)
+        n = 1
+        if self.args.params:
+            n = self.args.params.get('n',1)
+        user_limit = self.user.get_concurrency(self.args["models"],db.get_available_models(waiting_prompts,lite_dict=True))
+        if wp_count + n > user_limit:
+            raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
         ip_timeout = cm.retrieve_timeout(self.user_ip)
         if ip_timeout:
             raise e.TimeoutIP(self.user_ip, ip_timeout)
@@ -259,6 +263,7 @@ class AsyncStatus(Resource):
 class AsyncCheck(Resource):
     # Increasing this until I can figure out how to pass original IP from reverse proxy
     decorators = [limiter.limit("10/second", key_func = get_request_path)]
+    @cache.cached(timeout=1)
     @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
     # @cache.cached(timeout=0.5)
     @api.response(404, 'Request Not found', models.response_model_error)

@@ -88,10 +88,11 @@ class AsyncGenerate(AsyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
         )
-        if self.wp.requires_upfront_kudos():
+        needs_kudos,resolution = self.wp.requires_upfront_kudos()
+        if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
-                raise e.KudosUpfront(required_kudos, self.username)
+                raise e.KudosUpfront(required_kudos, self.username, resolution)
             else:
                 logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
     
@@ -132,10 +133,11 @@ class SyncGenerate(SyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
         )
-        if self.wp.requires_upfront_kudos():
+        needs_kudos,resolution = self.wp.requires_upfront_kudos()
+        if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
-                raise e.KudosUpfront(required_kudos, self.username)
+                raise e.KudosUpfront(required_kudos, self.username, resolution)
             else:
                 logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
@@ -144,16 +146,17 @@ class JobPop(JobPop):
 
     def check_in(self):
         self.worker.check_in(
-            self.args['max_pixels'], 
-            nsfw = self.args['nsfw'], 
+            self.args.max_pixels, 
+            nsfw = self.args.nsfw, 
             blacklist = self.blacklist, 
             models = self.models, 
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
-            bridge_version = self.args["bridge_version"],
-            allow_img2img = self.args["allow_img2img"],
-            allow_painting = self.args["allow_painting"],
-            allow_unsafe_ipaddr = self.args["allow_unsafe_ipaddr"],
+            threads = self.args.threads,
+            bridge_version = self.args.bridge_version,
+            allow_img2img = self.args.allow_img2img,
+            allow_painting = self.args.allow_painting,
+            allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
         )
   
 class HordeLoad(HordeLoad):

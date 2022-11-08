@@ -114,7 +114,7 @@ class SyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.concurrency:
+        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("height",512)%64 or args["params"].get("height",512) <= 0:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
@@ -203,7 +203,7 @@ class AsyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.concurrency:
+        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("height",512)%64 or args["params"].get("height",512) <= 0:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
