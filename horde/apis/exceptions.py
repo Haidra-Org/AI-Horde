@@ -138,6 +138,7 @@ class KudosUpfront(wze.Forbidden):
     def __init__(self, kudos_required, username):
         self.specific = f"For requests over 1024x1024 or over 100 steps, the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
         self.log = f"{username} attempted request for {kudos_required} kudos without having enough."
+        super().__init__(description=self.specific)
 
 class InvalidProcGen(wze.NotFound):
     def __init__(self, gen_id):
