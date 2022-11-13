@@ -75,6 +75,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 * Join us on [Discord](https://discord.gg/3DxrhksKzn)
 * Support the development of the Stable Horde on [Patreon](https://www.patreon.com/db0) or [Github](https://github.com/db0)
+* Follow us on <a rel="me" href="https://sigmoid.social/@stablehorde">Mastodon</a>
 
 ## Credits
 
