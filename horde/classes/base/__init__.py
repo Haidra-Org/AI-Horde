@@ -1627,14 +1627,32 @@ class Database:
     def write_files(self):
         time.sleep(4)
         logger.init_ok("Database Store Thread", status="Started")
+        self.save_progress = self.interval
         while True:
-            self.write_files_to_disk()
-            time.sleep(self.interval)
+            if self.interval == -1:
+                logger.warning("Stopping DB save thread")
+                return
+            if self.save_progress >= self.interval:
+                self.write_files_to_disk()
+                self.save_progress = 0
+            time.sleep(1)
+            self.save_progress += 1
 
-    def initiate_save(self):
-        pass
-        # TODO: change the time.slep above to a counter and this function will adjust it to 10 seconds or less
-    
+    def initiate_save(self, seconds):
+        logger.success(f"Initiating save in {seconds} seconds")
+        if seconds > self.interval:
+            second = self.interval
+        self.save_progress = self.interval - seconds
+
+    def shutdown(self, seconds):
+        self.interval = -1
+        if seconds > 0:
+            logger.critical(f"Initiating shutdown in {seconds} seconds")
+            time.sleep(seconds)
+        self.write_files_to_disk()
+        logger.critical(f"DB written to disk. You can now SIGTERM.")
+
+
     @logger.catch(reraise=True)
     def write_files_to_disk(self):
         if not os.path.exists('db'):
