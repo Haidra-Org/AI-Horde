@@ -848,6 +848,7 @@ class HordeModes(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
     parser.add_argument("maintenance", type=bool, required=False, help="Start or stop maintenance mode", location="json")
+    parser.add_argument("shutdown", type=int, required=False, help="Initiate a graceful shutdown of the horde in this amount of seconds. Will put horde in maintenance if not already set.", location="json")
     parser.add_argument("invite_only", type=bool, required=False, help="Start or stop worker invite-only mode", location="json")
     parser.add_argument("raid", type=bool, required=False, help="Start or stop raid mode", location="json")
 
@@ -869,8 +870,18 @@ class HordeModes(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
+            logger.critical(f"Horde enterred maintenance mode")
+            db.initiate_save(10)
             for wp in waiting_prompts.get_all():
                 wp.abort_for_maintenance()
+            ret_dict["maintenance_mode"] = maintenance.active
+        if self.args.shutdown != None:
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+                raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
+            maintenance.toggle(self.args.maintenance)
+            for wp in waiting_prompts.get_all():
+                wp.abort_for_maintenance()
+            db.shutdown(self.args.shutdown)
             ret_dict["maintenance_mode"] = maintenance.active
         if self.args.invite_only != None:
             if not admin.moderator:
