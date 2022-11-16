@@ -870,7 +870,7 @@ class HordeModes(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
-            logger.critical(f"Horde enterred maintenance mode")
+            logger.critical(f"Horde entered maintenance mode")
             db.initiate_save(10)
             for wp in waiting_prompts.get_all():
                 wp.abort_for_maintenance()
