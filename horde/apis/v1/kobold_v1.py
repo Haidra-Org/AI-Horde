@@ -80,7 +80,7 @@ def get_error(error, **kwargs):
         return("You're not an admin. Sod off!")
     if error == ServerErrors.MAINTENANCE_MODE:
         logger.info(f'Rejecting endpoint "{kwargs["endpoint"]}" because server in maintenance mode.')
-        return("Server has enterred maintenance mode. Please try again later.")
+        return("Server has entered maintenance mode. Please try again later.")
     if error == ServerErrors.NOT_OWNER:
         logger.warning(f'User "{kwargs["username"]}" tried to modify server they do not own: "{kwargs["server_name"]}". Aborting!')
         return("You're not the owner of this server!")

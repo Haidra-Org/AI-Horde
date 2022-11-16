@@ -395,7 +395,7 @@ class News(News):
         },
         {
             "date_published": "2022-10-11",
-            "newspiece": "A [new dedicated Web UI](https://aqualxx.github.io/stable-ui/) has enterred the scene!",
+            "newspiece": "A [new dedicated Web UI](https://aqualxx.github.io/stable-ui/) has entered the scene!",
             "importance": "Information"
         },
         {

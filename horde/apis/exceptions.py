@@ -188,7 +188,7 @@ class NoValidWorkers(wze.BadRequest):
 class MaintenanceMode(wze.BadRequest):
     retry_after = 60
     def __init__(self, endpoint):
-        self.specific = f"Horde has enterred maintenance mode. Please try again later."
+        self.specific = f"Horde has entered maintenance mode. Please try again later."
         self.log = f"Rejecting endpoint '{endpoint}' because horde in maintenance mode."
 
 def handle_bad_requests(error):
