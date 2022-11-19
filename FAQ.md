@@ -43,11 +43,7 @@ Yes! We do not require workers to stay always online. We only request that you p
 
 ### Do workers support multiple models
 
-Depends. 
-
-For text generation on the KoboldAI Horde the answer is yes, but you select your model manually.
-
-For image generation on the Stable Horde, the answer is not yet. We plan to add this functionality in the future.
+Yes, but you select your model manually. You can also not select a model and get the first model the next worker that picks up your work provides
 
 ### Can I prioritize myself and my friends on my own worker?
 

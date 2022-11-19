@@ -66,6 +66,11 @@ class UnsupportedSampler(wze.BadRequest):
         self.specific = f"This sampler is not supported in this mode the moment"
         self.log = None
 
+class UnsupportedModel(wze.BadRequest):
+    def __init__(self):
+        self.specific = f"This model is not supported in this mode the moment"
+        self.log = None
+
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
@@ -102,8 +107,8 @@ class NotTrusted(wze.Forbidden):
         self.log = None
 
 class WorkerMaintenance(wze.Forbidden):
-    def __init__(self, worker_id):
-        self.specific = f"worker {worker_id} has been put into maintenance by its owner"
+    def __init__(self, maintenance_msg):
+        self.specific = maintenance_msg
         self.log = None
 
 class TooManySameIPs(wze.Forbidden):

@@ -34,6 +34,7 @@ handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.handle_bad_requests)
 handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(e.handle_bad_requests)
 handle_unsupported_sampler = api.errorhandler(e.UnsupportedSampler)(e.handle_bad_requests)
+handle_unsupported_model = api.errorhandler(e.UnsupportedModel)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
@@ -116,7 +117,10 @@ class GenerateTemplate(Resource):
         self.username = self.user.get_unique_alias()
         if self.args['prompt'] == '':
             raise e.MissingPrompt(self.username)
-        wp_count = waiting_prompts.count_waiting_requests(self.user)
+        if self.user.is_anon():
+            wp_count = waiting_prompts.count_waiting_requests(self.user,self.args["models"])
+        else:
+            wp_count = waiting_prompts.count_waiting_requests(self.user)
         if len(self.workers):
             for worker_id in self.workers:
                 if not db.find_worker_by_id(worker_id):
@@ -337,7 +341,7 @@ class JobPop(Resource):
             return(self.start_worker(wp), 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
-            raise e.WorkerMaintenance(self.worker.id)
+            raise e.WorkerMaintenance(self.worker.maintenance_msg)
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension
@@ -497,6 +501,7 @@ class WorkerSingle(Resource):
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
+    put_parser.add_argument("maintenance_msg", type=str, required=False, help="if maintenance is True, You can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
     put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")
     put_parser.add_argument("name", type=str, required=False, help="When this is set, it will change the worker's name. No profanity allowed!", location="json")
@@ -530,7 +535,7 @@ class WorkerSingle(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
-            worker.maintenance = self.args.maintenance
+            worker.toggle_maintenance(self.args.maintenance, self.args.maintenance_msg)
             ret_dict["maintenance"] = worker.maintenance
         # Only owners can set info notes
         if self.args.info != None:
@@ -878,7 +883,7 @@ class HordeModes(Resource):
         if self.args.shutdown != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
-            maintenance.toggle(self.args.maintenance)
+            maintenance.activate()
             for wp in waiting_prompts.get_all():
                 wp.abort_for_maintenance()
             db.shutdown(self.args.shutdown)

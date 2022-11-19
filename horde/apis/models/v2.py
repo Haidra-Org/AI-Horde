@@ -134,7 +134,8 @@ class Models:
         })
 
         self.input_model_worker_modify = api.model('ModifyWorkerInput', {
-            "maintenance": fields.Boolean(description="(Mods only) Set to true to put this worker into maintenance."),
+            "maintenance": fields.Boolean(description="Set to true to put this worker into maintenance."),
+            "maintenance_msg": fields.String(description="if maintenance is True, you can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed."),
             "paused": fields.Boolean(description="(Mods only) Set to true to pause this worker."),
             "info": fields.String(description="You can optionally provide a server note which will be seen in the server details. No profanity allowed!",min_length=2,max_length=1000),
             "name": fields.String(description="When this is set, it will change the worker's name. No profanity allowed!",min_length=5,max_length=100),

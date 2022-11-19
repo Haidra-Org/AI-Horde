@@ -138,6 +138,9 @@ class Stats(Stats):
         except OSError:
             logger.error(f"Model '{model_name}' not found in hugging face. Defaulting to multiplier of 1.")
             multiplier = 1
+        except RuntimeError:
+            logger.error(f"Model '{model_name}' could not be parsed. Defaulting to multiplier of 1.")
+            multiplier = 1
         self.model_mulitpliers[model_name] = multiplier
         return(multiplier)
 

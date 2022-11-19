@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.7
+
+### Features 
+
+* Increased the jobs dropped needed to think a worker is supicious
+* Added thread locking for starting generations to avoid the n going negative
+
+# Changelog
+
 ## v2.6
 
 ### Features 

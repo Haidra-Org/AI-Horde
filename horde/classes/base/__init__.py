@@ -63,6 +63,7 @@ class WaitingPrompt:
         self.set_job_ttl()
         # How many kudos this request consumed until now
         self.consumed_kudos = 0
+        self.lock = threading.Lock()
 
     # These are typically worker-specific so they will be defined in the specific class for this horde type
     def extract_params(self, params, **kwargs):
@@ -97,14 +98,15 @@ class WaitingPrompt:
         return(False)
 
     def start_generation(self, worker):
-        if self.n <= 0:
-            return
-        new_gen = self.new_procgen(worker)
-        self.processing_gens.append(new_gen)
-        self.n -= 1
-        self.refresh()
-        logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
-        return(self.get_pop_payload(new_gen))
+        with self.lock:
+            if self.n <= 0:
+                return
+            new_gen = self.new_procgen(worker)
+            self.processing_gens.append(new_gen)
+            self.n -= 1
+            self.refresh()
+            logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
+            return(self.get_pop_payload(new_gen))
 
     def fake_generation(self, worker):
         new_gen = self.new_procgen(worker)
@@ -370,7 +372,10 @@ class ProcessingGeneration:
             return        
         self.faulted = True
         self.worker.log_aborted_job()
-        logger.info(f"Aborted Stale Generation from by worker: {self.worker.name} ({self.worker.id})")
+        self.log_aborted_generation()
+
+    def log_aborted_generation(self):
+        logger.info(f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})")
 
     # Overridable function
     def get_gen_kudos(self):
@@ -426,6 +431,7 @@ class Worker:
     suspicion_threshold = 3
     # Every how many seconds does this worker get a kudos reward
     uptime_reward_threshold = 600
+    default_maintenance_msg = "This worker has been put into maintenance mode by its owner"
 
     def __init__(self, db):
         self.last_reward_uptime = 0
@@ -452,6 +458,7 @@ class Worker:
         self.db = db
         self.bridge_version = 1
         self.threads = 1
+        self.maintenance_msg = self.default_maintenance_msg
 
     def create(self, user, name, **kwargs):
         self.user = user
@@ -533,6 +540,13 @@ class Worker:
     # This should be overwriten by each specific horde
     def calculate_uptime_reward(self):
         return(100)
+
+    def toggle_maintenance(self, is_maintenance_active, maintenance_msg = None):
+        self.maintenance = is_maintenance_active
+        self.maintenance_msg = self.default_maintenance_msg
+        if self.maintenance and maintenance_msg is not None:
+            self.maintenance_msg = bleach.clean(maintenance_msg)
+
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
@@ -643,12 +657,24 @@ class Worker:
         self.kudos_details[action] = round(self.kudos_details.get(action,0) + abs(kudos), 2) 
 
     def log_aborted_job(self):
-        # If the last aborted job was an hour ago, we reset the counter
+        # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.
         if (datetime.now() - self.last_aborted_job).seconds > 3600:
             self.aborted_jobs = 0
+            self.last_aborted_job = datetime.now()
         self.aborted_jobs += 1
-        self.last_aborted_job = datetime.now()
-        if self.aborted_jobs > 5:
+        # These are accumulating too fast at 5. Increasing to 20
+        dropped_job_threshold = 20
+        if raid.active:
+            dropped_job_threshold = 10
+        if self.aborted_jobs > dropped_job_threshold:
+            # if a worker drops too many jobs in an hour, we put them in maintenance
+            # except during a raid, as we don't want them to know we detected them.
+            if not raid.active:
+                self.toggle_maintenance(
+                    True, 
+                    "Maintenance mode activated because worker is dropping too many jobs."
+                    "Please investigate if your performance has been impacted and consider reducing your max_power or your max_threads"
+                )
             self.report_suspicion(reason = Suspicions.TOO_MANY_JOBS_ABORTED)
             self.aborted_jobs = 0
         self.uncompleted_jobs += 1
@@ -728,6 +754,7 @@ class Worker:
             "uptime": self.uptime,
             "paused": self.paused,
             "maintenance": self.maintenance,
+            "maintenance_msg": self.maintenance_msg,
             "threads": self.threads,
             "info": self.info,
             "nsfw": self.nsfw,
@@ -753,6 +780,7 @@ class Worker:
         self.id = saved_dict["id"]
         self.uptime = saved_dict.get("uptime",0)
         self.maintenance = saved_dict.get("maintenance",False)
+        self.maintenance_msg = saved_dict.get("maintenance_msg",self.default_maintenance_msg)
         self.threads = saved_dict.get("threads",1)
         self.paused = saved_dict.get("paused",False)
         self.info = saved_dict.get("info",None)
@@ -763,11 +791,14 @@ class Worker:
         self.blacklist = saved_dict.get("blacklist",[])
         self.ipaddr = saved_dict.get("ipaddr", None)
         self.suspicions = saved_dict.get("suspicions", [])
-        old_model = saved_dict.get("model")
-        self.models = saved_dict.get("models", [old_model])
-        for suspicion in self.suspicions:
+        for suspicion in self.suspicions.copy():
+            if convert_flag == "clean_dropped_jobs":
+                self.suspicions.remove(suspicion)
+                continue
             self.suspicious += 1
             logger.debug(f"Suspecting worker {self.name} for {self.suspicious} with reasons {self.suspicions}")
+        old_model = saved_dict.get("model")
+        self.models = saved_dict.get("models", [old_model])
         self.check_for_bad_actor()
         if convert_flag == "prune_bad_worker" and not self.is_suspicious():
             self.db.workers[self.name] = self
@@ -806,10 +837,19 @@ class Index:
 
 class PromptsIndex(Index):
 
-    def count_waiting_requests(self, user):
+    def count_waiting_requests(self, user, models = []):
         count = 0
         for wp in list(self._index.values()):
             if wp.user == user and not wp.is_completed():
+                # If we pass a list of models, we want to count only the WP for these particular models.
+                if len(models) > 0:
+                    matching_model = False
+                    for model in models:
+                        if model in wp.models:
+                            matching_model = True
+                            break
+                    if not matching_model:
+                        continue
                 count += wp.n
         return(count)
 
@@ -1114,12 +1154,17 @@ class User:
             return(False)
 
     def get_concurrency(self, models_requested = [], models_dict = {}):
-        if not self.is_anon():
+        if not self.is_anon() or len(models_requested) == 0:
             return(self.concurrency)
-        allowed_concurrency = 0
+        found_workers = []
         for model_name in models_requested:
-            # We allow 10 concurrency per worker serving that model
-            allowed_concurrency += models_dict.get(model_name,{"count":0})["count"] * 10
+            model_dict = models_dict.get(model_name)
+            if model_dict:
+                for worker in model_dict["workers"]:
+                    if worker not in found_workers:
+                        found_workers.append(worker)
+        # We allow 10 concurrency per worker serving the models requested
+        allowed_concurrency = len(found_workers) * 4
         # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
         return(allowed_concurrency)
             
@@ -1275,7 +1320,11 @@ class User:
         self.worker_invited = int(saved_dict.get("worker_invited", 0))
         self.suspicions = saved_dict.get("suspicions", [])
         self.contact = saved_dict.get("contact",None)
-        for suspicion in self.suspicions:
+        for suspicion in self.suspicions.copy():
+            if convert_flag == "clean_dropped_jobs":
+                if suspicion == 9:
+                    self.suspicions.remove(suspicion)
+                    continue
             self.suspicious += 1
             logger.debug(f"Suspecting user {self.get_unique_alias()} for {self.suspicious} with reasons {self.suspicions}")
         self.public_workers = saved_dict.get("public_workers", False)
@@ -1647,7 +1696,7 @@ class Database:
             time.sleep(1)
             self.save_progress += 1
 
-    def initiate_save(self, seconds):
+    def initiate_save(self, seconds = 3):
         logger.success(f"Initiating save in {seconds} seconds")
         if seconds > self.interval:
             second = self.interval
@@ -1844,7 +1893,7 @@ class Database:
 
     def get_available_models(self, waiting_prompts, lite_dict=False):
         models_dict = {}
-        for worker in self.workers.values():
+        for worker in list(self.workers.values()):
             if worker.is_stale():
                 continue
             model_name = None
@@ -1854,12 +1903,14 @@ class Database:
                 mode_dict_template = {
                     "name": model_name,
                     "count": 0,
+                    "workers": [],
                     "performance": self.stats.get_model_avg(model_name),
                     "queued": 0,
                     "eta": 0,
                 }
                 models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
                 models_dict[model_name]["count"] += worker.threads
+                models_dict[model_name]["workers"].append(worker)
         if lite_dict:
             return(models_dict)
         things_per_model = waiting_prompts.count_things_per_model()

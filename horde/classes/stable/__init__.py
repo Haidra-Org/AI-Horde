@@ -13,12 +13,15 @@ class WaitingPrompt(WaitingPrompt):
             self.n = 20
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
+        self.models = kwargs.get("models", ['stable_diffusion'])
         self.sampler = params.get('sampler_name', 'k_euler')
+        # Silent change
+        if self.models == ["stable_diffusion_2.0"]:
+            self.sampler = "dpmsolver"
         # The total amount of to pixelsteps requested.
         self.source_image = kwargs.get("source_image", None)
         self.source_processing = kwargs.get("source_processing", 'img2img')
         self.source_mask = kwargs.get("source_mask", None)
-        self.models = kwargs.get("models", ['stable_diffusion'])
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
         self.seed = None
         if 'seed' in params and params['seed'] != None:
@@ -146,6 +149,9 @@ class WaitingPrompt(WaitingPrompt):
         max_res = 1124 - round(queue * 0.9)
         if max_res < 576:
             max_res = 576
+            # SD 2.0 requires at least 768 to do its thing
+            if max_res < 768 and len(self.models) > 1 and "stable_diffusion_2.0" in self.models:
+                max_res = 768
         if max_res > 1024:
             max_res = 1024
         if self.get_accurate_steps() > 50:
@@ -176,7 +182,7 @@ class WaitingPrompt(WaitingPrompt):
     def set_job_ttl(self):
         # default is 2 minutes. Then we scale up based on resolution.
         # This will be more accurate with a newer formula
-        self.job_ttl = 150
+        self.job_ttl = 120
         if self.width * self.height > 2048*2048:
             self.job_ttl = 800
         elif self.width * self.height > 1024*1024:
@@ -184,10 +190,9 @@ class WaitingPrompt(WaitingPrompt):
         elif self.width * self.height > 728*728:
             self.job_ttl = 260
         elif self.width * self.height >= 512*512:
-            self.job_ttl = 200
+            self.job_ttl = 150
 
     def log_faulted_job(self):
-        '''Extendable function to log why a request was aborted'''
         source_processing = 'txt2img'
         if self.source_image:
             source_processing = self.source_processing
@@ -211,6 +216,8 @@ class ProcessingGeneration(ProcessingGeneration):
         # We have pre-calculated them as they don't change per worker
         return(self.owner.kudos)
 
+    def log_aborted_generation(self):
+        logger.info(f"Aborted Stale Generation {self.id} ({self.owner.width}x{self.owner.height}x{self.owner.steps}@{self.owner.sampler}) from by worker: {self.worker.name} ({self.worker.id})")
 
 class Worker(Worker):
 
@@ -338,6 +345,26 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-11-24",
+            "newspiece": "Due to the massive increase in demand from the Horde, we have to limit the amount of concurrent anonymous requests we can serve. We will revert this once our infrastructure can scale better.",
+            "importance": "Crisis"
+        },
+        {
+            "date_published": "2022-11-24",
+            "newspiece": "Stable Diffusion 2.0 has been released and now it is available on the Horde as well.",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-11-22",
+            "newspiece": "A new Stable Horde Bot has been deployed, this time for Mastodon. You can find [the stablehorde_generator}(https://sigmoid.social/@stablehorde_generator) as well as our [official Stable Horde account](https://sigmoid.social/@stablehorde) on sigmoid.social",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-11-22",
+            "newspiece": "We now have [support for the Unreal Engine](https://github.com/Mystfit/Unreal-StableDiffusionTools/releases/tag/v0.5.0) via a community-provided plugin",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-11-18",
             "newspiece": "The stable horde [now supports post-processing](https://www.patreon.com/posts/post-processing-74815675) on images automatically",

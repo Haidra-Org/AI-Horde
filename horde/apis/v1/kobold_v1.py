@@ -117,7 +117,7 @@ class SyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(lite_dict=True)):
+        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(waiting_prompts,lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         # logger.debug(args["models"])
         wp = WaitingPrompt(
@@ -202,7 +202,7 @@ class AsyncGenerate(Resource):
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(lite_dict=True)):
+        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(waiting_prompts,lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
@@ -352,7 +352,7 @@ class Models(Resource):
     @logger.catch(reraise=True)
     def get(self):
         # Old style, using new class
-        models = _db.get_available_models()
+        models = _db.get_available_models(waiting_prompts)
         mdict = {}
         for model in models:
             mdict[model['name']] = model['count']
