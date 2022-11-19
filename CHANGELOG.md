@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.6
+
+### Features 
+
+* Added post-processing capabilities. GFPGAN and RealESRGAN_x4plus
+* Added clean shutdown capability
+* Added rate limiter information to headers (@jamdon2)
+
+### Tweaks
+
+* Adaptive samplers now consume kudos as if they are at 50 steps always.
+
+### API
+
+Please check the API documentation for each new field.
+
+### Model `ModelGenerationInputStable`
+
+Used in `/v2/generate/async`, `/v2/generate/sync`
+
+* Added 'post_processing' key
+* increased amount of models allows in 'models' key
+
+### endpoint `/v2/status/modes`
+
+* Added 'shutdown' key
+
+
+
 ## v2.5
 
 ### Features

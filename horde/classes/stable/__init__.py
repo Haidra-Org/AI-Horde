@@ -14,10 +14,6 @@ class WaitingPrompt(WaitingPrompt):
         self.width = params.get("width", 512)
         self.height = params.get("height", 512)
         self.sampler = params.get('sampler_name', 'k_euler')
-        self.use_gfpgan = params.get("use_gfpgan", False)
-        self.use_real_esrgan = params.get("use_real_esrgan", False)
-        self.use_ldsr = params.get("use_ldsr", False)
-        self.use_upscaling = params.get("use_upscaling", False)
         # The total amount of to pixelsteps requested.
         self.source_image = kwargs.get("source_image", None)
         self.source_processing = kwargs.get("source_processing", 'img2img')
@@ -59,10 +55,6 @@ class WaitingPrompt(WaitingPrompt):
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
             self.generations_done += 1
         if procgen.worker.bridge_version >= 2:
-            self.gen_payload["use_gfpgan"] = self.use_gfpgan
-            self.gen_payload["use_real_esrgan"] = self.use_real_esrgan
-            self.gen_payload["use_ldsr"] = self.use_ldsr
-            self.gen_payload["use_upscaling"] = self.use_upscaling
             if not self.nsfw and self.censor_nsfw:
                 self.gen_payload["use_nsfw_censor"] = True
         else:
@@ -126,9 +118,12 @@ class WaitingPrompt(WaitingPrompt):
     def record_usage(self, raw_things, kudos):
         '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
         img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
+        Also extra cost when upscaling
         '''
         if self.source_image:
             kudos = kudos * 1.5
+        if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
+            kudos = kudos * 1.3
         super().record_usage(raw_things, kudos)
 
     # We can calculate the kudos in advance as they model doesn't affect them
@@ -138,6 +133,10 @@ class WaitingPrompt(WaitingPrompt):
         # because some samplers are effectively doubling their steps
         steps = self.get_accurate_steps()
         self.kudos = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
+        # For each post processor in requested, we increase the cost by 20%
+        for post_processor in self.gen_payload.get('post_processing', []):
+            self.kudos = round(self.kudos * 1.2,2)
+
 
     def requires_upfront_kudos(self):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
@@ -153,12 +152,20 @@ class WaitingPrompt(WaitingPrompt):
             return(True,max_res)
         if self.width * self.height > max_res*max_res:
             return(True,max_res)
+        # haven't decided yet if this is a good idea.
+        # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
+        #     return(True,max_res)
         return(False,max_res)
 
     def get_accurate_steps(self):
+        if self.sampler in ['k_dpm_adaptive']:
+            # This sampler chooses the steps amount automatically 
+            # and disregards the steps value from the user
+            # so we just calculate it as an average 50 steps
+            return(50)
         steps = self.steps
         if self.sampler in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
-            # These three sampler do double steps per iteration, so they're at half the speed
+            # These samplerS do double steps per iteration, so they're at half the speed
             # So we adjust the things to take that into account
             steps *= 2
         if self.source_image and self.source_processing == "img2img":
@@ -259,6 +266,9 @@ class Worker(Worker):
         if waiting_prompt.gen_payload.get('karras', False) and self.bridge_version < 6:
             is_matching = False
             skipped_reason = 'bridge_version'
+        if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and self.bridge_version < 7:
+            is_matching = False
+            skipped_reason = 'bridge_version'
         if waiting_prompt.source_image and not self.allow_img2img:
             is_matching = False
             skipped_reason = 'img2img'
@@ -328,6 +338,11 @@ class Database(Database):
 class News(News):
 
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-11-18",
+            "newspiece": "The stable horde [now supports post-processing](https://www.patreon.com/posts/post-processing-74815675) on images automatically",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-11-05",
             "newspiece": "Due to suddenly increased demand, we have adjusted how much requests accounts can request before needing to have the kudos upfront. More than 50 steps will require kudos and the max resolution will be adjusted based on the current horde demand.",

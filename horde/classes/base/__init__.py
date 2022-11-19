@@ -160,6 +160,10 @@ class WaitingPrompt:
     def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
+        # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
+        if ret_dict["waiting"] < 0:
+            logger.error("Request was popped more times than requested!")
+            ret_dict["waiting"] = 0
         ret_dict["done"] = self.is_completed()
         ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
@@ -220,29 +224,34 @@ class WaitingPrompt:
 
     def check_for_stale(self):
         while True:
-            # The below check if any jobs have been running too long and aborts them
-            faulted_requests = 0
-            for gen in self.processing_gens:
-                # We don't want to recheck if we've faulted already
-                if self.faulted:
+            try:
+                # The below check if any jobs have been running too long and aborts them
+                faulted_requests = 0
+                for gen in self.processing_gens:
+                    # We don't want to recheck if we've faulted already
+                    if self.faulted:
+                        break
+                    if gen.is_stale(self.job_ttl):
+                        # If the request took too long to complete, we cancel it and add it to the retry
+                        gen.abort()
+                        self.n += 1
+                    if gen.is_faulted():
+                        faulted_requests += 1
+                    # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
+                    if faulted_requests >= 3:
+                        self.faulted = True
+                        self.log_faulted_job()
+                if self._waiting_prompts.is_deleted(self):
                     break
-                if gen.is_stale(self.job_ttl):
-                    # If the request took too long to complete, we cancel it and add it to the retry
-                    gen.abort()
-                    self.n += 1
-                if gen.is_faulted():
-                    faulted_requests += 1
-                # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
-                if faulted_requests >= 3:
-                    self.faulted = True
-                    self.log_faulted_job()
-            if self._waiting_prompts.is_deleted(self):
-                break
-            if self.is_stale():
-                self.delete()
-                break
-            time.sleep(10)
-            self.extra_priority += 50
+                if self.is_stale():
+                    self.delete()
+                    break
+                time.sleep(10)
+                self.extra_priority += 50
+            except Exception as e:
+                logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
+                time.sleep(10)
+
 
     def log_faulted_job(self):
         '''Extendable function to log why a request was aborted'''
@@ -529,7 +538,7 @@ class Worker:
     def check_in(self, **kwargs):
         self.models = [bleach.clean(model_name) for model_name in kwargs.get("models")]
         # We don't allow more workers to claim they can server more than 30 models atm (to prevent abuse)
-        del self.models[30:]
+        del self.models[50:]
         self.nsfw = kwargs.get("nsfw", True)
         self.blacklist = kwargs.get("blacklist", [])
         self.ipaddr = kwargs.get("ipaddr", None)
