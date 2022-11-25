@@ -17,9 +17,9 @@ if args.raid:
 
 from .limiter import limiter
 from flask import Flask, render_template, redirect, url_for, request, Blueprint
-from .flask import HORDE, cache
-from . import routes
-from .apis import apiv1, apiv2
+from horde.flask import HORDE, cache
+from horde import routes
+from horde.apis import apiv1, apiv2
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.discord import make_discord_blueprint, discord
 from flask_dance.contrib.github import make_github_blueprint, github

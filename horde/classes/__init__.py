@@ -1,7 +1,7 @@
 from .. import logger, args
 from importlib import import_module
-from horde.classes.base import Suspicions
 from horde.flask import db
+from horde.classes.base import Suspicions
 
 Database = import_module(name=f'horde.classes.{args.horde}').Database
 database = Database(convert_flag=args.convert_flag)

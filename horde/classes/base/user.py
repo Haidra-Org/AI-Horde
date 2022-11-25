@@ -5,7 +5,7 @@ import dateutil.relativedelta
 import bleach
 
 from horde import logger
-from horde.classes import db, database
+from horde.classes import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
@@ -254,7 +254,7 @@ class User(db.Model):
             reason_log = suspicion_logs[reason].format(*formats)
             logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
 
-    def reset_suspicion(self,database):
+    def reset_suspicion(self):
         '''Clears the user's suspicion and resets their reasons'''
         if self.is_anon():
             return
@@ -266,7 +266,7 @@ class User(db.Model):
     def get_suspicion(self):
         return(db.session.query(UserSuspicions).filter(user_id=self.id).count())
 
-    def get_workers(self,database):
+    def get_workers(self):
         #TODO Switch to workers DB
         return find_workers_by_user(self)
     
