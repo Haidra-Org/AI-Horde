@@ -16,3 +16,4 @@ better_profanity
 python-dateutil
 redis
 pillow
+flask_sqlalchemy 

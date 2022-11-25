@@ -2,13 +2,12 @@ import json, os, sys
 from uuid import uuid4
 from datetime import datetime
 import threading, time, dateutil.relativedelta, bleach
-from .. import logger, args
-from ...vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
+from horde import logger, args, raid
+from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 import uuid, re, random
-from ...utils import is_profane
-from ... import raid
+from horde.utils import is_profane
 from enum import IntEnum
-from .news import News
+from horde.classes.news import News
 
 class Suspicions(IntEnum):
     WORKER_NAME_LONG = 0
