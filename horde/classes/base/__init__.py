@@ -1375,12 +1375,6 @@ class Database:
                 return(worker)
         return(None)
 
-    def find_workers_by_user(self, user):
-        found_workers = []
-        for worker in list(self.workers.values()):
-            if worker.user == user:
-                found_workers.append(worker)
-        return(found_workers)
     
     def find_workers_by_team(self, team):
         found_workers = []

@@ -9,6 +9,7 @@ from horde.classes import db, database
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
+from horde.classes.base.database import find_workers_by_user
 
 # from sqlalchemy.dialects.postgresql import UUID
 
@@ -17,7 +18,7 @@ class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    action = db.Column(db.String(80), nullable=False)
+    action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
 
 class UserSuspicions(db.Model):
@@ -28,6 +29,7 @@ class UserSuspicions(db.Model):
 
 
 class User(db.Model):
+    
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True) 
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
@@ -258,7 +260,7 @@ class User(db.Model):
             return
         #TODO Select from UserSuspicions DB and delete all matching user ID
         db.session.commit()
-        for worker in database.find_workers_by_user(self):
+        for worker in find_workers_by_user(self):
             worker.reset_suspicion()
 
     def get_suspicion(self):
@@ -266,7 +268,7 @@ class User(db.Model):
 
     def get_workers(self,database):
         #TODO Switch to workers DB
-        return(database.find_workers_by_user(self))
+        return find_workers_by_user(self)
     
     def count_workers(self):
         return(len(self.get_workers()))
