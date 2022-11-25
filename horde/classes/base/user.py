@@ -4,7 +4,8 @@ import time
 import dateutil.relativedelta
 import bleach
 
-from horde.flask import db
+from horde import logger
+from horde.classes import db, database
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
@@ -15,20 +16,20 @@ from horde.utils import is_profane
 class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     action = db.Column(db.String(80), nullable=False)
     value = db.Column(db.Integer, nullable=False)
 
 class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
 class User(db.Model):
-    # TODO CLEAN THIS UP, BUNCH OF DUPLICATES
-    id = db.Column(db.Integer, primary_key=True)  # Whilst using sqlite use this, as it has no uuid type
+    __tablename__ = "users"
+    id = db.Column(db.Integer, primary_key=True) 
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False)
@@ -61,13 +62,12 @@ class User(db.Model):
     same_ip_worker_threshold = db.Column(db.Integer, default=3)
     suspicion_threshold = db.Column(db.Integer, default=3)
 
-    def __init__(self, db):
+    def create(self):
         self.set_min_kudos()
         self.check_for_bad_actor()
         db.session.add(self)
         db.session.commit()
         # FIXME: Vestigial. Will remove later when everything is in the DB
-        self.db = db
 
     def set_min_kudos(self):
         if self.is_anon(): 
@@ -252,18 +252,21 @@ class User(db.Model):
             reason_log = suspicion_logs[reason].format(*formats)
             logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
 
-    def reset_suspicion(self):
+    def reset_suspicion(self,database):
         '''Clears the user's suspicion and resets their reasons'''
         if self.is_anon():
             return
         #TODO Select from UserSuspicions DB and delete all matching user ID
         db.session.commit()
-        for worker in self.db.find_workers_by_user(self):
+        for worker in database.find_workers_by_user(self):
             worker.reset_suspicion()
 
-    def get_workers(self):
+    def get_suspicion(self):
+        return(db.session.query(UserSuspicions).filter(user_id=self.id).count())
+
+    def get_workers(self,database):
         #TODO Switch to workers DB
-        return(self.db.find_workers_by_user(self))
+        return(database.find_workers_by_user(self))
     
     def count_workers(self):
         return(len(self.get_workers()))

@@ -336,8 +336,6 @@ class Database(Database):
 
     def new_worker(self):
         return(Worker(self))
-    def new_user(self):
-        return(User(self))
     def new_stats(self):
         return(Stats(self))
 

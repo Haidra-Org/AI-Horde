@@ -2,7 +2,7 @@ from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
 from ... import limiter
 from ...logger import logger
-from ...classes import db as _db
+from ...classes import database as _db
 from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
 from ... import maintenance, invite_only, raid, cm
 from enum import Enum

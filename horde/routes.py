@@ -7,10 +7,11 @@ from markdown import markdown
 from uuid import uuid4
 from . import logger, maintenance, args, HORDE, cache
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
-from .classes import db
-from .classes import waiting_prompts,User,News
+from horde.classes import database as db
+from horde.classes import waiting_prompts,News
+from horde.classes.base.user import User
 import bleach
-from .utils import ConvertAmount, is_profane
+from horde.utils import ConvertAmount, is_profane
 
 dance_return_to = '/'
 
@@ -174,9 +175,8 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
-            user = User(db)
-            user.create(request.form['username'], oauth_id, api_key, None)
             username = bleach.clean(request.form['username'])
+            user = User(db=db,username=username,oauth_id=oauth_id,api_key=api_key)
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',

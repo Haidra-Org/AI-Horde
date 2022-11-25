@@ -4,35 +4,12 @@ from datetime import datetime
 import threading, time, dateutil.relativedelta, bleach
 from horde import logger, args, raid
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
+from horde.suspicions import Suspicions, SUSPICION_LOGS
 import uuid, re, random
 from horde.utils import is_profane
-from enum import IntEnum
-from horde.classes.news import News
-
-class Suspicions(IntEnum):
-    WORKER_NAME_LONG = 0
-    WORKER_NAME_EXTREME = 1
-    WORKER_PROFANITY = 2
-    UNSAFE_IP = 3
-    EXTREME_MAX_PIXELS = 4
-    UNREASONABLY_FAST = 5
-    USERNAME_LONG = 6
-    USERNAME_PROFANITY = 7
-    CORRUPT_PROMPT = 8
-    TOO_MANY_JOBS_ABORTED = 9
-
-suspicion_logs = {
-    Suspicions.WORKER_NAME_LONG: 'Worker Name too long',
-    Suspicions.WORKER_NAME_EXTREME: 'Worker Name extremely long',
-    Suspicions.WORKER_PROFANITY: 'Discovered profanity in worker name {}',
-    Suspicions.UNSAFE_IP: 'Worker using unsafe IP',
-    Suspicions.EXTREME_MAX_PIXELS: 'Worker claiming they can generate too many pixels',
-    Suspicions.UNREASONABLY_FAST: 'Generation unreasonably fast ({})',
-    Suspicions.USERNAME_LONG: 'Username too long',
-    Suspicions.USERNAME_PROFANITY: 'Profanity in username',
-    Suspicions.CORRUPT_PROMPT: 'Corrupt Prompt detected',
-    Suspicions.TOO_MANY_JOBS_ABORTED: 'Too many jobs aborted in a short amount of time'
-}
+from horde.classes.base.news import News
+from horde.flask import db, anon
+from horde.classes.base.user import User
 
 class WaitingPrompt:
     extra_priority = 0
@@ -474,7 +451,7 @@ class Worker:
 
     def check_for_bad_actor(self):
         # Each worker starts at the suspicion level of its user
-        self.suspicious = self.user.suspicious
+        self.suspicious = self.user.get_suspicion()
         if len(self.name) > 100:
             if len(self.name) > 200:
                 self.report_suspicion(reason = Suspicions.WORKER_NAME_EXTREMELY_LONG)
@@ -491,7 +468,7 @@ class Worker:
         self.suspicious += amount
         self.user.report_suspicion(amount, reason, formats)
         if reason:
-            reason_log = suspicion_logs[reason].format(*formats)
+            reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason_log}")
         if self.is_suspicious():
             self.paused = True
@@ -933,434 +910,6 @@ class GenerationsIndex(Index):
             org[model].append(procgen)
         return(org)
 
-class User:
-    suspicion_threshold = 3
-
-    def __init__(self, db):
-        self.suspicious = 0
-        self.worker_invited = 0
-        self.moderator = False
-        self.concurrency = 30
-        self.usage_multiplier = 1.0
-        self.kudos = 0
-        self.same_ip_worker_threshold = 3
-        self.public_workers = False
-        self.trusted = False
-        self.evaluating_kudos = 0
-        self.kudos_details = {
-            "accumulated": 0,
-            "gifted": 0,
-            "admin": 0,
-            "received": 0,
-            "recurring": 0,
-        }
-        self.monthly_kudos = {
-            "amount": 0,
-            "last_received": None,
-        }
-        self.suspicions = []
-        self.contact = None
-        self.db = db
-        self.min_kudos = 0
-
-    def create_anon(self):
-        self.username = 'Anonymous'
-        self.oauth_id = 'anon'
-        self.api_key = '0000000000'
-        self.invite_id = ''
-        self.creation_date = datetime.now()
-        self.last_active = datetime.now()
-        self.id = 0
-        self.public_workers = True
-        self.contributions = {
-            thing_name: 0,
-            "fulfillments": 0
-        }
-        self.usage = {
-            thing_name: 0,
-            "requests": 0
-        }
-        # We allow anonymous users more leeway for the max amount of concurrent requests
-        # This is balanced by their lower priority
-        self.concurrency = 500
-
-    def create(self, username, oauth_id, api_key, invite_id):
-        self.username = username
-        self.oauth_id = oauth_id
-        self.api_key = api_key
-        self.invite_id = invite_id
-        self.creation_date = datetime.now()
-        self.last_active = datetime.now()
-        self.check_for_bad_actor()
-        self.id = self.db.register_new_user(self)
-        self.set_min_kudos()
-        self.contributions = {
-            thing_name: 0,
-            "fulfillments": 0
-        }
-        self.usage = {
-            thing_name: 0,
-            "requests": 0
-        }
-
-    def set_min_kudos(self):
-        if self.is_anon(): 
-            self.min_kudos = -50
-        elif self.is_pseudonymous():
-            self.min_kudos = 14
-        else:
-            self.min_kudos = 25
-
-    def check_for_bad_actor(self):
-        if len(self.username) > 30:
-            self.username = self.username[:30]
-            self.report_suspicion(reason = Suspicions.USERNAME_LONG)
-        if is_profane(self.username):
-            self.report_suspicion(reason = Suspicions.USERNAME_PROFANITY)
-
-    # Checks that this user matches the specified API key
-    def check_key(api_key):
-        if self.api_key and self.api_key == api_key:
-            return(True)
-        return(False)
-
-    def set_username(self,new_username):
-        if is_profane(new_username):
-            return("Profanity")
-        if len(new_username) > 30:
-            return("Too Long")
-        self.username = bleach.clean(new_username)
-        return("OK")
-
-    def set_contact(self,new_contact):
-        if self.contact == new_contact:
-            return("OK")
-        if is_profane(new_contact):
-            return("Profanity")
-        self.contact = bleach.clean(new_contact)
-        return("OK")
-
-    def set_trusted(self,is_trusted):
-        # Anonymous can never be trusted
-        if self.is_anon():
-            return
-        self.trusted = is_trusted
-        if self.trusted:
-            for worker in self.get_workers():
-                worker.paused = False
-
-    def set_moderator(self,is_moderator):
-        if self.is_anon():
-            return
-        self.moderator = is_moderator
-        if self.moderator:
-            logger.warning(f"{self.username} Set as moderator")
-            self.set_trusted(True)
-
-    def get_unique_alias(self):
-        return(f"{self.username}#{self.id}")
-
-    def record_usage(self, raw_things, kudos):
-        self.last_active = datetime.now()
-        self.usage["requests"] += 1
-        self.modify_kudos(-kudos,"accumulated")
-        self.usage[thing_name] = round(self.usage[thing_name] + (raw_things * self.usage_multiplier / thing_divisor),2)
-
-    def record_contributions(self, raw_things, kudos):
-        self.last_active = datetime.now()
-        self.contributions["fulfillments"] += 1
-        # While a worker is untrusted, half of all generated kudos go for evaluation
-        if not self.trusted and not self.is_anon():
-            kudos_eval = round(kudos / 2)
-            kudos -= kudos_eval
-            self.evaluating_kudos += kudos_eval
-            self.modify_kudos(kudos,"accumulated")
-            self.check_for_trust()
-        else:
-            self.modify_kudos(kudos,"accumulated")
-        self.contributions[thing_name] = round(self.contributions[thing_name] + raw_things/thing_divisor,2)
-
-    def record_uptime(self, kudos):
-        self.last_active = datetime.now()
-        # While a worker is untrusted, all uptime kudos go for evaluation
-        if not self.trusted and not self.is_anon():
-            self.evaluating_kudos += kudos
-            self.check_for_trust()
-        else:
-            self.modify_kudos(kudos,"accumulated")
-
-    def check_for_trust(self):
-        '''After a user passes the evaluation threshold (50000 kudos)
-        All the evaluating Kudos added to their total and they automatically become trusted
-        Suspicious users do not automatically pass evaluation
-        '''
-        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious() and not self.is_anon():
-            self.modify_kudos(self.evaluating_kudos,"accumulated")
-            self.evaluating_kudos = 0
-            self.set_trusted(True)
-
-    def modify_monthly_kudos(self, monthly_kudos):
-        # We always give upfront the monthly kudos to the user once.
-        # If they already had some, we give the difference but don't change the date
-        if monthly_kudos > 0:
-            self.modify_kudos(monthly_kudos, "recurring")
-        if not self.monthly_kudos["last_received"]:
-            self.monthly_kudos["last_received"] = datetime.now()
-        self.monthly_kudos["amount"] += monthly_kudos
-        if self.monthly_kudos["amount"] < 0:
-            self.monthly_kudos["amount"] = 0
-
-    def receive_monthly_kudos(self):
-        kudos_amount = self.calculate_monthly_kudos()
-        if kudos_amount == 0:
-            return
-        if self.monthly_kudos["last_received"]:
-            has_month_passed = datetime.now() > self.monthly_kudos["last_received"] + dateutil.relativedelta.relativedelta(months=+6)
-        else:
-            # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
-            has_month_passed = True
-        if has_month_passed:
-            self.modify_kudos(kudos_amount, "recurring")
-            self.monthly_kudos["last_received"] = datetime.now()
-            logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
-
-    def calculate_monthly_kudos(self):
-        base_amount = self.monthly_kudos['amount']
-        if self.moderator:
-            base_amount += 100000
-        return(base_amount)
-
-    def modify_kudos(self, kudos, action = 'accumulated'):
-        logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
-        self.kudos = round(self.kudos + kudos, 2)
-        self.ensure_kudos_positive()
-        self.kudos_details[action] = round(self.kudos_details.get(action,0) + kudos, 2)
-
-    def ensure_kudos_positive(self):
-        if self.kudos < self.min_kudos:
-            self.kudos = self.min_kudos
-
-    def is_anon(self):
-        if self.oauth_id == 'anon':
-            return(True)
-        return(False)
-
-    def is_pseudonymous(self):
-        try:
-            uuid.UUID(str(self.oauth_id))
-            return(True)
-        except ValueError:
-            return(False)
-
-    def get_concurrency(self, models_requested = [], models_dict = {}):
-        if not self.is_anon() or len(models_requested) == 0:
-            return(self.concurrency)
-        found_workers = []
-        for model_name in models_requested:
-            model_dict = models_dict.get(model_name)
-            if model_dict:
-                for worker in model_dict["workers"]:
-                    if worker not in found_workers:
-                        found_workers.append(worker)
-        # We allow 10 concurrency per worker serving the models requested
-        allowed_concurrency = len(found_workers) * 4
-        # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
-        return(allowed_concurrency)
-            
-
-    @logger.catch(reraise=True)
-    def get_details(self, details_privilege = 0):
-        ret_dict = {
-            "username": self.get_unique_alias(),
-            "id": self.id,
-            "kudos": self.kudos,
-            "kudos_details": self.kudos_details,
-            "usage": self.usage,
-            "contributions": self.contributions,
-            "concurrency": self.concurrency,
-            "worker_invited": self.worker_invited,
-            "moderator": self.moderator,
-            "trusted": self.trusted,
-            "pseudonymous": self.is_pseudonymous(),
-            "worker_count": self.count_workers(),
-            # unnecessary information, since the workers themselves wil be visible
-            # "public_workers": self.public_workers,
-        }
-        if self.public_workers or details_privilege >= 1:
-            workers_array = []
-            for worker in self.get_workers():
-                workers_array.append(worker.id)
-            ret_dict["worker_ids"] = workers_array
-            ret_dict['contact'] = self.contact
-        if details_privilege >= 2:
-            mk_dict = {
-                "amount": self.calculate_monthly_kudos(),
-                "last_received": self.monthly_kudos["last_received"]
-            }
-            ret_dict["evaluating_kudos"] = self.evaluating_kudos
-            ret_dict["monthly_kudos"] = mk_dict
-            ret_dict["suspicious"] = self.suspicious
-        return(ret_dict)
-
-    def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = []):
-        # Anon is never considered suspicious
-        if self.is_anon():
-            return
-        if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
-            return
-        self.suspicions.append(int(reason))
-        self.suspicious += amount
-        if reason:
-            reason_log = suspicion_logs[reason].format(*formats)
-            logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
-
-    def reset_suspicion(self):
-        '''Clears the user's suspicion and resets their reasons'''
-        if self.is_anon():
-            return
-        self.suspicions = []
-        self.suspicious = 0
-        for worker in self.db.find_workers_by_user(self):
-            worker.reset_suspicion()
-
-    def get_workers(self):
-        return(self.db.find_workers_by_user(self))
-    
-    def count_workers(self):
-        return(len(self.get_workers()))
-
-    def is_suspicious(self): 
-        if self.trusted:
-            return(False)       
-        if self.suspicious >= self.suspicion_threshold:
-            return(True)
-        return(False)
-
-    def exceeding_ipaddr_restrictions(self, ipaddr):
-        '''Checks that the ipaddr of the new worker does not have too many other workers
-        to prevent easy spamming of new workers with a script
-        '''
-        ipcount = 0
-        for worker in self.get_workers():
-            if worker.ipaddr == ipaddr:
-                ipcount += 1
-        if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
-            return(True)
-        return(False)
-
-    def is_stale(self):
-        # Stale users have to be inactive for a month
-        days_threshold = 30
-        days_inactive = (datetime.now() - self.last_active).days
-        if days_inactive < days_threshold:
-            return(False)
-        # Stale user have to have little accumulated kudos. 
-        # The longer a user account is inactive. the more kudos they need to have stored to not be deleted
-        # logger.debug([days_inactive,self.kudos, 10 * (days_inactive - days_threshold)])
-        if self.kudos > 10 * (days_inactive - days_threshold):
-            return(False)
-        # Anonymous cannot be stale
-        if self.is_anon():
-            return(False)
-        if self.moderator:
-            return(False)
-        if self.trusted:
-            return(False)
-        return(True)
-
-    @logger.catch(reraise=True)
-    def serialize(self):
-        serialized_monthly_kudos = {
-            "amount": self.monthly_kudos["amount"],
-        }
-        if self.monthly_kudos["last_received"]:
-            serialized_monthly_kudos["last_received"] = self.monthly_kudos["last_received"].strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            serialized_monthly_kudos["last_received"] = None
-        ret_dict = {
-            "username": self.username,
-            "oauth_id": self.oauth_id,
-            "api_key": self.api_key,
-            "kudos": self.kudos,
-            "kudos_details": self.kudos_details.copy(),
-            "id": self.id,
-            "invite_id": self.invite_id,
-            "contributions": self.contributions.copy(),
-            "usage": self.usage.copy(),
-            "usage_multiplier": self.usage_multiplier,
-            "concurrency": self.concurrency,
-            "worker_invited": self.worker_invited,
-            "moderator": self.moderator,
-            "suspicions": self.suspicions,
-            "public_workers": self.public_workers,
-            "trusted": self.trusted,
-            "creation_date": self.creation_date.strftime("%Y-%m-%d %H:%M:%S"),
-            "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
-            "monthly_kudos": serialized_monthly_kudos,
-            "evaluating_kudos": self.evaluating_kudos,
-            "contact": self.contact,
-        }
-        return(ret_dict)
-
-    @logger.catch(reraise=True)
-    def deserialize(self, saved_dict, convert_flag = None):
-        self.username = saved_dict["username"]
-        self.oauth_id = saved_dict["oauth_id"]
-        self.api_key = saved_dict["api_key"]
-        self.kudos = saved_dict["kudos"]
-        self.kudos_details = saved_dict.get("kudos_details", self.kudos_details)
-        self.id = saved_dict["id"]
-        self.invite_id = saved_dict["invite_id"]
-        self.contributions = saved_dict["contributions"]
-        self.usage = saved_dict["usage"]
-        self.concurrency = saved_dict.get("concurrency", 30)
-        self.usage_multiplier = saved_dict.get("usage_multiplier", 1.0)
-        # I am putting int() here, to convert a boolean entry I had in the past
-        self.worker_invited = int(saved_dict.get("worker_invited", 0))
-        self.suspicions = saved_dict.get("suspicions", [])
-        self.contact = saved_dict.get("contact",None)
-        for suspicion in self.suspicions.copy():
-            if convert_flag == "clean_dropped_jobs":
-                if suspicion == 9:
-                    self.suspicions.remove(suspicion)
-                    continue
-            self.suspicious += 1
-            logger.debug(f"Suspecting user {self.get_unique_alias()} for {self.suspicious} with reasons {self.suspicions}")
-        self.public_workers = saved_dict.get("public_workers", False)
-        self.trusted = saved_dict.get("trusted", False)
-        self.evaluating_kudos = saved_dict.get("evaluating_kudos", 0)
-        self.set_moderator(saved_dict.get("moderator", False))
-        serialized_monthly_kudos = saved_dict.get("monthly_kudos")
-        if serialized_monthly_kudos and serialized_monthly_kudos['last_received'] != None:
-            self.monthly_kudos['amount'] = serialized_monthly_kudos['amount']
-            self.monthly_kudos['last_received'] = datetime.strptime(serialized_monthly_kudos['last_received'],"%Y-%m-%d %H:%M:%S")
-        if self.is_anon():
-            self.concurrency = 500
-            self.public_workers = True
-        self.creation_date = datetime.strptime(saved_dict["creation_date"],"%Y-%m-%d %H:%M:%S")
-        self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
-        if convert_flag == "kudos_fix":
-            multiplier = 20
-            if args.horde == 'kobold':
-                multiplier = 100
-            recalc_kudos =  (self.contributions['fulfillments'] - self.usage['requests']) * multiplier
-            self.kudos = recalc_kudos + self.kudos_details.get('admin',0) + self.kudos_details.get('received',0) - self.kudos_details.get('gifted',0)
-            self.kudos_details['accumulated'] = recalc_kudos
-        self.set_min_kudos()
-        self.ensure_kudos_positive()
-        duplicate_user = self.db.find_user_by_id(self.id)
-        if duplicate_user and duplicate_user != self:
-            if duplicate_user.get_unique_alias() != self.get_unique_alias():
-                logger.error(f"mismatching duplicate IDs found! {self.get_unique_alias()} != {duplicate_user.get_unique_alias()}. Please cleanup manually!")
-            else:
-                logger.warning(f"found duplicate ID: {[self,duplicate_user,self.get_unique_alias(),self.id,duplicate_user.id,duplicate_user.get_unique_alias()]}")
-                duplicate_user.kudos += self.kudos
-                if duplicate_user.last_active < self.last_active:
-                    logger.warning(f"Merging {self.oauth_id} into {duplicate_user.oauth_id}")
-                    duplicate_user.oauth_id = self.oauth_id
-                return(True)
-
-
 class Team:
     def __init__(self, db):
         self.contributions = 0
@@ -1599,40 +1148,30 @@ class Database:
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
         self.stats = self.new_stats()
-        self.USERS_FILE = "db/users.json"
-        self.users = {}
         self.TEAMS_FILE = "db/teams.json"
         self.teams = {}
         # I'm setting this quickly here so that we do not crash when trying to detect duplicate IDs, during user deserialization
-        self.anon = None
+        self.anon = db.session.query(User).filter_by(oauth_id="anon").first()
         # Increments any time a new user is added
         # Is appended to usernames, to ensure usernames never conflict
         self.last_user_id = 0
+    
+    def load(self):
         logger.init(f"Database Load", status="Starting")
         if convert_flag:
             logger.init_warn(f"Convert Flag '{convert_flag}' received.", status="Converting")
-        if os.path.isfile(self.USERS_FILE):
-            with open(self.USERS_FILE) as db:
-                serialized_users = json.load(db)
-                for user_dict in serialized_users:
-                    if not user_dict:
-                        logger.error("Found null user on db load. Bypassing")
-                        continue
-                    new_user = self.new_user()
-                    error = new_user.deserialize(user_dict,convert_flag)
-                    if error:
-                        continue
-                    if new_user.is_stale():
-                        # logger.warning(f"(Dry-Run) Deleting stale user {new_user.get_unique_alias()}")
-                        pass
-                    self.users[new_user.oauth_id] = new_user
-                    if new_user.id > self.last_user_id:
-                        self.last_user_id = new_user.id
         self.anon = self.find_user_by_oauth_id('anon')
+        logger.debug(self.anon)
         if not self.anon:
-            self.anon = User(self)
-            self.anon.create_anon()
-            self.users[self.anon.oauth_id] = self.anon
+            self.anon = User(
+                id=0,
+                username="Anonymous",
+                oauth_id="oauth_id",
+                api_key="0000000000",
+                public_workers=True,
+                concurrency=500
+            )
+            self.anon.create()
         if os.path.isfile(self.TEAMS_FILE):
             with open(self.TEAMS_FILE) as db:
                 serialized_teams = json.load(db)
@@ -1674,8 +1213,6 @@ class Database:
     # So that it will grab the extended classes from each horde type, and not the internal classes in this package
     def new_worker(self):
         return(Worker(self))
-    def new_user(self):
-        return(User(self))
     def new_stats(self):
         return(Stats(self))
     def new_team(self):
@@ -1724,11 +1261,11 @@ class Database:
             json.dump(worker_serialized_list,db)
         with open(self.STATS_FILE, 'w') as db:
             json.dump(self.stats.serialize(),db)
-        user_serialized_list = []
-        for user in self.users.copy().values():
-            user_serialized_list.append(user.serialize())
-        with open(self.USERS_FILE, 'w') as db:
-            json.dump(user_serialized_list,db)
+        # user_serialized_list = []
+        # for user in self.users.copy().values():
+        #     user_serialized_list.append(user.serialize())
+        # with open(self.USERS_FILE, 'w') as db:
+        #     json.dump(user_serialized_list,db)
         teams_serialized_list = []
         for team in self.teams.copy().values():
             teams_serialized_list.append(team.serialize())
@@ -1739,7 +1276,8 @@ class Database:
         time.sleep(2)
         logger.init_ok("Monthly Kudos Awards Thread", status="Started")
         while True:
-            for user in self.users.values():
+            #TODO Make the select statement bring the users with monthly kudos only
+            for user in db.session.query(User).all():
                 user.receive_monthly_kudos()
             # Check once a day
             time.sleep(86400)
@@ -1747,11 +1285,11 @@ class Database:
     def get_top_contributor(self):
         top_contribution = 0
         top_contributor = None
-        user = None
-        for user in self.users.values():
-            if user.contributions[thing_name] > top_contribution and user != self.anon:
+        #TODO Make the select statement bring automatically bring to 10 contributors sorted
+        for user in db.session.query(User).all():
+            if user.contributed_thing > top_contribution and user != self.anon:
                 top_contributor = user
-                top_contribution = user.contributions[thing_name]
+                top_contribution = user.contributed_thing
         return(top_contributor)
 
     def get_top_worker(self):
@@ -1793,13 +1331,6 @@ class Database:
             totals["fulfilments"] += worker.fulfilments
         return(totals)
 
-    def register_new_user(self, user):
-        self.last_user_id += 1
-        self.users[user.oauth_id] = user
-        logger.info(f'New user created: {user.username}#{self.last_user_id}')
-        return(self.last_user_id)
-        self.initiate_save()
-
     def register_new_worker(self, worker):
         self.workers[worker.name] = worker
         logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
@@ -1812,34 +1343,28 @@ class Database:
     def find_user_by_oauth_id(self,oauth_id):
         if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
             return(None)
-        return(self.users.get(oauth_id))
+        user = db.session.query(User).filter_by(oauth_id=oauth_id).first()
+        return(user)
 
     def find_user_by_username(self, username):
-        for user in list(self.users.values()):
-            ulist = username.split('#')
-            # This approach handles someone cheekily putting # in their username
-            if user.username == "#".join(ulist[:-1]) and user.id == int(ulist[-1]):
-                if user == self.anon and not self.ALLOW_ANONYMOUS:
-                    return(None)
-                return(user)
-        return(None)
+        ulist = username.split('#')
+        # This approach handles someone cheekily putting # in their username
+        user = db.session.query(User).filter_by(user_id=int(ulist[-1])).first()
+        if user == self.anon and not self.ALLOW_ANONYMOUS:
+            return(None)
+        return(user)
 
     def find_user_by_id(self, user_id):
-        for user in list(self.users.values()):
-            # The arguments passed to the URL are always strings
-            if str(user.id) == str(user_id):
-                if user == self.anon and not self.ALLOW_ANONYMOUS:
-                    return(None)
-                return(user)
-        return(None)
+        user = db.session.query(User).filter_by(user_id=user_id).first()
+        if user == self.anon and not self.ALLOW_ANONYMOUS:
+            return(None)
+        return(user)
 
     def find_user_by_api_key(self,api_key):
-        for user in list(self.users.values()):
-            if user.api_key == api_key:
-                if user == self.anon and not self.ALLOW_ANONYMOUS:
-                    return(None)
-                return(user)
-        return(None)
+        user = db.session.query(User).filter_by(api_key=api_key).first()
+        if user == self.anon and not self.ALLOW_ANONYMOUS:
+            return(None)
+        return(user)
 
     def find_worker_by_name(self,worker_name):
         return(self.workers.get(worker_name))
