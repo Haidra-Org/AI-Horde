@@ -174,7 +174,8 @@ def register():
                 oauth_id = str(uuid4())
                 pseudonymous = True
             username = bleach.clean(request.form['username'])
-            user = User(db=db,username=username,oauth_id=oauth_id,api_key=api_key)
+            user = User(username=username,oauth_id=oauth_id,api_key=api_key)
+            user.create()
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',

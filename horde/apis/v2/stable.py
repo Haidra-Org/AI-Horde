@@ -150,8 +150,8 @@ class SyncGenerate(SyncGenerate):
 
     
 class JobPop(JobPop):
-
     def check_in(self):
+        logger.debug(self.worker)
         self.worker.check_in(
             self.args.max_pixels, 
             nsfw = self.args.nsfw, 

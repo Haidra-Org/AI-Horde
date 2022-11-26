@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import time
 
@@ -20,7 +20,7 @@ class FulfillmentPerformance(db.Model):
     things = db.Column(db.Float, primary_key=False)
 
 
-def record_fulfilment(self, things, starting_time, model):
+def record_fulfilment(things, starting_time, model):
     seconds_taken = (datetime.utcnow() - starting_time).seconds
     if seconds_taken == 0:
         things_per_sec = 1
@@ -36,17 +36,17 @@ def record_fulfilment(self, things, starting_time, model):
     db.session.commit()
     return(things_per_sec)
 
-def get_things_per_min(self):
+def get_things_per_min():
     total_things = 0
     pruned_array = []
     # clear up old requests (older than 5 mins)
     db.session.query(FulfillmentPerformance).filter(
-       datetime.utcnow() - FulfillmentPerformance.model.created > datetime.timedelta(seconds=60)
+       datetime.utcnow() - FulfillmentPerformance.model.created > timedelta(seconds=60)
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned fulfillments")
     last_minute_fulfillments = db.session.query(FulfillmentPerformance).filter(
-       datetime.utcnow() - FulfillmentPerformance.model.created <= datetime.timedelta(seconds=60)
+       datetime.utcnow() - FulfillmentPerformance.model.created <= timedelta(seconds=60)
     )
     for fulfillment in last_minute_fulfillments:
         total_things += fulfillment.things
@@ -56,7 +56,7 @@ def get_things_per_min(self):
 def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance).all()]
 
-def get_request_avg(self):
+def get_request_avg():
     worker_performances = get_worker_performances()
     if len(worker_performances) == 0:
         return(0)
@@ -66,7 +66,7 @@ def get_request_avg(self):
 def get_model_performance(model_name):
     return db.session.query(ModelPerformance).filter(model=model_name).desc().limit(10)
 
-def get_model_avg(self, model):
+def get_model_avg(model):
     model_performances = get_model_performance(model)
     if len(model_performances) == 0:
         return(0)

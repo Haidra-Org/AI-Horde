@@ -2,15 +2,13 @@ from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
 from horde import limiter, logger, maintenance, invite_only, raid, cm, cache
 from horde.suspicions import Suspicions 
-from horde.classes import database,processing_generations,waiting_prompts,Worker,Team,WaitingPrompt,News
+from horde.classes import database,processing_generations,waiting_prompts,Worker,Team,WaitingPrompt,News,User,stats
 from enum import Enum
 from horde.apis import exceptions as e
 import os, time, json, re, bleach
 from horde.apis import ModelsV2, ParsersV2
 from horde.utils import is_profane
 from horde.flask import db
-from horde.classes.base.user import User
-from horde.classes.base import stats
 
 # Not used yet
 authorizations = {
@@ -388,8 +386,12 @@ class JobPop(Resource):
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
-            self.worker = Worker(database)
-            self.worker.create(self.user, self.worker_name)
+            logger.debug(Worker)
+            self.worker = Worker(
+                user_id=self.user.id,
+                name=self.worker_name,
+            )
+            self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
     
@@ -466,9 +468,7 @@ class Workers(Resource):
         '''
         workers_ret = []
         # I could do this with a comprehension, but this is clearer to understand
-        for worker in list(database.workers.values()):
-            if worker.is_stale():
-                continue
+        for worker in database.get_active_workers():
             workers_ret.append(worker.get_details())
         return(workers_ret,200)
 

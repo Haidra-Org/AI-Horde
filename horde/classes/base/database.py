@@ -1,13 +1,10 @@
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading, time, dateutil.relativedelta, bleach
 from horde import logger
 from horde.vars import thing_name,raw_thing_name,thing_divisor
-from horde.classes import db
-from horde.classes.base.user import User
-from horde.classes.base.team import Team
-from horde.classes.base.worker import Worker
+from horde.classes import db, User, Team, Worker, stats
 
 ALLOW_ANONYMOUS = True
 
@@ -62,14 +59,14 @@ def get_top_worker():
 
 def get_active_workers():
     active_workers = db.session.query(Worker).filter(
-        datetime.utcnow() - Worker.last_check_in <= datetime.timedelta(seconds=300)
+        datetime.utcnow() - Worker.last_check_in <= timedelta(seconds=300)
     ).all()
     return active_workers
 
 def count_active_workers():
     count = 0
     active_workers = db.session.query(Worker).filter(
-        datetime.utcnow() - Worker.last_check_in <= datetime.timedelta(seconds=300)
+        datetime.utcnow() - Worker.last_check_in <= timedelta(seconds=300)
     ).all()
     for worker in active_workers:
         count += worker.threads
@@ -109,13 +106,13 @@ def find_user_by_username(username):
     if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
         return(None)
     # This approach handles someone cheekily putting # in their username
-    user = db.session.query(User).filter_by(user_id=int(ulist[-1])).first()
+    user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
     return(user)
 
 def find_user_by_id(user_id):
     if int(user_id) == 0 and not ALLOW_ANONYMOUS:
         return(None)
-    user = db.session.query(User).filter_by(user_id=user_id).first()
+    user = db.session.query(User).filter_by(id=user_id).first()
     return(user)
 
 def find_user_by_api_key(api_key):

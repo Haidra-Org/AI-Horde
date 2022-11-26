@@ -9,8 +9,6 @@ from horde.flask import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
-from horde.classes.base import User
-
 
 class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
@@ -55,7 +53,7 @@ class Worker(db.Model):
     uptime_reward_threshold = 600
     default_maintenance_msg = "This worker has been put into maintenance mode by its owner"
 
-    id = db.Column(db.String(36), primary_key=True, default=uuid.uuid4)
+    id = db.Column(db.String(36), primary_key=True, default=str(uuid.uuid4()))
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="workers")
@@ -65,22 +63,23 @@ class Worker(db.Model):
 
     last_check_in = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    kudos = db.Column(db.Integer, default=0)
-    contributions = db.Column(db.Integer, default=0)
-    fulfilments = db.Column(db.Integer, default=0)
-    aborted_jobs = db.Column(db.Integer, default=0)
-    uncompleted_jobs = db.Column(db.Integer, default=0)
-    uptime = db.Column(db.Integer, default=0)
-    threads = db.Column(db.Integer, default=1)
-    bridge_version = db.Column(db.Integer, default=1)
+    kudos = db.Column(db.Integer, default=0, nullable=False)
+    contributions = db.Column(db.Integer, default=0, nullable=False)
+    fulfilments = db.Column(db.Integer, default=0, nullable=False)
+    aborted_jobs = db.Column(db.Integer, default=0, nullable=False)
+    uncompleted_jobs = db.Column(db.Integer, default=0, nullable=False)
+    uptime = db.Column(db.Integer, default=0, nullable=False)
+    threads = db.Column(db.Integer, default=1, nullable=False)
+    bridge_version = db.Column(db.Integer, default=1, nullable=False)
+    last_reward_uptime = db.Column(db.Integer, default=0, nullable=False)
 
-    kudos_generated = db.Column(db.Integer, default=0)
-    kudos_uptime = db.Column(db.Integer, default=0)
+    kudos_generated = db.Column(db.Integer, default=0, nullable=False)
+    kudos_uptime = db.Column(db.Integer, default=0, nullable=False)
 
-    paused = db.Column(db.Boolean, default=False)
-    maintenance = db.Column(db.Boolean, default=False)
-    maintenance_msg = db.Column(db.String(100), unique=False, default=default_maintenance_msg)
-    nsfw = db.Column(db.Boolean, default=False)
+    paused = db.Column(db.Boolean, default=False, nullable=False)
+    maintenance = db.Column(db.Boolean, default=False, nullable=False)
+    maintenance_msg = db.Column(db.String(100), unique=False, default=default_maintenance_msg, nullable=False)
+    nsfw = db.Column(db.Boolean, default=False, nullable=False)
     team_id = db.Column(db.String(36), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", back_populates="workers")
 
@@ -90,17 +89,14 @@ class Worker(db.Model):
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker")
     models = db.relationship("WorkerModels", back_populates="worker")
 
-
-    def create(self, user, name, **kwargs):
-        self.user_id = user.id
-        self.name = name
+    def create(self, **kwargs):
         self.check_for_bad_actor()
-        if not self.is_suspicious():
-            db.session.add(self)
-            db.session.commit()
-
-    def get_user(self):
-        return(db.session.query(User).filter_by(user_id=self.user_id).first())
+        db.session.add(self)
+        db.session.commit()
+        if self.is_suspicious():
+            pass
+            # TODO: Doesn't work
+            # db.delete(self)
 
     def check_for_bad_actor(self):
         # Each worker starts at the suspicion level of its user
@@ -117,7 +113,7 @@ class Worker(db.Model):
         if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
             return
         new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(reason))
-        self.get_user().report_suspicion(amount, reason, formats)
+        self.user.report_suspicion(amount, reason, formats)
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason_log}")
@@ -131,11 +127,11 @@ class Worker(db.Model):
         db.session.commit()   
 
     def get_suspicion(self):
-        return(db.session.query(WorkerSuspicions).filter(worker_id=self.id).count())
+        return(len(self.suspicions))
 
     def is_suspicious(self):
         # Trusted users are never suspicious
-        if self.get_user().trusted:
+        if self.user.trusted:
             return(False)       
         if self.get_suspicion() >= self.suspicion_threshold:
             return(True)
@@ -190,14 +186,12 @@ class Worker(db.Model):
             return
         existing_models.delete()
         for model_name in models:
-            model = Model(worker_id=self.id,model=model_name)
+            model = WorkerModels(worker_id=self.id,model=model_name)
             db.session.add(model)
         db.session.commit()
 
     def get_model_names(self):
-        existing_models = db.session.query(WorkerModels).filter_by(worker_id=self.id)
-        return set([m.model for m in existing_models.all()])
-
+        return set([m.model for m in self.models])
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
@@ -208,17 +202,17 @@ class Worker(db.Model):
         self.bridge_version = kwargs.get("bridge_version", 1)
         self.threads = kwargs.get("threads", 1)
         if not kwargs.get("safe_ip", True):
-            if not self.get_user().trusted:
+            if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
         if not self.is_stale() and not self.paused and not self.maintenance:
-            self.uptime += (utcnow() - self.last_check_in).seconds
+            self.uptime += (datetime.utcnow() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 if self.team:
                     self.team.record_uptime(self.uptime_reward_threshold)
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
-                self.get_user().record_uptime(kudos)
+                self.user.record_uptime(kudos)
                 logger.debug(f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.")
                 self.last_reward_uptime = self.uptime
         else:
@@ -243,7 +237,7 @@ class Worker(db.Model):
         is_matching = True
         skipped_reason = None
         # Workers in maintenance are still allowed to generate for their owner
-        if self.maintenance and waiting_prompt.user != self.get_user():
+        if self.maintenance and waiting_prompt.user != self.user:
             is_matching = False
             return([is_matching,skipped_reason])
         if self.is_stale():
@@ -257,7 +251,7 @@ class Worker(db.Model):
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False
             skipped_reason = 'nsfw'
-        if waiting_prompt.trusted_workers and not self.get_user().trusted:
+        if waiting_prompt.trusted_workers and not self.user.trusted:
             is_matching = False
             skipped_reason = 'untrusted'
         # If the worker has been tricked once by this prompt, we don't want to resend it it
@@ -290,7 +284,7 @@ class Worker(db.Model):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
-        self.get_user().record_contributions(raw_things = raw_things, kudos = kudos)
+        self.user.record_contributions(raw_things = raw_things, kudos = kudos)
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
@@ -313,7 +307,7 @@ class Worker(db.Model):
 
     def log_aborted_job(self):
         # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.
-        if (utcnow() - self.last_aborted_job).seconds > 3600:
+        if (datetime.utcnow() - self.last_aborted_job).seconds > 3600:
             self.aborted_jobs = 0
             self.last_aborted_job = datetime.utcnow()
         self.aborted_jobs += 1
@@ -353,7 +347,7 @@ class Worker(db.Model):
 
     def is_stale(self):
         try:
-            if (utcnow() - self.last_check_in).seconds > 300:
+            if (datetime.utcnow() - self.last_check_in).seconds > 300:
                 return(True)
         # If the last_check_in isn't set, it's a new worker, so it's stale by default
         except AttributeError:
@@ -388,7 +382,7 @@ class Worker(db.Model):
             "maintenance_mode": self.maintenance,
             "info": self.info,
             "nsfw": self.nsfw,
-            "trusted": self.get_user().trusted,
+            "trusted": self.user.trusted,
             "models": self.get_model_names(),
             "online": not self.is_stale(),
             "team": {"id": self.team.id,"name": self.team.name} if self.team else 'None',
@@ -396,7 +390,7 @@ class Worker(db.Model):
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
             ret_dict['suspicious'] = self.suspicious
-        if details_privilege >= 1 or self.get_user().public_workers:
-            ret_dict['owner'] = self.get_user().get_unique_alias()
-            ret_dict['contact'] = self.get_user().contact
+        if details_privilege >= 1 or self.user.public_workers:
+            ret_dict['owner'] = self.user.get_unique_alias()
+            ret_dict['contact'] = self.user.contact
         return(ret_dict)

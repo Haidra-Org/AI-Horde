@@ -75,7 +75,8 @@ class User(db.Model):
         self.check_for_bad_actor()
         db.session.add(self)
         db.session.commit()
-        # FIXME: Vestigial. Will remove later when everything is in the DB
+        logger.info(f"New User Created {self.get_unique_alias()}")
+        
 
     def set_min_kudos(self):
         if self.is_anon(): 
@@ -315,6 +316,29 @@ class User(db.Model):
             return(False)
         return(True)
 
+    def compile_kudos_details(self):
+        kudos_dict = {
+            "accumulated": self.kudos_accumulated,
+            "gifted": self.kudos_gifted,
+            "admin": self.kudos_admin,
+            "received": self.kudos_received,
+            "recurring": self.kudos_recurring,
+        }
+        return kudos_dict
+
+    def compile_usage_details(self):
+        usage_dict = {
+            thing_name: self.usage_thing,
+            "requests": self.usage_requests
+        }
+        return usage_dict
+
+    def compile_contribution_details(self):
+        usage_dict = {
+            thing_name: self.contributed_thing,
+            "fulfillments": self.contributed_fulfillments
+        }
+        return usage_dict
 
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
@@ -322,9 +346,9 @@ class User(db.Model):
             "username": self.get_unique_alias(),
             "id": self.id,
             "kudos": self.kudos,
-            "kudos_details": self.kudos_details,
-            "usage": self.usage,
-            "contributions": self.contributions,
+            "kudos_details": self.compile_kudos_details(),
+            "usage": self.compile_usage_details(),
+            "contributions": self.compile_contribution_details(),
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
