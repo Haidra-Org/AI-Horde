@@ -2,22 +2,35 @@ from .. import logger, args
 from importlib import import_module
 from horde.flask import db
 
+# To avoid imports on uninitialized vars
+stats = None
+ProcessingGeneration = None
+WaitingPrompt = None
+User = None
+Team = None
+Worker = None
+WorkerPerformance = None
+News = None
+WPCleaner = None
+MonthlyKudos = None
+
+from horde.classes import database
 # Should figure out an elegant way to do this with a for loop
 stats = import_module(name=f'horde.classes.{args.horde}').stats
-WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
 ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}').ProcessingGeneration
+WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
 User = import_module(name=f'horde.classes.{args.horde}').User
 Team = import_module(name=f'horde.classes.{args.horde}').Team
-Worker = import_module(name=f'horde.classes.{args.horde}').WorkerExtended
-PromptsIndex = import_module(name=f'horde.classes.{args.horde}').PromptsIndex
-GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').GenerationsIndex
+Worker = import_module(name=f'horde.classes.{args.horde}').Worker
+WorkerPerformance = import_module(name=f'horde.classes.{args.horde}').WorkerPerformance
 News = import_module(name=f'horde.classes.{args.horde}').News
+WPCleaner = import_module(name=f'horde.classes.{args.horde}').WPCleaner
 MonthlyKudos = import_module(name=f'horde.classes.{args.horde}').MonthlyKudos
 
 logger.debug(Team)
 db.create_all()
 
-database = import_module(name=f'horde.classes.{args.horde}').database
+wp_cleaner = WPCleaner()
 monthly_kudos = MonthlyKudos()
 
 anon = db.session.query(User).filter_by(oauth_id="anon").first()

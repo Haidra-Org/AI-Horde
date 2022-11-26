@@ -1,6 +1,5 @@
 from datetime import datetime
 import uuid
-import time
 import bleach
 
 from horde import logger

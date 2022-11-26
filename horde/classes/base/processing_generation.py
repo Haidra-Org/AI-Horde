@@ -5,8 +5,8 @@ import time
 
 from horde import logger, raid
 from horde.flask import db
-from horde.classes.base.database import convert_things_to_kudos
-from horde.classes.base.stats import record_fulfilment
+from horde.classes import database
+from horde.classes import stats
 
 class ProcessingGeneration:
     """For storing processing generations in the DB"""
@@ -50,7 +50,7 @@ class ProcessingGeneration:
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        self.things_per_sec = record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
+        self.things_per_sec = stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record()
@@ -98,7 +98,7 @@ class ProcessingGeneration:
 
     # Overridable function
     def get_gen_kudos(self):
-        return(convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
+        return(database.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
 
     def is_completed(self):
         if self.generation:

@@ -4,9 +4,11 @@ from datetime import datetime, timedelta
 import time
 from horde import logger
 from horde.vars import thing_name,raw_thing_name,thing_divisor
-from horde.classes import db, User, Team, Worker, stats
 
 ALLOW_ANONYMOUS = True
+
+from horde.classes import db, stats, User, Team, Worker, ProcessingGeneration, WaitingPrompt
+
 
 def initiate_save(seconds = 1):
     logger.success(f"Initiating save in {seconds} seconds")

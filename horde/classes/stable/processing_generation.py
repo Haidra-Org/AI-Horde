@@ -1,3 +1,4 @@
+from horde import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
 
 class ProcessingGenerationExtended(ProcessingGeneration):

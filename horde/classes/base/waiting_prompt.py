@@ -3,11 +3,11 @@ from datetime import datetime
 import uuid
 import time
 
-from horde import logger, args, raid
+from horde import logger
 from horde.flask import db
-from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.classes.base import stats
-from horde.classes.base.database import count_active_workers
+from horde.classes import ProcessingGeneration
+from horde.classes import stats
+from horde.classes import database
 
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
@@ -201,7 +201,7 @@ class WaitingPrompt(db.Model):
         # We increment the priority by 1, because it starts at -1
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        active_workers = count_active_workers()
+        active_workers = database.count_active_workers()
         # If there's less requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_workers:

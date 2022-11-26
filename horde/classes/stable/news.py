@@ -1,3 +1,4 @@
+from horde import logger
 from horde.classes.base.news import News
 
 class NewsExtended(News):

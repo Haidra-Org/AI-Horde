@@ -1,8 +1,9 @@
+from horde import logger
 from horde.flask import db
-from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.stable.processing_generation import ProcessingGenerationExtended
+from horde.classes.base.waiting_prompt import WaitingPrompt
 
-class WaitingPromptExtemded(WaitingPrompt):
+class WaitingPromptExtended(WaitingPrompt):
     source_image = db.Column(db.Text, default=None)
     source_processing = db.Column(db.String(10), default='img2img', nullable=False)
     source_mask = db.Column(db.Text, default=None)
