@@ -1,5 +1,5 @@
 from horde.classes.base import *
-from horde.classes.stable.worker import Worker
+from horde.classes.stable.worker import WorkerExtended
 
 class WaitingPrompt(WaitingPrompt):
 

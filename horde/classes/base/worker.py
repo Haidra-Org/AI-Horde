@@ -4,7 +4,7 @@ import time
 import dateutil.relativedelta
 import bleach
 
-from horde import logger, raid
+from horde import logger, args, raid
 from horde.flask import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
@@ -16,7 +16,7 @@ class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
-    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="stats")
+    worker = db.relationship(f"WorkerExtended", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
 
@@ -24,28 +24,28 @@ class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="performance")
+    worker = db.relationship(f"WorkerExtended", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
 
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="blacklist")
+    worker = db.relationship(f"WorkerExtended", back_populates="blacklist")
     word = db.Column(db.String(15), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="suspicions")
+    worker = db.relationship(f"WorkerExtended", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 class WorkerModels(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="models")
+    worker = db.relationship(f"WorkerExtended", back_populates="models")
     model = db.Column(db.String(20), primary_key=False)
 
 class Worker(db.Model):
@@ -82,7 +82,7 @@ class Worker(db.Model):
     maintenance_msg = db.Column(db.String(100), unique=False, default=default_maintenance_msg)
     nsfw = db.Column(db.Boolean, default=False)
     team_id = db.Column(db.String(36), db.ForeignKey("teams.id"), default=None)
-    team = db.relationship("Team", backref=db.backref("team_id", lazy="dynamic"))
+    team = db.relationship("Team", back_populates="workers")
 
     stats = db.relationship("WorkerStats", back_populates="worker")
     performance = db.relationship("WorkerPerformance", back_populates="worker")

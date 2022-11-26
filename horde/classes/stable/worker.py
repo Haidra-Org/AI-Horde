@@ -1,6 +1,6 @@
 from horde.classes.base.worker import *
 
-class Worker(Worker):
+class WorkerExtended(Worker):
 
     max_pixels = db.Column(db.Integer, default=512*512)
     allow_img2img = db.Column(db.Boolean, default=True)

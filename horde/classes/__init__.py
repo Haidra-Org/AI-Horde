@@ -8,7 +8,7 @@ WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
 ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}').ProcessingGeneration
 User = import_module(name=f'horde.classes.{args.horde}').User
 Team = import_module(name=f'horde.classes.{args.horde}').Team
-Worker = import_module(name=f'horde.classes.{args.horde}').Worker
+Worker = import_module(name=f'horde.classes.{args.horde}').WorkerExtended
 PromptsIndex = import_module(name=f'horde.classes.{args.horde}').PromptsIndex
 GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').GenerationsIndex
 News = import_module(name=f'horde.classes.{args.horde}').News

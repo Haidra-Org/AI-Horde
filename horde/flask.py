@@ -10,6 +10,7 @@ cache = None
 HORDE = Flask(__name__)
 HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
 HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
+HORDE.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(HORDE)
 db.init_app(HORDE)
 db.create_all()

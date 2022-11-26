@@ -4,12 +4,11 @@ import time
 import dateutil.relativedelta
 import bleach
 
-from horde import logger
+from horde import logger, args
 from horde.flask import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
-from horde.classes.base.db_utils import find_workers_by_user
 
 
 # from sqlalchemy.dialects.postgresql import UUID
@@ -66,7 +65,8 @@ class User(db.Model):
     same_ip_worker_threshold = db.Column(db.Integer, default=3)
     suspicion_threshold = db.Column(db.Integer, default=3)
 
-    workers = db.relationship("horde.classes.base.worker.Worker", back_populates="user")
+    workers = db.relationship(f"WorkerExtended", back_populates="user")
+    teams = db.relationship(f"Team", back_populates="owner")
     suspicions = db.relationship("UserSuspicions", back_populates="user")
     stats = db.relationship("UserStats", back_populates="user")
 
@@ -120,7 +120,7 @@ class User(db.Model):
         self.trusted = is_trusted
         db.session.commit()
         if self.trusted:
-            for worker in self.get_workers():
+            for worker in self.workers:
                 worker.paused = False
 
     def set_moderator(self,is_moderator):
@@ -266,18 +266,14 @@ class User(db.Model):
             return
         #TODO Select from UserSuspicions DB and delete all matching user ID
         db.session.commit()
-        for worker in find_workers_by_user(self):
+        for worker in self.workers:
             worker.reset_suspicion()
 
     def get_suspicion(self):
         return(db.session.query(UserSuspicions).filter(user_id=self.id).count())
 
-    def get_workers(self):
-        #TODO Switch to workers DB
-        return find_workers_by_user(self)
-    
     def count_workers(self):
-        return(len(self.get_workers()))
+        return(len(self.workers))
 
     def is_suspicious(self): 
         if self.trusted:
@@ -340,7 +336,7 @@ class User(db.Model):
         }
         if self.public_workers or details_privilege >= 1:
             workers_array = []
-            for worker in self.get_workers():
+            for worker in self.workers:
                 workers_array.append(worker.id)
             ret_dict["worker_ids"] = workers_array
             ret_dict['contact'] = self.contact

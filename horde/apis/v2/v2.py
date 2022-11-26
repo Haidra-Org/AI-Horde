@@ -1,7 +1,8 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
 from horde import limiter, logger, maintenance, invite_only, raid, cm, cache
-from horde.classes import database,processing_generations,waiting_prompts,Worker,Team,WaitingPrompt,News,Suspicions
+from horde.suspicions import Suspicions 
+from horde.classes import database,processing_generations,waiting_prompts,Worker,Team,WaitingPrompt,News
 from enum import Enum
 from horde.apis import exceptions as e
 import os, time, json, re, bleach

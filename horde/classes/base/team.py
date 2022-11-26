@@ -7,26 +7,25 @@ from horde import logger
 from horde.flask import db
 from horde.vars import thing_divisor
 from horde.utils import is_profane
-from horde.classes.base import User
-from horde.classes.base.db_utils import find_workers_by_team
-
 
 class Team(db.Model):
     __tablename__ = "teams"
     id = db.Column(db.String(36), primary_key=True, default=uuid.uuid4)
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     info = db.Column(db.String(1000), default='')
-    name = db.Column(db.String(100), default='', is_nullable=False)
+    name = db.Column(db.String(100), default='', nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    owner = db.relationship("User", backref=db.backref("owner_id", lazy="dynamic"))
+    owner = db.relationship(f"User", back_populates="teams")
 
     contributions = db.Column(db.Integer, unique=False)
     fulfilments = db.Column(db.Integer, unique=False)
     kudos = db.Column(db.Integer, unique=False)
     uptime = db.Column(db.Integer, unique=False)
 
-    creation_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_active = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    creation_date = db.Column(db.DateTime, default=datetime.utcnow)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow)
+
+    workers = db.relationship("Worker", back_populates="team")
 
 
     def create(self, user):
@@ -38,7 +37,7 @@ class Team(db.Model):
 
     def get_performance(self):
         all_performances = []
-        for worker in find_workers_by_team(self):
+        for worker in self.workers:
             if worker.is_stale():
                 continue
             all_performances.append(worker.get_performance_average())
@@ -52,7 +51,7 @@ class Team(db.Model):
 
     def get_all_models(self):
         all_models = {}
-        for worker in find_workers_by_team(self):
+        for worker in self.workers:
             for model_name in worker.get_model_names():
                 all_models[model_name] = all_models.get(model_name,0) + 1
         model_list = []
@@ -91,11 +90,11 @@ class Team(db.Model):
         db.session.commit()
 
     def get_owner(self, new_owner):
-        return(db.session.query(User).filter_by(user_id=self.user_id).first())
+        return self.owner
 
     def delete(self):
         db.session.delete(self)
-        for worker in find_workers_by_team(self):
+        for worker in self.workers:
             worker.set_team(None)
         db.session.commit()
 
@@ -115,7 +114,7 @@ class Team(db.Model):
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
-        worker_list = [{"id": worker.id, "name":worker.name, "online": not worker.is_stale()} for worker in find_workers_by_team(self)]
+        worker_list = [{"id": worker.id, "name":worker.name, "online": not worker.is_stale()} for worker in self.workers]
         perf_avg, perf_total = self.get_performance()
         ret_dict = {
             "name": self.name,

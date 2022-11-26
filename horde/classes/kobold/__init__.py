@@ -56,7 +56,7 @@ class ProcessingGeneration(ProcessingGeneration):
         }
         return(ret_dict)
 
-class Worker(Worker):
+class WorkerExtended(Worker):
 
     def check_in(self, max_length, max_content_length, softprompts, **kwargs):
         super().check_in(**kwargs)
