@@ -3,9 +3,9 @@ from flask import request
 from horde import limiter, logger, maintenance, invite_only, raid, cm, cache
 from horde.classes import database,processing_generations,waiting_prompts,Worker,Team,WaitingPrompt,News,Suspicions
 from enum import Enum
-from horde.api import exceptions as e
+from horde.apis import exceptions as e
 import os, time, json, re, bleach
-from horde.api import ModelsV2, ParsersV2
+from horde.apis import ModelsV2, ParsersV2
 from horde.utils import is_profane
 from horde.flask import db
 from horde.classes.base.user import User

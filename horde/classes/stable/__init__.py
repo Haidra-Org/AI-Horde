@@ -223,8 +223,6 @@ class ProcessingGeneration(ProcessingGeneration):
 
 class Database(Database):
 
-    def new_worker(self):
-        return(Worker(self))
     def new_stats(self):
         return(Stats(self))
 

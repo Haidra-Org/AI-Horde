@@ -10,6 +10,8 @@ from horde.utils import is_profane
 from horde.classes.base.news import News
 from horde.flask import db
 from horde.classes.base.user import User
+from horde.classes.base.team import Team
+from horde.classes.base.worker import Worker
 
 class WaitingPrompt:
     extra_priority = 0
@@ -523,141 +525,6 @@ class GenerationsIndex(Index):
             org[model].append(procgen)
         return(org)
 
-class Team:
-    def __init__(self, db):
-        self.contributions = 0
-        self.fulfilments = 0
-        self.kudos = 0
-        self.uptime = 0
-        self.db = db
-        self.info = ''
-        self.name = ''
-
-    def create(self, user):
-        self.id = str(uuid4())
-        self.set_owner(user)
-        self.creation_date = datetime.now()
-        self.last_active = datetime.now()
-        self.db.register_new_team(self)
-
-    def get_performance(self):
-        all_performances = []
-        for worker in self.db.find_workers_by_team(self):
-            if worker.is_stale():
-                continue
-            all_performances.append(worker.get_performance_average())
-        if len(all_performances):
-            perf_avg = round(sum(all_performances) / len(all_performances) / thing_divisor,1)
-            perf_total = round(sum(all_performances) / thing_divisor,1)
-        else:
-            perf_avg = 0
-            perf_total = 0
-        return(perf_avg,perf_total)
-
-    def get_all_models(self):
-        all_models = {}
-        for worker in self.db.find_workers_by_team(self):
-            for model_name in worker.models:
-                all_models[model_name] = all_models.get(model_name,0) + 1
-        model_list = []
-        for model in all_models:
-            minfo = {
-                "name": model,
-                "count": all_models[model]
-            }
-            model_list.append(minfo)
-        return(model_list)
-
-    def set_name(self,new_name):
-        if self.name == new_name:
-            return("OK")        
-        if is_profane(new_name):
-            return("Profanity")
-        self.name = bleach.clean(new_name)
-        existing_team = self.db.find_team_by_name(self.name)
-        if existing_team and existing_team != self:
-            return("Already Exists")
-        return("OK")
-
-    def set_info(self, new_info):
-        if self.info == new_info:
-            return("OK")
-        if is_profane(new_info):
-            return("Profanity")
-        self.info = bleach.clean(new_info)
-        return("OK")
-
-    def set_owner(self, new_owner):
-        self.user = new_owner
-
-    def delete(self):
-        for worker in self.db.find_workers_by_team(self):
-            worker.set_team(None)
-        self.db.delete_team(self)
-        del self
-
-    def record_uptime(self, seconds):
-        self.uptime += seconds
-        self.last_active = datetime.now()
-    
-    def record_contribution(self, contributions, kudos):
-        self.contributions = round(self.contributions + contributions, 2)
-        self.fulfilments += 1
-        self.kudos = round(self.kudos + kudos, 2)
-        self.last_active = datetime.now()
-
-   # Should be extended by each specific horde
-    @logger.catch(reraise=True)
-    def get_details(self, details_privilege = 0):
-        '''We display these in the workers list json'''
-        worker_list = [{"id": worker.id, "name":worker.name, "online": not worker.is_stale()} for worker in self.db.find_workers_by_team(self)]
-        perf_avg, perf_total = self.get_performance()
-        ret_dict = {
-            "name": self.name,
-            "id": self.id,
-            "creator": self.user.get_unique_alias(),
-            "contributions": self.contributions,
-            "requests_fulfilled": self.fulfilments,
-            "kudos": self.kudos,
-            "performance": perf_avg,
-            "speed": perf_total,
-            "uptime": self.uptime,
-            "info": self.info,
-            "worker_count": len(worker_list),
-            "workers": worker_list,
-            "models": self.get_all_models(),
-        }
-        return(ret_dict)
-
-    # Should be extended by each specific horde
-    @logger.catch(reraise=True)
-    def serialize(self):
-        ret_dict = {
-            "oauth_id": self.user.oauth_id,
-            "name": self.name,
-            "contributions": self.contributions,
-            "fulfilments": self.fulfilments,
-            "kudos": self.kudos,
-            "last_active": self.last_active.strftime("%Y-%m-%d %H:%M:%S"),
-            "id": self.id,
-            "uptime": self.uptime,
-            "info": self.info,
-        }
-        return(ret_dict)
-
-    @logger.catch(reraise=True)
-    def deserialize(self, saved_dict, convert_flag = None):
-        self.user = self.db.find_user_by_oauth_id(saved_dict["oauth_id"])
-        self.name = saved_dict["name"]
-        self.contributions = saved_dict["contributions"]
-        self.fulfilments = saved_dict["fulfilments"]
-        self.kudos = saved_dict.get("kudos",0)
-        self.last_active = datetime.strptime(saved_dict["last_active"],"%Y-%m-%d %H:%M:%S")
-        self.id = saved_dict["id"]
-        self.uptime = saved_dict.get("uptime",0)
-        self.info = saved_dict.get("info",None)
-
-
 class Stats:
     worker_performances = []
     model_performances = {}
@@ -758,45 +625,30 @@ class Database:
         # Other miscellaneous statistics
         self.STATS_FILE = "db/stats.json"
         self.stats = self.new_stats()
-        self.TEAMS_FILE = "db/teams.json"
-        self.teams = {}
         # I'm setting this quickly here so that we do not crash when trying to detect duplicate IDs, during user deserialization
         self.anon = db.session.query(User).filter_by(oauth_id="anon").first()
-        # Increments any time a new user is added
-        # Is appended to usernames, to ensure usernames never conflict
-        self.last_user_id = 0
+        self.convert_flag = convert_flag
+        if self.convert_flag:
+            logger.init_warn(f"Convert Flag '{convert_flag}' received.", status="Converting")
     
     def load(self):
         logger.init(f"Database Load", status="Starting")
-        if convert_flag:
-            logger.init_warn(f"Convert Flag '{convert_flag}' received.", status="Converting")
         self.anon = self.find_user_by_oauth_id('anon')
-        logger.debug(self.anon)
         if not self.anon:
             self.anon = User(
                 id=0,
                 username="Anonymous",
-                oauth_id="oauth_id",
+                oauth_id="anon",
                 api_key="0000000000",
                 public_workers=True,
                 concurrency=500
             )
             self.anon.create()
-        if os.path.isfile(self.TEAMS_FILE):
-            with open(self.TEAMS_FILE) as db:
-                serialized_teams = json.load(db)
-                for team_dict in serialized_teams:
-                    if not team_dict:
-                        logger.error("Found null team on db load. Bypassing")
-                        continue
-                    new_team = self.new_team()
-                    new_team.deserialize(team_dict,convert_flag)
-                    self.teams[new_team.id] = new_team
         if os.path.isfile(self.STATS_FILE):
             with open(self.STATS_FILE) as stats_db:
-                self.stats.deserialize(json.load(stats_db),convert_flag)
+                self.stats.deserialize(json.load(stats_db),self.convert_flag)
 
-        if convert_flag:
+        if self.convert_flag:
             self.write_files_to_disk()
             logger.init_ok(f"Convertion complete.", status="Exiting")
             sys.exit()
@@ -810,12 +662,8 @@ class Database:
 
     # I don't know if I'm doing this right,  but I'm using these so that I can extend them from the extended DB
     # So that it will grab the extended classes from each horde type, and not the internal classes in this package
-    def new_worker(self):
-        return(Worker(self))
     def new_stats(self):
         return(Stats(self))
-    def new_team(self):
-        return(Team(self))
 
     def write_files(self):
         time.sleep(4)
@@ -852,12 +700,12 @@ class Database:
             os.mkdir('db')
         worker_serialized_list = []
         logger.debug("Saving DB")
-        for worker in self.workers.copy().values():
-            # We don't store data for anon workers
-            if worker.user == self.anon: continue
-            worker_serialized_list.append(worker.serialize())
-        with open(self.WORKERS_FILE, 'w') as db:
-            json.dump(worker_serialized_list,db)
+        # for worker in self.workers.copy().values():
+        #     # We don't store data for anon workers
+        #     if worker.user == self.anon: continue
+        #     worker_serialized_list.append(worker.serialize())
+        # with open(self.WORKERS_FILE, 'w') as db:
+        #     json.dump(worker_serialized_list,db)
         with open(self.STATS_FILE, 'w') as db:
             json.dump(self.stats.serialize(),db)
         # user_serialized_list = []
@@ -865,11 +713,11 @@ class Database:
         #     user_serialized_list.append(user.serialize())
         # with open(self.USERS_FILE, 'w') as db:
         #     json.dump(user_serialized_list,db)
-        teams_serialized_list = []
-        for team in self.teams.copy().values():
-            teams_serialized_list.append(team.serialize())
-        with open(self.TEAMS_FILE, 'w') as db:
-            json.dump(teams_serialized_list,db)
+        # teams_serialized_list = []
+        # for team in self.teams.copy().values():
+        #     teams_serialized_list.append(team.serialize())
+        # with open(self.TEAMS_FILE, 'w') as db:
+        #     json.dump(teams_serialized_list,db)
 
     def assign_monthly_kudos(self):
         time.sleep(2)
@@ -974,14 +822,6 @@ class Database:
                 return(worker)
         return(None)
 
-    
-    def find_workers_by_team(self, team):
-        found_workers = []
-        for worker in list(self.workers.values()):
-            if worker.team == team:
-                found_workers.append(worker)
-        return(found_workers)
-    
     def update_worker_name(self, worker, new_name):
         if new_name in self.workers:
             # If the name already exists, we return error code 1

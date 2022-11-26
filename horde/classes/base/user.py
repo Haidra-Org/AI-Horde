@@ -5,7 +5,7 @@ import dateutil.relativedelta
 import bleach
 
 from horde import logger
-from horde.classes import db
+from horde.flask import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
@@ -29,7 +29,6 @@ class UserSuspicions(db.Model):
 
 
 class User(db.Model):
-    
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True) 
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this

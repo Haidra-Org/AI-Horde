@@ -5,11 +5,12 @@ import dateutil.relativedelta
 import bleach
 
 from horde import logger, raid
-from horde.classes import db
+from horde.flask import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
 from horde.classes.base import User
+from horde.classes.base.database import find_team_by_worker
 
 
 
@@ -90,6 +91,11 @@ class Worker(db.Model):
     def get_user(self):
         return(db.session.query(User).filter_by(user_id=self.user_id).first())
 
+    def get_team(self):
+        #TODO Switch to workers DB
+        return find_team_by_worker(self)
+    
+
     def check_for_bad_actor(self):
         # Each worker starts at the suspicion level of its user
         if len(self.name) > 100:
@@ -152,7 +158,7 @@ class Worker(db.Model):
         return("OK")
 
     def set_team(self,new_team):
-        self.team = new_team
+        self.team_id = new_team.id
         db.session.commit()   
         return("OK")
 
@@ -202,8 +208,9 @@ class Worker(db.Model):
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                if self.team:
-                    self.team.record_uptime(self.uptime_reward_threshold)
+                team = self.get_team()
+                if team:
+                    team.record_uptime(self.uptime_reward_threshold)
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.get_user().record_uptime(kudos)
@@ -282,9 +289,9 @@ class Worker(db.Model):
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
-        # FIXME: Team stuff
-        # if self.team:
-        #     self.team.record_contribution(converted_amount, kudos)
+        team = self.get_team()
+        if team:
+            team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformances).filter_by(worker_id=self.id)
         if performances.count() >= 20:
             performances.first().delete()
@@ -349,10 +356,9 @@ class Worker(db.Model):
             return(True)
         return(False)
 
-    # TODO: How do I do this? Externally only?
     def delete(self):
-        self.db.delete_worker(self)
-        del self
+        db.session.delete(self)
+        db.session.commit()
 
     def get_kudos_details(self):
         kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).all()
@@ -365,6 +371,7 @@ class Worker(db.Model):
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
+        team = self.get_team()
         ret_dict = {
             "name": self.name,
             "id": self.id,
@@ -381,7 +388,7 @@ class Worker(db.Model):
             "trusted": self.get_user().trusted,
             "models": self.get_model_names(),
             "online": not self.is_stale(),
-            "team": {"id": self.team.id,"name": self.team.name} if self.team else 'None',
+            "team": {"id": team.id,"name": team.name} if team else 'None',
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
