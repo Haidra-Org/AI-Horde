@@ -131,14 +131,14 @@ class User(db.Model):
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, raw_things, kudos):
-        self.last_active = datetime.now()
+        self.last_active = datetime.datetime.utcnow()
         self.usage_requests += 1
         self.modify_kudos(-kudos,"accumulated")
         self.usage_thing = round(self.usage_thing + (raw_things * self.usage_multiplier / thing_divisor),2)
         db.session.commit()
 
     def record_contributions(self, raw_things, kudos):
-        self.last_active = datetime.now()
+        self.last_active = datetime.datetime.utcnow()
         self.contributed_fulfillments += 1
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted and not self.is_anon():
@@ -153,7 +153,7 @@ class User(db.Model):
         db.session.commit()
 
     def record_uptime(self, kudos):
-        self.last_active = datetime.now()
+        self.last_active = datetime.datetime.utcnow()
         # While a worker is untrusted, all uptime kudos go for evaluation
         if not self.trusted and not self.is_anon():
             self.evaluating_kudos += kudos
@@ -177,7 +177,7 @@ class User(db.Model):
         if monthly_kudos > 0:
             self.modify_kudos(monthly_kudos, "recurring")
         if not self.monthly_kudos_last_received:
-            self.monthly_kudos_last_received = datetime.now()
+            self.monthly_kudos_last_received = datetime.datetime.utcnow()
         self.monthly_kudos += monthly_kudos
         if self.monthly_kudos < 0:
             self.monthly_kudos = 0
@@ -188,13 +188,13 @@ class User(db.Model):
         if kudos_amount == 0:
             return
         if self.monthly_kudos_last_received:
-            has_month_passed = datetime.now() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
+            has_month_passed = datetime.datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
         else:
             # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
             has_month_passed = True
         if has_month_passed:
             # Not commiting as it'll happen in modify_kudos() anyway
-            self.monthly_kudos_last_received = datetime.now()
+            self.monthly_kudos_last_received = datetime.datetime.utcnow()
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
 
@@ -297,7 +297,7 @@ class User(db.Model):
     def is_stale(self):
         # Stale users have to be inactive for a month
         days_threshold = 30
-        days_inactive = (datetime.now() - self.last_active).days
+        days_inactive = (datetime.datetime.utcnow() - self.last_active).days
         if days_inactive < days_threshold:
             return(False)
         # Stale user have to have little accumulated kudos. 

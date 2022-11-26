@@ -31,8 +31,8 @@ class Team(db.Model):
 
     def create(self, user):
         self.set_owner(user)
-        self.creation_date = datetime.now()
-        self.last_active = datetime.now()
+        self.creation_date = datetime.datetime.utcnow()
+        self.last_active = datetime.datetime.utcnow()
         db.session.add(self)
         db.session.commit()
 
@@ -101,14 +101,14 @@ class Team(db.Model):
 
     def record_uptime(self, seconds):
         self.uptime += seconds
-        self.last_active = datetime.now()
+        self.last_active = datetime.datetime.utcnow()
         db.session.commit()
     
     def record_contribution(self, contributions, kudos):
         self.contributions = round(self.contributions + contributions, 2)
         self.fulfilments += 1
         self.kudos = round(self.kudos + kudos, 2)
-        self.last_active = datetime.now()
+        self.last_active = datetime.datetime.utcnow()
         db.session.commit()
 
    # Should be extended by each specific horde
