@@ -96,9 +96,16 @@ class WaitingPrompt(db.Model):
         self.jobs = self.n 
         # This specific per horde so it should be set in the extended class
         self.things = 0
-        self.models = kwargs.get("models", ['ReadOnly'])
+        self.store_models(kwargs.get("models", ['ReadOnly']))
+
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload()
+        db.session.commit()
+
+    def store_models(self, model_names):
+        for model in model_names:
+            model_entry = WPModels(wp_id=self.id, model=model)
+            db.session.add(model_entry)
         db.session.commit()
 
     def prepare_job_payload(self):

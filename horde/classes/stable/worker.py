@@ -1,4 +1,5 @@
-from horde.classes.base.worker import *
+from horde.flask import db
+from horde.classes.base.worker import Worker
 
 class WorkerExtended(Worker):
 
