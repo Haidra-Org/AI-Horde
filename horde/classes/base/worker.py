@@ -10,8 +10,6 @@ from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_su
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
 from horde.classes.base import User
-from horde.classes.base.database import find_team_by_worker
-
 
 
 class WorkerStats(db.Model):
@@ -24,25 +22,29 @@ class WorkerStats(db.Model):
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker = db.relationship("Worker", backref=db.backref("worker_id", lazy="dynamic"))
     performance = db.Column(db.Float, primary_key=False)
 
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker = db.relationship("Worker", backref=db.backref("worker_id", lazy="dynamic"))
     word = db.Column(db.String(15), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker = db.relationship("Worker", backref=db.backref("worker_id", lazy="dynamic"))
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 class WorkerModels(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker = db.relationship("Worker", backref=db.backref("worker_id", lazy="dynamic"))
     model = db.Column(db.String(20), primary_key=False)
 
 class Worker(db.Model):
@@ -55,6 +57,7 @@ class Worker(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=uuid.uuid4)
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user = db.relationship("User", backref=db.backref("user_id", lazy="dynamic"))
     name = db.Column(db.String(50), unique=True, nullable=False)
     info = db.Column(db.String(1000), unique=False)
     ipaddr = db.Column(db.String(15), unique=False)
@@ -78,6 +81,7 @@ class Worker(db.Model):
     maintenance_msg = db.Column(db.String(100), unique=False, default=default_maintenance_msg)
     nsfw = db.Column(db.Boolean, default=False)
     team_id = db.Column(db.String(36), db.ForeignKey("teams.id"), default=None)
+    team = db.relationship("Team", backref=db.backref("team_id", lazy="dynamic"))
 
 
     def create(self, user, name, **kwargs):
@@ -90,11 +94,6 @@ class Worker(db.Model):
 
     def get_user(self):
         return(db.session.query(User).filter_by(user_id=self.user_id).first())
-
-    def get_team(self):
-        #TODO Switch to workers DB
-        return find_team_by_worker(self)
-    
 
     def check_for_bad_actor(self):
         # Each worker starts at the suspicion level of its user
@@ -208,9 +207,8 @@ class Worker(db.Model):
             self.uptime += (datetime.now() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
-                team = self.get_team()
-                if team:
-                    team.record_uptime(self.uptime_reward_threshold)
+                if self.team:
+                    self.team.record_uptime(self.uptime_reward_threshold)
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos,'uptime')
                 self.get_user().record_uptime(kudos)
@@ -289,9 +287,8 @@ class Worker(db.Model):
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
-        team = self.get_team()
-        if team:
-            team.record_contribution(converted_amount, kudos)
+        if self.team:
+            self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformances).filter_by(worker_id=self.id)
         if performances.count() >= 20:
             performances.first().delete()
@@ -371,7 +368,6 @@ class Worker(db.Model):
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
-        team = self.get_team()
         ret_dict = {
             "name": self.name,
             "id": self.id,
@@ -388,7 +384,7 @@ class Worker(db.Model):
             "trusted": self.get_user().trusted,
             "models": self.get_model_names(),
             "online": not self.is_stale(),
-            "team": {"id": team.id,"name": team.name} if team else 'None',
+            "team": {"id": self.team.id,"name": self.team.name} if self.team else 'None',
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused

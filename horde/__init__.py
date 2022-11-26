@@ -1,12 +1,12 @@
-from .logger import logger, set_logger_verbosity, quiesce_logger
-from .argparser import args
+from horde.logger import logger, set_logger_verbosity, quiesce_logger
+from horde.argparser import args
 
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
 
-from . import countermeasures as cm
+from horde import countermeasures as cm
 
-from .switch import Switch
+from horde.switch import Switch
 maintenance = Switch()
 invite_only = Switch()
 if args.worker_invite:
@@ -14,6 +14,15 @@ if args.worker_invite:
 raid = Switch()
 if args.raid:
     raid.activate()
+
+from horde.redis_ctrl import get_horde_db, is_redis_up
+horde_r = None
+logger.init("Horde Redis", status="Connecting")
+if is_redis_up():
+	horde_r = get_horde_db()
+	logger.init_ok("Horde Redis", status="Connected")
+else:
+	logger.init_err("Horde Redis", status="Failed")
 
 from .limiter import limiter
 from flask import Flask, render_template, redirect, url_for, request, Blueprint

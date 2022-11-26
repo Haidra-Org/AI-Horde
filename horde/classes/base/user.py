@@ -18,6 +18,7 @@ class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user = db.relationship("User", backref=db.backref("user_id", lazy="dynamic"))
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
 
@@ -25,6 +26,7 @@ class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user = db.relationship("User", backref=db.backref("user_id", lazy="dynamic"))
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 

@@ -18,6 +18,7 @@ class Team(db.Model):
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', is_nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    owner = db.relationship("User", backref=db.backref("owner_id", lazy="dynamic"))
 
     contributions = db.Column(db.Integer, unique=False)
     fulfilments = db.Column(db.Integer, unique=False)

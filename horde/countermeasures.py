@@ -1,6 +1,6 @@
 import requests, os
-from . import logger, args
-from .redis_ctrl import is_redis_up, get_ipaddr_db, get_ipaddr_suspicion_db, get_ipaddr_timeout_db
+from horde import logger, args
+from horde.redis_ctrl import is_redis_up, get_ipaddr_db, get_ipaddr_suspicion_db, get_ipaddr_timeout_db
 from datetime import timedelta
 
 ip_r = None

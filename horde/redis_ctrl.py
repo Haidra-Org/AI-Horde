@@ -5,6 +5,7 @@ hostname = "localhost"
 port = 6379
 address = f"redis://{hostname}:{port}"
 
+horde_db = 0
 limiter_db = 1
 ipaddr_db = 2
 cache_db = 3
@@ -20,6 +21,13 @@ def ger_limiter_url():
 
 def ger_cache_url():
     return(f"{address}/{cache_db}")
+
+def get_horde_db():
+    rdb = redis.Redis(
+        host=hostname,
+        port=port,
+        db = horde_db)
+    return(rdb)
 
 def get_ipaddr_db():
     rdb = redis.Redis(
