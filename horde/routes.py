@@ -61,7 +61,7 @@ This is the worker which has generated the most pixels for the horde.
         news += f"* {sorted_news[iter]['newspiece']}\n"
         if iter > 1: break
     totals = database.get_total_usage()
-    wp_totals = waiting_prompts.count_totals()
+    wp_totals = database.count_totals()
     active_worker_count = database.count_active_workers()
     avg_performance = ConvertAmount(stats.get_request_avg() * active_worker_count)
     # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately

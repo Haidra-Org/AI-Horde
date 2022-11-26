@@ -1,28 +1,12 @@
 
 import time
 from datetime import datetime, timedelta
-import threading, time, dateutil.relativedelta, bleach
+import time
 from horde import logger
 from horde.vars import thing_name,raw_thing_name,thing_divisor
 from horde.classes import db, User, Team, Worker, stats
 
 ALLOW_ANONYMOUS = True
-
-class MonthlyKudos:
-    def __init__(self):
-        monthly_kudos_thread = threading.Thread(target=self.assign_monthly_kudos, args=())
-        monthly_kudos_thread.daemon = True
-        monthly_kudos_thread.start()
-
-    def assign_monthly_kudos(self):
-        time.sleep(2)
-        logger.init_ok("Monthly Kudos Awards Thread", status="Started")
-        while True:
-            #TODO Make the select statement bring the users with monthly kudos only
-            for user in db.session.query(User).all():
-                user.receive_monthly_kudos()
-            # Check once a day
-            time.sleep(86400)
 
 def initiate_save(seconds = 1):
     logger.success(f"Initiating save in {seconds} seconds")
@@ -156,7 +140,7 @@ def get_available_models(waiting_prompts, lite_dict=False):
             models_dict[model_name]["workers"].append(worker)
     if lite_dict:
         return(models_dict)
-    things_per_model = waiting_prompts.count_things_per_model()
+    things_per_model = count_things_per_model()
     # If we request a lite_dict, we only want worker count per model and a dict format
     for model_name in things_per_model:
         # This shouldn't happen, but I'm checking anyway
@@ -185,7 +169,7 @@ def transfer_kudos(source_user, dest_user, amount):
     dest_user.modify_kudos(amount, 'received')
     return([amount,'OK'])
 
-def transfer_kudos_to_username(self, source_user, dest_username, amount):
+def transfer_kudos_to_username(source_user, dest_username, amount):
     dest_user = find_user_by_username(dest_username)
     if not dest_user:
         return([0,'Invalid target username.'])
@@ -196,7 +180,7 @@ def transfer_kudos_to_username(self, source_user, dest_username, amount):
     kudos = transfer_kudos(source_user,dest_user, amount)
     return(kudos)
 
-def transfer_kudos_from_apikey_to_username(self, source_api_key, dest_username, amount):
+def transfer_kudos_from_apikey_to_username(source_api_key, dest_username, amount):
     source_user = find_user_by_api_key(source_api_key)
     if not source_user:
         return([0,'Invalid API Key.'])
@@ -206,12 +190,12 @@ def transfer_kudos_from_apikey_to_username(self, source_api_key, dest_username, 
     return(kudos)
 
 # Should be overriden
-def convert_things_to_kudos(self, things, **kwargs):
+def convert_things_to_kudos(things, **kwargs):
     # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
     kudos = round(things,2)
     return(kudos)
 
-def count_waiting_requests(self, user, models = []):
+def count_waiting_requests(user, models = []):
     count = 0
     for wp in db.session.query(WaitingPromptExtended).all():
         if wp.user == user and not wp.is_completed():
@@ -227,7 +211,7 @@ def count_waiting_requests(self, user, models = []):
             count += wp.n
     return(count)
 
-def count_totals(self):
+def count_totals():
     queued_thing = f"queued_{thing_name}"
     ret_dict = {
         "queued_requests": 0,
@@ -242,3 +226,75 @@ def count_totals(self):
     ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
     return(ret_dict)
 
+
+def get_organized_wps_by_model():
+    org = {}
+    #TODO: Offload the sorting to the DB through join() + SELECT statements
+    all_wps = db.session.query(WaitingPromptExtended).all()
+    for wp in all_wps:
+        # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
+        # This will inflate the overall expected times, but it shouldn't be by much.
+        # I don't see a way to do this calculation more accurately though
+        for model in wp.get_model_names():
+            if not model in org:
+                org[model] = []
+            org[model].append(wp)
+    return(org)    
+
+def count_things_per_model(self):
+    things_per_model = {}
+    org = get_organized_wps_by_model()
+    for model in org:
+        for wp in org[model]:
+            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+            if current_wp_queue > 0:
+                things_per_model[model] = things_per_model.get(model,0) + wp.things
+        things_per_model[model] = round(things_per_model.get(model,0),2)
+    return(things_per_model)
+
+def get_waiting_wp_by_kudos(self):
+    #TODO: Perform the sort via SQL during select
+    wplist = db.session.query(WaitingPromptExtended).all()
+    sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
+    final_wp_list = []
+    for wp in sorted_wp_list:
+        if wp.needs_gen():
+            final_wp_list.append(wp)
+    # logger.debug([(wp,wp.get_priority()) for wp in final_wp_list])
+    return(final_wp_list)
+
+# Returns the queue position of the provided WP based on kudos
+# Also returns the amount of things until the wp is generated
+# Also returns the amount of different gens queued
+def get_wp_queue_stats(self, wp):
+    things_ahead_in_queue = 0
+    n_ahead_in_queue = 0
+    priority_sorted_list = get_waiting_wp_by_kudos()
+    for iter in range(len(priority_sorted_list)):
+        things_ahead_in_queue += priority_sorted_list[iter].get_queued_things()
+        n_ahead_in_queue += priority_sorted_list[iter].n
+        if priority_sorted_list[iter] == wp:
+            things_ahead_in_queue = round(things_ahead_in_queue,2)
+            return(iter, things_ahead_in_queue, n_ahead_in_queue)
+    # -1 means the WP is done and not in the queue
+    return(-1,0,0)
+
+def get_organized_procgens_by_model():
+    org = {}
+    for procgen in db.session.query(ProcessingGenerationExtended).all():
+        if not procgen.model in org:
+            org[model] = []
+        org[model].append(procgen)
+    return(org)
+
+def get_wp_by_id(self, uuid):
+    return db.session.query(WaitingPromptExtended).filter_by(id=uuid).first()
+
+def get_progen_by_id(self, uuid):
+    return db.session.query(ProcessingGenerationExtended).filter_by(id=uuid).first()
+
+def get_all_wps(self, uuid):
+    return db.session.query(WaitingPromptExtended).all()
+
+def get_progens(self, uuid):
+    return db.session.query(ProcessingGenerationExtended).all()

@@ -242,7 +242,7 @@ class AsyncStatus(Resource):
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
         This endpoint is limited to 1 request per minute
         '''
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status()
@@ -257,7 +257,7 @@ class AsyncStatus(Resource):
         '''Cancel an unfinished request.
         This request will include all already generated images in base64 encoded .webp files.
         '''
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status()
@@ -277,7 +277,7 @@ class AsyncCheck(Resource):
         '''Retrieve the status of an Asynchronous generation request without images.
         Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
         '''
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
         return(wp.get_lite_status(), 200)
@@ -319,12 +319,12 @@ class JobPop(Resource):
             if priority_user:
                self.priority_users.append(priority_user)
         for priority_user in self.priority_users:
-            wp_list = waiting_prompts.get_all()
+            wp_list = database.get_all_wps()
             for wp in wp_list:
                 if wp.user == priority_user and wp.needs_gen():
                     self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
-        for wp in waiting_prompts.get_waiting_wp_by_kudos():
+        for wp in database.get_waiting_wp_by_kudos():
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
         for wp in self.prioritized_wp:
@@ -422,7 +422,7 @@ class JobSubmit(Resource):
         return({"reward": self.kudos}, 200)
 
     def validate(self):
-        self.procgen = processing_generations.get_item(self.args['id'])
+        self.procgen = database.get_progen_by_id(self.args['id'])
         if not self.procgen:
             raise e.InvalidProcGen(self.args['id'])
         self.user = database.find_user_by_api_key(self.args['apikey'])
@@ -811,7 +811,7 @@ class HordeLoad(Resource):
     def get(self):
         '''Details about the current performance of this Horde
         '''
-        load_dict = waiting_prompts.count_totals()
+        load_dict = database.count_totals()
         load_dict["worker_count"] = database.count_active_workers()
         return(load_dict,200)
 
@@ -881,14 +881,14 @@ class HordeModes(Resource):
             maintenance.toggle(self.args.maintenance)
             logger.critical(f"Horde entered maintenance mode")
             database.initiate_save()
-            for wp in waiting_prompts.get_all():
+            for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = maintenance.active
         if self.args.shutdown != None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.activate()
-            for wp in waiting_prompts.get_all():
+            for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
             database.shutdown(self.args.shutdown)
             ret_dict["maintenance_mode"] = maintenance.active

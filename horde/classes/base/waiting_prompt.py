@@ -36,6 +36,7 @@ class WPModels(db.Model):
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
+    STALE_TIME = 1200
     id = db.Column(db.String(36), primary_key=True, default=str(uuid.uuid4()))  # Whilst using sqlite use this, as it has no uuid type
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     prompt = db.Column(db.Text, nullable=False)
@@ -59,8 +60,10 @@ class WaitingPrompt(db.Model):
     jobs = db.Column(db.Integer, default=0, nullable=False)
     things = db.Column(db.Integer, default=0, nullable=False)
     total_usage = db.Column(db.Float, default=0, nullable=False)
+    extra_priority = db.Column(db.Integer, default=0, nullable=False)
+    job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    procgens = db.relationship(f"ProcessingGenerationExtended", back_populates="wp")
+    processing_gens = db.relationship(f"ProcessingGenerationExtended", back_populates="wp")
     tricked_workers = db.relationship(f"WPTrickedWorkers", back_populates="wp")
     workers = db.relationship(f"WPAllowedWorkers", back_populates="wp")
     models = db.relationship(f"WPModels", back_populates="wp")
@@ -81,10 +84,6 @@ class WaitingPrompt(db.Model):
         '''
         db.session.add(self)
         db.session.commit()
-        # self._waiting_prompts.add_item(self)
-        # thread = threading.Thread(target=self.check_for_stale, args=())
-        # thread.daemon = True
-        # thread.start()
 
     def get_model_names(self):
         return set([m.model for m in self.models])
@@ -229,7 +228,7 @@ class WaitingPrompt(db.Model):
         If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
         '''
         if self.needs_gen():
-            return(self._waiting_prompts.get_wp_queue_stats(self))
+            return(database.get_wp_queue_stats(self))
         return(-1,0,0)
 
     def record_usage(self, raw_things, kudos):
@@ -241,63 +240,31 @@ class WaitingPrompt(db.Model):
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()
 
-    def check_for_stale(self):
-        while True:
-            try:
-                # The below check if any jobs have been running too long and aborts them
-                faulted_requests = 0
-                for gen in self.processing_gens:
-                    # We don't want to recheck if we've faulted already
-                    if self.faulted:
-                        break
-                    if gen.is_stale(self.job_ttl):
-                        # If the request took too long to complete, we cancel it and add it to the retry
-                        gen.abort()
-                        self.n += 1
-                    if gen.is_faulted():
-                        faulted_requests += 1
-                    # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
-                    if faulted_requests >= 3:
-                        self.faulted = True
-                        self.log_faulted_job()
-                if self._waiting_prompts.is_deleted(self):
-                    break
-                if self.is_stale():
-                    self.delete()
-                    break
-                time.sleep(10)
-                self.extra_priority += 50
-            except Exception as e:
-                logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
-                time.sleep(10)
-
-
     def log_faulted_job(self):
         '''Extendable function to log why a request was aborted'''
         logger.warning(f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
 
     def delete(self):
         for gen in self.processing_gens:
-            if not self.faulted:
+            if not self.faulted and not gen.fake:
                 gen.cancel()
             gen.delete()
-        for gen in self.fake_gens:
-            gen.delete()
-        self._waiting_prompts.del_item(self)
-        del self
+        db.session.delete(self)
+        db.session.commit()
 
     def abort_for_maintenance(self):
         '''sets all waiting requests to 0, so that all clients pick them up once the client gen is completed'''
         if self.is_completed():
             return
         self.n = 0
+        db.session.commit()
 
     def refresh(self):
         self.last_process_time = datetime.utcnow()
         db.session.commit()
 
     def is_stale(self):
-        if (datetime.utcnow() - self.last_process_time).seconds > self.stale_time:
+        if (datetime.utcnow() - self.last_process_time).seconds > self.STALE_TIME:
             return(True)
         return(False)
 
@@ -309,11 +276,12 @@ class WaitingPrompt(db.Model):
         This function should be overriden by the invididual hordes depending on how the calculating ttl
         '''
         self.job_ttl = 150
+        db.session.commit()
 
     def has_valid_workers(self):
         worker_found = False
-        for worker in self.db.workers.values():
-            if len(self.workers) and worker.id not in self.workers:
+        for worker in database.get_active_workers():
+            if len(self.workers) and worker not in self.workers:
                 continue
             if worker.can_generate(self)[0]:
                 worker_found = True

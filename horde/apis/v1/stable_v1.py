@@ -161,7 +161,7 @@ class AsyncStatus(Resource):
     @logger.catch(reraise=True)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     def get(self, id = ''):
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             return("ID not found", 404)
         wp_status = wp.get_status()
@@ -176,7 +176,7 @@ class AsyncCheck(Resource):
     decorators = [limiter.limit("10/second")]
     @logger.catch(reraise=True)
     def get(self, id = ''):
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             return("ID not found", 404)
         return(wp.get_lite_status(), 200)
@@ -275,11 +275,11 @@ class PromptPop(Resource):
             if priority_user:
                 priority_users.append(priority_user)
         for priority_user in priority_users:
-            for wp in waiting_prompts.get_all():
+            for wp in database.get_all_wps():
                 if wp.user == priority_user and wp.needs_gen():
                     prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
-        for wp in waiting_prompts.get_waiting_wp_by_kudos():
+        for wp in database.get_waiting_wp_by_kudos():
             if wp not in prioritized_wp:
                 prioritized_wp.append(wp)
         for wp in prioritized_wp:
@@ -303,7 +303,7 @@ class SubmitGeneration(Resource):
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
-        procgen = processing_generations.get_item(args['id'])
+        procgen = database.get_progen_by_id(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
         user = database.find_user_by_api_key(args['api_key'])
@@ -522,7 +522,7 @@ class UserSingle(Resource):
 class HordeLoad(Resource):
     @logger.catch(reraise=True)
     def get(self):
-        load_dict = waiting_prompts.count_totals()
+        load_dict = database.count_totals()
         load_dict["megapixelsteps_per_min"] = stats.get_things_per_min()
         load_dict["server_count"] = database.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active

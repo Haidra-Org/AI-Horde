@@ -6,6 +6,7 @@ import time
 from horde import logger, raid
 from horde.flask import db
 from horde.classes.base.database import convert_things_to_kudos
+from horde.classes.base.stats import record_fulfilment
 
 class ProcessingGeneration:
     """For storing processing generations in the DB"""
@@ -16,12 +17,13 @@ class ProcessingGeneration:
 
     model = db.Column(db.String(40), default='', nullable=False)
     seed = db.Column(db.Integer, default=0, nullable=False)
+    start_time = db.Column(db.DateTime, default=datetime.utcnow())
 
     cancelled = db.Column(db.Boolean, default=False, nullable=False)
     faulted = db.Column(db.Boolean, default=False, nullable=False)
 
     wp_id = db.Column(db.String(36), db.ForeignKey("waiting_prompts.id"))
-    wp = db.relationship("WaitingPromptExtended", back_populates="procgens")
+    wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
     worker_id = db.Column(db.String(36), db.ForeignKey("workers.id"))
     worker = db.relationship("WorkerExtended", back_populates="workers")
  
@@ -51,9 +53,10 @@ class ProcessingGeneration:
         self.things_per_sec = record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
         self.cancelled = False
-        thread = threading.Thread(target=self.record, args=())
-        thread.start()        
+        self.record()
+        db.session.commit()
         return(self.kudos)
+        
 
     def cancel(self):
         '''Cancelling requests in progress still rewards/burns the relevant amount of kudos'''
@@ -64,8 +67,8 @@ class ProcessingGeneration:
         self.things_per_sec = self.worker.get_performance_average()
         self.kudos = self.get_gen_kudos()
         self.cancelled = True
-        thread = threading.Thread(target=self.record, args=())
-        thread.start()   
+        self.record()
+        db.session.commit()
         return(self.kudos)
     
     def record(self):
@@ -88,7 +91,8 @@ class ProcessingGeneration:
         self.faulted = True
         self.worker.log_aborted_job()
         self.log_aborted_generation()
-
+        db.session.commit()
+        
     def log_aborted_generation(self):
         logger.info(f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})")
 
@@ -114,8 +118,8 @@ class ProcessingGeneration:
         return(False)
 
     def delete(self):
-        self._processing_generations.del_item(self)
-        del self
+        db.session.delete(self)
+        db.session.commit()
 
     def get_seconds_needed(self):
         return(self.owner.things / self.worker.get_performance_average())
