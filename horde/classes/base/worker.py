@@ -16,7 +16,7 @@ class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
-    worker = db.relationship("Worker", back_populates="stats")
+    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
 
@@ -24,28 +24,28 @@ class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("Worker", back_populates="performance")
+    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
 
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("Worker", back_populates="blacklist")
+    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="blacklist")
     word = db.Column(db.String(15), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("Worker", back_populates="suspicions")
+    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 class WorkerModels(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
-    worker = db.relationship("Worker", back_populates="models")
+    worker = db.relationship("horde.classes.base.worker.Worker", back_populates="models")
     model = db.Column(db.String(20), primary_key=False)
 
 class Worker(db.Model):
@@ -58,7 +58,7 @@ class Worker(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=uuid.uuid4)
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    user = db.relationship("User", backref=db.backref("user_id", lazy="dynamic"))
+    user = db.relationship("User", back_populates="workers")
     name = db.Column(db.String(50), unique=True, nullable=False)
     info = db.Column(db.String(1000), unique=False)
     ipaddr = db.Column(db.String(15), unique=False)
@@ -84,7 +84,6 @@ class Worker(db.Model):
     team_id = db.Column(db.String(36), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", backref=db.backref("team_id", lazy="dynamic"))
 
-    worker = db.relationship("User", back_populates="workers")
     stats = db.relationship("WorkerStats", back_populates="worker")
     performance = db.relationship("WorkerPerformance", back_populates="worker")
     blacklist = db.relationship("WorkerBlackList", back_populates="worker")

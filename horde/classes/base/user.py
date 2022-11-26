@@ -11,6 +11,7 @@ from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
 from horde.classes.base.db_utils import find_workers_by_user
 
+
 # from sqlalchemy.dialects.postgresql import UUID
 
 
@@ -65,7 +66,7 @@ class User(db.Model):
     same_ip_worker_threshold = db.Column(db.Integer, default=3)
     suspicion_threshold = db.Column(db.Integer, default=3)
 
-    workers = db.relationship("Worker", back_populates="user")
+    workers = db.relationship("horde.classes.base.worker.Worker", back_populates="user")
     suspicions = db.relationship("UserSuspicions", back_populates="user")
     stats = db.relationship("UserStats", back_populates="user")
 
@@ -291,7 +292,7 @@ class User(db.Model):
         to prevent easy spamming of new workers with a script
         '''
         ipcount = 0
-        for worker in self.get_workers():
+        for worker in self.workers:
             if worker.ipaddr == ipaddr:
                 ipcount += 1
         if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
