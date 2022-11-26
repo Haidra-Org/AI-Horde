@@ -1,10 +1,9 @@
 from .. import logger, args
 from importlib import import_module
 from horde.flask import db
-from horde.classes.base import Suspicions
-
 
 # Should figure out an elegant way to do this with a for loop
+stats = import_module(name=f'horde.classes.{args.horde}').stats
 WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
 ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}').ProcessingGeneration
 User = import_module(name=f'horde.classes.{args.horde}').User
@@ -13,12 +12,13 @@ Worker = import_module(name=f'horde.classes.{args.horde}').Worker
 PromptsIndex = import_module(name=f'horde.classes.{args.horde}').PromptsIndex
 GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').GenerationsIndex
 News = import_module(name=f'horde.classes.{args.horde}').News
+MonthlyKudos = import_module(name=f'horde.classes.{args.horde}').MonthlyKudos
 
 logger.debug(Team)
 db.create_all()
 
-Database = import_module(name=f'horde.classes.{args.horde}').Database
-database = Database(convert_flag=args.convert_flag)
+database = import_module(name=f'horde.classes.{args.horde}').database
+monthly_kudos = MonthlyKudos()
 
 anon = db.session.query(User).filter_by(oauth_id="anon").first()
 if not anon:
@@ -33,7 +33,6 @@ if not anon:
     anon.create()
 
 
-database.load()
 # from .base import WaitingPrompt,ProcessingGeneration,Worker,PromptsIndex,GenerationsIndex,User,Database
 
 waiting_prompts = PromptsIndex()

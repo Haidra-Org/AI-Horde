@@ -175,7 +175,7 @@ class HordeLoad(HordeLoad):
         '''Details about the current performance of this Horde
         '''
         load_dict = super().get()[0]
-        load_dict["past_minute_megapixelsteps"] = db.stats.get_things_per_min()
+        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min()
         return(load_dict,200)
 
 class HordeNews(HordeNews):

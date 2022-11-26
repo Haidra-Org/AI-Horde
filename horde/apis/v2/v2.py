@@ -9,6 +9,7 @@ from horde.apis import ModelsV2, ParsersV2
 from horde.utils import is_profane
 from horde.flask import db
 from horde.classes.base.user import User
+from horde.classes.base import stats
 
 # Not used yet
 authorizations = {
@@ -878,7 +879,7 @@ class HordeModes(Resource):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
             logger.critical(f"Horde entered maintenance mode")
-            database.initiate_save(10)
+            database.initiate_save()
             for wp in waiting_prompts.get_all():
                 wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = maintenance.active

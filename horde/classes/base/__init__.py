@@ -12,6 +12,9 @@ from horde.flask import db
 from horde.classes.base.user import User
 from horde.classes.base.team import Team
 from horde.classes.base.worker import Worker
+from horde.classes.base.stats import record_fulfilment, get_request_avg
+from horde.classes.base.database import count_active_workers, convert_things_to_kudos, MonthlyKudos
+
 
 class WaitingPrompt:
     extra_priority = 0
@@ -156,12 +159,12 @@ class WaitingPrompt:
         # We increment the priority by 1, because it starts at -1
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        active_workers = self.db.count_active_workers()
+        active_workers = count_active_workers()
         # If there's less requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_workers:
             active_workers = queued_n
-        avg_things_per_sec = (self.db.stats.get_request_avg() / thing_divisor) * active_workers
+        avg_things_per_sec = (get_request_avg() / thing_divisor) * active_workers
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
@@ -311,7 +314,7 @@ class ProcessingGeneration:
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        self.things_per_sec = self.owner.db.stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
+        self.things_per_sec = record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
         self.cancelled = False
         thread = threading.Thread(target=self.record, args=())
@@ -357,7 +360,7 @@ class ProcessingGeneration:
 
     # Overridable function
     def get_gen_kudos(self):
-        return(self.owner.db.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
+        return(convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
 
     def is_completed(self):
         if self.generation:
@@ -524,313 +527,3 @@ class GenerationsIndex(Index):
                 org[model] = []
             org[model].append(procgen)
         return(org)
-
-
-       
-class Database:
-    def __init__(self, convert_flag = None, interval = 60):
-        self.interval = interval
-        self.ALLOW_ANONYMOUS = True
-        # Other miscellaneous statistics
-        self.STATS_FILE = "db/stats.json"
-        self.stats = self.new_stats()
-        # I'm setting this quickly here so that we do not crash when trying to detect duplicate IDs, during user deserialization
-        self.anon = db.session.query(User).filter_by(oauth_id="anon").first()
-        self.convert_flag = convert_flag
-        if self.convert_flag:
-            logger.init_warn(f"Convert Flag '{convert_flag}' received.", status="Converting")
-    
-    def load(self):
-        logger.init(f"Database Load", status="Starting")
-        self.anon = self.find_user_by_oauth_id('anon')
-        if not self.anon:
-            self.anon = User(
-                id=0,
-                username="Anonymous",
-                oauth_id="anon",
-                api_key="0000000000",
-                public_workers=True,
-                concurrency=500
-            )
-            self.anon.create()
-        if os.path.isfile(self.STATS_FILE):
-            with open(self.STATS_FILE) as stats_db:
-                self.stats.deserialize(json.load(stats_db),self.convert_flag)
-
-        if self.convert_flag:
-            self.write_files_to_disk()
-            logger.init_ok(f"Convertion complete.", status="Exiting")
-            sys.exit()
-        thread = threading.Thread(target=self.write_files, args=())
-        thread.daemon = True
-        thread.start()
-        monthly_kudos_thread = threading.Thread(target=self.assign_monthly_kudos, args=())
-        monthly_kudos_thread.daemon = True
-        monthly_kudos_thread.start()
-        logger.init_ok(f"Database Load", status="Completed")
-
-    # I don't know if I'm doing this right,  but I'm using these so that I can extend them from the extended DB
-    # So that it will grab the extended classes from each horde type, and not the internal classes in this package
-    def new_stats(self):
-        return(Stats(self))
-
-    def write_files(self):
-        time.sleep(4)
-        logger.init_ok("Database Store Thread", status="Started")
-        self.save_progress = self.interval
-        while True:
-            if self.interval == -1:
-                logger.warning("Stopping DB save thread")
-                return
-            if self.save_progress >= self.interval:
-                self.write_files_to_disk()
-                self.save_progress = 0
-            time.sleep(1)
-            self.save_progress += 1
-
-    def initiate_save(self, seconds = 3):
-        logger.success(f"Initiating save in {seconds} seconds")
-        if seconds > self.interval:
-            second = self.interval
-        self.save_progress = self.interval - seconds
-
-    def shutdown(self, seconds):
-        self.interval = -1
-        if seconds > 0:
-            logger.critical(f"Initiating shutdown in {seconds} seconds")
-            time.sleep(seconds)
-        self.write_files_to_disk()
-        logger.critical(f"DB written to disk. You can now SIGTERM.")
-
-
-    @logger.catch(reraise=True)
-    def write_files_to_disk(self):
-        if not os.path.exists('db'):
-            os.mkdir('db')
-        worker_serialized_list = []
-        logger.debug("Saving DB")
-        # for worker in self.workers.copy().values():
-        #     # We don't store data for anon workers
-        #     if worker.user == self.anon: continue
-        #     worker_serialized_list.append(worker.serialize())
-        # with open(self.WORKERS_FILE, 'w') as db:
-        #     json.dump(worker_serialized_list,db)
-        with open(self.STATS_FILE, 'w') as db:
-            json.dump(self.stats.serialize(),db)
-        # user_serialized_list = []
-        # for user in self.users.copy().values():
-        #     user_serialized_list.append(user.serialize())
-        # with open(self.USERS_FILE, 'w') as db:
-        #     json.dump(user_serialized_list,db)
-        # teams_serialized_list = []
-        # for team in self.teams.copy().values():
-        #     teams_serialized_list.append(team.serialize())
-        # with open(self.TEAMS_FILE, 'w') as db:
-        #     json.dump(teams_serialized_list,db)
-
-    def assign_monthly_kudos(self):
-        time.sleep(2)
-        logger.init_ok("Monthly Kudos Awards Thread", status="Started")
-        while True:
-            #TODO Make the select statement bring the users with monthly kudos only
-            for user in db.session.query(User).all():
-                user.receive_monthly_kudos()
-            # Check once a day
-            time.sleep(86400)
-
-    def get_top_contributor(self):
-        top_contribution = 0
-        top_contributor = None
-        #TODO Make the select statement bring automatically bring to 10 contributors sorted
-        for user in db.session.query(User).all():
-            if user.contributed_thing > top_contribution and user != self.anon:
-                top_contributor = user
-                top_contribution = user.contributed_thing
-        return(top_contributor)
-
-    def get_top_worker(self):
-        top_worker = None
-        top_worker_contribution = 0
-        for worker in self.workers:
-            if self.workers[worker].contributions > top_worker_contribution:
-                top_worker = self.workers[worker]
-                top_worker_contribution = self.workers[worker].contributions
-        return(top_worker)
-
-    def count_active_workers(self):
-        count = 0
-        for worker in self.workers.values():
-            if not worker.is_stale():
-                count += worker.threads
-        return(count)
-
-    def compile_workers_by_ip(self):
-        workers_per_ip = {}
-        for worker in self.workers.values():
-            if worker.ipaddr not in workers_per_ip:
-                workers_per_ip[worker.ipaddr] = []
-            workers_per_ip[worker.ipaddr].append(worker)
-        return(workers_per_ip)
-
-    def count_workers_in_ipaddr(self,ipaddr):
-        workers_per_ip = self.compile_workers_by_ip()
-        found_workers = workers_per_ip.get(ipaddr,[])
-        return(len(found_workers))
-
-    def get_total_usage(self):
-        totals = {
-            thing_name: 0,
-            "fulfilments": 0,
-        }
-        for worker in self.workers.values():
-            totals[thing_name] += worker.contributions
-            totals["fulfilments"] += worker.fulfilments
-        return(totals)
-
-    def register_new_worker(self, worker):
-        self.workers[worker.name] = worker
-        logger.info(f'New worker checked-in: {worker.name} by {worker.user.get_unique_alias()}')
-        self.initiate_save()
-
-    def delete_worker(self,worker):
-        del self.workers[worker.name]
-        self.initiate_save()
-
-    def find_user_by_oauth_id(self,oauth_id):
-        if oauth_id == 'anon' and not self.ALLOW_ANONYMOUS:
-            return(None)
-        user = db.session.query(User).filter_by(oauth_id=oauth_id).first()
-        return(user)
-
-    def find_user_by_username(self, username):
-        ulist = username.split('#')
-        # This approach handles someone cheekily putting # in their username
-        user = db.session.query(User).filter_by(user_id=int(ulist[-1])).first()
-        if user == self.anon and not self.ALLOW_ANONYMOUS:
-            return(None)
-        return(user)
-
-    def find_user_by_id(self, user_id):
-        user = db.session.query(User).filter_by(user_id=user_id).first()
-        if user == self.anon and not self.ALLOW_ANONYMOUS:
-            return(None)
-        return(user)
-
-    def find_user_by_api_key(self,api_key):
-        user = db.session.query(User).filter_by(api_key=api_key).first()
-        if user == self.anon and not self.ALLOW_ANONYMOUS:
-            return(None)
-        return(user)
-
-    def find_worker_by_name(self,worker_name):
-        return(self.workers.get(worker_name))
-
-    def find_worker_by_id(self,worker_id):
-        for worker in list(self.workers.values()):
-            if worker.id == worker_id:
-                return(worker)
-        return(None)
-
-    def update_worker_name(self, worker, new_name):
-        if new_name in self.workers:
-            # If the name already exists, we return error code 1
-            return(1)
-        self.workers[new_name] = worker
-        del self.workers[worker.name]
-        logger.info(f'Worker renamed from {worker.name} to {new_name}')
-
-    def register_new_team(self, team):
-        self.teams[team.id] = team
-        logger.info(f'New team created: {team.name} by {team.user.get_unique_alias()}')
-        self.initiate_save()
-
-    def find_team_by_id(self,team_id):
-        return(self.teams.get(team_id))
-
-    def find_team_by_name(self,team_name):
-        for team in list(self.teams.values()):
-            if team.name.lower() == team_name.lower():
-                return(team)
-        return(None)
-
-    def delete_team(self, team):
-        del self.teams[team.id]
-        self.initiate_save()
-
-    def get_available_models(self, waiting_prompts, lite_dict=False):
-        models_dict = {}
-        for worker in list(self.workers.values()):
-            if worker.is_stale():
-                continue
-            model_name = None
-            if not worker.models: continue
-            for model_name in worker.models:
-                if not model_name: continue
-                mode_dict_template = {
-                    "name": model_name,
-                    "count": 0,
-                    "workers": [],
-                    "performance": self.stats.get_model_avg(model_name),
-                    "queued": 0,
-                    "eta": 0,
-                }
-                models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
-                models_dict[model_name]["count"] += worker.threads
-                models_dict[model_name]["workers"].append(worker)
-        if lite_dict:
-            return(models_dict)
-        things_per_model = waiting_prompts.count_things_per_model()
-        # If we request a lite_dict, we only want worker count per model and a dict format
-        for model_name in things_per_model:
-            # This shouldn't happen, but I'm checking anyway
-            if model_name not in models_dict:
-                # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
-                continue
-            models_dict[model_name]['queued'] = things_per_model[model_name]
-            total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
-            # We don't want a division by zero when there's no workers for this model.
-            if total_performance_on_model > 0:
-                models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
-            else:
-                models_dict[model_name]['eta'] = -1
-        return(list(models_dict.values()))
-
-    def transfer_kudos(self, source_user, dest_user, amount):
-        if source_user.is_suspicious():
-            return([0,'Something went wrong when sending kudos. Please contact the mods.'])
-        if dest_user.is_suspicious():
-            return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
-        if amount < 0:
-            return([0,'Nice try...'])
-        if amount > source_user.kudos - source_user.min_kudos:
-            return([0,'Not enough kudos.'])
-        source_user.modify_kudos(-amount, 'gifted')
-        dest_user.modify_kudos(amount, 'received')
-        return([amount,'OK'])
-
-    def transfer_kudos_to_username(self, source_user, dest_username, amount):
-        dest_user = self.find_user_by_username(dest_username)
-        if not dest_user:
-            return([0,'Invalid target username.'])
-        if dest_user == self.anon:
-            return([0,'Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.'])
-        if dest_user == source_user:
-            return([0,'Cannot send kudos to yourself, ya monkey!'])
-        kudos = self.transfer_kudos(source_user,dest_user, amount)
-        return(kudos)
-
-    def transfer_kudos_from_apikey_to_username(self, source_api_key, dest_username, amount):
-        source_user = self.find_user_by_api_key(source_api_key)
-        if not source_user:
-            return([0,'Invalid API Key.'])
-        if source_user == self.anon:
-            return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
-        kudos = self.transfer_kudos_to_username(source_user, dest_username, amount)
-        return(kudos)
-
-    # Should be overriden
-    def convert_things_to_kudos(self, things, **kwargs):
-        # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
-        kudos = round(things,2)
-        return(kudos)
-

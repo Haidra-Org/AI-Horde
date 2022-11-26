@@ -7,9 +7,7 @@ from markdown import markdown
 from uuid import uuid4
 from . import logger, maintenance, args, HORDE, cache
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
-from horde.classes import database as db
-from horde.classes import waiting_prompts,News
-from horde.classes.base.user import User
+from horde.classes import waiting_prompts,News, User, stats, database
 import bleach
 from horde.utils import ConvertAmount, is_profane
 
@@ -21,8 +19,8 @@ dance_return_to = '/'
 def index():
     with open(f'index_{args.horde}.md') as index_file:
         index = index_file.read()
-    top_contributor = db.get_top_contributor()
-    top_worker = db.get_top_worker()
+    top_contributor = database.get_top_contributor()
+    top_worker = database.get_top_worker()
     align_image = 0
     big_image = align_image
     while big_image == align_image:
@@ -62,10 +60,10 @@ This is the worker which has generated the most pixels for the horde.
     for iter in range(len(sorted_news)):
         news += f"* {sorted_news[iter]['newspiece']}\n"
         if iter > 1: break
-    totals = db.get_total_usage()
+    totals = database.get_total_usage()
     wp_totals = waiting_prompts.count_totals()
-    active_worker_count = db.count_active_workers()
-    avg_performance = ConvertAmount(db.stats.get_request_avg() * active_worker_count)
+    active_worker_count = database.count_active_workers()
+    avg_performance = ConvertAmount(stats.get_request_avg() * active_worker_count)
     # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
@@ -157,7 +155,7 @@ def register():
     pseudonymous = False
     oauth_id = get_oauth_id()
     if oauth_id:
-        user = db.find_user_by_oauth_id(oauth_id)
+        user = database.find_user_by_oauth_id(oauth_id)
         if user:
             username = user.username
     if request.method == 'POST':
@@ -200,7 +198,7 @@ def transfer():
     welcome = 'Welcome'
     oauth_id = get_oauth_id()
     if oauth_id:
-        src_user = db.find_user_by_oauth_id(oauth_id)
+        src_user = database.find_user_by_oauth_id(oauth_id)
         if not src_user:
             # This probably means the user was deleted
             oauth_id = None
@@ -212,11 +210,11 @@ def transfer():
             error = "Please enter a number in the kudos field"
         # Triggered when the user submited without logging in
         elif src_user:
-            ret = db.transfer_kudos_to_username(src_user,dest_username,int(amount))
+            ret = database.transfer_kudos_to_username(src_user,dest_username,int(amount))
             kudos = ret[0]
             error = ret[1]
         else:
-            ret = db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
+            ret = database.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
             kudos = ret[0]
             error = ret[1]
     if src_user:

@@ -9,7 +9,7 @@ from horde.flask import db
 from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane
-from horde.classes.base.database import find_workers_by_user
+from horde.classes.base.db_utils import find_workers_by_user
 
 # from sqlalchemy.dialects.postgresql import UUID
 
@@ -18,7 +18,7 @@ class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    user = db.relationship("User", backref=db.backref("user_id", lazy="dynamic"))
+    user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
 
@@ -26,7 +26,7 @@ class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    user = db.relationship("User", backref=db.backref("user_id", lazy="dynamic"))
+    user = db.relationship("User", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
@@ -64,6 +64,10 @@ class User(db.Model):
     concurrency = db.Column(db.Integer, default=30)
     same_ip_worker_threshold = db.Column(db.Integer, default=3)
     suspicion_threshold = db.Column(db.Integer, default=3)
+
+    workers = db.relationship("Worker", back_populates="user")
+    suspicions = db.relationship("UserSuspicions", back_populates="user")
+    stats = db.relationship("UserStats", back_populates="user")
 
     def create(self):
         self.set_min_kudos()

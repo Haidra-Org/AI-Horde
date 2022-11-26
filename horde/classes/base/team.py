@@ -8,7 +8,7 @@ from horde.flask import db
 from horde.vars import thing_divisor
 from horde.utils import is_profane
 from horde.classes.base import User
-from horde.classes.base.database import find_workers_by_team
+from horde.classes.base.db_utils import find_workers_by_team
 
 
 class Team(db.Model):

@@ -93,7 +93,7 @@ class HordeLoad(HordeLoad):
         '''Details about the current performance of this Horde
         '''
         load_dict = super().get()[0]
-        load_dict["past_minute_tokens"] = db.stats.get_things_per_min()
+        load_dict["past_minute_tokens"] = stats.get_things_per_min()
         return(load_dict,200)
 
 api.add_resource(SyncGenerate, "/generate/sync")

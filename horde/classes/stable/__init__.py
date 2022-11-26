@@ -221,12 +221,6 @@ class ProcessingGeneration(ProcessingGeneration):
         logger.info(f"Aborted Stale Generation {self.id} ({self.owner.width}x{self.owner.height}x{self.owner.steps}@{self.owner.sampler}) from by worker: {self.worker.name} ({self.worker.id})")
 
 
-class Database(Database):
-
-    def new_stats(self):
-        return(Stats(self))
-
-
 class News(News):
 
     STABLE_HORDE_NEWS = [

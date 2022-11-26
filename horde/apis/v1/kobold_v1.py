@@ -1,10 +1,11 @@
 from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
 from flask import request
-from ... import limiter
-from ...logger import logger
-from ...classes import database as _db
-from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance, invite_only, raid, cm
+from horde import limiter
+from horde.logger import logger
+from horde.classes import database
+from horde.classes.base import stats
+from horde.classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
+from horde import maintenance, invite_only, raid, cm
 from enum import Enum
 import os, time, json
 
@@ -110,14 +111,14 @@ class SyncGenerate(Resource):
         if maintenance.active:
             return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'SyncGenerate')}",503)
         if args.api_key:
-            user = _db.find_user_by_api_key(args['api_key'])
+            user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
         username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(waiting_prompts,lite_dict=True)):
+        if wp_count >= user.get_concurrency(args["models"],database.get_available_models(waiting_prompts,lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         # logger.debug(args["models"])
         wp = WaitingPrompt(
@@ -195,14 +196,14 @@ class AsyncGenerate(Resource):
         if maintenance.active:
             return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'AsyncGenerate')}",503)
         if args.api_key:
-            user = _db.find_user_by_api_key(args['api_key'])
+            user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
         username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
         wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(waiting_prompts,lite_dict=True)):
+        if wp_count >= user.get_concurrency(args["models"],database.get_available_models(waiting_prompts,lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         wp = WaitingPrompt(
             _db,
@@ -234,10 +235,10 @@ class PromptPop(Resource):
         if not cm.is_ip_safe(request.remote_addr):
             return(f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.",403)
         skipped = {}
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
-        server = _db.find_worker_by_name(args['name'])
+        server = database.find_worker_by_name(args['name'])
         if not server:
             server = Worker(_db)
             server.create(user, args['name'])
@@ -253,7 +254,7 @@ class PromptPop(Resource):
         priority_users = [user]
         ## Start prioritize by bridge request ##
         for priority_username in args.priority_usernames:
-            priority_user = _db.find_user_by_username(priority_username)
+            priority_user = database.find_user_by_username(priority_username)
             if priority_user:
                 priority_users.append(priority_user)
         for priority_user in priority_users:
@@ -300,7 +301,7 @@ class SubmitGeneration(Resource):
         procgen = processing_generations.get_item(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.worker.user:
@@ -319,10 +320,10 @@ class TransferKudos(Resource):
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
-        ret = _db.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
+        ret = database.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
@@ -338,7 +339,7 @@ class AdminMaintenanceMode(Resource):
     @api.expect(parser)
     def put(self):
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = database.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
@@ -352,7 +353,7 @@ class Models(Resource):
     @logger.catch(reraise=True)
     def get(self):
         # Old style, using new class
-        models = _db.get_available_models(waiting_prompts)
+        models = database.get_available_models(waiting_prompts)
         mdict = {}
         for model in models:
             mdict[model['name']] = model['count']
@@ -385,7 +386,7 @@ class Servers(Resource):
 class ServerSingle(Resource):
     @logger.catch(reraise=True)
     def get(self, server_id = ''):
-        server = _db.find_worker_by_id(server_id)
+        server = database.find_worker_by_id(server_id)
         if server:
             sdict = {
                 "name": server.name,
@@ -409,11 +410,11 @@ class ServerSingle(Resource):
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
     def put(self, server_id = ''):
-        server = _db.find_worker_by_id(server_id)
+        server = database.find_worker_by_id(server_id)
         if not server:
             return("Invalid Server ID", 404)
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = database.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
         ret_dict = {}
@@ -454,7 +455,7 @@ class UserSingle(Resource):
     @logger.catch(reraise=True)
     def get(self, user_id = ''):
         logger.debug(user_id)
-        user = _db.find_user_by_id(user_id)
+        user = database.find_user_by_id(user_id)
         if user:
             udict = {
                 "username": user.get_unique_alias(),
@@ -476,11 +477,11 @@ class UserSingle(Resource):
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
     def put(self, user_id = ''):
-        user = user = _db.find_user_by_id(user_id)
+        user = user = database.find_user_by_id(user_id)
         if not user:
             return(f"Invalid user_id: {user_id}",400)        
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = database.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'PUT UserSingle')}",401)
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
@@ -504,8 +505,8 @@ class HordeLoad(Resource):
     @logger.catch(reraise=True)
     def get(self):
         load_dict = waiting_prompts.count_totals()
-        load_dict["kilotokens_per_min"] = _db.stats.get_things_per_min()
-        load_dict["server_count"] = _db.count_active_workers()
+        load_dict["kilotokens_per_min"] = stats.get_things_per_min()
+        load_dict["server_count"] = database.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)
 
