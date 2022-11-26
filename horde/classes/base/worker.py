@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import uuid
 import time
 import dateutil.relativedelta
@@ -62,7 +62,7 @@ class Worker(db.Model):
     info = db.Column(db.String(1000), unique=False)
     ipaddr = db.Column(db.String(15), unique=False)
 
-    last_check_in = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    last_check_in = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     kudos = db.Column(db.Integer, default=0)
     contributions = db.Column(db.Integer, default=0)
@@ -204,7 +204,7 @@ class Worker(db.Model):
             if not self.get_user().trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
         if not self.is_stale() and not self.paused and not self.maintenance:
-            self.uptime += (datetime.datetime.utcnow() - self.last_check_in).seconds
+            self.uptime += (utcnow() - self.last_check_in).seconds
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 if self.team:
@@ -218,7 +218,7 @@ class Worker(db.Model):
             # If the worker comes back from being stale, we just reset their last_reward_uptime
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
-        self.last_check_in = datetime.datetime.utcnow()
+        self.last_check_in = datetime.utcnow()
         db.session.commit()
 
     def get_human_readable_uptime(self):
@@ -306,9 +306,9 @@ class Worker(db.Model):
 
     def log_aborted_job(self):
         # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.
-        if (datetime.datetime.utcnow() - self.last_aborted_job).seconds > 3600:
+        if (utcnow() - self.last_aborted_job).seconds > 3600:
             self.aborted_jobs = 0
-            self.last_aborted_job = datetime.datetime.utcnow()
+            self.last_aborted_job = datetime.utcnow()
         self.aborted_jobs += 1
         # These are accumulating too fast at 5. Increasing to 20
         dropped_job_threshold = 20
@@ -346,7 +346,7 @@ class Worker(db.Model):
 
     def is_stale(self):
         try:
-            if (datetime.datetime.utcnow() - self.last_check_in).seconds > 300:
+            if (utcnow() - self.last_check_in).seconds > 300:
                 return(True)
         # If the last_check_in isn't set, it's a new worker, so it's stale by default
         except AttributeError:

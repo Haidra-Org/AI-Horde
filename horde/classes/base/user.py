@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import uuid
 import time
 import dateutil.relativedelta
@@ -37,8 +37,8 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False)
     api_key = db.Column(db.String(50), unique=True, nullable=False)
-    creation_date = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    last_active = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    creation_date = db.Column(db.DateTime, default=datetime.utcnow)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow)
     contact = db.Column(db.String(50), default=None)
 
     kudos = db.Column(db.Integer, default=0)
@@ -131,14 +131,14 @@ class User(db.Model):
         return(f"{self.username}#{self.id}")
 
     def record_usage(self, raw_things, kudos):
-        self.last_active = datetime.datetime.utcnow()
+        self.last_active = datetime.utcnow()
         self.usage_requests += 1
         self.modify_kudos(-kudos,"accumulated")
         self.usage_thing = round(self.usage_thing + (raw_things * self.usage_multiplier / thing_divisor),2)
         db.session.commit()
 
     def record_contributions(self, raw_things, kudos):
-        self.last_active = datetime.datetime.utcnow()
+        self.last_active = datetime.utcnow()
         self.contributed_fulfillments += 1
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted and not self.is_anon():
@@ -153,7 +153,7 @@ class User(db.Model):
         db.session.commit()
 
     def record_uptime(self, kudos):
-        self.last_active = datetime.datetime.utcnow()
+        self.last_active = datetime.utcnow()
         # While a worker is untrusted, all uptime kudos go for evaluation
         if not self.trusted and not self.is_anon():
             self.evaluating_kudos += kudos
@@ -177,7 +177,7 @@ class User(db.Model):
         if monthly_kudos > 0:
             self.modify_kudos(monthly_kudos, "recurring")
         if not self.monthly_kudos_last_received:
-            self.monthly_kudos_last_received = datetime.datetime.utcnow()
+            self.monthly_kudos_last_received = datetime.utcnow()
         self.monthly_kudos += monthly_kudos
         if self.monthly_kudos < 0:
             self.monthly_kudos = 0
@@ -188,13 +188,13 @@ class User(db.Model):
         if kudos_amount == 0:
             return
         if self.monthly_kudos_last_received:
-            has_month_passed = datetime.datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
+            has_month_passed = datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
         else:
             # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
             has_month_passed = True
         if has_month_passed:
             # Not commiting as it'll happen in modify_kudos() anyway
-            self.monthly_kudos_last_received = datetime.datetime.utcnow()
+            self.monthly_kudos_last_received = datetime.utcnow()
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
 
@@ -297,7 +297,7 @@ class User(db.Model):
     def is_stale(self):
         # Stale users have to be inactive for a month
         days_threshold = 30
-        days_inactive = (datetime.datetime.utcnow() - self.last_active).days
+        days_inactive = (datetime.utcnow() - self.last_active).days
         if days_inactive < days_threshold:
             return(False)
         # Stale user have to have little accumulated kudos. 
@@ -370,7 +370,7 @@ class User(db.Model):
 #     # A lot of these look like they don't belong to prompt and should be moved
 #     processing_gens = db.Column(db.JSON, default=[], nullable=False)
 #     fake_gens = db.Column(db.JSON, default=[], nullable=False)
-#     last_process_time = db.Column(db.DateTime, default=datetime.datetime.utcnow())
+#     last_process_time = db.Column(db.DateTime, default=utcnow())
 #     workers = db.Column(db.JSON, default=[], nullable=False)
 #     faulted = db.Column(db.Boolean, default=False, nullable=False)
 #     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -378,9 +378,9 @@ class User(db.Model):
 
 #     ttl = db.Column(db.Integer, default=1200, nullable=False)
 
-#     created = db.Column(db.DateTime(timezone=False), default=datetime.datetime.utcnow)
+#     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
 #     updated = db.Column(
-#         db.DateTime(timezone=False), nullable=True, onupdate=datetime.datetime.utcnow
+#         db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow
 #     )
 
 #     def set_job_ttl(self):
@@ -418,5 +418,5 @@ class User(db.Model):
 
 # # clear up old requests (older than 5 mins)
 # db.session.query(PromptRequest).filter(
-#     PromptRequest.model.created < datetime.datetime.utcnow() - datetime.timedelta(seconds=1200)
+#     PromptRequest.model.created <datetime.utcnow() - datetime.timedelta(seconds=1200)
 # ).delete(synchronize_session=False)

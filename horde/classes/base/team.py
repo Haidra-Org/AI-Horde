@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import uuid
 import time
 import bleach
@@ -25,14 +25,14 @@ class Team(db.Model):
     kudos = db.Column(db.Integer, unique=False)
     uptime = db.Column(db.Integer, unique=False)
 
-    creation_date = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-    last_active = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    creation_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
     def create(self, user):
         self.set_owner(user)
-        self.creation_date = datetime.datetime.utcnow()
-        self.last_active = datetime.datetime.utcnow()
+        self.creation_date = datetime.utcnow()
+        self.last_active = datetime.utcnow()
         db.session.add(self)
         db.session.commit()
 
@@ -101,14 +101,14 @@ class Team(db.Model):
 
     def record_uptime(self, seconds):
         self.uptime += seconds
-        self.last_active = datetime.datetime.utcnow()
+        self.last_active = datetime.utcnow()
         db.session.commit()
     
     def record_contribution(self, contributions, kudos):
         self.contributions = round(self.contributions + contributions, 2)
         self.fulfilments += 1
         self.kudos = round(self.kudos + kudos, 2)
-        self.last_active = datetime.datetime.utcnow()
+        self.last_active = datetime.utcnow()
         db.session.commit()
 
    # Should be extended by each specific horde

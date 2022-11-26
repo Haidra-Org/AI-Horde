@@ -33,7 +33,7 @@ class WaitingPrompt:
         # The generations that have been created already
         self.processing_gens = []
         self.fake_gens = []
-        self.last_process_time = datetime.now()
+        self.last_process_time = datetime.utcnow()
         self.workers = kwargs.get("workers", [])
         self.faulted = False
         # Prompt requests are removed after 1 mins of inactivity per n, to a max of 5 minutes
@@ -254,10 +254,10 @@ class WaitingPrompt:
         self.n = 0
 
     def refresh(self):
-        self.last_process_time = datetime.now()
+        self.last_process_time = datetime.utcnow()
 
     def is_stale(self):
-        if (datetime.now() - self.last_process_time).seconds > self.stale_time:
+        if (datetime.utcnow() - self.last_process_time).seconds > self.stale_time:
             return(True)
         return(False)
 
@@ -301,7 +301,7 @@ class ProcessingGeneration:
         for model in self.owner.models:
             if model in self.worker.models:
                 self.model = model
-        self.start_time = datetime.now()
+        self.start_time = datetime.utcnow()
         self._processing_generations.add_item(self)
 
     # We allow the seed to not be sent
@@ -372,7 +372,7 @@ class ProcessingGeneration:
     def is_stale(self, ttl):
         if self.is_completed() or self.is_faulted():
             return(False)
-        if (datetime.now() - self.start_time).seconds > ttl:
+        if (datetime.utcnow() - self.start_time).seconds > ttl:
             return(True)
         return(False)
 
@@ -387,7 +387,7 @@ class ProcessingGeneration:
         if self.is_completed():
             return(0)
         seconds_needed = self.get_seconds_needed()
-        seconds_elapsed = (datetime.now() - self.start_time).seconds
+        seconds_elapsed = (datetime.utcnow() - self.start_time).seconds
         expected_time = seconds_needed - seconds_elapsed
         # In case we run into a slow request
         if expected_time < 0:
