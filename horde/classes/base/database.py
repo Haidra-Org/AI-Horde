@@ -211,3 +211,34 @@ def convert_things_to_kudos(self, things, **kwargs):
     kudos = round(things,2)
     return(kudos)
 
+def count_waiting_requests(self, user, models = []):
+    count = 0
+    for wp in db.session.query(WaitingPromptExtended).all():
+        if wp.user == user and not wp.is_completed():
+            # If we pass a list of models, we want to count only the WP for these particular models.
+            if len(models) > 0:
+                matching_model = False
+                for model in models:
+                    if model in wp.get_model_names():
+                        matching_model = True
+                        break
+                if not matching_model:
+                    continue
+            count += wp.n
+    return(count)
+
+def count_totals(self):
+    queued_thing = f"queued_{thing_name}"
+    ret_dict = {
+        "queued_requests": 0,
+        queued_thing: 0,
+    }
+    for wp in db.session.query(WaitingPromptExtended).all():
+        current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+        ret_dict["queued_requests"] += current_wp_queue
+        if current_wp_queue > 0:
+            ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
+    # We round the end result to avoid to many decimals
+    ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
+    return(ret_dict)
+

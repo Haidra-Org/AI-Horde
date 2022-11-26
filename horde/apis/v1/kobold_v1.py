@@ -117,7 +117,7 @@ class SyncGenerate(Resource):
         username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
-        wp_count = waiting_prompts.count_waiting_requests(user)
+        wp_count = database.count_waiting_requests(user)
         if wp_count >= user.get_concurrency(args["models"],database.get_available_models(waiting_prompts,lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         # logger.debug(args["models"])
@@ -202,7 +202,7 @@ class AsyncGenerate(Resource):
         username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
-        wp_count = waiting_prompts.count_waiting_requests(user)
+        wp_count = database.count_waiting_requests(user)
         if wp_count >= user.get_concurrency(args["models"],database.get_available_models(waiting_prompts,lite_dict=True)):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         wp = WaitingPrompt(
