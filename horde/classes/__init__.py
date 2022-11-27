@@ -8,12 +8,14 @@ from horde.classes.base import stats
 # Should figure out an elegant way to do this with a for loop
 # stats = import_module(name=f'horde.classes.{args.horde}').stats
 try:
-    ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
+    ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGeneration
+    ProcessingGenerationExtended = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
     print(f'Loaded ProcessingGenerationExtended')
 except (ModuleNotFoundError,AttributeError):
     ProcessingGeneration = import_module(name=f'horde.classes.base.processing_generation').ProcessingGeneration
 try:
-    WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
+    WaitingPrompt = import_module(name=f'horde.classes.base.waiting_prompt').WaitingPrompt
+    WaitingPromptExtended = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
     print("Loaded WaitingPromptExtended")
 except (ModuleNotFoundError,AttributeError):
     WaitingPrompt = import_module(name=f'horde.classes.base.waiting_prompt').WaitingPrompt
@@ -37,6 +39,7 @@ try:
     WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
 except (ModuleNotFoundError,AttributeError):
     WorkerPerformance = import_module(name=f'horde.classes.base.worker').WorkerPerformance
+
 News = import_module(name=f'horde.classes.{args.horde}.news').News
 try:
     WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended

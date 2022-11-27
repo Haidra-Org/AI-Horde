@@ -1,9 +1,11 @@
 import random
 
 from horde.logger import logger
+from horde.vars import thing_divisor
 from horde.flask import db
 from horde.classes.stable.processing_generation import ProcessingGenerationExtended
 from horde.classes.base.waiting_prompt import WaitingPrompt
+
 
 class WaitingPromptExtended(WaitingPrompt):
     source_image = db.Column(db.Text, default=None)
@@ -30,7 +32,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.source_processing = kwargs.get("source_processing", 'img2img')
         self.source_mask = kwargs.get("source_mask", None)
         self.censor_nsfw = kwargs.get("censor_nsfw", True)
-        if 'seed' in self.params and self.params['seed'] != None:
+        if 'seed' in self.params and self.params['seed'] is not None:
             # logger.warning([self,'seed' in params, params])
             self.seed = self.params.pop('seed')
         if "seed_variation" in self.params:
@@ -39,7 +41,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.things = self.params['width'] * self.params['height'] * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.calculate_kudos()
-        self.prepare_job_payload(params)
+        self.prepare_job_payload(self.params)
         # Commit will happen in prepare_job_payload()
 
     @logger.catch(reraise=True)

@@ -54,12 +54,12 @@ class NameAlreadyExists(wze.BadRequest):
 class ImageValidationFailed(wze.BadRequest):
     def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
         self.specific = f"Image validation failed. {message}"
-        self.log = f"Source image validation failed for img2img"
+        self.log = "Source image validation failed for img2img"
 
 class SourceMaskUnnecessary(wze.BadRequest):
     def __init__(self):
         self.specific = f"Please do not pass a source_mask unless you are sending a source_image as well"
-        self.log = f"Tried to pass source_mask with txt2img"
+        self.log = "Tried to pass source_mask with txt2img"
 
 class UnsupportedSampler(wze.BadRequest):
     def __init__(self):
@@ -68,7 +68,7 @@ class UnsupportedSampler(wze.BadRequest):
 
 class UnsupportedModel(wze.BadRequest):
     def __init__(self):
-        self.specific = f"This model is not supported in this mode the moment"
+        self.specific = "This model is not supported in this mode the moment"
         self.log = None
 
 class InvalidAPIKey(wze.Unauthorized):

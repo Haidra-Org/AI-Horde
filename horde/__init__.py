@@ -11,7 +11,7 @@ from horde.flask import HORDE, cache
 from horde.logger import logger, quiesce_logger, set_logger_verbosity
 from horde.redis_ctrl import get_horde_db, is_redis_up
 
-from .limiter import limiter
+from horde.limiter import limiter
 
 set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)

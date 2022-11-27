@@ -1,6 +1,9 @@
 import threading
 import time
-from horde.classes import db, database
+
+from horde.classes import WaitingPrompt
+from horde.flask import HORDE, db
+from horde.logger import logger
 
 class MonthlyKudos:
     def __init__(self):
@@ -28,31 +31,32 @@ class WPCleaner:
         time.sleep(1.5)
         logger.init_ok("Stale WP Cleanup Thread", status="Started")
         while True:
-            for wp in database.get_all_wps():
-                try:
-                    # The below check if any jobs have been running too long and aborts them
-                    faulted_requests = 0
-                    for gen in wp.processing_gens:
-                        # We don't want to recheck if we've faulted already
-                        if wp.faulted:
+            with HORDE.app_context():
+                for wp in db.session.query(WaitingPrompt).all():
+                    try:
+                        # The below check if any jobs have been running too long and aborts them
+                        faulted_requests = 0
+                        for gen in wp.processing_gens:
+                            # We don't want to recheck if we've faulted already
+                            if wp.faulted:
+                                break
+                            if gen.is_stale(wp.job_ttl):
+                                # If the request took too long to complete, we cancel it and add it to the retry
+                                gen.abort()
+                                wp.n += 1
+                            if gen.is_faulted():
+                                faulted_requests += 1
+                            # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
+                            if faulted_requests >= 3:
+                                wp.faulted = True
+                                wp.log_faulted_job()
+                        if wp.is_stale():
+                            wp.delete()
                             break
-                        if gen.is_stale(wp.job_ttl):
-                            # If the request took too long to complete, we cancel it and add it to the retry
-                            gen.abort()
-                            wp.n += 1
-                        if gen.is_faulted():
-                            faulted_requests += 1
-                        # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
-                        if faulted_requests >= 3:
-                            wp.faulted = True
-                            wp.log_faulted_job()
-                    if wp.is_stale():
-                        wp.delete()
-                        break
-                    wp.extra_priority += 50
-                    db.session.commit()
-                except Exception as e:
-                    logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
+                        wp.extra_priority += 50
+                        db.session.commit()
+                    except Exception as e:
+                        logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
+                        time.sleep(10)
                     time.sleep(10)
-                time.sleep(10)
 

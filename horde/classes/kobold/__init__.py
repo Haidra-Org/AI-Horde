@@ -1,4 +1,7 @@
-from ..base import *
+from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.logger import logger
+from horde.vars import thing_divisor
 
 class WaitingPrompt(WaitingPrompt):
 
@@ -115,6 +118,8 @@ class WorkerExtended(Worker):
         self.max_length = saved_dict["max_length"]
         self.max_content_length = saved_dict["max_content_length"]
 
+
+# TODO This doesnt exist to override
 class Stats(Stats):
 
     model_mulitpliers = {}

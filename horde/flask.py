@@ -29,7 +29,7 @@ if is_redis_up():
         pass
 
 # Allow local workatation run
-if cache == None:
+if cache is None:
     cache_config = {
         "CACHE_TYPE": "SimpleCache",
         "CACHE_DEFAULT_TIMEOUT": 300

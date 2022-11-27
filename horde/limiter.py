@@ -1,7 +1,7 @@
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from .flask import HORDE
-from . import logger
+from horde.flask import HORDE
+from horde.logger import logger
 from .redis_ctrl import is_redis_up, ger_limiter_url
 
 limiter = None
@@ -20,10 +20,11 @@ if is_redis_up():
             headers_enabled=True
         )
         logger.init_ok("Limiter Cache", status="Connected")
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to connect to Limiter Cache: {e}")
+
 # Allow local workatation run
-if limiter == None:
+if limiter is None:
     limiter = Limiter(
         HORDE,
         key_func=get_remote_address,

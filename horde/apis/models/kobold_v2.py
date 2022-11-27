@@ -1,4 +1,4 @@
-from flask_restx import fields, reqparse
+from flask_restx import fields
 from . import v2
 
 

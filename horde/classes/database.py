@@ -236,7 +236,7 @@ def get_organized_wps_by_model():
         # This will inflate the overall expected times, but it shouldn't be by much.
         # I don't see a way to do this calculation more accurately though
         for model in wp.get_model_names():
-            if not model in org:
+            if model not in org:
                 org[model] = []
             org[model].append(wp)
     return(org)    
@@ -282,7 +282,7 @@ def get_wp_queue_stats(self, wp):
 def get_organized_procgens_by_model():
     org = {}
     for procgen in db.session.query(ProcessingGenerationExtended).all():
-        if not procgen.model in org:
+        if procgen.model not in org:
             org[model] = []
         org[model].append(procgen)
     return(org)

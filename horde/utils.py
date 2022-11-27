@@ -4,17 +4,17 @@ profanity.load_censor_words()
 
 def is_profane(text):
     if profanity.contains_profanity(text):
-        return(True)
+        return True
     if predict([text]) == [1]:
-        return(True)
-    return(False)            
+        return True
+    return False
 
 def count_digits(number):
     digits = 1
     while number > 10:
         number = number / 10
         digits += 1
-    return(digits)
+    return digits
 
 class ConvertAmount:
 

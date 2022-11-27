@@ -1,14 +1,18 @@
-from .v2 import *
 import base64
 from io import BytesIO
 from PIL import Image
+
+from .v2 import *
+from horde.countermeasures import CounterMeasures
+from horde.logger import logger
+from ..exceptions import ImageValidationFailed
 
 
 def convert_source_image_to_webp(source_image_b64):
     '''Convert img2img sources to 90% compressed webp, to avoid wasting bandwidth, while still supporting all types'''
     except_msg = None
     try:
-        if source_image_b64 == None:
+        if source_image_b64 is None:
             return(source_image_b64)
         base64_bytes = source_image_b64.encode('utf-8')
         img_bytes = base64.b64decode(base64_bytes)
@@ -18,6 +22,7 @@ def convert_source_image_to_webp(source_image_b64):
         resolution_threshold = 3072*3072
         if resolution > resolution_threshold:
             except_msg = "Image size cannot exceed 3072*3072 pixels"
+            # Not sure e exists here?
             raise e.ImageValidationFailed()
         buffer = BytesIO()
         quality = 100
@@ -40,11 +45,13 @@ def convert_source_image_to_webp(source_image_b64):
         image.save(buffer, format="WebP", quality=quality)
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
         logger.debug(f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars")
-        return(final_image_b64)
-    except e.ImageValidationFailed:
+        return final_image_b64
+    except ImageValidationFailed as e:
         raise e.ImageValidationFailed(except_msg)
-    except:
+    except Exception as e:
+        logger.error(e)
         raise e.ImageValidationFailed
+
 
 class AsyncGenerate(AsyncGenerate):
     
@@ -52,9 +59,9 @@ class AsyncGenerate(AsyncGenerate):
         super().validate()
         # Temporary exception. During trial period only trusted users can use img2img
         if not self.user.trusted:
-            self.safe_ip = cm.is_ip_safe(self.user_ip)
+            self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
             # We allow unsafe IPs when being rate limited as they're only temporary
-            if self.safe_ip == None:
+            if self.safe_ip is None:
                 self.safe_ip = True
             # We actually block unsafe IPs for now to combat CP
             if not self.safe_ip:
@@ -110,9 +117,9 @@ class SyncGenerate(SyncGenerate):
         # Temporary exception. During trial period only trusted users can use img2img
         if self.args.source_image:
             if not self.user.trusted:
-                self.safe_ip = cm.is_ip_safe(self.user_ip)
+                self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
                 # We allow unsafe IPs when being rate limited as they're only temporary
-                if self.safe_ip == False:
+                if self.safe_ip is False:
                     self.safe_ip = False
                     raise e.NotTrusted
         if not self.args.source_image and self.args.source_mask:

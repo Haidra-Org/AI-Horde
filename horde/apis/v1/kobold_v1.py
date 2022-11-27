@@ -1,11 +1,11 @@
-from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
+from flask_restx import Namespace, Resource, reqparse, fields
 from flask import request
 from horde import limiter
 from horde.logger import logger
 from horde.classes import database
 from horde.classes.base import stats
-from horde.classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from horde import maintenance, invite_only, raid, cm
+from horde.classes import processing_generations,waiting_prompts,Worker,WaitingPrompt
+from horde import maintenance, cm
 from enum import Enum
 import os, time, json
 
@@ -419,14 +419,14 @@ class ServerSingle(Resource):
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
         ret_dict = {}
         # Both admins and owners can set the server to maintenance
-        if args.maintenance != None:
+        if args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != server.user:
                     return(f"{get_error(ServerErrors.NOT_OWNER, username = admin.get_unique_alias(), server_name = server.name)}",401)
             server.maintenance = args.maintenance
             ret_dict["maintenance"] = server.maintenance
         # Only admins can set a server as paused
-        if args.paused != None:
+        if args.paused is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyServer')}",401)
             server.paused = args.paused

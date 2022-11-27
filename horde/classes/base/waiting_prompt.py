@@ -4,9 +4,11 @@ import uuid
 
 from horde.logger import logger
 from horde.flask import db
-from horde.classes import ProcessingGeneration
 from horde.classes import stats
 from horde.classes import database
+from horde.vars import thing_divisor
+
+from horde.classes.base.processing_generation import ProcessingGeneration
 
 
 class WPAllowedWorkers(db.Model):
@@ -35,8 +37,6 @@ class WPModels(db.Model):
     model = db.Column(db.String(20), primary_key=False)
 
 
-# TODO why is this line here?
-logger.debug(ProcessingGeneration)
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
@@ -48,7 +48,6 @@ class WaitingPrompt(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="waiting_prompts")
 
-    
     params = db.Column(db.JSON, default={}, nullable=False)
     gen_payload = db.Column(db.JSON, default={}, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
@@ -67,7 +66,8 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
+    # TODO temp disabled
+    # processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="processing_gens")
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")
     models = db.relationship("WPModels", back_populates="wp")
@@ -154,18 +154,19 @@ class WaitingPrompt(db.Model):
         return(prompt_payload)
 
     # Using this function so that I can extend it to have it grab the correct extended class
-    def new_procgen(self, worker):
-        return(ProcessingGeneration(wp_id=self.id, worker_id=worker.id))
+    # def new_procgen(self, worker):
+    #     # TODO THIS SHOULDN'T BE HERE - we can make a method on proc gen that takes a worker
+    #     return(ProcessingGeneration(wp_id=self.id, worker_id=worker.id))
 
     def is_completed(self):
         if self.faulted:
-            return(True)
+            return True
         if self.needs_gen():
-            return(False)
+            return False
         for procgen in self.processing_gens:
             if not procgen.is_completed() and not procgen.is_faulted():
-                return(False)
-        return(True)
+                return False
+        return True
 
     def count_processing_gens(self):
         ret_dict = {
@@ -180,11 +181,11 @@ class WaitingPrompt(db.Model):
                 ret_dict["restarted"] += 1
             else:
                 ret_dict["processing"] += 1
-        return(ret_dict)
+        return ret_dict
 
     def get_queued_things(self):
         '''The things still queued to be generated for this waiting prompt'''
-        return(round(self.things * self.n/thing_divisor,2))
+        return round(self.things * self.n/thing_divisor,2)
 
     def get_status(self, lite = False):
         ret_dict = self.count_processing_gens()

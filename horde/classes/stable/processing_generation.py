@@ -1,6 +1,7 @@
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
 
+
 class ProcessingGenerationExtended(ProcessingGeneration):
 
     def get_details(self):
@@ -12,11 +13,11 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             "worker_name": self.worker.name,
             "model": self.model,
         }
-        return(ret_dict)
+        return ret_dict
 
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker
-        return(self.owner.kudos)
+        return self.owner.kudos
 
     def log_aborted_generation(self):
         logger.info(

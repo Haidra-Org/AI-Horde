@@ -1,4 +1,4 @@
-from .. import args
+from horde.argparser import args
 from importlib import import_module
 
 ModelsV2 = import_module(name=f'horde.apis.models.{args.horde}_v2').Models

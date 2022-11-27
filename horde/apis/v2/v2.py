@@ -1,14 +1,22 @@
-from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
+import bleach
+import json
+import os
+import re
+import time
+
 from flask import request
-from horde import limiter, logger, maintenance, invite_only, raid, cm, cache
-from horde.suspicions import Suspicions 
-from horde.classes import database,processing_generations,waiting_prompts,Worker,Team,WaitingPrompt,News,User,stats
-from enum import Enum
-from horde.apis import exceptions as e
-import os, time, json, re, bleach
+from flask_restx import Namespace, Resource, reqparse
+
+from horde.flask import cache
+from horde.limiter import limiter
+from horde.logger import logger
+from horde.argparser import maintenance, invite_only, raid
 from horde.apis import ModelsV2, ParsersV2
+from horde.apis import exceptions as e
+from horde.classes import database, processing_generations, waiting_prompts, Worker, Team, WaitingPrompt, News, User
+from horde.suspicions import Suspicions
 from horde.utils import is_profane
-from horde.flask import db
+from horde.countermeasures import CounterMeasures
 
 # Not used yet
 authorizations = {
@@ -133,7 +141,7 @@ class GenerateTemplate(Resource):
         user_limit = self.user.get_concurrency(self.args["models"],database.get_available_models(waiting_prompts,lite_dict=True))
         if wp_count + n > user_limit:
             raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
-        ip_timeout = cm.retrieve_timeout(self.user_ip)
+        ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
         if ip_timeout:
             raise e.TimeoutIP(self.user_ip, ip_timeout)
         prompt_suspicion = 0
@@ -148,7 +156,7 @@ class GenerateTemplate(Resource):
                     break
         if prompt_suspicion >= 2:
             self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
-            cm.report_suspicion(self.user_ip)
+            CounterMeasures.report_suspicion(self.user_ip)
             raise e.CorruptPrompt(self.username, self.user_ip, prompt)
 
     
@@ -367,10 +375,10 @@ class JobPop(Resource):
         self.worker = database.find_worker_by_name(self.worker_name)
         self.safe_ip = True
         if not self.worker or not self.worker.user.trusted:
-            self.safe_ip = cm.is_ip_safe(self.worker_ip)
-            if self.safe_ip == None:
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip == False:
+            if self.safe_ip is False:
                 # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
                 # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
                 # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
@@ -535,14 +543,14 @@ class WorkerSingle(Resource):
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
         ret_dict = {}
         # Both admins and owners can set the worker to maintenance
-        if self.args.maintenance != None:
+        if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.toggle_maintenance(self.args.maintenance, self.args.maintenance_msg)
             ret_dict["maintenance"] = worker.maintenance
         # Only owners can set info notes
-        if self.args.info != None:
+        if self.args.info is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
             if admin.is_anon():
@@ -554,12 +562,12 @@ class WorkerSingle(Resource):
                 raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, 'worker info')
             ret_dict["info"] = worker.info
         # Only mods can set a worker as paused
-        if self.args.paused != None:
+        if self.args.paused is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
-        if self.args.name != None:
+        if self.args.name is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             if admin.is_anon():
@@ -572,7 +580,7 @@ class WorkerSingle(Resource):
             if ret == "Already Exists":
                 raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
             ret_dict["name"] = worker.name
-        if self.args.team != None:
+        if self.args.team is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             if admin.is_anon():
@@ -700,56 +708,56 @@ class UserSingle(Resource):
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         ret_dict = {}
         # Admin Access
-        if self.args.kudos != None:
+        if self.args.kudos is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
-        if self.args.monthly_kudos != None:
+        if self.args.monthly_kudos is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_monthly_kudos(self.args.monthly_kudos)
             ret_dict["monthly_kudos"] = user.monthly_kudos['amount']
-        if self.args.usage_multiplier != None:
+        if self.args.usage_multiplier is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.usage_multiplier = self.args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
-        if self.args.moderator != None:
+        if self.args.moderator is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_moderator(self.args.moderator)
             ret_dict["moderator"] = user.moderator
         # Moderator Access
-        if self.args.concurrency != None:
+        if self.args.concurrency is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.concurrency = self.args.concurrency
             ret_dict["concurrency"] = user.concurrency
-        if self.args.worker_invite != None:
+        if self.args.worker_invite is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.worker_invited = self.args.worker_invite
             ret_dict["worker_invited"] = user.worker_invited
-        if self.args.trusted != None:
+        if self.args.trusted is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_trusted(self.args.trusted)
             ret_dict["trusted"] = user.trusted
-        if self.args.reset_suspicion != None:
+        if self.args.reset_suspicion is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.reset_suspicion()
             ret_dict["new_suspicion"] = user.get_suspicion()
         # User Access
-        if self.args.public_workers != None:
+        if self.args.public_workers is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             if admin.is_anon():
                 raise e.AnonForbidden()
             user.public_workers = self.args.public_workers
             ret_dict["public_workers"] = user.public_workers
-        if self.args.username != None:
+        if self.args.username is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             if admin.is_anon():
@@ -760,7 +768,7 @@ class UserSingle(Resource):
             if ret == "Too Long":
                 raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, 'username')
             ret_dict["username"] = user.username
-        if self.args.contact != None:
+        if self.args.contact is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             if admin.is_anon():
@@ -875,7 +883,7 @@ class HordeModes(Resource):
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
         ret_dict = {}
-        if self.args.maintenance != None:
+        if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
@@ -884,7 +892,7 @@ class HordeModes(Resource):
             for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = maintenance.active
-        if self.args.shutdown != None:
+        if self.args.shutdown is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.activate()
@@ -892,12 +900,12 @@ class HordeModes(Resource):
                 wp.abort_for_maintenance()
             database.shutdown(self.args.shutdown)
             ret_dict["maintenance_mode"] = maintenance.active
-        if self.args.invite_only != None:
+        if self.args.invite_only is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
             invite_only.toggle(self.args.invite_only)
             ret_dict["invite_only_mode"] = invite_only.active
-        if self.args.raid != None:
+        if self.args.raid is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
             raid.toggle(self.args.raid)
@@ -951,7 +959,7 @@ class Teams(Resource):
         if ret == "Already Exists":
             raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
         ret_dict["name"] = team.name
-        if self.args.info != None:
+        if self.args.info is not None:
             ret = team.set_info(self.args.info)
             if ret == "Profanity":
                 raise e.Profanity(user.get_unique_alias(), self.args.info, 'team info')
@@ -1013,14 +1021,14 @@ class TeamSingle(Resource):
             raise e.InvalidAPIKey('User action: ' + 'PATCH TeamSingle')
         ret_dict = {}
         # Only creators can set info notes
-        if self.args.info != None:
+        if self.args.info is not None:
             if not admin.moderator and admin != team.user:
                 raise e.NotOwner(admin.get_unique_alias(), team.name)
             ret = team.set_info(self.args.info)
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.info, 'team info')
             ret_dict["info"] = team.info
-        if self.args.name != None:
+        if self.args.name is not None:
             if not admin.moderator and admin != team.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PATCH TeamSingle')
             ret = team.set_name(self.args.name)
@@ -1085,7 +1093,7 @@ class OperationsIP(Resource):
             raise e.InvalidAPIKey('User action: ' + 'DELETE OperationsIP')
         if not mod.moderator:
             raise e.NotModerator(mod.get_unique_alias(), 'DELETE OperationsIP')
-        cm.delete_timeout(self.args.ipaddr)
+        CounterMeasures.delete_timeout(self.args.ipaddr)
         return({"message":'OK'}, 200)
 
         
