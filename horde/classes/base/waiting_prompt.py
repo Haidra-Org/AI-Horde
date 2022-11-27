@@ -67,7 +67,7 @@ class WaitingPrompt(db.Model):
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
     # TODO temp disabled
-    # processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="processing_gens")
+    # processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")
     models = db.relationship("WPModels", back_populates="wp")
