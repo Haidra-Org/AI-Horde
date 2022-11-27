@@ -85,8 +85,6 @@ class WorkerExtended(Worker):
             #     is_matching = False
             #     skipped_reason = 'untrusted'
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
-                logger.debug(waiting_prompt.user)
-                logger.debug(waiting_prompt.user.trusted)
                 is_matching = False
                 skipped_reason = 'untrusted'
         return [is_matching, skipped_reason]

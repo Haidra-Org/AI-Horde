@@ -104,13 +104,6 @@ class GenerateTemplate(Resource):
         self.safe_ip = True
         self.validate()
         self.initiate_waiting_prompt()
-        worker_found = False
-        for worker in database.get_all_workers():
-            if len(self.workers) and worker.id not in self.workers:
-                continue
-            if worker.can_generate(self.wp)[0]:
-                worker_found = True
-                break
         self.activate_waiting_prompt()
 
     # We split this into its own function, so that it may be overriden and extended
@@ -193,7 +186,7 @@ class AsyncGenerate(GenerateTemplate):
         '''
         super().post()
         ret_dict = {"id":self.wp.id}
-        if not self.wp.has_valid_workers() and not raid.active:
+        if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
@@ -224,6 +217,8 @@ class SyncGenerate(GenerateTemplate):
                 break
         ret_dict = self.wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            wp_queue_stats=database.get_wp_queue_stats(self.wp),
             active_worker_count=database.count_active_workers()
         )
         # We delete it from memory immediately to ensure we don't run out
@@ -233,9 +228,10 @@ class SyncGenerate(GenerateTemplate):
     # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue
     def activate_waiting_prompt(self):
         # We don't want to keep synchronous requests up unless there's someone who can fulfill them
-        if not self.wp.has_valid_workers():
+        if not database.wp_has_valid_workers(self.wp, self.workers):
             # We don't need to call .delete() on the wp because it's not activated yet
             # And therefore not added to the waiting_prompt dict.
+            self.wp.delete()
             raise e.NoValidWorkers(self.username)
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
@@ -256,6 +252,8 @@ class AsyncStatus(Resource):
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
         # If the status is retrieved after the wp is done we clear it to free the ram
@@ -274,6 +272,8 @@ class AsyncStatus(Resource):
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
@@ -295,7 +295,13 @@ class AsyncCheck(Resource):
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        return(wp.get_lite_status(), 200)
+        lite_status = wp.get_lite_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        return(lite_status, 200)
 
 
 class JobPop(Resource):
