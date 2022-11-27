@@ -3,7 +3,7 @@ import time
 from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
-from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance
+from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 
 ALLOW_ANONYMOUS = True
 
@@ -122,7 +122,7 @@ def find_team_by_name(team_name):
     team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
     return(team)
 
-def get_available_models(waiting_prompts, lite_dict=False):
+def get_available_models(lite_dict=False):
     models_dict = {}
     for worker in get_active_workers():
         model_name = None
@@ -242,7 +242,7 @@ def get_organized_wps_by_model():
             org[model].append(wp)
     return(org)    
 
-def count_things_per_model(self):
+def count_things_per_model():
     things_per_model = {}
     org = get_organized_wps_by_model()
     for model in org:
@@ -253,7 +253,7 @@ def count_things_per_model(self):
         things_per_model[model] = round(things_per_model.get(model,0),2)
     return(things_per_model)
 
-def get_waiting_wp_by_kudos(self):
+def get_waiting_wp_by_kudos():
     #TODO: Perform the sort via SQL during select
     wplist = db.session.query(WaitingPrompt).all()
     sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
@@ -267,7 +267,7 @@ def get_waiting_wp_by_kudos(self):
 # Returns the queue position of the provided WP based on kudos
 # Also returns the amount of things until the wp is generated
 # Also returns the amount of different gens queued
-def get_wp_queue_stats(self, wp):
+def get_wp_queue_stats(wp):
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
     priority_sorted_list = get_waiting_wp_by_kudos()
@@ -288,16 +288,16 @@ def get_organized_procgens_by_model():
         org[model].append(procgen)
     return(org)
 
-def get_wp_by_id(self, uuid):
+def get_wp_by_id(uuid):
     return db.session.query(WaitingPrompt).filter_by(id=uuid).first()
 
-def get_progen_by_id(self, uuid):
+def get_progen_by_id(uuid):
     return db.session.query(ProcessingGeneration).filter_by(id=uuid).first()
 
-def get_all_wps(self, uuid):
+def get_all_wps():
     return db.session.query(WaitingPrompt).all()
 
-def get_progens(self, uuid):
+def get_progens():
     return db.session.query(ProcessingGeneration).all()
 
 def get_worker_performances():

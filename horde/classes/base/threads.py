@@ -59,6 +59,5 @@ class WPCleaner:
                         db.session.commit()
                     except Exception as e:
                         logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
-                        time.sleep(10)
                     time.sleep(10)
 

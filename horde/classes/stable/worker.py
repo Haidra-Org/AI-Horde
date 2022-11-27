@@ -1,4 +1,4 @@
-from horde import logger
+from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
@@ -25,7 +25,7 @@ class WorkerExtended(Worker):
         if self.paused:
             paused_string = '(Paused) '
         db.session.commit()
-        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering models {self.models} at {self.max_pixels} max pixels")
+        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return 50

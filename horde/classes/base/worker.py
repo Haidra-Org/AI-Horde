@@ -189,6 +189,21 @@ class Worker(db.Model):
             db.session.add(model)
         db.session.commit()
 
+    def set_blacklist(self, blacklist):
+        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
+        blacklist = [bleach.clean(word) for word in blacklist]
+        del blacklist[100:]
+        blacklist = set(blacklist)
+        existing_blacklist = db.session.query(WorkerBlackList).filter_by(worker_id=self.id)
+        existing_blacklist_words = set([b.word for b in existing_blacklist.all()])
+        if existing_blacklist_words == blacklist:
+            return
+        existing_blacklist.delete()
+        for word in blacklist:
+            blacklisted_word = WorkerBlackList(worker_id=self.id,word=word)
+            db.session.add(blacklisted_word)
+        db.session.commit()
+
     def get_model_names(self):
         return set([m.model for m in self.models])
 
@@ -196,7 +211,7 @@ class Worker(db.Model):
     def check_in(self, **kwargs):
         self.set_models(kwargs.get("models"))
         self.nsfw = kwargs.get("nsfw", True)
-        self.blacklist = kwargs.get("blacklist", [])
+        self.set_blacklist(kwargs.get("blacklist", []))
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
         self.threads = kwargs.get("threads", 1)
@@ -289,10 +304,10 @@ class Worker(db.Model):
         self.fulfilments += 1
         if self.team:
             self.team.record_contribution(converted_amount, kudos)
-        performances = db.session.query(WorkerPerformances).filter_by(worker_id=self.id).asc()
+        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).asc()
         if performances.count() >= 20:
             performances.first().delete()
-        new_performance = WorkerPerformances(worker_id=self.id, performance=things_per_sec)
+        new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
         if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
@@ -301,7 +316,9 @@ class Worker(db.Model):
     def modify_kudos(self, kudos, action = 'generated'):
         self.kudos = round(self.kudos + kudos, 2)
         kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).filter_by(action=action).first()
-        kudos_details = round(kudos_details + kudos, 2)
+        if not kudos_details:
+            kudos_details = WorkerStats(action=action)
+        kudos_details.value = round(kudos_details + kudos, 2)
         db.session.commit()
 
     def log_aborted_job(self):
@@ -337,7 +354,7 @@ class Worker(db.Model):
         return(ret_num)
 
     def get_performance(self):
-        performances = [p.performance for p in db.session.query(WorkerPerformances).filter_by(worker_id=self.id).all()]
+        performances = [p.performance for p in db.session.query(WorkerPerformance).filter_by(worker_id=self.id).all()]
         if len(performances):
             ret_str = f'{round(sum(performances) / len(performances) / thing_divisor,1)} {thing_name} per second'
         else:

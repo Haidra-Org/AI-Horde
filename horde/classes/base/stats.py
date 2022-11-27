@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from horde import logger
+from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
 

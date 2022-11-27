@@ -9,44 +9,48 @@ try:
     ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
     logger.debug(f'Loaded ProcessingGenerationExtended')
 except (ModuleNotFoundError,AttributeError):
-    ProcessingGeneration = import_module(name=f'horde.classes.base.processing_generation').ProcessingGeneration
+    ProcessingGeneration = import_module(name='horde.classes.base.processing_generation').ProcessingGeneration
 try:
     WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
     logger.debug("Loaded WaitingPromptExtended")
 except (ModuleNotFoundError,AttributeError):
-    WaitingPrompt = import_module(name=f'horde.classes.base.waiting_prompt').WaitingPrompt
+    WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
 try:
     WPAllowedWorkers = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WPAllowedWorkers
 except (ModuleNotFoundError,AttributeError):
-    WPAllowedWorkers = import_module(name=f'horde.classes.base.waiting_prompt').WPAllowedWorkers
+    WPAllowedWorkers = import_module(name='horde.classes.base.waiting_prompt').WPAllowedWorkers
 try:
     User = import_module(name=f'horde.classes.{args.horde}.user').UserExtended
 except (ModuleNotFoundError,AttributeError):
-    User = import_module(name=f'horde.classes.base.user').User
+    User = import_module(name='horde.classes.base.user').User
 try:
     Team = import_module(name=f'horde.classes.{args.horde}.team').TeamExtended
 except (ModuleNotFoundError,AttributeError):
-    Team = import_module(name=f'horde.classes.base.team').Team
+    Team = import_module(name='horde.classes.base.team').Team
 try:
     Worker = import_module(name=f'horde.classes.{args.horde}.worker').WorkerExtended
 except (ModuleNotFoundError,AttributeError):
-    Worker = import_module(name=f'horde.classes.base.worker').Worker
+    Worker = import_module(name='horde.classes.base.worker').Worker
 try:
     WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
 except (ModuleNotFoundError,AttributeError):
-    WorkerPerformance = import_module(name=f'horde.classes.base.worker').WorkerPerformance
+    WorkerPerformance = import_module(name='horde.classes.base.worker').WorkerPerformance
 News = import_module(name=f'horde.classes.{args.horde}.news').News
 try:
     WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended
 except (ModuleNotFoundError,AttributeError):
-    WPCleaner = import_module(name=f'horde.classes.base.threads').WPCleaner
+    WPCleaner = import_module(name='horde.classes.base.threads').WPCleaner
 try:
     MonthlyKudos = import_module(name=f'horde.classes.{args.horde}.threads').MonthlyKudosExtended
 except (ModuleNotFoundError,AttributeError):
-    MonthlyKudos = import_module(name=f'horde.classes.base.threads').MonthlyKudos
+    MonthlyKudos = import_module(name='horde.classes.base.threads').MonthlyKudos
+try:
+    stats = import_module(name=f'horde.classes.{args.horde}.stats')
+except (ModuleNotFoundError,AttributeError):
+    stats = import_module(name='horde.classes.base.stats')
 
+# from horde.classes.base import stats
 from horde.classes import database
-from horde.classes.base import stats
 
 logger.debug(Team)
 with HORDE.app_context():

@@ -154,11 +154,11 @@ class WaitingPromptExtended(WaitingPrompt):
         db.session.commit()
 
 
-    def requires_upfront_kudos(self):
+    def requires_upfront_kudos(self, counted_totals):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
         '''
-        queue = self._waiting_prompts.count_totals()["queued_requests"]
+        queue = counted_totals["queued_requests"]
         max_res = 1124 - round(queue * 0.9)
         if max_res < 576:
             max_res = 576
