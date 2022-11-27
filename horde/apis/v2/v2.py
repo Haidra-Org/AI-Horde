@@ -407,7 +407,6 @@ class JobPop(Resource):
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
-            logger.debug(Worker)
             self.worker = Worker(
                 user_id=self.user.id,
                 name=self.worker_name,
@@ -451,8 +450,12 @@ class JobSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
-        stats.record_fulfilment(self.procgen, database.get_worker_performances())
+        things_per_sec = stats.record_fulfilment(self.procgen, database.get_worker_performances())
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args['seed']
+        )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 

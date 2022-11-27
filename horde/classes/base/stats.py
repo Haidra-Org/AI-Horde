@@ -20,7 +20,7 @@ class FulfillmentPerformance(db.Model):
 
 
 def record_fulfilment(procgen, worker_performances):
-    things = procgen.owner.things
+    things = procgen.wp.things
     starting_time = procgen.start_time
     model = procgen.model
     seconds_taken = (datetime.utcnow() - starting_time).seconds
@@ -28,7 +28,7 @@ def record_fulfilment(procgen, worker_performances):
         things_per_sec = 1
     else:
         things_per_sec = round(things / seconds_taken,1)
-    worker_performances = get_worker_performances()
+    worker_performances = worker_performances
     model_performances = db.session.query(ModelPerformance).filter_by(model=model).order_by(
         ModelPerformance.created.asc()
     )

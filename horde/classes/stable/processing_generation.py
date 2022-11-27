@@ -17,12 +17,12 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker
-        return self.owner.kudos
+        return self.wp.kudos
 
     def log_aborted_generation(self):
         logger.info(
             f"Aborted Stale Generation {self.id} "
-            f"({self.owner.params['width']}x{self.owner.params['height']}x{self.owner.params['steps']}@{self.owner.params['sampler_name']})"
+            f"({self.wp.params['width']}x{self.wp.params['height']}x{self.wp.params['steps']}@{self.wp.params['sampler_name']})"
             f" from by worker: {self.worker.name} ({self.worker.id})"
         )
 

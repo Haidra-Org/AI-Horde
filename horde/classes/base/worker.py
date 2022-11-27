@@ -7,7 +7,8 @@ from horde.argparser import raid
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
-from horde.utils import is_profane
+from horde.utils import is_profane, get_db_uuid
+
 
 class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
@@ -23,6 +24,7 @@ class WorkerPerformance(db.Model):
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
     worker = db.relationship(f"WorkerExtended", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
 
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
@@ -52,7 +54,7 @@ class Worker(db.Model):
     uptime_reward_threshold = 600
     default_maintenance_msg = "This worker has been put into maintenance mode by its owner"
 
-    id = db.Column(db.String(36), primary_key=True, default=str(uuid.uuid4()))
+    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="workers")
@@ -61,7 +63,8 @@ class Worker(db.Model):
     ipaddr = db.Column(db.String(15), unique=False)
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
-    last_check_in = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_check_in = db.Column(db.DateTime, default=datetime.utcnow)
+    last_aborted_job = db.Column(db.DateTime, default=datetime.utcnow)
 
     kudos = db.Column(db.Integer, default=0, nullable=False)
     contributions = db.Column(db.Integer, default=0, nullable=False)
@@ -207,7 +210,7 @@ class Worker(db.Model):
         db.session.commit()
 
     def get_model_names(self):
-        return set([m.model for m in self.models])
+        return [m.model for m in self.models]
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
@@ -269,6 +272,7 @@ class Worker(db.Model):
             skipped_reason = 'nsfw'
         if waiting_prompt.trusted_workers and not self.user.trusted:
             is_matching = False
+            logger.debug('adasao')
             skipped_reason = 'untrusted'
         # If the worker has been tricked once by this prompt, we don't want to resend it it
         # as it may give up the jig
@@ -306,7 +310,7 @@ class Worker(db.Model):
         self.fulfilments += 1
         if self.team:
             self.team.record_contribution(converted_amount, kudos)
-        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).asc()
+        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
             performances.first().delete()
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
@@ -319,10 +323,13 @@ class Worker(db.Model):
         self.kudos = round(self.kudos + kudos, 2)
         kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).filter_by(action=action).first()
         if not kudos_details:
-            kudos_details = WorkerStats(action=action)
+            kudos_details = WorkerStats(action=action, value=round(kudos, 2))
+            db.session.add(kudos_details)
+            db.session.commit()
+        else:
+            kudos_details.value = round(kudos_details.value + kudos, 2)
+            db.session.commit()
         logger.debug([kudos_details,kudos_details.value])
-        kudos_details.value = round(kudos_details.value + kudos, 2)
-        db.session.commit()
 
     def log_aborted_job(self):
         # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.
@@ -349,15 +356,16 @@ class Worker(db.Model):
         db.session.commit()
 
     def get_performance_average(self):
-        if len(self.performances):
-            ret_num = sum(self.performances) / len(self.performances)
+        performances = [p.performance for p in self.performance]
+        if len(performances):
+            ret_num = sum(performances) / len(performances)
         else:
             # Always sending at least 1 thing per second, to avoid divisions by zero
             ret_num = 1
         return(ret_num)
 
     def get_performance(self):
-        performances = [p.performance for p in db.session.query(WorkerPerformance).filter_by(worker_id=self.id).all()]
+        performances = [p.performance for p in self.performance]
         if len(performances):
             ret_str = f'{round(sum(performances) / len(performances) / thing_divisor,1)} {thing_name} per second'
         else:
@@ -374,6 +382,8 @@ class Worker(db.Model):
         return(False)
 
     def delete(self):
+        for procgen in self.processing_gens:
+            procgen.abort()
         for stat in self.stats:
             db.session.delete(stat)    
         for performance in self.performance:

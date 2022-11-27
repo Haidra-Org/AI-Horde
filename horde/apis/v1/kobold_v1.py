@@ -131,6 +131,7 @@ class SyncGenerate(Resource):
             servers=args["servers"],
             models=args["models"],
             softprompts=args["softprompts"],
+            safe_ip=self.safe_ip,
         )
         server_found = False
         for server in _db.workers.values():
@@ -229,6 +230,7 @@ class AsyncGenerate(Resource):
             user,
             args["params"],
             servers=args["servers"],
+            safe_ip=self.safe_ip,
         )
         wp.activate()
         return({"id":wp.id}, 200)

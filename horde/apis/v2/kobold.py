@@ -7,16 +7,15 @@ class AsyncGenerate(AsyncGenerate):
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
         self.wp = WaitingPrompt(
-            db,
-            waiting_prompts,
-            processing_generations,
-            self.args["prompt"],
-            self.user,
-            self.params,
+            prompt = self.args.prompt,
+            user_id = self.user.id,
+            params = self.params,
             workers = self.workers,
             models = self.models,
             softprompts = self.softprompts,
             trusted_workers = self.args["trusted_workers"],
+            ipaddr=self.ipaddr,
+            safe_ip=self.safe_ip,
         )
 
     def get_size_too_big_message(self):

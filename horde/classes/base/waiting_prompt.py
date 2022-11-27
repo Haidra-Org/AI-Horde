@@ -1,10 +1,13 @@
 
 from datetime import datetime
 import uuid
+from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.dialects.postgresql import JSONB
 
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
+from horde.utils import is_profane, get_db_uuid
 
 from horde.classes import ProcessingGeneration
 
@@ -39,15 +42,15 @@ class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
     STALE_TIME = 1200
-    id = db.Column(db.String(36), primary_key=True, default=str(uuid.uuid4()))  # Whilst using sqlite use this, as it has no uuid type
+    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="waiting_prompts")
 
-    params = db.Column(db.JSON, default={}, nullable=False)
-    gen_payload = db.Column(db.JSON, default={}, nullable=False)
+    params = db.Column(MutableDict.as_mutable(JSONB), default={}, nullable=False)
+    gen_payload = db.Column(MutableDict.as_mutable(JSONB), default={}, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -84,7 +87,6 @@ class WaitingPrompt(db.Model):
         self.set_models(models)
         self.extract_params()
         db.session.add(self)
-        logger.debug([kwargs, self.user,self.models, self.user_id]) 
 
     def set_workers(self, worker_ids = []):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
@@ -137,14 +139,14 @@ class WaitingPrompt(db.Model):
     def start_generation(self, worker):
         if self.n <= 0:
             return
-        new_gen = self.new_procgen(worker)
+        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.n -= 1
         self.refresh()
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
         return self.get_pop_payload(new_gen)
 
     def fake_generation(self, worker):
-        new_gen = self.new_procgen(worker)
+        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         new_gen.fake = True
         new_trick = WPTrickedWorkers(wp_id=self.id, worker_id=worker.id)
         db.session.add(new_trick)
@@ -161,11 +163,6 @@ class WaitingPrompt(db.Model):
             "model": procgen.model,
         }
         return(prompt_payload)
-
-    # Using this function so that I can extend it to have it grab the correct extended class
-    # def new_procgen(self, worker):
-    #     # TODO THIS SHOULDN'T BE HERE - we can make a method on proc gen that takes a worker
-    #     return(ProcessingGeneration(wp_id=self.id, worker_id=worker.id))
 
     def is_completed(self):
         if self.faulted:

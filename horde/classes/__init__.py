@@ -7,12 +7,10 @@ from horde.flask import db, HORDE
 # stats = import_module(name=f'horde.classes.{args.horde}').stats
 try:
     ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
-    logger.debug(f'Loaded ProcessingGenerationExtended')
 except (ModuleNotFoundError,AttributeError):
     ProcessingGeneration = import_module(name='horde.classes.base.processing_generation').ProcessingGeneration
 try:
     WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
-    logger.debug("Loaded WaitingPromptExtended")
 except (ModuleNotFoundError,AttributeError):
     WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
 try:
@@ -52,7 +50,6 @@ except (ModuleNotFoundError,AttributeError):
 # from horde.classes.base import stats
 from horde.classes import database
 
-logger.debug(Team)
 with HORDE.app_context():
     db.create_all()
 

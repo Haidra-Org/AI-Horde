@@ -13,6 +13,7 @@ class WaitingPromptExtended(WaitingPrompt):
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
     seed = db.Column(db.Integer, default=None)
     seed_variation = db.Column(db.Integer, default=None)
+    kudos = db.Column(db.Float, default=0, nullable=False)
 
     @logger.catch(reraise=True)
     def extract_params(self):
@@ -57,7 +58,6 @@ class WaitingPromptExtended(WaitingPrompt):
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
         else:
-            # logger.error(self.seed)
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
         if procgen.worker.bridge_version >= 2:
             if not self.nsfw and self.censor_nsfw:
@@ -110,9 +110,6 @@ class WaitingPromptExtended(WaitingPrompt):
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): "
             f"w:{self.params['width']} * h:{self.params['height']} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
         )
-
-    def new_procgen(self, worker):
-        return(ProcessingGenerationExtended(self, self._processing_generations, worker))
 
     def seed_to_int(self, s = None):
         if type(s) is int:

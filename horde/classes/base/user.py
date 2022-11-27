@@ -2,6 +2,7 @@ from datetime import datetime
 import uuid
 import dateutil.relativedelta
 import bleach
+import os
 
 from horde.logger import logger
 from horde.flask import db
@@ -216,8 +217,13 @@ class User(db.Model):
         self.kudos = round(self.kudos + kudos, 2)
         self.ensure_kudos_positive()
         kudos_details = db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
-        kudos_details = round(kudos_details + kudos, 2)
-        db.session.commit()
+        if not kudos_details:
+            kudos_details = UserStats(action=action, value=round(kudos, 2))
+            db.session.add(kudos_details)
+            db.session.commit()
+        else:
+            kudos_details.value = round(kudos_details.value + kudos, 2)
+            db.session.commit()
 
     def ensure_kudos_positive(self):
         if self.kudos < self.min_kudos:

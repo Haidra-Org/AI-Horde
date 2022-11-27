@@ -1,3 +1,4 @@
+import uuid
 from profanity_check  import predict
 from better_profanity import profanity
 profanity.load_censor_words()
@@ -41,3 +42,6 @@ class ConvertAmount:
             self.amount = round(amount / 1000000000000, self.decimals)
             self.prefix = 'tera'
             self.char = 'T'
+
+def get_db_uuid():
+    return str(uuid.uuid4())
