@@ -7,7 +7,8 @@ from horde.vars import thing_name,raw_thing_name,thing_divisor
 
 ALLOW_ANONYMOUS = True
 
-from horde.classes import db, stats, User, Team, Worker, ProcessingGeneration, WaitingPrompt
+def initialize():
+    from horde.classes import db, stats, User, Team, Worker, ProcessingGeneration, WaitingPrompt
 
 
 def initiate_save(seconds = 1):

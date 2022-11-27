@@ -23,7 +23,7 @@ class WPTrickedWorkers(db.Model):
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
@@ -32,7 +32,7 @@ class WPModels(db.Model):
     wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
     model = db.Column(db.String(20), primary_key=False)
 
-
+logger.debug(ProcessingGeneration)
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
@@ -42,7 +42,7 @@ class WaitingPrompt(db.Model):
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    user = db.relationship("User", back_populates="workers")
+    user = db.relationship("User", back_populates="waiting_prompts")
 
     
     params = db.Column(db.JSON, default={}, nullable=False)
@@ -63,10 +63,10 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    processing_gens = db.relationship(f"ProcessingGenerationExtended", back_populates="wp")
-    tricked_workers = db.relationship(f"WPTrickedWorkers", back_populates="wp")
-    workers = db.relationship(f"WPAllowedWorkers", back_populates="wp")
-    models = db.relationship(f"WPModels", back_populates="wp")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
+    tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
+    workers = db.relationship("WPAllowedWorkers", back_populates="wp")
+    models = db.relationship("WPModels", back_populates="wp")
 
     ttl = db.Column(db.Integer, default=1200, nullable=False)
 

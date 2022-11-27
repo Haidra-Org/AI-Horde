@@ -69,6 +69,7 @@ class User(db.Model):
     teams = db.relationship(f"Team", back_populates="owner")
     suspicions = db.relationship("UserSuspicions", back_populates="user")
     stats = db.relationship("UserStats", back_populates="user")
+    waiting_prompts = db.relationship("WaitingPrompt", back_populates="user")
 
     def create(self):
         self.set_min_kudos()

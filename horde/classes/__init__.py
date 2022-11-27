@@ -1,35 +1,50 @@
 from .. import logger, args
 from importlib import import_module
 from horde.flask import db
-
-# To avoid imports on uninitialized vars
-stats = None
-ProcessingGeneration = None
-WaitingPrompt = None
-User = None
-Team = None
-Worker = None
-WorkerPerformance = None
-News = None
-WPCleaner = None
-MonthlyKudos = None
-
 from horde.classes import database
+from horde.classes.base import stats
+
 # Should figure out an elegant way to do this with a for loop
-stats = import_module(name=f'horde.classes.{args.horde}').stats
-ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}').ProcessingGeneration
-WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
-User = import_module(name=f'horde.classes.{args.horde}').User
-Team = import_module(name=f'horde.classes.{args.horde}').Team
-Worker = import_module(name=f'horde.classes.{args.horde}').Worker
-WorkerPerformance = import_module(name=f'horde.classes.{args.horde}').WorkerPerformance
-News = import_module(name=f'horde.classes.{args.horde}').News
-WPCleaner = import_module(name=f'horde.classes.{args.horde}').WPCleaner
-MonthlyKudos = import_module(name=f'horde.classes.{args.horde}').MonthlyKudos
+# stats = import_module(name=f'horde.classes.{args.horde}').stats
+try:
+    ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
+except (ModuleNotFoundError,AttributeError):
+    ProcessingGeneration = import_module(name=f'horde.classes.base.processing_generation').ProcessingGeneration
+try:
+    WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
+except (ModuleNotFoundError,AttributeError):
+    WaitingPrompt = import_module(name=f'horde.classes.base.waiting_prompt').WaitingPrompt
+try:
+    User = import_module(name=f'horde.classes.{args.horde}.user').UserExtended
+except (ModuleNotFoundError,AttributeError):
+    User = import_module(name=f'horde.classes.base.user').User
+try:
+    Team = import_module(name=f'horde.classes.{args.horde}.team').TeamExtended
+except (ModuleNotFoundError,AttributeError):
+    Team = import_module(name=f'horde.classes.base.team').Team
+try:
+    Worker = import_module(name=f'horde.classes.{args.horde}.worker').WorkerExtended
+except (ModuleNotFoundError,AttributeError):
+    Worker = import_module(name=f'horde.classes.base.worker').Worker
+try:
+    WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
+except (ModuleNotFoundError,AttributeError):
+    WorkerPerformance = import_module(name=f'horde.classes.base.worker').WorkerPerformance
+News = import_module(name=f'horde.classes.{args.horde}.news').News
+try:
+    WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended
+except (ModuleNotFoundError,AttributeError):
+    WPCleaner = import_module(name=f'horde.classes.base.threads').WPCleaner
+try:
+    MonthlyKudos = import_module(name=f'horde.classes.{args.horde}.threads').MonthlyKudosExtended
+except (ModuleNotFoundError,AttributeError):
+    MonthlyKudos = import_module(name=f'horde.classes.base.threads').MonthlyKudos
 
 logger.debug(Team)
 db.create_all()
 
+stats.initialize()
+database.initialize()
 wp_cleaner = WPCleaner()
 monthly_kudos = MonthlyKudos()
 
@@ -45,8 +60,3 @@ if not anon:
     )
     anon.create()
 
-
-# from .base import WaitingPrompt,ProcessingGeneration,Worker,PromptsIndex,GenerationsIndex,User,Database
-
-waiting_prompts = PromptsIndex()
-processing_generations = GenerationsIndex()

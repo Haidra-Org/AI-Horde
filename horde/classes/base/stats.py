@@ -4,7 +4,8 @@ from horde import logger
 from horde.flask import db
 from horde.vars import thing_divisor, raw_thing_name
 
-from horde.classes import WorkerPerformance
+def initialize():
+    from horde.classes import WorkerPerformance
 
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
