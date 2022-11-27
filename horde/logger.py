@@ -1,6 +1,7 @@
 import sys
 from functools import partialmethod
 from loguru import logger
+from horde.argparser import args
 
 STDOUT_LEVELS = ["GENERATION", "PROMPT"]
 INIT_LEVELS = ["INIT", "INIT_OK", "INIT_WARN", "INIT_ERR"]
@@ -105,3 +106,6 @@ logger.warning("disabled")
 logger.enable("")
 logger.enable(None)
 
+
+set_logger_verbosity(args.verbosity)
+quiesce_logger(args.quiet)

@@ -3,6 +3,7 @@ import time
 from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
+from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration
 
 ALLOW_ANONYMOUS = True
 
@@ -281,20 +282,20 @@ def get_wp_queue_stats(self, wp):
 
 def get_organized_procgens_by_model():
     org = {}
-    for procgen in db.session.query(ProcessingGenerationExtended).all():
+    for procgen in db.session.query(ProcessingGeneration).all():
         if procgen.model not in org:
             org[model] = []
         org[model].append(procgen)
     return(org)
 
 def get_wp_by_id(self, uuid):
-    return db.session.query(WaitingPromptExtended).filter_by(id=uuid).first()
+    return db.session.query(WaitingPrompt).filter_by(id=uuid).first()
 
 def get_progen_by_id(self, uuid):
-    return db.session.query(ProcessingGenerationExtended).filter_by(id=uuid).first()
+    return db.session.query(ProcessingGeneration).filter_by(id=uuid).first()
 
 def get_all_wps(self, uuid):
-    return db.session.query(WaitingPromptExtended).all()
+    return db.session.query(WaitingPrompt).all()
 
 def get_progens(self, uuid):
-    return db.session.query(ProcessingGenerationExtended).all()
+    return db.session.query(ProcessingGeneration).all()

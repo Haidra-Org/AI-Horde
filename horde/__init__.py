@@ -8,18 +8,10 @@ from horde.routes import *  # I don't like this, we should be refactoring what t
 from horde.apis import apiv1, apiv2
 from horde.argparser import args, invite_only, raid, maintenance
 from horde.flask import HORDE, cache
-from horde.logger import logger, quiesce_logger, set_logger_verbosity
+from horde.logger import logger
 from horde.redis_ctrl import get_horde_db, is_redis_up
 
 from horde.limiter import limiter
-
-set_logger_verbosity(args.verbosity)
-quiesce_logger(args.quiet)
-
-if args.worker_invite:
-    invite_only.activate()
-if args.raid:
-    raid.activate()
 
 horde_r = None
 logger.init("Horde Redis", status="Connecting")

@@ -4,11 +4,9 @@ import uuid
 
 from horde.logger import logger
 from horde.flask import db
-from horde.classes import stats
-from horde.classes import database
 from horde.vars import thing_divisor
 
-from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes import ProcessingGeneration
 
 
 class WPAllowedWorkers(db.Model):
@@ -187,7 +185,7 @@ class WaitingPrompt(db.Model):
         '''The things still queued to be generated for this waiting prompt'''
         return round(self.things * self.n/thing_divisor,2)
 
-    def get_status(self, lite = False):
+    def get_status(self, request_avg, active_worker_count, lite = False):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
@@ -206,12 +204,12 @@ class WaitingPrompt(db.Model):
         # We increment the priority by 1, because it starts at -1
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        active_workers = database.count_active_workers()
+        active_workers = active_workers_count
         # If there's less requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_workers:
             active_workers = queued_n
-        avg_things_per_sec = (stats.get_request_avg() / thing_divisor) * active_workers
+        avg_things_per_sec = (request_avg / thing_divisor) * active_workers
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1

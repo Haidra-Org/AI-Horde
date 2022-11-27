@@ -18,7 +18,10 @@ class FulfillmentPerformance(db.Model):
     things = db.Column(db.Float, primary_key=False)
 
 
-def record_fulfilment(things, starting_time, model):
+def record_fulfilment(procgen):
+    things = procgen.owner.things
+    starting_time = procgen.start_time
+    model = procgen.model
     seconds_taken = (datetime.utcnow() - starting_time).seconds
     if seconds_taken == 0:
         things_per_sec = 1

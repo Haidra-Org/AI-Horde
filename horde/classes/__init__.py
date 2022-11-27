@@ -2,8 +2,6 @@ from horde.logger import logger
 from horde.argparser import args
 from importlib import import_module
 from horde.flask import db, HORDE
-from horde.classes import database
-from horde.classes.base import stats
 
 # Should figure out an elegant way to do this with a for loop
 # stats = import_module(name=f'horde.classes.{args.horde}').stats
@@ -37,7 +35,6 @@ try:
     WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
 except (ModuleNotFoundError,AttributeError):
     WorkerPerformance = import_module(name=f'horde.classes.base.worker').WorkerPerformance
-
 News = import_module(name=f'horde.classes.{args.horde}.news').News
 try:
     WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended
@@ -47,6 +44,9 @@ try:
     MonthlyKudos = import_module(name=f'horde.classes.{args.horde}.threads').MonthlyKudosExtended
 except (ModuleNotFoundError,AttributeError):
     MonthlyKudos = import_module(name=f'horde.classes.base.threads').MonthlyKudos
+
+from horde.classes import database
+from horde.classes.base import stats
 
 logger.debug(Team)
 with HORDE.app_context():

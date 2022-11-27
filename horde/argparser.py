@@ -17,3 +17,8 @@ args = arg_parser.parse_args()
 maintenance = Switch()
 invite_only = Switch()
 raid = Switch()
+
+if args.worker_invite:
+    invite_only.activate()
+if args.raid:
+    raid.activate()

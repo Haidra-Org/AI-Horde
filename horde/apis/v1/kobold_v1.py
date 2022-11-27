@@ -150,7 +150,7 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        ret_dict = wp.get_status()['generations']
+        ret_dict = wp.get_status(request_avg=stats.get_request_avg(),active_worker_count=database.count_active_workers())['generations']
         # We delete it from memory immediately to ensure we don't run out
         wp.delete()
         return(ret_dict, 200)
@@ -164,7 +164,7 @@ class AsyncStatus(Resource):
         wp = database.get_wp_by_id(id)
         if not wp:
             return("ID not found", 404)
-        wp_status = wp.get_status()
+        wp_status = wp.get_status(request_avg=stats.get_request_avg(),active_worker_count=database.count_active_workers())
         return(wp_status, 200)
 
 

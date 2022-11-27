@@ -3,8 +3,6 @@ import uuid
 
 from horde.logger import logger
 from horde.flask import db
-from horde.classes import database
-from horde.classes import stats
 
 
 class ProcessingGeneration:
@@ -49,7 +47,6 @@ class ProcessingGeneration:
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        self.things_per_sec = stats.record_fulfilment(things=self.owner.things, starting_time=self.start_time, model=self.model)
         self.kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record()
@@ -97,7 +94,8 @@ class ProcessingGeneration:
 
     # Overridable function
     def get_gen_kudos(self):
-        return(database.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
+        return self.owner.kudos
+        # return(database.convert_things_to_kudos(self.owner.things, seed = self.seed, model_name = self.model))
 
     def is_completed(self):
         if self.generation:
