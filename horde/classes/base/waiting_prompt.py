@@ -82,7 +82,7 @@ class WaitingPrompt(db.Model):
         self.set_workers(worker_ids)
         self.set_models(models)
         self.extract_params()
-        logger.debug([kwargs, self.user])
+        logger.debug([kwargs, self.user]) 
 
     def set_workers(self, worker_ids = []):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
