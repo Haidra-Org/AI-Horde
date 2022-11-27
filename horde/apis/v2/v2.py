@@ -7,13 +7,13 @@ import time
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
 
-from horde.flask import cache
+from horde.flask import cache, db, HORDE
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.argparser import maintenance, invite_only, raid
 from horde.apis import ModelsV2, ParsersV2
 from horde.apis import exceptions as e
-from horde.classes import database, processing_generations, waiting_prompts, Worker, Team, WaitingPrompt, News, User
+from horde.classes import Worker, Team, WaitingPrompt, News, User
 from horde.suspicions import Suspicions
 from horde.utils import is_profane
 from horde.countermeasures import CounterMeasures
@@ -86,6 +86,15 @@ def get_request_path():
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
+    def __init__(self):
+        self.params = None
+        self.models = None
+        self.workers = None
+        self.username = 'Anonymous'
+        self.user = None
+        self.user_ip = request.remote_addr
+        self.safe_ip = True
+        super().__init__()
 
     def post(self):
         self.args = parsers.generate_parser.parse_args()
@@ -100,7 +109,6 @@ class GenerateTemplate(Resource):
         self.workers = []
         if self.args.workers:
             self.workers = self.args.workers
-        self.username = 'Anonymous'
         self.user = None
         self.user_ip = request.remote_addr
         # For now this is checked on validate()
@@ -120,44 +128,45 @@ class GenerateTemplate(Resource):
     def validate(self):
         if maintenance.active:
             raise e.MaintenanceMode('Generate')
-        if self.args.apikey:
-            self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('generation')
-        self.username = self.user.get_unique_alias()
-        if self.args['prompt'] == '':
-            raise e.MissingPrompt(self.username)
-        if self.user.is_anon():
-            wp_count = database.count_waiting_requests(self.user,self.args["models"])
-        else:
-            wp_count = database.count_waiting_requests(self.user)
-        if len(self.workers):
-            for worker_id in self.workers:
-                if not database.find_worker_by_id(worker_id):
-                    raise e.WorkerNotFound(worker_id)
-        n = 1
-        if self.args.params:
-            n = self.args.params.get('n',1)
-        user_limit = self.user.get_concurrency(self.args["models"],database.get_available_models(waiting_prompts,lite_dict=True))
-        if wp_count + n > user_limit:
-            raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
-        ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
-        if ip_timeout:
-            raise e.TimeoutIP(self.user_ip, ip_timeout)
-        prompt_suspicion = 0
-        if "###" in self.args.prompt:
-            prompt, negprompt = self.args.prompt.split("###", 1)
-        else:
-            prompt = self.args.prompt
-        for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
-            for blacklist in blacklist_regex:
-                if blacklist.search(prompt):
-                    prompt_suspicion += 1
-                    break
-        if prompt_suspicion >= 2:
-            self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
-            CounterMeasures.report_suspicion(self.user_ip)
-            raise e.CorruptPrompt(self.username, self.user_ip, prompt)
+        with HORDE.app_context():
+            if self.args.apikey:
+                self.user = db.session.query(User).filter_by(apikey=self.args['apikey']).first()
+            if not self.user:
+                raise e.InvalidAPIKey('generation')
+            self.username = self.user.get_unique_alias()
+            if self.args['prompt'] == '':
+                raise e.MissingPrompt(self.username)
+            if self.user.is_anon():
+                wp_count = WaitingPrompt.count_waiting_requests(self.user,self.args["models"])
+            else:
+                wp_count = WaitingPrompt.count_waiting_requests(self.user)
+            if len(self.workers):
+                for worker_id in self.workers:
+                    if not database.find_worker_by_id(worker_id):
+                        raise e.WorkerNotFound(worker_id)
+            n = 1
+            if self.args.params:
+                n = self.args.params.get('n',1)
+            user_limit = self.user.get_concurrency(self.args["models"],database.get_available_models(waiting_prompts,lite_dict=True))
+            if wp_count + n > user_limit:
+                raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
+            ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
+            if ip_timeout:
+                raise e.TimeoutIP(self.user_ip, ip_timeout)
+            prompt_suspicion = 0
+            if "###" in self.args.prompt:
+                prompt, negprompt = self.args.prompt.split("###", 1)
+            else:
+                prompt = self.args.prompt
+            for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
+                for blacklist in blacklist_regex:
+                    if blacklist.search(prompt):
+                        prompt_suspicion += 1
+                        break
+            if prompt_suspicion >= 2:
+                self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
+                CounterMeasures.report_suspicion(self.user_ip)
+                raise e.CorruptPrompt(self.username, self.user_ip, prompt)
 
     
     # We split this into its own function, so that it may be overriden

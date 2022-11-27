@@ -1,7 +1,7 @@
 import threading
 import time
 
-from horde.classes import WaitingPrompt
+from horde.classes import WaitingPrompt, User
 from horde.flask import HORDE, db
 from horde.logger import logger
 
