@@ -15,27 +15,27 @@ from horde.classes import ProcessingGeneration
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
 
 
 class WPTrickedWorkers(db.Model):
     __tablename__ = "wp_tricked_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
 
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
-    model = db.Column(db.String(20), primary_key=False)
+    model = db.Column(db.String(20), nullable=False)
 
 
 class WaitingPrompt(db.Model):

@@ -13,7 +13,7 @@ from horde.utils import is_profane, get_db_uuid
 class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, default=0, nullable=False)
@@ -21,7 +21,7 @@ class WorkerStats(db.Model):
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
     created = db.Column(db.DateTime, default=datetime.utcnow)
@@ -29,21 +29,21 @@ class WorkerPerformance(db.Model):
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="blacklist")
     word = db.Column(db.String(15), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 class WorkerModel(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="models")
     model = db.Column(db.String(20), primary_key=False)
 
@@ -323,7 +323,7 @@ class Worker(db.Model):
         self.kudos = round(self.kudos + kudos, 2)
         kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).filter_by(action=action).first()
         if not kudos_details:
-            kudos_details = WorkerStats(action=action, value=round(kudos, 2))
+            kudos_details = WorkerStats(worker_id=self.id,action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
             db.session.commit()
         else:

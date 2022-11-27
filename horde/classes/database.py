@@ -11,7 +11,7 @@ ALLOW_ANONYMOUS = True
 def initiate_save(seconds = 1):
     logger.success(f"Initiating save in {seconds} seconds")
     # TODO - we don't want waits if we can avoid it (as this is a server)
-    time.wait(seconds)
+    time.sleep(seconds)
     db.session.commit()
 
 def get_anon():

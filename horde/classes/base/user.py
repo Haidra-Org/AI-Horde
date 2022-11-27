@@ -17,7 +17,7 @@ from horde.utils import is_profane
 class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
@@ -26,45 +26,41 @@ class UserStats(db.Model):
 class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     user = db.relationship("User", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
 class User(db.Model):
     __tablename__ = "users"
+    SUSPICION_THRESHOLD = 3
+
     id = db.Column(db.Integer, primary_key=True) 
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False)
     api_key = db.Column(db.String(50), unique=True, nullable=False)
-    created = db.Column(db.DateTime, default=datetime.utcnow)
-    last_active = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
 
-    kudos = db.Column(db.Integer, default=0)
-    min_kudos = db.Column(db.Integer, default=0)
-    kudos_accumulated = db.Column(db.Integer, default=0)
-    kudos_gifted = db.Column(db.Integer, default=0)
-    kudos_admin = db.Column(db.Integer, default=0)
-    kudos_received = db.Column(db.Integer, default=0)
-    kudos_recurring = db.Column(db.Integer, default=0)
-    monthly_kudos = db.Column(db.Integer, default=0)
+    kudos = db.Column(db.Integer, default=0, nullable=False)
+    min_kudos = db.Column(db.Integer, default=0, nullable=False)
+    monthly_kudos = db.Column(db.Integer, default=0, nullable=False)
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
-    evaluating_kudos = db.Column(db.Integer, default=0)
-    usage_multiplier = db.Column(db.Float, default=1.0)
-    contributed_thing = db.Column(db.Float, default=0)
-    contributed_fulfillments = db.Column(db.Integer, default=0)
-    usage_thing = db.Column(db.Float, default=0)
-    usage_requests = db.Column(db.Integer, default=0)
+    evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
+    usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
+    contributed_thing = db.Column(db.Float, default=0, nullable=False)
+    contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
+    usage_thing = db.Column(db.Float, default=0, nullable=False)
+    usage_requests = db.Column(db.Integer, default=0, nullable=False)
 
-    worker_invited = db.Column(db.Boolean, default=False)
-    moderator = db.Column(db.Boolean, default=False)
-    public_workers = db.Column(db.Boolean, default=False)
-    trusted = db.Column(db.Boolean, default=False)
-    concurrency = db.Column(db.Integer, default=30)
-    same_ip_worker_threshold = db.Column(db.Integer, default=3)
-    suspicion_threshold = db.Column(db.Integer, default=3)
+    worker_invited = db.Column(db.Boolean, default=False, nullable=False)
+    moderator = db.Column(db.Boolean, default=False, nullable=False)
+    public_workers = db.Column(db.Boolean, default=False, nullable=False)
+    trusted = db.Column(db.Boolean, default=False, nullable=False)
+    concurrency = db.Column(db.Integer, default=30, nullable=False)
+    same_ip_worker_threshold = db.Column(db.Integer, default=3, nullable=False)
 
     workers = db.relationship(f"WorkerExtended", back_populates="user")
     teams = db.relationship(f"Team", back_populates="owner")
@@ -218,9 +214,10 @@ class User(db.Model):
         self.ensure_kudos_positive()
         kudos_details = db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
         if not kudos_details:
-            kudos_details = UserStats(action=action, value=round(kudos, 2))
+            kudos_details = UserStats(user_id=self.id, action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
             db.session.commit()
+            logger.debug(kudos_details)
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
             db.session.commit()
@@ -286,9 +283,8 @@ class User(db.Model):
     def is_suspicious(self): 
         if self.trusted:
             return(False)
-        #TODO: Replace with SELECT/COUNT from DB to get all the suspicions from the users and count them
-        # if self.suspicious >= self.suspicion_threshold:
-        #     return(True)
+        if len(self.suspicions) >= self.SUSPICION_THRESHOLD:
+            return(True)
         return(False)
 
     def exceeding_ipaddr_restrictions(self, ipaddr):
@@ -324,14 +320,10 @@ class User(db.Model):
         return(True)
 
     def compile_kudos_details(self):
-        kudos_dict = {
-            "accumulated": self.kudos_accumulated,
-            "gifted": self.kudos_gifted,
-            "admin": self.kudos_admin,
-            "received": self.kudos_received,
-            "recurring": self.kudos_recurring,
-        }
-        return kudos_dict
+        kudos_details_dict = {}
+        for stat in self.stats:
+            kudos_details_dict[stat.action] = stat.value
+        return kudos_details_dict
 
     def compile_usage_details(self):
         usage_dict = {

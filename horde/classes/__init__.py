@@ -33,7 +33,10 @@ try:
     WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
 except (ModuleNotFoundError,AttributeError):
     WorkerPerformance = import_module(name='horde.classes.base.worker').WorkerPerformance
-News = import_module(name=f'horde.classes.{args.horde}.news').News
+try:
+    News = import_module(name=f'horde.classes.{args.horde}.news').NewsExtended
+except (ModuleNotFoundError,AttributeError):
+    News = import_module(name=f'horde.classes.{args.horde}.news').News
 try:
     WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended
 except (ModuleNotFoundError,AttributeError):

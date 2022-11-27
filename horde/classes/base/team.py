@@ -14,16 +14,16 @@ class Team(db.Model):
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', nullable=False)
-    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     owner = db.relationship(f"User", back_populates="teams")
 
-    contributions = db.Column(db.Integer, unique=False)
-    fulfilments = db.Column(db.Integer, unique=False)
-    kudos = db.Column(db.Integer, unique=False)
-    uptime = db.Column(db.Integer, unique=False)
+    contributions = db.Column(db.Integer, default=0, nullable=False)
+    fulfilments = db.Column(db.Integer, default=0, nullable=False)
+    kudos = db.Column(db.Integer, default=0, nullable=False)
+    uptime = db.Column(db.Integer, default=0, nullable=False)
 
-    created = db.Column(db.DateTime, default=datetime.utcnow)
-    last_active = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     workers = db.relationship("Worker", back_populates="team")
 

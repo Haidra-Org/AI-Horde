@@ -14,17 +14,17 @@ class ProcessingGeneration(db.Model):
 
     model = db.Column(db.String(40), default='', nullable=False)
     seed = db.Column(db.Integer, default=0, nullable=False)
-    start_time = db.Column(db.DateTime, default=datetime.utcnow)
+    start_time = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     cancelled = db.Column(db.Boolean, default=False, nullable=False)
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     fake = db.Column(db.Boolean, default=False, nullable=False)
 
-    wp_id = db.Column(db.String(36), db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.String(36), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
-    worker_id = db.Column(db.String(36), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(36), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("WorkerExtended", back_populates="processing_gens")
-    created = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

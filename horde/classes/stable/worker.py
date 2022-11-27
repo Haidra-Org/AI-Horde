@@ -5,10 +5,10 @@ from horde.suspicions import Suspicions
 
 
 class WorkerExtended(Worker):
-    max_pixels = db.Column(db.Integer, default=512 * 512)
-    allow_img2img = db.Column(db.Boolean, default=True)
-    allow_painting = db.Column(db.Boolean, default=True)
-    allow_unsafe_ipaddr = db.Column(db.Boolean, default=True)
+    max_pixels = db.Column(db.Integer, default=512 * 512, nullable=False)
+    allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
+    allow_painting = db.Column(db.Boolean, default=True, nullable=False)
+    allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
