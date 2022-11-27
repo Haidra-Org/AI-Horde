@@ -54,6 +54,7 @@ class WaitingPrompt(db.Model):
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
     last_process_time = db.Column(db.DateTime, default=datetime.utcnow())
     faulted = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, default=False, nullable=False)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False)
@@ -82,7 +83,8 @@ class WaitingPrompt(db.Model):
         self.set_workers(worker_ids)
         self.set_models(models)
         self.extract_params()
-        logger.debug([kwargs, self.user]) 
+        db.session.add(self)
+        logger.debug([kwargs, self.user,self.models, self.user_id]) 
 
     def set_workers(self, worker_ids = []):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
@@ -101,7 +103,7 @@ class WaitingPrompt(db.Model):
         '''We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         '''
-        db.session.add(self)
+        self.active = True
         db.session.commit()
 
     def get_model_names(self):
@@ -194,7 +196,7 @@ class WaitingPrompt(db.Model):
         '''The things still queued to be generated for this waiting prompt'''
         return round(self.things * self.n/thing_divisor,2)
 
-    def get_status(self, request_avg, active_worker_count, lite = False):
+    def get_status(self, request_avg, active_worker_count, has_valid_workers, lite = False):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
@@ -234,7 +236,7 @@ class WaitingPrompt(db.Model):
         wait_time += highest_expected_time_left
         ret_dict["wait_time"] = round(wait_time)
         ret_dict["kudos"] = self.consumed_kudos
-        ret_dict["is_possible"] = self.has_valid_workers()
+        ret_dict["is_possible"] = has_valid_workers
         return(ret_dict)
 
     def get_lite_status(self):
@@ -268,6 +270,12 @@ class WaitingPrompt(db.Model):
             if not self.faulted and not gen.fake:
                 gen.cancel()
             gen.delete()
+        for worker in self.workers:
+            db.session.delete(worker)
+        for tricked_worker in self.tricked_workers:
+            db.session.delete(tricked_worker)
+        for model in self.models:
+            db.session.delete(model)
         db.session.delete(self)
         db.session.commit()
 
@@ -296,13 +304,6 @@ class WaitingPrompt(db.Model):
         '''
         self.job_ttl = 150
         db.session.commit()
-
-    def has_valid_workers(self):
-        worker_found = False
-        for worker in database.get_active_workers():
-            if len(self.workers) and worker not in self.workers:
-                continue
-            if worker.can_generate(self)[0]:
-                worker_found = True
-                break
-        return(worker_found)
+    
+    def get_worker_ids(self):
+        return [worker.id for worker in self.workers]

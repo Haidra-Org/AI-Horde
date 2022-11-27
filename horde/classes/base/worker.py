@@ -38,7 +38,7 @@ class WorkerSuspicions(db.Model):
     worker = db.relationship(f"WorkerExtended", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
-class WorkerModels(db.Model):
+class WorkerModel(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
@@ -87,7 +87,7 @@ class Worker(db.Model):
     performance = db.relationship("WorkerPerformance", back_populates="worker")
     blacklist = db.relationship("WorkerBlackList", back_populates="worker")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker")
-    models = db.relationship("WorkerModels", back_populates="worker")
+    models = db.relationship("WorkerModel", back_populates="worker")
     processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
 
     def create(self, **kwargs):
@@ -181,13 +181,13 @@ class Worker(db.Model):
         models = [bleach.clean(model_name) for model_name in models]
         del models[50:]
         models = set(models)
-        existing_models = db.session.query(WorkerModels).filter_by(worker_id=self.id)
+        existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
         existing_model_names = set([m.model for m in existing_models.all()])
         if existing_model_names == models:
             return
         existing_models.delete()
         for model_name in models:
-            model = WorkerModels(worker_id=self.id,model=model_name)
+            model = WorkerModel(worker_id=self.id,model=model_name)
             db.session.add(model)
         db.session.commit()
 
@@ -374,6 +374,16 @@ class Worker(db.Model):
         return(False)
 
     def delete(self):
+        for stat in self.stats:
+            db.session.delete(stat)    
+        for performance in self.performance:
+            db.session.delete(performance)
+        for word in self.blacklist:
+            db.session.delete(word)
+        for suspicion in self.suspicions:
+            db.session.delete(suspicion)
+        for model in self.models:
+            db.session.delete(model)
         db.session.delete(self)
         db.session.commit()
 

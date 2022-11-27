@@ -157,6 +157,7 @@ class SyncGenerate(Resource):
                 break
         ret_dict = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
             active_worker_count=database.count_active_workers()
         )['generations']
         # We delete it from memory immediately to ensure we don't run out
@@ -174,6 +175,7 @@ class AsyncStatus(Resource):
             return("ID not found", 404)
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
             active_worker_count=database.count_active_workers()
         )
         # If the status is retrieved after the wp is done we clear it to free the ram

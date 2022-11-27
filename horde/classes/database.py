@@ -301,7 +301,7 @@ def get_progen_by_id(uuid):
     return db.session.query(ProcessingGeneration).filter_by(id=uuid).first()
 
 def get_all_wps():
-    return db.session.query(WaitingPrompt).all()
+    return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
 def get_progens():
     return db.session.query(ProcessingGeneration).all()
@@ -309,3 +309,12 @@ def get_progens():
 def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance).all()]
 
+def wp_has_valid_workers(wp, limited_workers_ids = []):
+    worker_found = False
+    for worker in get_active_workers():
+        if len(limited_workers_ids) and worker not in wp.get_worker_ids():
+            continue
+        if worker.can_generate(wp)[0]:
+            worker_found = True
+            break
+    return(worker_found)
