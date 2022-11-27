@@ -22,15 +22,13 @@ class Team(db.Model):
     kudos = db.Column(db.Integer, unique=False)
     uptime = db.Column(db.Integer, unique=False)
 
-    creation_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
 
     workers = db.relationship("Worker", back_populates="team")
 
     def create(self, user):
         self.set_owner(user)
-        self.creation_date = datetime.utcnow()
-        self.last_active = datetime.utcnow()
         db.session.add(self)
         db.session.commit()
 

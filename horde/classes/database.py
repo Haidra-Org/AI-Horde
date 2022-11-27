@@ -42,6 +42,9 @@ def get_top_worker():
     ).first()
     return top_worker
 
+def get_all_workers():
+    return db.session.query(Worker).all()
+
 def get_active_workers():
     active_workers = db.session.query(Worker).filter(
         datetime.utcnow() - Worker.last_check_in <= timedelta(seconds=300)
@@ -113,6 +116,9 @@ def find_worker_by_name(worker_name):
 def find_worker_by_id(worker_id):
     worker = db.session.query(Worker).filter_by(id=worker_id).first()
     return(worker)
+
+def get_all_teams():
+    return db.session.query(Teams).all()
 
 def find_team_by_id(team_id):
     team = db.session.query(Team).filter_by(id=team_id).first()

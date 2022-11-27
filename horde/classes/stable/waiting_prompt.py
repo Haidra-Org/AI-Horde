@@ -15,22 +15,17 @@ class WaitingPromptExtended(WaitingPrompt):
     seed_variation = db.Column(db.Integer, default=None)
 
     @logger.catch(reraise=True)
-    def extract_params(self, **kwargs):
+    def extract_params(self):
         self.n = self.params.pop('n', 1)
         self.jobs = self.n 
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
             logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
-        self.store_models(kwargs.get("models", ['stable_diffusion']))
         # Silent change
         if self.get_model_names() == ["stable_diffusion_2.0"]:
             self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
-        self.source_image = kwargs.get("source_image", None)
-        self.source_processing = kwargs.get("source_processing", 'img2img')
-        self.source_mask = kwargs.get("source_mask", None)
-        self.censor_nsfw = kwargs.get("censor_nsfw", True)
         if 'seed' in self.params and self.params['seed'] is not None:
             # logger.warning([self,'seed' in params, params])
             self.seed = self.params.pop('seed')
@@ -39,14 +34,14 @@ class WaitingPromptExtended(WaitingPrompt):
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.params['width'] * self.params['height'] * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
-        self.calculate_kudos()
         self.prepare_job_payload(self.params)
+        self.calculate_kudos()
         # Commit will happen in prepare_job_payload()
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict = {}):
         '''Prepares the default job payload. This might be further adjusted per job in get_job_payload()'''
-        self.gen_payload = initial_dict
+        self.gen_payload = initial_dict.copy()
         self.gen_payload["prompt"] = self.prompt
         # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1

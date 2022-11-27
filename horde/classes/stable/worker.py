@@ -36,7 +36,7 @@ class WorkerExtended(Worker):
         skipped_reason = can_generate[1]
         if not is_matching:
             return [is_matching, skipped_reason]
-        if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
+        if self.max_pixels < waiting_prompt.params['width'] * waiting_prompt.params['height']:
             is_matching = False
             skipped_reason = 'max_pixels'
         if waiting_prompt.source_image and self.bridge_version < 2:
@@ -46,11 +46,11 @@ class WorkerExtended(Worker):
             if self.bridge_version < 4:
                 is_matching = False
                 skipped_reason = 'painting'
-            if "stable_diffusion_inpainting" not in self.models:
+            if "stable_diffusion_inpainting" not in self.get_model_names():
                 is_matching = False
                 skipped_reason = 'models'
         # If the only model loaded is the inpainting one, we skip the worker when this kind of work is not required
-        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.models == ["stable_diffusion_inpainting"]:
+        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.get_model_names() == ["stable_diffusion_inpainting"]:
             is_matching = False
             skipped_reason = 'models'
         if waiting_prompt.source_processing != 'img2img' and self.bridge_version < 4:
@@ -85,6 +85,8 @@ class WorkerExtended(Worker):
             #     is_matching = False
             #     skipped_reason = 'untrusted'
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
+                logger.debug(waiting_prompt.user)
+                logger.debug(waiting_prompt.user.trusted)
                 is_matching = False
                 skipped_reason = 'untrusted'
         return [is_matching, skipped_reason]

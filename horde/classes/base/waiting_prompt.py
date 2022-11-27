@@ -65,7 +65,7 @@ class WaitingPrompt(db.Model):
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
     # TODO temp disabled
-    # processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")
     models = db.relationship("WPModels", back_populates="wp")
@@ -75,10 +75,27 @@ class WaitingPrompt(db.Model):
     updated = db.Column(
         db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow
     )
+    created = db.Column(db.DateTime, default=datetime.utcnow)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, worker_ids, models, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.extract_params(**kwargs)
+        self.set_workers(worker_ids)
+        self.set_models(models)
+        self.extract_params()
+        logger.debug([kwargs, self.user])
+
+    def set_workers(self, worker_ids = []):
+        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
+        for wid in worker_ids:
+            worker_entry = WPAllowedWorkers(worker_id=wid,wp_id=self.id)
+            db.session.add(worker_entry)
+
+    def set_models(self, model_names = []):
+        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
+        logger.debug(model_names)
+        for model in model_names:
+            model_entry = WPModels(model=model,wp_id=self.id)
+            db.session.add(model_entry)
 
     def activate(self):
         '''We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -91,23 +108,15 @@ class WaitingPrompt(db.Model):
         return set([m.model for m in self.models])
 
     # These are typically horde-specific so they will be defined in the specific class for this horde type
-    def extract_params(self, **kwargs):
+    def extract_params(self):
         logger.debug(self.params)
         self.n = self.params.pop('n', 1)
         # We store the original amount of jobs requested as well
         self.jobs = self.n 
         # This specific per horde so it should be set in the extended class
         self.things = 0
-        self.store_models(kwargs.get("models", ['ReadOnly']))
-
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload()
-        db.session.commit()
-
-    def store_models(self, model_names):
-        for model in model_names:
-            model_entry = WPModels(wp_id=self.id, model=model)
-            db.session.add(model_entry)
         db.session.commit()
 
     def prepare_job_payload(self):

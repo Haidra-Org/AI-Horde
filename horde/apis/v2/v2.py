@@ -6,7 +6,6 @@ import time
 
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
-
 from horde.flask import cache, db, HORDE
 from horde.limiter import limiter
 from horde.logger import logger
@@ -86,16 +85,6 @@ def get_request_path():
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
-    def __init__(self):
-        self.params = None
-        self.models = None
-        self.workers = None
-        self.username = 'Anonymous'
-        self.user = None
-        self.user_ip = request.remote_addr
-        self.safe_ip = True
-        super().__init__()
-
     def post(self):
         self.args = parsers.generate_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
@@ -116,7 +105,7 @@ class GenerateTemplate(Resource):
         self.validate()
         self.initiate_waiting_prompt()
         worker_found = False
-        for worker in list(database.workers.values()):
+        for worker in database.get_all_workers():
             if len(self.workers) and worker.id not in self.workers:
                 continue
             if worker.can_generate(self.wp)[0]:
@@ -130,16 +119,16 @@ class GenerateTemplate(Resource):
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():
             if self.args.apikey:
-                self.user = db.session.query(User).filter_by(apikey=self.args['apikey']).first()
+                self.user = db.session.query(User).filter_by(api_key=self.args['apikey']).first()
             if not self.user:
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
             if self.args['prompt'] == '':
                 raise e.MissingPrompt(self.username)
             if self.user.is_anon():
-                wp_count = WaitingPrompt.count_waiting_requests(self.user,self.args["models"])
+                wp_count = database.count_waiting_requests(self.user,self.args["models"])
             else:
-                wp_count = WaitingPrompt.count_waiting_requests(self.user)
+                wp_count = database.count_waiting_requests(self.user)
             if len(self.workers):
                 for worker_id in self.workers:
                     if not database.find_worker_by_id(worker_id):
@@ -172,15 +161,15 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
-            database,
-            waiting_prompts,
-            processing_generations,
-            self.args["prompt"],
-            self.user,
-            self.params,
-            workers=self.args["workers"],
-            nsfw=self.args["nsfw"],
-            trusted_workers=self.args["trusted_workers"],
+            self.workers,
+            self.models,
+            prompt = self.args["prompt"],
+            user_id = self.user.id,
+            params = self.params,
+            nsfw = self.args.nsfw,
+            censor_nsfw = self.args.censor_nsfw,
+            trusted_workers = self.args.trusted_workers,
+            ipaddr = self.user_ip,
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -942,7 +931,7 @@ class Teams(Resource):
         '''
         teams_ret = []
         # I could do this with a comprehension, but this is clearer to understand
-        for team in list(database.teams.values()):
+        for team in database.get_all_teams():
             teams_ret.append(team.get_details())
         return(teams_ret,200)
 

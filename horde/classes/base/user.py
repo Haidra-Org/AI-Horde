@@ -37,7 +37,7 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False)
     api_key = db.Column(db.String(50), unique=True, nullable=False)
-    creation_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
     contact = db.Column(db.String(50), default=None)
 

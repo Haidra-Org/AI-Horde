@@ -15,7 +15,7 @@ class WorkerStats(db.Model):
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
     worker = db.relationship(f"WorkerExtended", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
-    value = db.Column(db.Integer, nullable=False)
+    value = db.Column(db.Integer, default=0, nullable=False)
 
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
@@ -59,6 +59,7 @@ class Worker(db.Model):
     name = db.Column(db.String(50), unique=True, nullable=False)
     info = db.Column(db.String(1000), unique=False)
     ipaddr = db.Column(db.String(15), unique=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
 
     last_check_in = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -87,6 +88,7 @@ class Worker(db.Model):
     blacklist = db.relationship("WorkerBlackList", back_populates="worker")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker")
     models = db.relationship("WorkerModels", back_populates="worker")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -259,7 +261,7 @@ class Worker(db.Model):
             is_matching = False
             return([is_matching,skipped_reason])
         # If the request specified only specific workers to fulfill it, and we're not one of them, we skip
-        if len(waiting_prompt.workers) >= 1 and self.id not in waiting_prompt.workers:
+        if len(waiting_prompt.workers) >= 1 and self not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'
         if waiting_prompt.nsfw and not self.nsfw:
@@ -273,10 +275,10 @@ class Worker(db.Model):
         if waiting_prompt.tricked_worker(self):
             is_matching = False
             skipped_reason = 'secret'
-        if any(word.lower() in waiting_prompt.prompt.lower() for word in self.blacklist):
+        if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
-        if len(waiting_prompt.models) > 0 and not any(model in waiting_prompt.models for model in self.models):
+        if len(waiting_prompt.models) > 0 and not any(model.name in waiting_prompt.get_model_names() for model in self.models):
             is_matching = False
             skipped_reason = 'models'
         # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
@@ -318,7 +320,8 @@ class Worker(db.Model):
         kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).filter_by(action=action).first()
         if not kudos_details:
             kudos_details = WorkerStats(action=action)
-        kudos_details.value = round(kudos_details + kudos, 2)
+        logger.debug([kudos_details,kudos_details.value])
+        kudos_details.value = round(kudos_details.value + kudos, 2)
         db.session.commit()
 
     def log_aborted_job(self):

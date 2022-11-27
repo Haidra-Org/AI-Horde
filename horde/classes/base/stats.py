@@ -7,14 +7,16 @@ from horde.vars import thing_divisor
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
     id = db.Column(db.Integer, primary_key=True)
-    model = db.Column(db.String(30), db.ForeignKey("workers.id"))
-    performance = db.Column(db.Float, primary_key=False)
+    model = db.Column(db.String(30))
+    performance = db.Column(db.Float)
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
 
 class FulfillmentPerformance(db.Model):
     __tablename__ = "horde_fulfillments"
     id = db.Column(db.Integer, primary_key=True)
     deliver_time = db.Column(db.DateTime, default=datetime.utcnow)
-    things = db.Column(db.Float, primary_key=False)
+    things = db.Column(db.Float)
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
 
 
 def record_fulfilment(procgen, worker_performances):
@@ -27,7 +29,9 @@ def record_fulfilment(procgen, worker_performances):
     else:
         things_per_sec = round(things / seconds_taken,1)
     worker_performances = get_worker_performances()
-    model_performances = db.session.query(ModelPerformance).filter_by(model=model).asc()
+    model_performances = db.session.query(ModelPerformance).filter_by(model=model).order_by(
+        ModelPerformance.created.asc()
+    )
     if model_performances.count() >= 20:
         model_performances.first().delete()
     new_performance = ModelPerformance(model=model,performance=things_per_sec)
@@ -60,13 +64,17 @@ def get_request_avg(worker_performances):
     return(round(avg,1))
 
 def get_model_performance(model_name):
-    return db.session.query(ModelPerformance).filter(model=model_name).desc().limit(10)
+    return db.session.query(ModelPerformance).filter_by(
+        model=model_name
+    ).order_by(
+        ModelPerformance.created.desc()
+    ).limit(10)
 
 def get_model_avg(model):
     model_performances = get_model_performance(model)
-    if len(model_performances) == 0:
+    if model_performances.count() == 0:
         return(0)
-    avg = sum([m.performance for m in model_performances]) / len(model_performances)
+    avg = sum([m.performance for m in model_performances]) / model_performances.count()
     return(round(avg,1))
 
     # TODO: Migrate to DB

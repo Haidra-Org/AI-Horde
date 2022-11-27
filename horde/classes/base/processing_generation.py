@@ -5,9 +5,9 @@ from horde.logger import logger
 from horde.flask import db
 
 
-class ProcessingGeneration:
+class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
-    __tablename__ = "waiting_prompts"
+    __tablename__ = "processing_gens"
     id = db.Column(db.String(36), primary_key=True, default=str(uuid.uuid4()))  # Whilst using sqlite use this, as it has no uuid type
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     generation = db.Column(db.Text, nullable=False)
@@ -22,8 +22,9 @@ class ProcessingGeneration:
     wp_id = db.Column(db.String(36), db.ForeignKey("waiting_prompts.id"))
     wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
     worker_id = db.Column(db.String(36), db.ForeignKey("workers.id"))
-    worker = db.relationship("WorkerExtended", back_populates="workers")
- 
+    worker = db.relationship("WorkerExtended", back_populates="processing_gens")
+    created = db.Column(db.DateTime, default=datetime.utcnow)
+
     def __init__(self, *args, **kwargs):
         super().__init__(self, *args, **kwargs)
         # If there has been no explicit model requested by the user, we just choose the first available from the worker
