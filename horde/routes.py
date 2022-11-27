@@ -35,8 +35,8 @@ def index():
         top_contributors = f'\n<img src="{img_url}/{big_image}.jpg" width="800" />'
     else:
         # We don't use the prefix char, so we just discard it
-        top_contrib_things = ConvertAmount(top_contributor.contributions[thing_name] * thing_divisor)
-        top_contrib_fulfillments = ConvertAmount(top_contributor.contributions['fulfillments'])
+        top_contrib_things = ConvertAmount(top_contributor.contributed_thing * thing_divisor)
+        top_contrib_fulfillments = ConvertAmount(top_contributor.contributed_fulfillments)
         top_worker_things = ConvertAmount(top_worker.contributions * thing_divisor)
         top_worker_fulfillments = ConvertAmount(top_worker.fulfilments)
         top_contributors = f"""\n## Top Contributors
@@ -69,7 +69,10 @@ This is the worker which has generated the most pixels for the horde.
     totals = database.get_total_usage()
     wp_totals = database.count_totals()
     active_worker_count = database.count_active_workers()
-    avg_performance = ConvertAmount(stats.get_request_avg() * active_worker_count)
+    avg_performance = ConvertAmount(
+        stats.get_request_avg(database.get_worker_performances())
+        * active_worker_count
+    )
     # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)

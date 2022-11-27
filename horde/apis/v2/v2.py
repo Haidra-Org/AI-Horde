@@ -233,7 +233,10 @@ class SyncGenerate(GenerateTemplate):
                 raise e.RequestExpired(self.username)
             if self.wp.is_completed():
                 break
-        ret_dict = self.wp.get_status(request_avg=stats.get_request_avg(),active_worker_count=database.count_active_workers())
+        ret_dict = self.wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            active_worker_count=database.count_active_workers()
+        )
         # We delete it from memory immediately to ensure we don't run out
         self.wp.delete()
         return(ret_dict, 200)
@@ -262,7 +265,10 @@ class AsyncStatus(Resource):
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        wp_status = wp.get_status(request_avg=stats.get_request_avg(),active_worker_count=database.count_active_workers())
+        wp_status = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            active_worker_count=database.count_active_workers()
+        )
         # If the status is retrieved after the wp is done we clear it to free the ram
         if wp_status["done"]:
             wp.delete()
@@ -277,7 +283,10 @@ class AsyncStatus(Resource):
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        wp_status = wp.get_status(request_avg=stats.get_request_avg(),active_worker_count=database.count_active_workers())
+        wp_status = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            active_worker_count=database.count_active_workers()
+        )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         wp.delete()
         return(wp_status, 200)
@@ -448,7 +457,7 @@ class JobSubmit(Resource):
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
         self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
-        stats.record_fulfilment(self.procgen)
+        stats.record_fulfilment(self.procgen, database.get_worker_performances())
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 

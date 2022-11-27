@@ -3,7 +3,7 @@ import time
 from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
-from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration
+from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance
 
 ALLOW_ANONYMOUS = True
 
@@ -198,7 +198,7 @@ def convert_things_to_kudos(things, **kwargs):
 
 def count_waiting_requests(user, models = []):
     count = 0
-    for wp in db.session.query(WaitingPromptExtended).all():
+    for wp in db.session.query(WaitingPrompt).all():
         if wp.user == user and not wp.is_completed():
             # If we pass a list of models, we want to count only the WP for these particular models.
             if len(models) > 0:
@@ -218,7 +218,7 @@ def count_totals():
         "queued_requests": 0,
         queued_thing: 0,
     }
-    for wp in db.session.query(WaitingPromptExtended).all():
+    for wp in db.session.query(WaitingPrompt).all():
         current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
         ret_dict["queued_requests"] += current_wp_queue
         if current_wp_queue > 0:
@@ -231,7 +231,7 @@ def count_totals():
 def get_organized_wps_by_model():
     org = {}
     #TODO: Offload the sorting to the DB through join() + SELECT statements
-    all_wps = db.session.query(WaitingPromptExtended).all()
+    all_wps = db.session.query(WaitingPrompt).all()
     for wp in all_wps:
         # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
         # This will inflate the overall expected times, but it shouldn't be by much.
@@ -255,7 +255,7 @@ def count_things_per_model(self):
 
 def get_waiting_wp_by_kudos(self):
     #TODO: Perform the sort via SQL during select
-    wplist = db.session.query(WaitingPromptExtended).all()
+    wplist = db.session.query(WaitingPrompt).all()
     sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
     final_wp_list = []
     for wp in sorted_wp_list:
@@ -299,3 +299,7 @@ def get_all_wps(self, uuid):
 
 def get_progens(self, uuid):
     return db.session.query(ProcessingGeneration).all()
+
+def get_worker_performances():
+    return [p.performance for p in db.session.query(WorkerPerformance).all()]
+

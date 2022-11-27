@@ -4,7 +4,6 @@ from horde import logger
 from horde.flask import db
 from horde.vars import thing_divisor
 
-
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
     id = db.Column(db.Integer, primary_key=True)
@@ -18,7 +17,7 @@ class FulfillmentPerformance(db.Model):
     things = db.Column(db.Float, primary_key=False)
 
 
-def record_fulfilment(procgen):
+def record_fulfilment(procgen, worker_performances):
     things = procgen.owner.things
     starting_time = procgen.start_time
     model = procgen.model
@@ -54,11 +53,7 @@ def get_things_per_min():
     things_per_min = round(total_things / thing_divisor,2)
     return(things_per_min)
 
-def get_worker_performances():
-    return [p.performance for p in db.session.query(WorkerPerformance).all()]
-
-def get_request_avg():
-    worker_performances = get_worker_performances()
+def get_request_avg(worker_performances):
     if len(worker_performances) == 0:
         return(0)
     avg = sum(worker_performances) / len(worker_performances)
