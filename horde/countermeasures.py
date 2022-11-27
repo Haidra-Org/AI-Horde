@@ -1,5 +1,8 @@
-import requests, os
-from horde import logger, args
+import os
+import requests
+
+from horde.logger import logger
+from horde.argparser import args
 from horde.redis_ctrl import is_redis_up, get_ipaddr_db, get_ipaddr_suspicion_db, get_ipaddr_timeout_db
 from datetime import timedelta
 

@@ -1,4 +1,6 @@
-from horde import logger
+import random
+
+from horde.logger import logger
 from horde.flask import db
 from horde.classes.stable.processing_generation import ProcessingGenerationExtended
 from horde.classes.base.waiting_prompt import WaitingPrompt

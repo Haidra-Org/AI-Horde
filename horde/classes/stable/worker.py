@@ -1,19 +1,20 @@
 from horde import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
+from horde.suspicions import Suspicions
+
 
 class WorkerExtended(Worker):
-
-    max_pixels = db.Column(db.Integer, default=512*512)
+    max_pixels = db.Column(db.Integer, default=512 * 512)
     allow_img2img = db.Column(db.Boolean, default=True)
     allow_painting = db.Column(db.Boolean, default=True)
     allow_unsafe_ipaddr = db.Column(db.Boolean, default=True)
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
-        if kwargs.get("max_pixels", 512*512) > 2048 * 2048:
+        if kwargs.get("max_pixels", 512 * 512) > 2048 * 2048:
             if not self.user.trusted:
-                self.report_suspicion(reason = Suspicions.EXTREME_MAX_PIXELS)
+                self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
@@ -23,18 +24,18 @@ class WorkerExtended(Worker):
         paused_string = ''
         if self.paused:
             paused_string = '(Paused) '
-        db.session.commit() 
+        db.session.commit()
         logger.debug(f"{paused_string}Worker {self.name} checked-in, offering models {self.models} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
-        return(50)
+        return 50
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
         is_matching = can_generate[0]
         skipped_reason = can_generate[1]
         if not is_matching:
-            return([is_matching,skipped_reason])
+            return [is_matching, skipped_reason]
         if self.max_pixels < waiting_prompt.width * waiting_prompt.height:
             is_matching = False
             skipped_reason = 'max_pixels'
@@ -49,9 +50,9 @@ class WorkerExtended(Worker):
                 is_matching = False
                 skipped_reason = 'models'
         # If the only model loaded is the inpainting one, we skip the worker when this kind of work is not required
-        if waiting_prompt.source_processing not in ['inpainting','outpainting'] and self.models == ["stable_diffusion_inpainting"]:
-                is_matching = False
-                skipped_reason = 'models'
+        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.models == ["stable_diffusion_inpainting"]:
+            is_matching = False
+            skipped_reason = 'models'
         if waiting_prompt.source_processing != 'img2img' and self.bridge_version < 4:
             is_matching = False
             skipped_reason = 'painting'
@@ -86,9 +87,9 @@ class WorkerExtended(Worker):
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
                 is_matching = False
                 skipped_reason = 'untrusted'
-        return([is_matching,skipped_reason])
+        return [is_matching, skipped_reason]
 
-    def get_details(self, is_privileged = False):
+    def get_details(self, is_privileged=False):
         ret_dict = super().get_details(is_privileged)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
@@ -98,4 +99,4 @@ class WorkerExtended(Worker):
         allow_painting = self.allow_painting
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
-        return(ret_dict)
+        return ret_dict

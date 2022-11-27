@@ -1,15 +1,21 @@
+import oauthlib
+import random
+import secrets
+from uuid import uuid4
+
+import bleach
 from flask import render_template, redirect, url_for, request
-import random, time, os, oauthlib, secrets, logging
-from flask_dance.contrib.google import google
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
+from flask_dance.contrib.google import google
 from markdown import markdown
-from uuid import uuid4
-from . import logger, maintenance, args, HORDE, cache
-from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
-from horde.classes import waiting_prompts,News, User, stats, database
-import bleach
+
+from horde.argparser import args, maintenance
+from horde.classes import News, User, stats, database
+from horde.flask import HORDE, cache
+from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane
+from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
 
 dance_return_to = '/'
 

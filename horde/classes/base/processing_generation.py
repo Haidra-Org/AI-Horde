@@ -1,12 +1,11 @@
-
 from datetime import datetime
 import uuid
-import time
 
-from horde import logger, raid
+from horde.logger import logger
 from horde.flask import db
 from horde.classes import database
 from horde.classes import stats
+
 
 class ProcessingGeneration:
     """For storing processing generations in the DB"""

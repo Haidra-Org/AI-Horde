@@ -1,13 +1,12 @@
 from datetime import datetime
 import uuid
-import time
 import dateutil.relativedelta
 import bleach
 
-from horde import logger
+from horde.logger import logger
 from horde.flask import db
-from horde.vars import thing_name,raw_thing_name,thing_divisor,things_per_sec_suspicion_threshold
-from horde.suspicions import SUSPICION_LOGS, Suspicions
+from horde.vars import thing_name, thing_divisor
+from horde.suspicions import Suspicions
 from horde.utils import is_profane
 
 
@@ -21,6 +20,7 @@ class UserStats(db.Model):
     user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False)
     value = db.Column(db.Integer, nullable=False)
+
 
 class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"

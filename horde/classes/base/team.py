@@ -2,10 +2,11 @@ from datetime import datetime
 import uuid
 import bleach
 
-from horde import logger
+from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
 from horde.utils import is_profane
+
 
 class Team(db.Model):
     __tablename__ = "teams"
@@ -25,7 +26,6 @@ class Team(db.Model):
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
 
     workers = db.relationship("Worker", back_populates="team")
-
 
     def create(self, user):
         self.set_owner(user)

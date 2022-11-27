@@ -1,19 +1,22 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 
-import os, logging
-from horde import logger, args, HORDE
+import os
+import logging
 
-
+from horde.argparser import args
+from horde import logger, HORDE
 
 if __name__ == "__main__":
     # Only setting this for the WSGI logs
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',level=logging.WARNING)
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s', level=logging.WARNING)
     from waitress import serve
+
     logger.init("WSGI Server", status="Starting")
     url_scheme = 'https'
     if args.insecure:
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' # Disable this on prod
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'  # Disable this on prod
         url_scheme = 'http'
     allowed_host = "127.0.0.1"
     if args.insecure:

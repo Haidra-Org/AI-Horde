@@ -1,13 +1,13 @@
 
 from datetime import datetime
 import uuid
-import time
 
-from horde import logger
+from horde.logger import logger
 from horde.flask import db
 from horde.classes import ProcessingGeneration
 from horde.classes import stats
 from horde.classes import database
+
 
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
@@ -17,6 +17,7 @@ class WPAllowedWorkers(db.Model):
     wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
     wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
 
+
 class WPTrickedWorkers(db.Model):
     __tablename__ = "wp_tricked_workers"
     id = db.Column(db.Integer, primary_key=True)
@@ -25,6 +26,7 @@ class WPTrickedWorkers(db.Model):
     wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
     wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
 
+
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
@@ -32,6 +34,8 @@ class WPModels(db.Model):
     wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
     model = db.Column(db.String(20), primary_key=False)
 
+
+# TODO why is this line here?
 logger.debug(ProcessingGeneration)
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""

@@ -1,6 +1,7 @@
-from .. import logger, args
+from horde.logger import logger
+from horde.argparser import args
 from importlib import import_module
-from horde.flask import db
+from horde.flask import db, HORDE
 from horde.classes import database
 from horde.classes.base import stats
 
@@ -8,12 +9,18 @@ from horde.classes.base import stats
 # stats = import_module(name=f'horde.classes.{args.horde}').stats
 try:
     ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
+    print(f'Loaded ProcessingGenerationExtended')
 except (ModuleNotFoundError,AttributeError):
     ProcessingGeneration = import_module(name=f'horde.classes.base.processing_generation').ProcessingGeneration
 try:
     WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
+    print("Loaded WaitingPromptExtended")
 except (ModuleNotFoundError,AttributeError):
     WaitingPrompt = import_module(name=f'horde.classes.base.waiting_prompt').WaitingPrompt
+try:
+    WPAllowedWorkers = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WPAllowedWorkers
+except (ModuleNotFoundError,AttributeError):
+    WPAllowedWorkers = import_module(name=f'horde.classes.base.waiting_prompt').WPAllowedWorkers
 try:
     User = import_module(name=f'horde.classes.{args.horde}.user').UserExtended
 except (ModuleNotFoundError,AttributeError):
@@ -41,22 +48,20 @@ except (ModuleNotFoundError,AttributeError):
     MonthlyKudos = import_module(name=f'horde.classes.base.threads').MonthlyKudos
 
 logger.debug(Team)
-db.create_all()
+with HORDE.app_context():
+    db.create_all()
 
-stats.initialize()
-database.initialize()
+    anon = db.session.query(User).filter_by(oauth_id="anon").first()
+    if not anon:
+        anon = User(
+            id=0,
+            username="Anonymous",
+            oauth_id="anon",
+            api_key="0000000000",
+            public_workers=True,
+            concurrency=500
+        )
+        anon.create()
+
 wp_cleaner = WPCleaner()
 monthly_kudos = MonthlyKudos()
-
-anon = db.session.query(User).filter_by(oauth_id="anon").first()
-if not anon:
-    anon = User(
-        id=0,
-        username="Anonymous",
-        oauth_id="anon",
-        api_key="0000000000",
-        public_workers=True,
-        concurrency=500
-    )
-    anon.create()
-

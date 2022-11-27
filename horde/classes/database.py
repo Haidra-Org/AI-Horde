@@ -1,18 +1,15 @@
-
-import time
 from datetime import datetime, timedelta
 import time
-from horde import logger
-from horde.vars import thing_name,raw_thing_name,thing_divisor
+from horde.flask import db
+from horde.logger import logger
+from horde.vars import thing_name,thing_divisor
 
 ALLOW_ANONYMOUS = True
-
-def initialize():
-    from horde.classes import db, stats, User, Team, Worker, ProcessingGeneration, WaitingPrompt
 
 
 def initiate_save(seconds = 1):
     logger.success(f"Initiating save in {seconds} seconds")
+    # TODO - we don't want waits if we can avoid it (as this is a server)
     time.wait(seconds)
     db.session.commit()
 
