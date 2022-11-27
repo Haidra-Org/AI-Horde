@@ -1,11 +1,13 @@
 from flask_restx import Namespace, Resource, reqparse, fields
 from flask import request
 from horde import limiter
+from horde.flask import HORDE, db
 from horde.logger import logger
 from horde.classes import database
 from horde.classes.base import stats
-from horde.classes import processing_generations,waiting_prompts,Worker,WaitingPrompt
-from horde import maintenance, invite_only, cm
+from horde.classes import Worker, WaitingPrompt
+from horde.argparser import maintenance, invite_only
+from horde.countermeasures import CounterMeasures
 from enum import Enum
 import os, time, json
 
@@ -30,9 +32,9 @@ response_model_wp_status_lite = api.model('RequestStatusCheckStableV1', {
 response_model_wp_status_full = api.inherit('RequestStatusStableV1', response_model_wp_status_lite, {
     'generations': fields.List(fields.Nested(response_model_generation)),
 })
-# Used to for the flas limiter, to limit requests per url paths
+# Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
-    return(request.path)
+    return request.path
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -246,29 +248,30 @@ class PromptPop(Resource):
     decorators = [limiter.limit("45/second")]
     @api.expect(parser)
     def post(self):
-        if not cm.is_ip_safe(request.remote_addr):
-            return(f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.",403)
+        if not CounterMeasures.is_ip_safe(request.remote_addr):
+            return f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.", 403
         args = self.parser.parse_args()
         skipped = {}
         user = database.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
-        server = database.find_worker_by_name(args['name'])
+            return f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}", 401
+        server = db.session.query(Worker).filter(name=args["name"]).first()
         if not server:
             if invite_only.active:
-                return(f"Horde in worker invite mode only. Please use APIv2 if you have an invite.",401)
+                return f"Horde in worker invite mode only. Please use APIv2 if you have an invite.", 401
             server = Worker()
             server.create(user, args['name'])
         if user != server.user:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
+            return f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}", 401
         server.check_in(args['max_pixels'])
         if server.maintenance:
-            return(f"Server has been put into maintenance mode by the owner",403)
+            return f"Server has been put into maintenance mode by the owner", 403
         if server.paused:
-            return({"id": None, "skipped": {}},200)
+            return {"id": None, "skipped": {}}, 200
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
+
         ## Start prioritize by bridge request ##
         for priority_username in args.priority_usernames:
             priority_user = database.find_user_by_username(priority_username)

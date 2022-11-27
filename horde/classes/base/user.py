@@ -200,7 +200,7 @@ class User(db.Model):
             # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
             has_month_passed = True
         if has_month_passed:
-            # Not commiting as it'll happen in modify_kudos() anyway
+            # Not committing as it'll happen in modify_kudos() anyway
             self.monthly_kudos_last_received = datetime.utcnow()
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")

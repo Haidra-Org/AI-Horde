@@ -12,12 +12,14 @@ class MonthlyKudos:
         monthly_kudos_thread.start()
 
     def assign_monthly_kudos(self):
+        # TODO - We dont want any sleeps on a server unless its needed
         time.sleep(2)
         logger.init_ok("Monthly Kudos Awards Thread", status="Started")
         while True:
-            #TODO Make the select statement bring the users with monthly kudos only
-            for user in db.session.query(User).all():
-                user.receive_monthly_kudos()
+            # TODO Make the select statement bring the users with monthly kudos only
+            with HORDE.app_context():
+                for user in db.session.query(User).all():
+                    user.receive_monthly_kudos()
             # Check once a day
             time.sleep(86400)
 
