@@ -46,7 +46,7 @@ class WorkerModel(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="models")
-    model = db.Column(db.String(20), primary_key=False)
+    model = db.Column(db.String(30), primary_key=False)
 
 class Worker(db.Model):
     __tablename__ = "workers"
@@ -179,7 +179,7 @@ class Worker(db.Model):
 
     def set_models(self, models):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        models = [sanitize_string(model_name) for model_name in models]
+        models = [sanitize_string(model_name[30:]) for model_name in models]
         del models[50:]
         models = set(models)
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
