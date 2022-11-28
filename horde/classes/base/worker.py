@@ -59,7 +59,7 @@ class Worker(db.Model):
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="workers")
-    name = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     info = db.Column(db.String(1000))
     ipaddr = db.Column(db.String(15))
     created = db.Column(db.DateTime, default=datetime.utcnow)
@@ -79,7 +79,7 @@ class Worker(db.Model):
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
-    maintenance_msg = db.Column(db.String(100), unique=False, default=default_maintenance_msg, nullable=False)
+    maintenance_msg = db.Column(db.String(300), unique=False, default=default_maintenance_msg, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     team_id = db.Column(UUID(as_uuid=True), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", back_populates="workers")
