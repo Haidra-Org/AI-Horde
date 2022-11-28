@@ -1,8 +1,8 @@
 
-from datetime import datetime
 import uuid
+
+from datetime import datetime
 from sqlalchemy.ext.mutable import MutableDict
-# for going live
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.logger import logger

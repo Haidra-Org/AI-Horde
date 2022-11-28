@@ -1,7 +1,8 @@
 import uuid
-from datetime import datetime
 
+from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
