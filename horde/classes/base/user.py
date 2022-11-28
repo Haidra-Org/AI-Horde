@@ -37,8 +37,8 @@ class User(db.Model):
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False, index=True)
-    api_key = db.Column(db.String(50), unique=True, nullable=False, index=True)
-    client_id = db.Column(db.String(50), unique=True, default=generate_client_id, nullable=False)
+    api_key = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    client_id = db.Column(db.String(20), unique=True, default=generate_client_id, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
