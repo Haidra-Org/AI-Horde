@@ -57,8 +57,7 @@ def count_active_workers():
     active_workers = db.session.query(func.sum(Worker.threads).label('threads')).filter(
         Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).first()
-    logger.debug([active_workers,active_workers.threads])
-    if active_workers:
+    if active_workers and active_workers.threads:
         return active_workers.threads
     return 0
 
