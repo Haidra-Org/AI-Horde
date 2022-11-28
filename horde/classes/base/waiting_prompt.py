@@ -16,7 +16,7 @@ from horde.classes import ProcessingGeneration
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
@@ -25,7 +25,7 @@ class WPAllowedWorkers(db.Model):
 class WPTrickedWorkers(db.Model):
     __tablename__ = "wp_tricked_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
