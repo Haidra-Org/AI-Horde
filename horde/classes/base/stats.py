@@ -45,12 +45,12 @@ def get_things_per_min():
     pruned_array = []
     # clear up old requests (older than 5 mins)
     db.session.query(FulfillmentPerformance).filter(
-       FulfillmentPerformance.model.created < datetime.utcnow() - timedelta(seconds=60)  # TODO - FulfillmentPerformance.model doesnt exist I don't think?
+       FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned fulfillments")
     last_minute_fulfillments = db.session.query(FulfillmentPerformance).filter(
-       FulfillmentPerformance.model.created > datetime.utcnow() - timedelta(seconds=60)  # TODO - FulfillmentPerformance.model doesnt exist I don't think?
+       FulfillmentPerformance.created >= datetime.utcnow() - timedelta(seconds=60)
     )
     for fulfillment in last_minute_fulfillments:
         total_things += fulfillment.things

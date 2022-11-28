@@ -660,8 +660,7 @@ class Users(Resource):
     def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
         '''
-        # To avoid the dict changing size while we're iterating it
-        all_users = database.session.query(User)
+        all_users = db.session.query(User)
         users_list = [user.get_details() for user in all_users]
         return(users_list,200)
 

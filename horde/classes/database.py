@@ -296,8 +296,8 @@ def get_organized_procgens_by_model():
     org = {}
     for procgen in db.session.query(ProcessingGeneration).all():
         if procgen.model not in org:
-            org[model] = [] # TODO model is not defined
-        org[model].append(procgen)
+            org[procgen.model] = []
+        org[procgen.model].append(procgen)
     return(org)
 
 def get_wp_by_id(uuid):
