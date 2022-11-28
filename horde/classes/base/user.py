@@ -33,6 +33,7 @@ class UserSuspicions(db.Model):
 class User(db.Model):
     __tablename__ = "users"
     SUSPICION_THRESHOLD = 3
+    SAME_IP_WORKER_THRESHOLD = 3
 
     id = db.Column(db.Integer, primary_key=True) 
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
@@ -60,7 +61,6 @@ class User(db.Model):
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
     trusted = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
-    same_ip_worker_threshold = db.Column(db.Integer, default=3, nullable=False)
 
     workers = db.relationship(f"WorkerExtended", back_populates="user")
     teams = db.relationship(f"Team", back_populates="owner")
@@ -260,6 +260,7 @@ class User(db.Model):
         if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
             return
         new_suspicion = UserSuspicions(user_id=self.id, suspicion_id=int(reason))
+        db.session.add(new_suspicion)
         db.session.commit()
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
@@ -295,7 +296,7 @@ class User(db.Model):
         for worker in self.workers:
             if worker.ipaddr == ipaddr:
                 ipcount += 1
-        if ipcount > self.same_ip_worker_threshold and ipcount > self.worker_invited:
+        if ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
             return(True)
         return(False)
 
@@ -317,6 +318,7 @@ class User(db.Model):
             return(False)
         if self.trusted:
             return(False)
+        logger.debug([days_inactive,self.kudos,10 * (days_inactive - days_threshold)])
         return(True)
 
     def compile_kudos_details(self):
@@ -373,51 +375,19 @@ class User(db.Model):
             ret_dict["suspicious"] = self.suspicious
         return(ret_dict)
 
-# class PromptRequest(db.Model):
-#     """For storing prompts in the DB"""
-#     __tablename__ = "prompt"
-#     id = db.Column(db.String(50), primary_key=True, default=uuid.uuid4)  # Whilst using sqlite use this, as it has no uuid type
-#     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
-#     prompt = db.Column(db.Text, unique=True, nullable=False)
 
-#     user_id = db.Column(db.String(50), db.ForeignKey("user.id"), primary_key=True)
-#     user = db.relationship("User", backref=db.backref("prompt", lazy="dynamic"))
+    def import_suspicions(self, suspicions):
+        for s in suspicions:
+            new_suspicion = UserSuspicions(user_id=self.id, suspicion_id=int(s))
+            db.session.add(new_suspicion)
+        db.session.commit()
 
-#     tricked_workers = db.Column(db.JSON, default=[], nullable=False)
-#     params = db.Column(db.JSON, default={}, nullable=False)
-#     total_usage = db.Column(db.Integer, default=0, nullable=False)
-#     nsfw = db.Column(db.Boolean, default=False, nullable=False)
-#     ipaddr = db.Column(db.String(39))  # ipv6
-#     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
-#     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
+    def import_kudos_details(self, kudos_details):
+        for key in kudos_details:
+            new_kd = UserStats(user_id=self.id, action=key, value=kudos_details[key])
+            db.session.add(new_kd)
+        db.session.commit()
 
-#     # A lot of these look like they don't belong to prompt and should be moved
-#     processing_gens = db.Column(db.JSON, default=[], nullable=False)
-#     fake_gens = db.Column(db.JSON, default=[], nullable=False)
-#     last_process_time = db.Column(db.DateTime, default=utcnow())
-#     workers = db.Column(db.JSON, default=[], nullable=False)
-#     faulted = db.Column(db.Boolean, default=False, nullable=False)
-#     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
-#     model = db.Column(db.String(50), default="stable-diffusion", nullable=False)
-
-#     ttl = db.Column(db.Integer, default=1200, nullable=False)
-
-#     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
-#     updated = db.Column(
-#         db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow
-#     )
-
-#     def set_job_ttl(self):
-#         raise NotImplementedError("This is not implemented yet")
-
-
-
-# # new request has come in
-# x = PromptRequest(prompt="test", user_id=1)
-
-# db.session.add(x)
-# db.session.commit()
-# prompt_req_id = x.id
 
 
 

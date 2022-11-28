@@ -57,6 +57,10 @@ from horde.classes import database
 with HORDE.app_context():
     db.create_all()
 
+    if args.convert_flag == "SQL":
+        from horde.conversions import convert_json_db
+        convert_json_db()
+
     anon = db.session.query(User).filter_by(oauth_id="anon").first()
     if not anon:
         anon = User(
