@@ -68,6 +68,7 @@ This is the worker which has generated the most pixels for the horde.
     totals = database.get_total_usage()
     wp_totals = database.count_totals()
     active_worker_count = database.count_active_workers()
+    logger.debug([stats.get_request_avg(database.get_worker_performances()),active_worker_count])
     avg_performance = ConvertAmount(
         stats.get_request_avg(database.get_worker_performances())
         * active_worker_count
