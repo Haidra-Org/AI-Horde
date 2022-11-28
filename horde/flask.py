@@ -10,7 +10,8 @@ cache = None
 HORDE = Flask(__name__)
 HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
 # HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
-logger.debug(os.getenv('POSTGRES_PASS'))
+wtf = os.getenv('POSTGRES_PASS')
+logger.debug(wtf)
 HORDE.config["SQLALCHEMY_DATABASE_URI"] = f"postgresql://postgres:{os.getenv('POSTGRES_PASS')}@localhost/postgres"
 HORDE.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(HORDE)
