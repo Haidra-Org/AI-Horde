@@ -19,3 +19,4 @@ pillow~=9.3.0
 flask_sqlalchemy 
 oauthlib~=3.2.2
 SQLAlchemy~=1.4.44
+psycopg2

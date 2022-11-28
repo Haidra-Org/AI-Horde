@@ -53,8 +53,8 @@ class Worker(db.Model):
     uptime_reward_threshold = 600
     default_maintenance_msg = "This worker has been put into maintenance mode by its owner"
 
-    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
-    # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
+    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="workers")
     name = db.Column(db.String(50), unique=True, nullable=False, index=True)

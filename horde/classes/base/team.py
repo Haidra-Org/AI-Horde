@@ -9,8 +9,8 @@ from horde.utils import is_profane, get_db_uuid, sanitize_string
 
 class Team(db.Model):
     __tablename__ = "teams"
-    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
-    # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
+    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', unique=True, nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)

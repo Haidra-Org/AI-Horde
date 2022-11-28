@@ -8,8 +8,8 @@ from horde.flask import db
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
     __tablename__ = "processing_gens"
-    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
-    # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
+    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     generation = db.Column(db.Text)
 
     model = db.Column(db.String(40), default='', nullable=False)

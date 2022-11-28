@@ -50,8 +50,8 @@ class WaitingPrompt(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="waiting_prompts")
 
-    params = db.Column(MutableDict.as_mutable(db.JSON), default={}, nullable=False)
-    gen_payload = db.Column(MutableDict.as_mutable(db.JSON), default={}, nullable=False)
+    params = db.Column(MutableDict.as_mutable(JSONB), default={}, nullable=False)
+    gen_payload = db.Column(MutableDict.as_mutable(JSONB), default={}, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
