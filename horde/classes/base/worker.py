@@ -1,13 +1,12 @@
 from datetime import datetime
 import uuid
-import bleach
 
 from horde.logger import logger
 from horde.argparser import raid
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
-from horde.utils import is_profane, get_db_uuid
+from horde.utils import is_profane, get_db_uuid, sanitize_string
 
 
 class WorkerStats(db.Model):
@@ -148,7 +147,7 @@ class Worker(db.Model):
             return("Profanity")
         if len(new_name) > 100:
             return("Too Long")
-        self.name = bleach.clean(new_name)
+        self.name = sanitize_string(new_name)
         db.session.commit()   
         return("OK")
 
@@ -159,7 +158,7 @@ class Worker(db.Model):
             return("Profanity")
         if len(new_info) > 1000:
             return("Too Long")
-        self.info = bleach.clean(new_info)
+        self.info = sanitize_string(new_info)
         db.session.commit()   
         return("OK")
 
@@ -176,12 +175,12 @@ class Worker(db.Model):
         self.maintenance = is_maintenance_active
         self.maintenance_msg = self.default_maintenance_msg
         if self.maintenance and maintenance_msg is not None:
-            self.maintenance_msg = bleach.clean(maintenance_msg)
+            self.maintenance_msg = sanitize_string(maintenance_msg)
         db.session.commit()   
 
     def set_models(self, models):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        models = [bleach.clean(model_name) for model_name in models]
+        models = [sanitize_string(model_name) for model_name in models]
         del models[50:]
         models = set(models)
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
@@ -196,7 +195,7 @@ class Worker(db.Model):
 
     def set_blacklist(self, blacklist):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        blacklist = [bleach.clean(word) for word in blacklist]
+        blacklist = [sanitize_string(word) for word in blacklist]
         del blacklist[100:]
         blacklist = set(blacklist)
         existing_blacklist = db.session.query(WorkerBlackList).filter_by(worker_id=self.id)
@@ -428,7 +427,7 @@ class Worker(db.Model):
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
-            ret_dict['suspicious'] = self.suspicious
+            ret_dict['suspicious'] = len(self.suspicions)
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
             ret_dict['contact'] = self.user.contact

@@ -1,19 +1,18 @@
 from datetime import datetime
 import uuid
-import bleach
 
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
-from horde.utils import is_profane
+from horde.utils import is_profane, get_db_uuid, sanitize_string
 
 
 class Team(db.Model):
     __tablename__ = "teams"
-    id = db.Column(db.String(36), primary_key=True, default=uuid.uuid4)
+    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     info = db.Column(db.String(1000), default='')
-    name = db.Column(db.String(100), default='', nullable=False)
+    name = db.Column(db.String(100), default='', unique=True, nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     owner = db.relationship(f"User", back_populates="teams")
 
@@ -27,8 +26,7 @@ class Team(db.Model):
 
     workers = db.relationship("Worker", back_populates="team")
 
-    def create(self, user):
-        self.set_owner(user)
+    def create(self):
         db.session.add(self)
         db.session.commit()
 
@@ -65,7 +63,7 @@ class Team(db.Model):
             return("OK")        
         if is_profane(new_name):
             return("Profanity")
-        self.name = bleach.clean(new_name)
+        self.name = sanitize_string(new_name)
         existing_team = find_team_by_name(self.name)
         if existing_team and existing_team != self:
             return("Already Exists")
@@ -78,16 +76,13 @@ class Team(db.Model):
             return("OK")
         if is_profane(new_info):
             return("Profanity")
-        self.info = bleach.clean(new_info)
+        self.info = sanitize_string(new_info)
         return("OK")
         db.session.commit()
 
     def set_owner(self, new_owner):
         self.user_id = new_owner.id
         db.session.commit()
-
-    def get_owner(self, new_owner):
-        return self.owner
 
     def delete(self):
         db.session.delete(self)
@@ -116,7 +111,7 @@ class Team(db.Model):
         ret_dict = {
             "name": self.name,
             "id": self.id,
-            "creator": self.get_owner().get_unique_alias(),
+            "creator": self.owner.get_unique_alias(),
             "contributions": self.contributions,
             "requests_fulfilled": self.fulfilments,
             "kudos": self.kudos,

@@ -1,4 +1,3 @@
-import bleach
 import json
 import os
 import re
@@ -14,7 +13,7 @@ from horde.apis import ModelsV2, ParsersV2
 from horde.apis import exceptions as e
 from horde.classes import database, stats, Worker, Team, WaitingPrompt, News, User
 from horde.suspicions import Suspicions
-from horde.utils import is_profane
+from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
 
 # Not used yet
@@ -384,7 +383,7 @@ class JobPop(Resource):
         self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
-        self.worker_name = bleach.clean(self.args['name'])
+        self.worker_name = sanitize_string(self.args['name'])
         self.worker = database.find_worker_by_name(self.worker_name)
         self.safe_ip = True
         if not self.worker or not self.worker.user.trusted:
@@ -613,6 +612,7 @@ class WorkerSingle(Resource):
                 ret_dict["team"] = team.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
+        # FIXME: Why does the response marshalling eat all the keys?!
         return(ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
@@ -961,27 +961,35 @@ class Teams(Resource):
         Only trusted users can create new teams.
         '''
         self.args = self.post_parser.parse_args()
-        user = database.find_user_by_api_key(self.args['apikey'])
-        if not user:
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
             raise e.InvalidAPIKey('User action: ' + 'PUT Teams')
-        if user.is_anon():
+        if self.user.is_anon():
             raise e.AnonForbidden()
-        if not user.trusted:
+        if not self.user.trusted:
             raise e.NotTrusted
         ret_dict = {}
-        team = Team(database)
-        ret = team.set_name(self.args.name)
-        if ret == "Profanity":
-            raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'team name')
-        if ret == "Already Exists":
-            raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
-        ret_dict["name"] = team.name
-        if self.args.info is not None:
-            ret = team.set_info(self.args.info)
-            if ret == "Profanity":
-                raise e.Profanity(user.get_unique_alias(), self.args.info, 'team info')
-            ret_dict["info"] = team.info
-        team.create(user)
+
+        self.team_name = sanitize_string(self.args.name)
+        self.team = database.find_team_by_name(self.team_name)
+        self.team_info = self.args.info
+        if self.team_info is not None:
+            self.team_info = sanitize_string(self.team_info)
+
+        if self.team:
+            raise e.NameAlreadyExists(self.user.get_unique_alias(), self.team_name, self.args.name, 'team')
+        if is_profane(self.team_name):
+            raise e.Profanity(self.user.get_unique_alias(), self.team_name, 'team name')
+        if self.team_info and is_profane(self.team_info):
+            raise e.Profanity(self.user.get_unique_alias(), self.team_info, 'team info')
+        team = Team(
+            owner_id=self.user.id, 
+            name=self.team_name,
+            info=self.team_info,
+        )
+        team.create()
+        ret_dict["name"] = self.team_name
+        ret_dict["info"] = self.team_info
         ret_dict["id"] = team.id
         return(ret_dict, 200)
 

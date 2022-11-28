@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta
 import time
+from datetime import datetime, timedelta
+from sqlalchemy import func
 from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
@@ -118,7 +119,7 @@ def find_worker_by_id(worker_id):
     return(worker)
 
 def get_all_teams():
-    return db.session.query(Teams).all()
+    return db.session.query(Team).all()
 
 def find_team_by_id(team_id):
     team = db.session.query(Team).filter_by(id=team_id).first()

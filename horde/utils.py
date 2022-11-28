@@ -1,4 +1,5 @@
 import uuid
+import bleach
 from profanity_check  import predict
 from better_profanity import profanity
 profanity.load_censor_words()
@@ -45,3 +46,7 @@ class ConvertAmount:
 
 def get_db_uuid():
     return str(uuid.uuid4())
+
+def sanitize_string(text):
+    santxt = bleach.clean(text).lstrip().rstrip()
+    return santxt

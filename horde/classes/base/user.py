@@ -1,14 +1,13 @@
 from datetime import datetime
 import uuid
 import dateutil.relativedelta
-import bleach
 import os
 
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor
 from horde.suspicions import Suspicions
-from horde.utils import is_profane
+from horde.utils import is_profane, sanitize_string
 
 
 # from sqlalchemy.dialects.postgresql import UUID
@@ -99,7 +98,7 @@ class User(db.Model):
             return("Profanity")
         if len(new_username) > 30:
             return("Too Long")
-        self.username = bleach.clean(new_username)
+        self.username = sanitize_string(new_username)
         db.session.commit()
         return("OK")
 
@@ -108,7 +107,7 @@ class User(db.Model):
             return("OK")
         if is_profane(new_contact):
             return("Profanity")
-        self.contact = bleach.clean(new_contact)
+        self.contact = sanitize_string(new_contact)
         db.session.commit()
         return("OK")
 
