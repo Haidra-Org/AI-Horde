@@ -3,7 +3,7 @@ from datetime import datetime
 import uuid
 from sqlalchemy.ext.mutable import MutableDict
 # for going live
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.logger import logger
 from horde.flask import db

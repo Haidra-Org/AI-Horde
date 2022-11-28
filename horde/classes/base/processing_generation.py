@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from horde.utils import get_db_uuid
 from horde.logger import logger
 from horde.flask import db

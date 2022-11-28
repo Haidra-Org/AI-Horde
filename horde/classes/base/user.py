@@ -1,16 +1,13 @@
-from datetime import datetime
 import uuid
 import dateutil.relativedelta
 import os
+from datetime import datetime
 
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
-
-
-# from sqlalchemy.dialects.postgresql import UUID
 
 
 class UserStats(db.Model):
