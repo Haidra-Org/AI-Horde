@@ -6,7 +6,7 @@ import os
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor
-from horde.suspicions import Suspicions
+from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 
 
@@ -262,8 +262,8 @@ class User(db.Model):
         new_suspicion = UserSuspicions(user_id=self.id, suspicion_id=int(reason))
         db.session.commit()
         if reason:
-            reason_log = suspicion_logs[reason].format(*formats)
-            logger.warning(f"User '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason}")
+            reason_log = SUSPICION_LOGS[reason].format(*formats)
+            logger.warning(f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason}")
 
     def reset_suspicion(self):
         '''Clears the user's suspicion and resets their reasons'''
