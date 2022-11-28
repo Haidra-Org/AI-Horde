@@ -14,9 +14,9 @@ class ModelPerformance(db.Model):
 class FulfillmentPerformance(db.Model):
     __tablename__ = "horde_fulfillments"
     id = db.Column(db.Integer, primary_key=True)
-    deliver_time = db.Column(db.DateTime, default=datetime.utcnow)
+    deliver_time = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
     things = db.Column(db.Float)
-    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 def record_fulfilment(procgen, worker_performances):

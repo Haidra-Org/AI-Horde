@@ -415,6 +415,9 @@ class JobPop(Resource):
             self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+        for model in self.models:
+            if is_profane(model):
+                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
     
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it

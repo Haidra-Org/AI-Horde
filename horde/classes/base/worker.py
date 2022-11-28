@@ -58,8 +58,8 @@ class Worker(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="workers")
     name = db.Column(db.String(50), unique=True, nullable=False)
-    info = db.Column(db.String(1000), unique=False)
-    ipaddr = db.Column(db.String(15), unique=False)
+    info = db.Column(db.String(1000))
+    ipaddr = db.Column(db.String(15))
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
     last_check_in = db.Column(db.DateTime, default=datetime.utcnow)
@@ -74,9 +74,6 @@ class Worker(db.Model):
     threads = db.Column(db.Integer, default=1, nullable=False)
     bridge_version = db.Column(db.Integer, default=1, nullable=False)
     last_reward_uptime = db.Column(db.Integer, default=0, nullable=False)
-
-    kudos_generated = db.Column(db.Integer, default=0, nullable=False)
-    kudos_uptime = db.Column(db.Integer, default=0, nullable=False)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
@@ -432,3 +429,22 @@ class Worker(db.Model):
             ret_dict['owner'] = self.user.get_unique_alias()
             ret_dict['contact'] = self.user.contact
         return(ret_dict)
+
+
+    def import_kudos_details(self, kudos_details):
+        for key in kudos_details:
+            new_kd = WorkerStats(worker_id=self.id, action=key, value=kudos_details[key])
+            db.session.add(new_kd)
+        db.session.commit()
+
+    def import_performances(self, performances):
+        for p in performances:
+            new_kd = WorkerPerformance(worker_id=self.id, performance=p)
+            db.session.add(new_kd)
+        db.session.commit()
+
+    def import_suspicions(self, suspicions):
+        for s in suspicions:
+            new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(s))
+            db.session.add(new_suspicion)
+        db.session.commit()

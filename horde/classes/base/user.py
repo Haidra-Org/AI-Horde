@@ -46,7 +46,6 @@ class User(db.Model):
     contact = db.Column(db.String(50), default=None)
 
     kudos = db.Column(db.Integer, default=0, nullable=False)
-    min_kudos = db.Column(db.Integer, default=0, nullable=False)
     monthly_kudos = db.Column(db.Integer, default=0, nullable=False)
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -69,20 +68,19 @@ class User(db.Model):
     waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user")
 
     def create(self):
-        self.set_min_kudos()
         self.check_for_bad_actor()
         db.session.add(self)
         db.session.commit()
         logger.info(f"New User Created {self.get_unique_alias()}")
         
 
-    def set_min_kudos(self):
+    def get_min_kudos(self):
         if self.is_anon(): 
-            self.min_kudos = -50
+            return -50
         elif self.is_pseudonymous():
-            self.min_kudos = 14
+            return 14
         else:
-            self.min_kudos = 25
+            return 25
 
     def check_for_bad_actor(self):
         if len(self.username) > 30:
@@ -223,8 +221,8 @@ class User(db.Model):
             db.session.commit()
 
     def ensure_kudos_positive(self):
-        if self.kudos < self.min_kudos:
-            self.kudos = self.min_kudos
+        if self.kudos < self.get_min_kudos():
+            self.kudos = self.get_min_kudos()
 
     def is_anon(self):
         if self.oauth_id == 'anon':

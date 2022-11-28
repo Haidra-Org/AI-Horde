@@ -172,7 +172,7 @@ def transfer_kudos(source_user, dest_user, amount):
         return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
     if amount < 0:
         return([0,'Nice try...'])
-    if amount > source_user.kudos - source_user.min_kudos:
+    if amount > source_user.kudos - source_user.get_min_kudos():
         return([0,'Not enough kudos.'])
     source_user.modify_kudos(-amount, 'gifted')
     dest_user.modify_kudos(amount, 'received')
