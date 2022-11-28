@@ -32,7 +32,7 @@ class WorkerBlackList(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="blacklist")
-    word = db.Column(db.String(15), primary_key=False)
+    word = db.Column(db.String(20), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
@@ -203,7 +203,7 @@ class Worker(db.Model):
             return
         existing_blacklist.delete()
         for word in blacklist:
-            blacklisted_word = WorkerBlackList(worker_id=self.id,word=word)
+            blacklisted_word = WorkerBlackList(worker_id=self.id,word=word[0:15])
             db.session.add(blacklisted_word)
         db.session.commit()
 
