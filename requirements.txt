@@ -8,7 +8,7 @@ requests >= 2.27
 Markdown~=3.4.1
 flask-dance[sqla]
 blinker
-python-dotenv~=0.21.0
+python-dotenv
 loguru~=0.6.0
 bleach~=5.0.1
 alt-profanity-check
