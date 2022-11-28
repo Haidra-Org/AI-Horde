@@ -6,7 +6,7 @@ from horde.argparser import args
 from horde.flask import HORDE
 from horde.logger import logger
 
-load_dotenv('.env')
+load_dotenv('/home/stablehorde/stable-horde/.env')
 logger.debug(os.getenv('BLACKLIST1A'))
 if __name__ == "__main__":
     # Only setting this for the WSGI logs
