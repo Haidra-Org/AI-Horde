@@ -81,7 +81,7 @@ class Worker(db.Model):
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
     maintenance_msg = db.Column(db.String(100), unique=False, default=default_maintenance_msg, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
-    team_id = db.Column(db.String(36), db.ForeignKey("teams.id"), default=None)
+    team_id = db.Column(UUID(as_uuid=True), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", back_populates="workers")
 
     stats = db.relationship("WorkerStats", back_populates="worker")
