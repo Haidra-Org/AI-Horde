@@ -7,7 +7,7 @@ from horde.flask import HORDE
 from horde.logger import logger
 
 load_dotenv()
-
+logger.debug(os.getenv('POSTGRES_PASS'))
 if __name__ == "__main__":
     # Only setting this for the WSGI logs
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s', level=logging.WARNING)
