@@ -55,7 +55,7 @@ class User(db.Model):
     usage_thing = db.Column(db.Float, default=0, nullable=False)
     usage_requests = db.Column(db.Integer, default=0, nullable=False)
 
-    worker_invited = db.Column(db.Boolean, default=False, nullable=False)
+    worker_invited = db.Column(db.Integer, default=0, nullable=False)
     moderator = db.Column(db.Boolean, default=False, nullable=False)
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
     trusted = db.Column(db.Boolean, default=False, nullable=False)

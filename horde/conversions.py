@@ -73,9 +73,7 @@ def convert_user(saved_dict):
         db.session.commit()
         logger.message(f"Stale user {new_user.get_unique_alias()} Skipped")
     logger.debug(kudos_details)
-    new_user.import_kudos_details(kudos_details)
     logger.debug(suspicions)
-    new_user.import_suspicions(suspicions)
     logger.message(f"Converted User: {new_user.get_unique_alias()}")
 
 
