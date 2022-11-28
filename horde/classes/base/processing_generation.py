@@ -23,9 +23,9 @@ class ProcessingGeneration(db.Model):
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     fake = db.Column(db.Boolean, default=False, nullable=False)
 
-    wp_id = db.Column(db.String(36), db.ForeignKey("waiting_prompts.id"), nullable=False)
+    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
-    worker_id = db.Column(db.String(36), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("WorkerExtended", back_populates="processing_gens")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 

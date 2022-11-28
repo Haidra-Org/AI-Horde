@@ -18,7 +18,7 @@ class WPAllowedWorkers(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
+    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
 
 
@@ -27,14 +27,14 @@ class WPTrickedWorkers(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
+    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
 
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
+    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
     model = db.Column(db.String(20), nullable=False)
 
@@ -43,8 +43,8 @@ class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
     STALE_TIME = 1200
-    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
-    # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
+    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
+    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
