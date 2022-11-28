@@ -7,9 +7,9 @@ from horde.vars import thing_divisor
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
     id = db.Column(db.Integer, primary_key=True)
-    model = db.Column(db.String(30))
+    model = db.Column(db.String(30), index=True)
     performance = db.Column(db.Float)
-    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)  # Maybe index this, but I'm not actually sure how big this table is
 
 class FulfillmentPerformance(db.Model):
     __tablename__ = "horde_fulfillments"
@@ -45,12 +45,12 @@ def get_things_per_min():
     pruned_array = []
     # clear up old requests (older than 5 mins)
     db.session.query(FulfillmentPerformance).filter(
-       datetime.utcnow() - FulfillmentPerformance.model.created > timedelta(seconds=60)
+       FulfillmentPerformance.model.created < datetime.utcnow() - timedelta(seconds=60)  # TODO - FulfillmentPerformance.model doesnt exist I don't think?
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned fulfillments")
     last_minute_fulfillments = db.session.query(FulfillmentPerformance).filter(
-       datetime.utcnow() - FulfillmentPerformance.model.created <= timedelta(seconds=60)
+       FulfillmentPerformance.model.created > datetime.utcnow() - timedelta(seconds=60)  # TODO - FulfillmentPerformance.model doesnt exist I don't think?
     )
     for fulfillment in last_minute_fulfillments:
         total_things += fulfillment.things

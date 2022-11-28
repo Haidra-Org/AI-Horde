@@ -160,11 +160,11 @@ class Database(Database):
         return(kudos)
 
     def new_worker(self):
-        return(Worker(self))
+        return Worker(self)
     def new_user(self):
-        return(User(self))
+        return User(self)
     def new_stats(self):
-        return(Stats(self))
+        return Stats(self)
 
 
 class News(News):

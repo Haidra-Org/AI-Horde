@@ -657,10 +657,10 @@ class Users(Resource):
     decorators = [limiter.limit("30/minute")]
     @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
-    def get(self):
+    def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
         '''
-        # To avoid the the dict changing size while we're iterating it
+        # To avoid the dict changing size while we're iterating it
         all_users = database.session.query(User)
         users_list = [user.get_details() for user in all_users]
         return(users_list,200)

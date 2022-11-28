@@ -1,12 +1,12 @@
 from dotenv import load_dotenv
-
-load_dotenv()
-
 import os
 import logging
 
 from horde.argparser import args
-from horde import logger, HORDE
+from horde.flask import HORDE
+from horde.logger import logger
+
+load_dotenv()
 
 if __name__ == "__main__":
     # Only setting this for the WSGI logs

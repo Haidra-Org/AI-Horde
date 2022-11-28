@@ -49,18 +49,17 @@ def get_all_workers():
 
 def get_active_workers():
     active_workers = db.session.query(Worker).filter(
-        datetime.utcnow() - Worker.last_check_in <= timedelta(seconds=300)
+        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).all()
     return active_workers
 
 def count_active_workers():
-    count = 0
-    active_workers = db.session.query(Worker).filter(
-        datetime.utcnow() - Worker.last_check_in <= timedelta(seconds=300)
-    ).all()
-    for worker in active_workers:
-        count += worker.threads
-    return count
+    active_workers = db.session.query(func.sum(Worker.threads).label('threads')).filter(
+        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    ).first()
+    if active_workers:
+        return active_workers.threads
+    return 0
 
 def compile_workers_by_ip():
     workers_per_ip = {}
@@ -75,21 +74,24 @@ def count_workers_in_ipaddr(ipaddr):
     found_workers = workers_per_ip.get(ipaddr,[])
     return(len(found_workers))
 
+
 def get_total_usage():
     totals = {
         thing_name: 0,
         "fulfilments": 0,
     }
-    for worker in db.session.query(Worker).all():
-        totals[thing_name] += worker.contributions
-        totals["fulfilments"] += worker.fulfilments
-    return(totals)
+    result = db.session.query(func.sum(Worker.contributions).label('contributions'), func.sum(Worker.fulfilments).label('fulfilments')).first()
+    if result:
+        totals[thing_name] = result.contributions
+        totals["fulfilments"] = result.fulfilments
+    return totals
+
 
 def find_user_by_oauth_id(oauth_id):
     if oauth_id == 'anon' and not ALLOW_ANONYMOUS:
-        return(None)
-    user = db.session.query(User).filter_by(oauth_id=oauth_id).first()
-    return(user)
+        return None
+    return db.session.query(User).filter_by(oauth_id=oauth_id).first()
+
 
 def find_user_by_username(username):
     ulist = username.split('#')
@@ -206,7 +208,7 @@ def convert_things_to_kudos(things, **kwargs):
 
 def count_waiting_requests(user, models = []):
     count = 0
-    for wp in db.session.query(WaitingPrompt).all():
+    for wp in db.session.query(WaitingPrompt).all(): # TODO this can likely be improved
         if wp.user == user and not wp.is_completed():
             # If we pass a list of models, we want to count only the WP for these particular models.
             if len(models) > 0:
@@ -226,7 +228,7 @@ def count_totals():
         "queued_requests": 0,
         queued_thing: 0,
     }
-    for wp in db.session.query(WaitingPrompt).all():
+    for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
         current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
         ret_dict["queued_requests"] += current_wp_queue
         if current_wp_queue > 0:
@@ -239,7 +241,7 @@ def count_totals():
 def get_organized_wps_by_model():
     org = {}
     #TODO: Offload the sorting to the DB through join() + SELECT statements
-    all_wps = db.session.query(WaitingPrompt).all()
+    all_wps = db.session.query(WaitingPrompt).all() # TODO this can likely be improved
     for wp in all_wps:
         # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
         # This will inflate the overall expected times, but it shouldn't be by much.
@@ -263,7 +265,7 @@ def count_things_per_model():
 
 def get_waiting_wp_by_kudos():
     #TODO: Perform the sort via SQL during select
-    wplist = db.session.query(WaitingPrompt).all()
+    wplist = db.session.query(WaitingPrompt).all()  # TODO this can likely be improved
     sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
     final_wp_list = []
     for wp in sorted_wp_list:
@@ -294,7 +296,7 @@ def get_organized_procgens_by_model():
     org = {}
     for procgen in db.session.query(ProcessingGeneration).all():
         if procgen.model not in org:
-            org[model] = []
+            org[model] = [] # TODO model is not defined
         org[model].append(procgen)
     return(org)
 
@@ -311,7 +313,7 @@ def get_progens():
     return db.session.query(ProcessingGeneration).all()
 
 def get_worker_performances():
-    return [p.performance for p in db.session.query(WorkerPerformance).all()]
+    return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
 
 def wp_has_valid_workers(wp, limited_workers_ids = []):
     worker_found = False

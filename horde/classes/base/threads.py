@@ -34,7 +34,7 @@ class WPCleaner:
         logger.init_ok("Stale WP Cleanup Thread", status="Started")
         while True:
             with HORDE.app_context():
-                for wp in db.session.query(WaitingPrompt).all():
+                for wp in db.session.query(WaitingPrompt).all():  # TODO - all this logic can likely be moved into a prompt when it gets processed, ie, how many did i fail first, then delete
                     try:
                         # The below check if any jobs have been running too long and aborts them
                         faulted_requests = 0

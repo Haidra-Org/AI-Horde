@@ -59,6 +59,6 @@ def sanitize_string(text):
     return santxt
 
 def hash_api_key(unhashed_api_key):
-    salt = os.getenv("secret_key")
+    salt = os.getenv("secret_key", "s0m3s3cr3t") # Note default here, just so it can run without env file
     hashed_key = hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
     return hashed_key

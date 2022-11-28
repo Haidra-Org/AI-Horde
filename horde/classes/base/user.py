@@ -18,7 +18,7 @@ class UserStats(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     user = db.relationship("User", back_populates="stats")
-    action = db.Column(db.String(20), nullable=False)
+    action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.Integer, nullable=False)
 
 
@@ -38,8 +38,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True) 
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     username = db.Column(db.String(50), unique=False, nullable=False)
-    oauth_id = db.Column(db.String(50), unique=True, nullable=False)
-    api_key = db.Column(db.String(50), unique=True, nullable=False)
+    oauth_id = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    api_key = db.Column(db.String(50), unique=True, nullable=False, index=True)
     client_id = db.Column(db.String(50), unique=True, default=generate_client_id, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -50,7 +50,7 @@ class User(db.Model):
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
-    contributed_thing = db.Column(db.Float, default=0, nullable=False)
+    contributed_thing = db.Column(db.Float, default=0, nullable=False, index=True)
     contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
     usage_thing = db.Column(db.Float, default=0, nullable=False)
     usage_requests = db.Column(db.Integer, default=0, nullable=False)

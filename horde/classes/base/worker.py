@@ -14,7 +14,7 @@ class WorkerStats(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="stats")
-    action = db.Column(db.String(20), nullable=False)
+    action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.Integer, default=0, nullable=False)
 
 class WorkerPerformance(db.Model):
@@ -23,7 +23,7 @@ class WorkerPerformance(db.Model):
     worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
-    created = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow) # TODO maybe index here, but I'm not sure how big this table is
 
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
@@ -57,7 +57,7 @@ class Worker(db.Model):
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="workers")
-    name = db.Column(db.String(50), unique=True, nullable=False)
+    name = db.Column(db.String(50), unique=True, nullable=False, index=True)
     info = db.Column(db.String(1000))
     ipaddr = db.Column(db.String(15))
     created = db.Column(db.DateTime, default=datetime.utcnow)
@@ -66,7 +66,7 @@ class Worker(db.Model):
     last_aborted_job = db.Column(db.DateTime, default=datetime.utcnow)
 
     kudos = db.Column(db.Integer, default=0, nullable=False)
-    contributions = db.Column(db.Integer, default=0, nullable=False)
+    contributions = db.Column(db.Integer, default=0, nullable=False, index=True)
     fulfilments = db.Column(db.Integer, default=0, nullable=False)
     aborted_jobs = db.Column(db.Integer, default=0, nullable=False)
     uncompleted_jobs = db.Column(db.Integer, default=0, nullable=False)

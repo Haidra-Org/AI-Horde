@@ -58,7 +58,7 @@ class WaitingPrompt(db.Model):
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
     last_process_time = db.Column(db.DateTime, default=datetime.utcnow())
     faulted = db.Column(db.Boolean, default=False, nullable=False)
-    active = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False)
