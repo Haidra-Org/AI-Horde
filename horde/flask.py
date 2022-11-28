@@ -17,6 +17,7 @@ HORDE.config['SQLALCHEMY_POOL_SIZE'] = 500
 HORDE.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(HORDE)
 db.init_app(HORDE)
+logger.error("pool size = {}".format(db.engine.pool.size()))
 logger.init_ok("Horde Database", status="Started")
 
 if is_redis_up():
