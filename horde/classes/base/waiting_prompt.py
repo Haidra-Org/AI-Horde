@@ -83,10 +83,11 @@ class WaitingPrompt(db.Model):
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        db.session.add(self)
+        db.session.commit()
         self.set_workers(worker_ids)
         self.set_models(models)
         self.extract_params()
-        db.session.add(self)
 
     def set_workers(self, worker_ids = []):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)

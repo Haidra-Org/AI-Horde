@@ -111,7 +111,7 @@ class GenerateTemplate(Resource):
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():
             if self.args.apikey:
-                self.user = db.session.query(User).filter_by(api_key=self.args['apikey']).first()
+                self.user = database.find_user_by_api_key(self.args['apikey'])
             if not self.user:
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
