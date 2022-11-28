@@ -18,10 +18,10 @@ class Team(db.Model):
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     owner = db.relationship(f"User", back_populates="teams")
 
-    contributions = db.Column(db.Integer, default=0, nullable=False)
+    contributions = db.Column(db.BigInteger, default=0, nullable=False)
     fulfilments = db.Column(db.Integer, default=0, nullable=False)
-    kudos = db.Column(db.Integer, default=0, nullable=False)
-    uptime = db.Column(db.Integer, default=0, nullable=False)
+    kudos = db.Column(db.BigInteger, default=0, nullable=False)
+    uptime = db.Column(db.BigInteger, default=0, nullable=False)
 
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

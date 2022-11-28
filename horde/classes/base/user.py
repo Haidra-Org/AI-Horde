@@ -17,7 +17,7 @@ class UserStats(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
-    value = db.Column(db.Integer, nullable=False)
+    value = db.Column(db.BigInteger, nullable=False)
 
 
 class UserSuspicions(db.Model):
@@ -43,7 +43,7 @@ class User(db.Model):
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
 
-    kudos = db.Column(db.Integer, default=0, nullable=False)
+    kudos = db.Column(db.BigInteger, default=0, nullable=False)
     monthly_kudos = db.Column(db.Integer, default=0, nullable=False)
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)

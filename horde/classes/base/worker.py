@@ -17,7 +17,7 @@ class WorkerStats(db.Model):
     worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
-    value = db.Column(db.Integer, default=0, nullable=False)
+    value = db.Column(db.BigInteger, default=0, nullable=False)
 
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
@@ -67,15 +67,15 @@ class Worker(db.Model):
     last_check_in = db.Column(db.DateTime, default=datetime.utcnow)
     last_aborted_job = db.Column(db.DateTime, default=datetime.utcnow)
 
-    kudos = db.Column(db.Integer, default=0, nullable=False)
-    contributions = db.Column(db.Integer, default=0, nullable=False, index=True)
+    kudos = db.Column(db.BigInteger, default=0, nullable=False)
+    contributions = db.Column(db.BigInteger, default=0, nullable=False, index=True)
     fulfilments = db.Column(db.Integer, default=0, nullable=False)
     aborted_jobs = db.Column(db.Integer, default=0, nullable=False)
     uncompleted_jobs = db.Column(db.Integer, default=0, nullable=False)
-    uptime = db.Column(db.Integer, default=0, nullable=False)
+    uptime = db.Column(db.BigInteger, default=0, nullable=False)
     threads = db.Column(db.Integer, default=1, nullable=False)
     bridge_version = db.Column(db.Integer, default=1, nullable=False)
-    last_reward_uptime = db.Column(db.Integer, default=0, nullable=False)
+    last_reward_uptime = db.Column(db.BigInteger, default=0, nullable=False)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)

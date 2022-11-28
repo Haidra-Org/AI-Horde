@@ -16,7 +16,7 @@ class ProcessingGeneration(db.Model):
     generation = db.Column(db.Text)
 
     model = db.Column(db.String(40), default='', nullable=False)
-    seed = db.Column(db.Integer, default=0, nullable=False)
+    seed = db.Column(db.BigInteger, default=0, nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     cancelled = db.Column(db.Boolean, default=False, nullable=False)

@@ -64,7 +64,7 @@ class WaitingPrompt(db.Model):
     n = db.Column(db.Integer, default=0, nullable=False)
     # This stores the original amount of jobs requested
     jobs = db.Column(db.Integer, default=0, nullable=False)
-    things = db.Column(db.Integer, default=0, nullable=False)
+    things = db.Column(db.BigInteger, default=0, nullable=False)
     total_usage = db.Column(db.Float, default=0, nullable=False)
     extra_priority = db.Column(db.Integer, default=0, nullable=False)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
