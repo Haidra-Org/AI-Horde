@@ -82,9 +82,8 @@ def get_total_usage():
     }
     result = db.session.query(func.sum(Worker.contributions).label('contributions'), func.sum(Worker.fulfilments).label('fulfilments')).first()
     if result:
-        totals[thing_name] = result.contributions
-        totals["fulfilments"] = result.fulfilments
-    logger.debug(totals)
+        totals[thing_name] = result.contributions if result.contributions else 0
+        totals["fulfilments"] = result.fulfilments if result.fulfilments else 0
     return totals
 
 
