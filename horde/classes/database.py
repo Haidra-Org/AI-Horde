@@ -84,6 +84,7 @@ def get_total_usage():
     if result:
         totals[thing_name] = result.contributions
         totals["fulfilments"] = result.fulfilments
+    logger.debug(totals)
     return totals
 
 
