@@ -1,10 +1,14 @@
 
 from datetime import datetime
 import uuid
+from sqlalchemy.ext.mutable import MutableDict
+# for going live
+from sqlalchemy.dialects.postgresql import JSONB
 
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
+from horde.utils import is_profane, get_db_uuid
 
 from horde.classes import ProcessingGeneration
 
@@ -12,42 +16,42 @@ from horde.classes import ProcessingGeneration
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
 
 
 class WPTrickedWorkers(db.Model):
     __tablename__ = "wp_tricked_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"))
+    worker_id = db.Column(db.String(32), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
 
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
-    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"))
+    wp_id = db.Column(db.Integer, db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
-    model = db.Column(db.String(20), primary_key=False)
+    model = db.Column(db.String(20), nullable=False)
 
 
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
     STALE_TIME = 1200
-    id = db.Column(db.String(36), primary_key=True, default=str(uuid.uuid4()))  # Whilst using sqlite use this, as it has no uuid type
+    id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
     # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="waiting_prompts")
 
-    params = db.Column(db.JSON, default={}, nullable=False)
-    gen_payload = db.Column(db.JSON, default={}, nullable=False)
+    params = db.Column(MutableDict.as_mutable(db.JSON), default={}, nullable=False)
+    gen_payload = db.Column(MutableDict.as_mutable(db.JSON), default={}, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -65,7 +69,6 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    # TODO temp disabled
     processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")
@@ -80,11 +83,11 @@ class WaitingPrompt(db.Model):
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        db.session.add(self)
+        db.session.commit()
         self.set_workers(worker_ids)
         self.set_models(models)
         self.extract_params()
-        db.session.add(self)
-        logger.debug([kwargs, self.user,self.models, self.user_id]) 
 
     def set_workers(self, worker_ids = []):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
@@ -137,14 +140,14 @@ class WaitingPrompt(db.Model):
     def start_generation(self, worker):
         if self.n <= 0:
             return
-        new_gen = self.new_procgen(worker)
+        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.n -= 1
         self.refresh()
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
         return self.get_pop_payload(new_gen)
 
     def fake_generation(self, worker):
-        new_gen = self.new_procgen(worker)
+        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         new_gen.fake = True
         new_trick = WPTrickedWorkers(wp_id=self.id, worker_id=worker.id)
         db.session.add(new_trick)
@@ -161,11 +164,6 @@ class WaitingPrompt(db.Model):
             "model": procgen.model,
         }
         return(prompt_payload)
-
-    # Using this function so that I can extend it to have it grab the correct extended class
-    # def new_procgen(self, worker):
-    #     # TODO THIS SHOULDN'T BE HERE - we can make a method on proc gen that takes a worker
-    #     return(ProcessingGeneration(wp_id=self.id, worker_id=worker.id))
 
     def is_completed(self):
         if self.faulted:
@@ -196,7 +194,14 @@ class WaitingPrompt(db.Model):
         '''The things still queued to be generated for this waiting prompt'''
         return round(self.things * self.n/thing_divisor,2)
 
-    def get_status(self, request_avg, active_worker_count, has_valid_workers, lite = False):
+    def get_status(
+            self, 
+            request_avg, 
+            active_worker_count, 
+            has_valid_workers, 
+            wp_queue_stats, 
+            lite = False
+        ):
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = self.n
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
@@ -211,16 +216,15 @@ class WaitingPrompt(db.Model):
             for procgen in self.processing_gens:
                 if procgen.is_completed():
                     ret_dict["generations"].append(procgen.get_details())
-        queue_pos, queued_things, queued_n = self.get_own_queue_stats()
+        queue_pos, queued_things, queued_n = wp_queue_stats
         # We increment the priority by 1, because it starts at -1
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        active_workers = active_workers_count
         # If there's less requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
-        if queued_n < active_workers:
-            active_workers = queued_n
-        avg_things_per_sec = (request_avg / thing_divisor) * active_workers
+        if queued_n < active_worker_count:
+            active_worker_count = queued_n
+        avg_things_per_sec = (request_avg / thing_divisor) * active_worker_count
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
@@ -239,18 +243,10 @@ class WaitingPrompt(db.Model):
         ret_dict["is_possible"] = has_valid_workers
         return(ret_dict)
 
-    def get_lite_status(self):
+    def get_lite_status(self, **kwargs):
         '''Same as get_status(), but without the images to avoid unnecessary size'''
-        ret_dict = self.get_status(True)
+        ret_dict = self.get_status(lite=True, **kwargs)
         return(ret_dict)
-
-    def get_own_queue_stats(self):
-        '''Get out position in the working prompts queue sorted by kudos
-        If this gen is completed, we return (-1,-1) which represents this, to avoid doing operations.
-        '''
-        if self.needs_gen():
-            return(database.get_wp_queue_stats(self))
-        return(-1,0,0)
 
     def record_usage(self, raw_things, kudos):
         '''Record that we received a requested generation and how much kudos it costs us

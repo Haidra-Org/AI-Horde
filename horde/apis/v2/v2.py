@@ -1,4 +1,3 @@
-import bleach
 import json
 import os
 import re
@@ -14,7 +13,7 @@ from horde.apis import ModelsV2, ParsersV2
 from horde.apis import exceptions as e
 from horde.classes import database, stats, Worker, Team, WaitingPrompt, News, User
 from horde.suspicions import Suspicions
-from horde.utils import is_profane
+from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
 
 # Not used yet
@@ -112,7 +111,7 @@ class GenerateTemplate(Resource):
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():
             if self.args.apikey:
-                self.user = db.session.query(User).filter_by(api_key=self.args['apikey']).first()
+                self.user = database.find_user_by_api_key(self.args['apikey'])
             if not self.user:
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
@@ -146,8 +145,10 @@ class GenerateTemplate(Resource):
                         prompt_suspicion += 1
                         break
             if prompt_suspicion >= 2:
-                self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
-                CounterMeasures.report_suspicion(self.user_ip)
+                # Moderators do not get ip blocked to allow for experiments
+                if not self.user.moderator:
+                    self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
+                    CounterMeasures.report_suspicion(self.user_ip)
                 raise e.CorruptPrompt(self.username, self.user_ip, prompt)
 
     
@@ -218,6 +219,7 @@ class SyncGenerate(GenerateTemplate):
         ret_dict = self.wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
             has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            wp_queue_stats=database.get_wp_queue_stats(self.wp),
             active_worker_count=database.count_active_workers()
         )
         # We delete it from memory immediately to ensure we don't run out
@@ -252,6 +254,7 @@ class AsyncStatus(Resource):
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
             has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
         # If the status is retrieved after the wp is done we clear it to free the ram
@@ -271,6 +274,7 @@ class AsyncStatus(Resource):
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
             has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
@@ -292,7 +296,13 @@ class AsyncCheck(Resource):
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        return(wp.get_lite_status(), 200)
+        lite_status = wp.get_lite_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        return(lite_status, 200)
 
 
 class JobPop(Resource):
@@ -375,7 +385,7 @@ class JobPop(Resource):
         self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
-        self.worker_name = bleach.clean(self.args['name'])
+        self.worker_name = sanitize_string(self.args['name'])
         self.worker = database.find_worker_by_name(self.worker_name)
         self.safe_ip = True
         if not self.worker or not self.worker.user.trusted:
@@ -398,7 +408,6 @@ class JobPop(Resource):
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
-            logger.debug(Worker)
             self.worker = Worker(
                 user_id=self.user.id,
                 name=self.worker_name,
@@ -406,6 +415,9 @@ class JobPop(Resource):
             self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+        for model in self.models:
+            if is_profane(model):
+                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
     
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
@@ -442,8 +454,12 @@ class JobSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
-        stats.record_fulfilment(self.procgen, database.get_worker_performances())
+        things_per_sec = stats.record_fulfilment(self.procgen, database.get_worker_performances())
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args['seed']
+        )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 
@@ -949,27 +965,35 @@ class Teams(Resource):
         Only trusted users can create new teams.
         '''
         self.args = self.post_parser.parse_args()
-        user = database.find_user_by_api_key(self.args['apikey'])
-        if not user:
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
             raise e.InvalidAPIKey('User action: ' + 'PUT Teams')
-        if user.is_anon():
+        if self.user.is_anon():
             raise e.AnonForbidden()
-        if not user.trusted:
+        if not self.user.trusted:
             raise e.NotTrusted
         ret_dict = {}
-        team = Team(database)
-        ret = team.set_name(self.args.name)
-        if ret == "Profanity":
-            raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'team name')
-        if ret == "Already Exists":
-            raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
-        ret_dict["name"] = team.name
-        if self.args.info is not None:
-            ret = team.set_info(self.args.info)
-            if ret == "Profanity":
-                raise e.Profanity(user.get_unique_alias(), self.args.info, 'team info')
-            ret_dict["info"] = team.info
-        team.create(user)
+
+        self.team_name = sanitize_string(self.args.name)
+        self.team = database.find_team_by_name(self.team_name)
+        self.team_info = self.args.info
+        if self.team_info is not None:
+            self.team_info = sanitize_string(self.team_info)
+
+        if self.team:
+            raise e.NameAlreadyExists(self.user.get_unique_alias(), self.team_name, self.args.name, 'team')
+        if is_profane(self.team_name):
+            raise e.Profanity(self.user.get_unique_alias(), self.team_name, 'team name')
+        if self.team_info and is_profane(self.team_info):
+            raise e.Profanity(self.user.get_unique_alias(), self.team_info, 'team info')
+        team = Team(
+            owner_id=self.user.id, 
+            name=self.team_name,
+            info=self.team_info,
+        )
+        team.create()
+        ret_dict["name"] = self.team_name
+        ret_dict["info"] = self.team_info
         ret_dict["id"] = team.id
         return(ret_dict, 200)
 

@@ -2,17 +2,16 @@ from horde.logger import logger
 from horde.argparser import args
 from importlib import import_module
 from horde.flask import db, HORDE
+from horde.utils import hash_api_key
 
 # Should figure out an elegant way to do this with a for loop
 # stats = import_module(name=f'horde.classes.{args.horde}').stats
 try:
     ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
-    logger.debug(f'Loaded ProcessingGenerationExtended')
 except (ModuleNotFoundError,AttributeError):
     ProcessingGeneration = import_module(name='horde.classes.base.processing_generation').ProcessingGeneration
 try:
     WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
-    logger.debug("Loaded WaitingPromptExtended")
 except (ModuleNotFoundError,AttributeError):
     WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
 try:
@@ -35,7 +34,10 @@ try:
     WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
 except (ModuleNotFoundError,AttributeError):
     WorkerPerformance = import_module(name='horde.classes.base.worker').WorkerPerformance
-News = import_module(name=f'horde.classes.{args.horde}.news').News
+try:
+    News = import_module(name=f'horde.classes.{args.horde}.news').NewsExtended
+except (ModuleNotFoundError,AttributeError):
+    News = import_module(name=f'horde.classes.{args.horde}.news').News
 try:
     WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended
 except (ModuleNotFoundError,AttributeError):
@@ -52,9 +54,12 @@ except (ModuleNotFoundError,AttributeError):
 # from horde.classes.base import stats
 from horde.classes import database
 
-logger.debug(Team)
 with HORDE.app_context():
     db.create_all()
+
+    if args.convert_flag == "SQL":
+        from horde.conversions import convert_json_db
+        convert_json_db()
 
     anon = db.session.query(User).filter_by(oauth_id="anon").first()
     if not anon:
@@ -62,7 +67,7 @@ with HORDE.app_context():
             id=0,
             username="Anonymous",
             oauth_id="anon",
-            api_key="0000000000",
+            api_key=hash_api_key("0000000000"),
             public_workers=True,
             concurrency=500
         )

@@ -3,7 +3,6 @@ import random
 import secrets
 from uuid import uuid4
 
-import bleach
 from flask import render_template, redirect, url_for, request
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
@@ -14,7 +13,7 @@ from horde.argparser import args, maintenance
 from horde.classes import News, User, stats, database
 from horde.flask import HORDE, cache
 from horde.logger import logger
-from horde.utils import ConvertAmount, is_profane
+from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
 
 dance_return_to = '/'
@@ -169,12 +168,13 @@ def register():
             username = user.username
     if request.method == 'POST':
         api_key = secrets.token_urlsafe(16)
+        hashed_api_key = hash_api_key(api_key)
         if user:
-            username = bleach.clean(request.form['username'])
+            username = sanitize_string(request.form['username'])
             if is_profane(username):
                 return render_template('bad_username.html', page_title="Bad Username")
             user.username = username
-            user.api_key = api_key
+            user.api_key = hashed_api_key
         else:
             # Triggered when the user created a username without logging in
             if is_profane(request.form['username']):
@@ -182,8 +182,11 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
-            username = bleach.clean(request.form['username'])
-            user = User(username=username,oauth_id=oauth_id,api_key=api_key)
+            username = sanitize_string(request.form['username'])
+            user = User(
+                username=username,
+                oauth_id=oauth_id,
+                api_key=hashed_api_key)
             user.create()
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"

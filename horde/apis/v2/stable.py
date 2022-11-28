@@ -98,6 +98,7 @@ class AsyncGenerate(AsyncGenerate):
             source_processing = self.args.source_processing,
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
+            safe_ip=self.safe_ip,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.count_totals())
         if needs_kudos:
@@ -140,6 +141,7 @@ class SyncGenerate(SyncGenerate):
             source_processing = self.args.source_processing,
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
+            safe_ip=self.safe_ip,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.count_totals())
         if needs_kudos:
@@ -152,7 +154,6 @@ class SyncGenerate(SyncGenerate):
     
 class JobPop(JobPop):
     def check_in(self):
-        logger.debug(self.worker)
         self.worker.check_in(
             self.args.max_pixels, 
             nsfw = self.args.nsfw, 

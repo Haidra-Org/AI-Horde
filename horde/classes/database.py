@@ -1,9 +1,11 @@
-from datetime import datetime, timedelta
 import time
+from datetime import datetime, timedelta
+from sqlalchemy import func
 from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.utils import hash_api_key
 
 ALLOW_ANONYMOUS = True
 
@@ -11,7 +13,7 @@ ALLOW_ANONYMOUS = True
 def initiate_save(seconds = 1):
     logger.success(f"Initiating save in {seconds} seconds")
     # TODO - we don't want waits if we can avoid it (as this is a server)
-    time.wait(seconds)
+    time.sleep(seconds)
     db.session.commit()
 
 def get_anon():
@@ -106,7 +108,7 @@ def find_user_by_id(user_id):
 def find_user_by_api_key(api_key):
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return(None)
-    user = db.session.query(User).filter_by(api_key=api_key).first()
+    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
     return(user)
 
 def find_worker_by_name(worker_name):
@@ -118,7 +120,7 @@ def find_worker_by_id(worker_id):
     return(worker)
 
 def get_all_teams():
-    return db.session.query(Teams).all()
+    return db.session.query(Team).all()
 
 def find_team_by_id(team_id):
     team = db.session.query(Team).filter_by(id=team_id).first()
@@ -170,7 +172,7 @@ def transfer_kudos(source_user, dest_user, amount):
         return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
     if amount < 0:
         return([0,'Nice try...'])
-    if amount > source_user.kudos - source_user.min_kudos:
+    if amount > source_user.kudos - source_user.get_min_kudos():
         return([0,'Not enough kudos.'])
     source_user.modify_kudos(-amount, 'gifted')
     dest_user.modify_kudos(amount, 'received')
@@ -274,6 +276,8 @@ def get_waiting_wp_by_kudos():
 # Also returns the amount of things until the wp is generated
 # Also returns the amount of different gens queued
 def get_wp_queue_stats(wp):
+    if not wp.needs_gen():
+        return(-1,0,0)
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
     priority_sorted_list = get_waiting_wp_by_kudos()

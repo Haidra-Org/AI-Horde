@@ -131,6 +131,7 @@ class SyncGenerate(Resource):
             servers=args["servers"],
             models=args["models"],
             softprompts=args["softprompts"],
+            safe_ip=self.safe_ip,
         )
         server_found = False
         for server in _db.workers.values():
@@ -152,7 +153,8 @@ class SyncGenerate(Resource):
                 break
         ret_dict = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            has_valid_workers=database.wp_has_valid_workers(wp, args["servers"]),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )['generations']
         # We delete it from memory immediately to ensure we don't run out
@@ -170,7 +172,8 @@ class AsyncStatus(Resource):
             return("ID not found", 404)
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            has_valid_workers=database.wp_has_valid_workers(wp, args["servers"]),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
         return(wp_status, 200)
@@ -184,7 +187,13 @@ class AsyncCheck(Resource):
         wp = database.get_wp_by_id(id)
         if not wp:
             return("ID not found", 404)
-        return(wp.get_lite_status(), 200)
+        lite_status = wp.get_lite_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        return(lite_status, 200)
 
 
 class AsyncGenerate(Resource):
@@ -221,6 +230,7 @@ class AsyncGenerate(Resource):
             user,
             args["params"],
             servers=args["servers"],
+            safe_ip=self.safe_ip,
         )
         wp.activate()
         return({"id":wp.id}, 200)
