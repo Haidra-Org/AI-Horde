@@ -5,6 +5,7 @@ from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.utils import hash_api_key
 
 ALLOW_ANONYMOUS = True
 
@@ -107,7 +108,7 @@ def find_user_by_id(user_id):
 def find_user_by_api_key(api_key):
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return(None)
-    user = db.session.query(User).filter_by(api_key=api_key).first()
+    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
     return(user)
 
 def find_worker_by_name(worker_name):

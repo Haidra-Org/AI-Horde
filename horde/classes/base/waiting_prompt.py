@@ -2,6 +2,7 @@
 from datetime import datetime
 import uuid
 from sqlalchemy.ext.mutable import MutableDict
+# for going live
 from sqlalchemy.dialects.postgresql import JSONB
 
 from horde.logger import logger
@@ -49,8 +50,8 @@ class WaitingPrompt(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     user = db.relationship("User", back_populates="waiting_prompts")
 
-    params = db.Column(MutableDict.as_mutable(JSONB), default={}, nullable=False)
-    gen_payload = db.Column(MutableDict.as_mutable(JSONB), default={}, nullable=False)
+    params = db.Column(MutableDict.as_mutable(db.JSON), default={}, nullable=False)
+    gen_payload = db.Column(MutableDict.as_mutable(db.JSON), default={}, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -68,7 +69,6 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    # TODO temp disabled
     processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")

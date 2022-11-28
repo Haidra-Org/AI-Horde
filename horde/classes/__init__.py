@@ -2,6 +2,7 @@ from horde.logger import logger
 from horde.argparser import args
 from importlib import import_module
 from horde.flask import db, HORDE
+from horde.utils import hash_api_key
 
 # Should figure out an elegant way to do this with a for loop
 # stats = import_module(name=f'horde.classes.{args.horde}').stats
@@ -62,7 +63,7 @@ with HORDE.app_context():
             id=0,
             username="Anonymous",
             oauth_id="anon",
-            api_key="0000000000",
+            api_key=hash_api_key("0000000000"),
             public_workers=True,
             concurrency=500
         )

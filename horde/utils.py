@@ -1,7 +1,11 @@
 import uuid
 import bleach
+import secrets
+import hashlib
+import os
 from profanity_check  import predict
 from better_profanity import profanity
+from horde.logger import logger
 profanity.load_censor_words()
 
 def is_profane(text):
@@ -47,6 +51,14 @@ class ConvertAmount:
 def get_db_uuid():
     return str(uuid.uuid4())
 
+def generate_client_id():
+    return secrets.token_urlsafe(16)
+
 def sanitize_string(text):
     santxt = bleach.clean(text).lstrip().rstrip()
     return santxt
+
+def hash_api_key(unhashed_api_key):
+    salt = os.getenv("secret_key")
+    hashed_key = hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
+    return hashed_key

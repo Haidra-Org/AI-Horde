@@ -145,8 +145,10 @@ class GenerateTemplate(Resource):
                         prompt_suspicion += 1
                         break
             if prompt_suspicion >= 2:
-                self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
-                CounterMeasures.report_suspicion(self.user_ip)
+                # Moderators do not get ip blocked to allow for experiments
+                if not self.user.moderator:
+                    self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
+                    CounterMeasures.report_suspicion(self.user_ip)
                 raise e.CorruptPrompt(self.username, self.user_ip, prompt)
 
     
@@ -612,7 +614,6 @@ class WorkerSingle(Resource):
                 ret_dict["team"] = team.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!")
-        # FIXME: Why does the response marshalling eat all the keys?!
         return(ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()

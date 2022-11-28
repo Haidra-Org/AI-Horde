@@ -7,7 +7,7 @@ from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor
 from horde.suspicions import Suspicions
-from horde.utils import is_profane, sanitize_string
+from horde.utils import is_profane, sanitize_string, generate_client_id
 
 
 # from sqlalchemy.dialects.postgresql import UUID
@@ -39,6 +39,7 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False)
     api_key = db.Column(db.String(50), unique=True, nullable=False)
+    client_id = db.Column(db.String(50), unique=True, default=generate_client_id, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
