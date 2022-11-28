@@ -6,7 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from horde.redis_ctrl import is_redis_up
 from horde.logger import logger
 
-
+logger.debug('aaa')
 cache = None
 HORDE = Flask(__name__)
 HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
