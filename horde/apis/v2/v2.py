@@ -88,7 +88,7 @@ def get_request_path():
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
     def post(self):
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         self.args = parsers.generate_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -106,50 +106,50 @@ class GenerateTemplate(Resource):
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         self.initiate_waiting_prompt()
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         self.activate_waiting_prompt()
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
         if maintenance.active:
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if self.args.apikey:
                 self.user = database.find_user_by_api_key(self.args['apikey'])
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if self.args['prompt'] == '':
                 raise e.MissingPrompt(self.username)
             if self.user.is_anon():
                 wp_count = database.count_waiting_requests(self.user,self.args["models"])
-                logger.warning(datetime.utcnow())
+                #logger.warning(datetime.utcnow())
             else:
                 wp_count = database.count_waiting_requests(self.user)
-                logger.warning(datetime.utcnow())
+                #logger.warning(datetime.utcnow())
             if len(self.workers):
                 for worker_id in self.workers:
                     if not database.find_worker_by_id(worker_id):
                         raise e.WorkerNotFound(worker_id)
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             n = 1
             if self.args.params:
                 n = self.args.params.get('n',1)
             user_limit = self.user.get_concurrency(self.args["models"],database.get_available_models(lite_dict=True))
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
                 raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
             ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             prompt_suspicion = 0
             if "###" in self.args.prompt:
                 prompt, negprompt = self.args.prompt.split("###", 1)
@@ -160,7 +160,7 @@ class GenerateTemplate(Resource):
                     if blacklist.search(prompt):
                         prompt_suspicion += 1
                         break
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if prompt_suspicion >= 2:
                 # Moderators do not get ip blocked to allow for experiments
                 if not self.user.moderator:
@@ -338,7 +338,7 @@ class JobPop(Resource):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         self.args = parsers.job_pop_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -379,37 +379,37 @@ class JobPop(Resource):
         #     for wp in wp_list:
         #         if wp.user == priority_user and wp.needs_gen():
         #             self.prioritized_wp.append(wp)
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
         for wp in database.get_waiting_wp_by_kudos():  # This is just the top 50 - TODO need to filter by models
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         iter = 0
         for wp in self.prioritized_wp:
             logger.warning([datetime.utcnow(), iter])
             iter += 1
             check_gen = self.worker.can_generate(wp)
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
                 # We don't report on secret skipped reasons
                 # as they're typically countermeasures to raids
                 if skipped_reason != "secret":
                     self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
-                logger.warning(datetime.utcnow())
+                #logger.warning(datetime.utcnow())
                 continue
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
             # time.sleep(random.uniform(0, 1))
             if not wp.needs_gen():
                 continue
-            logger.warning(datetime.utcnow())
+            #logger.warning(datetime.utcnow())
             return(self.start_worker(wp), 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension

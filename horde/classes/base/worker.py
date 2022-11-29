@@ -263,36 +263,36 @@ class Worker(db.Model):
         if self.maintenance and waiting_prompt.user != self.user:
             is_matching = False
             return([is_matching,skipped_reason])
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         if self.is_stale():
             # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
             return([is_matching,skipped_reason])
         # If the request specified only specific workers to fulfill it, and we're not one of them, we skip
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         if len(waiting_prompt.workers) >= 1 and self not in waiting_prompt.workers:
             is_matching = False
             skipped_reason = 'worker_id'
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False
             skipped_reason = 'nsfw'
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         if waiting_prompt.trusted_workers and not self.user.trusted:
             is_matching = False
             logger.debug('adasao')
             skipped_reason = 'untrusted'
         # If the worker has been tricked once by this prompt, we don't want to resend it it
         # as it may give up the jig
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         if waiting_prompt.tricked_worker(self):
             is_matching = False
             skipped_reason = 'secret'
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
         if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
-        logger.warning(datetime.utcnow())
+        #logger.warning(datetime.utcnow())
 
         my_model_names = self.get_model_names()
         wp_model_names = waiting_prompt.get_model_names()
