@@ -56,7 +56,10 @@ def convert_source_image_to_webp(source_image_b64):
 class AsyncGenerate(AsyncGenerate):
     
     def validate(self):
+        from datetime import datetime
+        logger.warning(datetime.utcnow())
         super().validate()
+        logger.warning(datetime.utcnow())
         # Temporary exception. During trial period only trusted users can use img2img
         if not self.user.trusted:
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
@@ -85,6 +88,8 @@ class AsyncGenerate(AsyncGenerate):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
+        from datetime import datetime
+        logger.warning(datetime.utcnow())
         logger.message(self.params)
         self.wp = WaitingPrompt(
             self.workers,

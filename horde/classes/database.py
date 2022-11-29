@@ -223,17 +223,21 @@ def convert_things_to_kudos(things, **kwargs):
 def count_waiting_requests(user, models = []):
     count = 0
     for wp in db.session.query(WaitingPrompt).all(): # TODO this can likely be improved
+        logger.warning(datetime.utcnow())
         if wp.user == user and not wp.is_completed():
+            logger.warning(datetime.utcnow())
             # If we pass a list of models, we want to count only the WP for these particular models.
             if len(models) > 0:
                 matching_model = False
                 for model in models:
                     if model in wp.get_model_names():
+                        logger.warning(datetime.utcnow())
                         matching_model = True
                         break
                 if not matching_model:
                     continue
             count += wp.n
+    logger.warning(datetime.utcnow())
     return(count)
 
 def count_totals():

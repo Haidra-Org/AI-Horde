@@ -117,7 +117,6 @@ class CounterMeasures:
 
 	@staticmethod
 	def retrieve_timeout(ipaddr):
-		return 0 #FIXME When IP is working
 		'''Checks if an IP address is still in timeout'''
 		if not ip_t_r:
 			return test_timeout*3*60
