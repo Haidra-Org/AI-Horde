@@ -22,7 +22,7 @@ class WPAllowedWorkers(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers", cascade="all, delete")
 
 
 class WPTrickedWorkers(db.Model):
@@ -31,14 +31,14 @@ class WPTrickedWorkers(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers", cascade="all, delete")
 
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="models", cascade="all, delete")
     model = db.Column(db.String(20), nullable=False)
 
 
