@@ -48,7 +48,7 @@ class WPCleaner:
 
                 wp_ids = db.session.query(ProcessingGeneration.wp_id).group_by(ProcessingGeneration.wp_id).having(func.count(ProcessingGeneration.wp_id) > 2)
                 wp_ids = [wp_id[0] for wp_id in wp_ids]
-                waiting_prompts = db.session.query(WaitingPrompt).filter(WaitingPrompt.id.in_(wp_ids))
+                waiting_prompts = db.session.query(WaitingPrompt).filter(WaitingPrompt.id.in_(wp_ids)).filter(WaitingPrompt.faulted == False)
                 waiting_prompts.update({WaitingPrompt.faulted: True}, synchronize_session=False)
                 for wp in waiting_prompts.all():
                     wp.log_faulted_job()

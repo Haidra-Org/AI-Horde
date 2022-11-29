@@ -409,7 +409,7 @@ class JobPop(Resource):
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
-        logger.warning(datetime.utcnow())
+        # logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
 
     # Making it into its own function to allow extension
