@@ -4,15 +4,15 @@ from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.logger import logger
-from horde.flask import db
+from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 class Team(db.Model):
     __tablename__ = "teams"
-    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
-    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', unique=True, nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)

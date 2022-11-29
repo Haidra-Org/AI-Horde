@@ -5,14 +5,15 @@ from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from horde.utils import get_db_uuid
 from horde.logger import logger
-from horde.flask import db
+from horde.flask import db, SQLITE_MODE
 
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
     __tablename__ = "processing_gens"
     # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
-    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
     generation = db.Column(db.Text)
 
     model = db.Column(db.String(40), default='', nullable=False)
@@ -23,9 +24,9 @@ class ProcessingGeneration(db.Model):
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     fake = db.Column(db.Boolean, default=False, nullable=False)
 
-    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
+    wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
     wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
-    worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("WorkerExtended", back_populates="processing_gens")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
