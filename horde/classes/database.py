@@ -264,15 +264,15 @@ def count_things_per_model():
     return(things_per_model)
 
 def get_waiting_wp_by_kudos():
-    #TODO: Perform the sort via SQL during select
-    wplist = db.session.query(WaitingPrompt).all()  # TODO this can likely be improved
-    sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
-    final_wp_list = []
-    for wp in sorted_wp_list:
-        if wp.needs_gen():
-            final_wp_list.append(wp)
+    return db.session.query(WaitingPrompt).Join(User).filter(WaitingPrompt.n > 0).order_by(User.kudos.desc(), WaitingPrompt.created.desc()).limit(50).all()
+    # sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
+    # final_wp_list = []
+    # for wp in sorted_wp_list:
+    #     if wp.needs_gen():
+    #         final_wp_list.append(wp)
     # logger.debug([(wp,wp.get_priority()) for wp in final_wp_list])
-    return(final_wp_list)
+
+    return final_wp_list
 
 # Returns the queue position of the provided WP based on kudos
 # Also returns the amount of things until the wp is generated
