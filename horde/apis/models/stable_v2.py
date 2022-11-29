@@ -45,10 +45,12 @@ class Models(v2.Models):
             'n_iter': fields.Integer(default=1, description="The amount of images to generate"), 
             'use_nsfw_censor': fields.Boolean(description="When true will apply NSFW censoring model on the generation"),
         })
+        logger.info(self.input_model_generation_payload)
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
             'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min = 1, max=20), 
         })
+        logger.info(self.input_model_generation_payload)
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
             'unsafe_ip': fields.Integer(description="How many waiting requests were skipped because they came from an unsafe IP"),
