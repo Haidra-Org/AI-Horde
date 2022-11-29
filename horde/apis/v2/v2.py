@@ -340,7 +340,7 @@ class JobPop(Resource):
         priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
-        p_users_id_from_db = db.session.query(User.id).filter(User.id.any(priority_user_ids)).all()
+        p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(priority_user_ids)).all()
         if p_users_id_from_db:
             self.priority_user_ids.extend(p_users_id_from_db)
 
@@ -349,7 +349,7 @@ class JobPop(Resource):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
 
-        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id._in(self.priority_user_ids)).all()
+        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids)).all()
         for wp in wp_list:
             self.prioritized_wp.append(wp)
         # for priority_user in self.priority_users:
