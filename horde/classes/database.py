@@ -221,6 +221,7 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 def count_waiting_requests(user, models = []):
+    return 1
     count = 0
     for wp in db.session.query(WaitingPrompt).all(): # TODO this can likely be improved
         model_names = wp.get_model_names()
