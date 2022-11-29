@@ -36,12 +36,15 @@ class WorkerExtended(Worker):
         skipped_reason = can_generate[1]
         if not is_matching:
             return [is_matching, skipped_reason]
+        logger.warning(datetime.utcnow())
         if self.max_pixels < waiting_prompt.params.get('width', 512) * waiting_prompt.params.get('height', 512):
             is_matching = False
             skipped_reason = 'max_pixels'
+        logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and self.bridge_version < 2:
             is_matching = False
             skipped_reason = 'img2img'
+        logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img':
             if self.bridge_version < 4:
                 is_matching = False
@@ -50,36 +53,46 @@ class WorkerExtended(Worker):
                 is_matching = False
                 skipped_reason = 'models'
         # If the only model loaded is the inpainting one, we skip the worker when this kind of work is not required
+        logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.get_model_names() == ["stable_diffusion_inpainting"]:
             is_matching = False
             skipped_reason = 'models'
+        logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img' and self.bridge_version < 4:
             is_matching = False
             skipped_reason = 'painting'
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
+        logger.warning(datetime.utcnow())
         if waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a') in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"] and self.bridge_version < 5:
             is_matching = False
             skipped_reason = 'bridge_version'
+        logger.warning(datetime.utcnow())
         if waiting_prompt.gen_payload.get('karras', False) and self.bridge_version < 6:
             is_matching = False
             skipped_reason = 'bridge_version'
+        logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and self.bridge_version < 7:
             is_matching = False
             skipped_reason = 'bridge_version'
+        logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
             is_matching = False
             skipped_reason = 'img2img'
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
+        logger.warning(datetime.utcnow())
         if not waiting_prompt.source_image and (self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]):
             is_matching = False
             skipped_reason = 'models'
+        logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
             is_matching = False
             skipped_reason = 'painting'
+        logger.warning(datetime.utcnow())
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             is_matching = False
             skipped_reason = 'unsafe_ip'
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
+        logger.warning(datetime.utcnow())
         if not self.user.trusted:
             # if waiting_prompt.user.is_anon():
             #     is_matching = False
