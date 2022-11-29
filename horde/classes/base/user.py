@@ -59,11 +59,11 @@ class User(db.Model):
     trusted = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
-    workers = db.relationship(f"WorkerExtended", back_populates="user")
-    teams = db.relationship(f"Team", back_populates="owner")
-    suspicions = db.relationship("UserSuspicions", back_populates="user")
-    stats = db.relationship("UserStats", back_populates="user")
-    waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user")
+    workers = db.relationship(f"WorkerExtended", back_populates="user", cascade="all, delete")
+    teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete")
+    suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete")
+    stats = db.relationship("UserStats", back_populates="user", cascade="all, delete")
+    waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user", cascade="all, delete")
 
     def create(self):
         self.check_for_bad_actor()

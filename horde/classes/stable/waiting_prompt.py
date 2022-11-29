@@ -33,7 +33,8 @@ class WaitingPromptExtended(WaitingPrompt):
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
         # To avoid unnecessary calculations, we do it once here.
-        # logger.message(self.params)
+        logger.message(self.params)
+        db.session.commit()
         self.things = self.params['width'] * self.params['height'] * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(self.params)
