@@ -259,8 +259,10 @@ class AsyncStatus(Resource):
             active_worker_count=database.count_active_workers()
         )
         # If the status is retrieved after the wp is done we clear it to free the ram
-        if wp_status["done"]:
-            wp.delete()
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # if wp_status["done"]:
+            # wp.delete()
         return(wp_status, 200)
 
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
@@ -279,7 +281,9 @@ class AsyncStatus(Resource):
             active_worker_count=database.count_active_workers()
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
-        wp.delete()
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # wp.delete()
         return(wp_status, 200)
 
 
