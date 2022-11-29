@@ -69,8 +69,8 @@ class Team(db.Model):
         existing_team = find_team_by_name(self.name)
         if existing_team and existing_team != self:
             return("Already Exists")
-        return("OK")
         db.session.commit()
+        return("OK")
 
 
     def set_info(self, new_info):
@@ -79,8 +79,8 @@ class Team(db.Model):
         if is_profane(new_info):
             return("Profanity")
         self.info = sanitize_string(new_info)
-        return("OK")
         db.session.commit()
+        return("OK")
 
     def set_owner(self, new_owner):
         self.user_id = new_owner.id
