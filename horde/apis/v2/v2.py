@@ -387,7 +387,7 @@ class JobPop(Resource):
         #logger.warning(datetime.utcnow())
         iter = 0
         for wp in self.prioritized_wp:
-            logger.warning([datetime.utcnow(), iter])
+            # logger.warning([datetime.utcnow(), iter])
             iter += 1
             check_gen = self.worker.can_generate(wp)
             #logger.warning(datetime.utcnow())
