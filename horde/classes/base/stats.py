@@ -46,7 +46,7 @@ def get_things_per_min():
     total_things = 0
     pruned_array = []
     # clear up old requests (older than 5 mins)
-    if not args.secondary:
+    if args.primary:
         db.session.query(FulfillmentPerformance).filter(
         FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
         ).delete(synchronize_session=False)

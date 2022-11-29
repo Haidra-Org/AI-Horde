@@ -73,6 +73,6 @@ with HORDE.app_context():
         )
         anon.create()
         
-if not args.secondary:
+if args.primary:
     wp_cleaner = WPCleaner()
     monthly_kudos = MonthlyKudos()
