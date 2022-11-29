@@ -46,7 +46,7 @@ class Models(v2.Models):
             'n_iter': fields.Integer(default=1, description="The amount of images to generate"), 
             'use_nsfw_censor': fields.Boolean(description="When true will apply NSFW censoring model on the generation"),
         })
-        logger.info(self.input_model_generation_payload)
+        logger.info(self.root_model_generation_payload_stable)
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
             'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min = 1, max=20), 
