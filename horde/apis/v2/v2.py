@@ -218,7 +218,7 @@ class SyncGenerate(GenerateTemplate):
                 break
         ret_dict = self.wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            has_valid_workers=True,
             wp_queue_stats=database.get_wp_queue_stats(self.wp),
             active_worker_count=database.count_active_workers()
         )
@@ -253,7 +253,7 @@ class AsyncStatus(Resource):
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(wp),
+            has_valid_workers=True,
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
@@ -273,7 +273,7 @@ class AsyncStatus(Resource):
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(wp),
+            has_valid_workers=True,
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
