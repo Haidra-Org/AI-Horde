@@ -32,9 +32,7 @@ class WaitingPromptExtended(WaitingPrompt):
             self.seed = self.seed_to_int(self.params.pop('seed'))
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
-        # To avoid unnecessary calculations, we do it once here.
-        db.session.commit()
-        self.things = self.params['width'] * self.params['height'] * self.get_accurate_steps()
+        self.things = self.params.get('width',512) * self.params('height',512) * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(self.params)
         self.calculate_kudos()
