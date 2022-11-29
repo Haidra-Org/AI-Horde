@@ -3,7 +3,7 @@ from flask import Flask
 from flask_caching import Cache
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_sqlalchemy import SQLAlchemy
-from horde.redis_ctrl import is_redis_up
+from horde.redis_ctrl import is_redis_up, ger_cache_url
 from horde.logger import logger
 
 cache = None
@@ -26,6 +26,7 @@ logger.init_ok("Horde Database", status="Started")
 if is_redis_up():
     try:
         cache_config = {
+            "CACHE_REDIS_URL": ger_cache_url(),
             "CACHE_TYPE": "RedisCache",  
             "CACHE_DEFAULT_TIMEOUT": 300
         }
