@@ -264,7 +264,7 @@ def count_things_per_model():
     return(things_per_model)
 
 def get_waiting_wp_by_kudos():
-    return db.session.query(WaitingPrompt).Join(User).filter(WaitingPrompt.n > 0).order_by(User.kudos.desc(), WaitingPrompt.created.desc()).limit(50).all()
+    return db.session.query(WaitingPrompt).filter(WaitingPrompt.n > 0).order_by(WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()).limit(50).all()
     # sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
     # final_wp_list = []
     # for wp in sorted_wp_list:

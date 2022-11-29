@@ -66,7 +66,7 @@ class WaitingPrompt(db.Model):
     jobs = db.Column(db.Integer, default=0, nullable=False)
     things = db.Column(db.BigInteger, default=0, nullable=False)
     total_usage = db.Column(db.Float, default=0, nullable=False)
-    extra_priority = db.Column(db.Integer, default=0, nullable=False)
+    extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
     processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
@@ -107,6 +107,7 @@ class WaitingPrompt(db.Model):
         Before we add it to the queue
         '''
         self.active = True
+        self.extra_priority = self.user.kudos
         db.session.commit()
 
     def get_model_names(self):
@@ -290,7 +291,7 @@ class WaitingPrompt(db.Model):
         return(False)
 
     def get_priority(self):
-        return(self.user.kudos + self.extra_priority)
+        return(self.extra_priority)
 
     def set_job_ttl(self):
         '''Returns how many seconds each job request should stay waiting before considering it stale and cancelling it
