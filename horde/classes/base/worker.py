@@ -292,7 +292,7 @@ class Worker(db.Model):
             is_matching = False
             skipped_reason = 'blacklist'
         logger.warning(datetime.utcnow())
-        if len(waiting_prompt.models) > 0 and not any(m.model in waiting_prompt.get_model_names() for m in self.models):
+        if waiting_prompt.models.count() > 0 and not any(model in waiting_prompt.get_model_names() for model in self.get_model_names()):
             is_matching = False
             skipped_reason = 'models'
         # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
