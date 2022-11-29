@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 
@@ -210,7 +211,9 @@ class Worker(db.Model):
         db.session.commit()
 
     def get_model_names(self):
-        return [m.model for m in self.models]
+        model_names = db.session.query(func.distinct(WorkerModel.model).label('name')).filter(WorkerModel.worker_id == self.id).all()
+        return [m.name for m in model_names]
+
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
