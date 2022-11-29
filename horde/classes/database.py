@@ -232,7 +232,7 @@ def count_waiting_requests(user, models = []):
                 matching_model = False
                 for model in models:
                     if model in model_names:
-                        logger.warning(datetime.utcnow())
+                        # logger.warning(datetime.utcnow())
                         matching_model = True
                         break
                 if not matching_model:
