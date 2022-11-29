@@ -292,7 +292,7 @@ class Worker(db.Model):
         if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
-        #logger.warning(datetime.utcnow())
+        logger.warning(datetime.utcnow())
 
         my_model_names = self.get_model_names()
         wp_model_names = waiting_prompt.get_model_names()
