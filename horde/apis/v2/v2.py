@@ -427,7 +427,8 @@ class JobPop(Resource):
             if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                raise e.TooManySameIPs(self.user.username)
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
             self.worker = Worker(
                 user_id=self.user.id,
                 name=self.worker_name,
