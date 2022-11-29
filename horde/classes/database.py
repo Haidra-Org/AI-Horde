@@ -133,7 +133,7 @@ def get_available_models(lite_dict=False):
 
     available_worker_models = db.session.query(
         WorkerModel.model,
-        func.sum(WorkerModel).label('total_models'),
+        func.sum(WorkerModel.id).label('total_models'),
     ).group_by(WorkerModel.model).all()
 
     for model in available_worker_models:
