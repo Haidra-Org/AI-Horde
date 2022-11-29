@@ -510,6 +510,7 @@ class Workers(Resource):
         '''A List with the details of all registered and active workers
         '''
         workers_ret = []
+        return(workers_ret,200)
         # I could do this with a comprehension, but this is clearer to understand
         for worker in database.get_active_workers():
             workers_ret.append(worker.get_details())
@@ -674,6 +675,7 @@ class Users(Resource):
     def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
         '''
+        return ([],200) #FIXME: Debat
         all_users = db.session.query(User)
         users_list = [user.get_details() for user in all_users]
         return(users_list,200)
