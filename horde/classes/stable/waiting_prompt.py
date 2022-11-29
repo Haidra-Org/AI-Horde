@@ -11,7 +11,7 @@ class WaitingPromptExtended(WaitingPrompt):
     source_processing = db.Column(db.String(10), default='img2img', nullable=False)
     source_mask = db.Column(db.Text, default=None)
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
-    seed = db.Column(db.Integer, default=None)
+    seed = db.Column(db.Integer, default=None, nullable=False)
     seed_variation = db.Column(db.Integer, default=None)
     kudos = db.Column(db.Float, default=0, nullable=False)
 
