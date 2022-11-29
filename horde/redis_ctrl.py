@@ -1,7 +1,8 @@
+import os
 import socket
 import redis
 
-hostname = "localhost"
+hostname = os.getenv('REDIS_IP')
 port = 6379
 address = f"redis://{hostname}:{port}"
 
@@ -30,6 +31,7 @@ def get_horde_db():
     return(rdb)
 
 def get_ipaddr_db():
+    logger.error(hostname)
     rdb = redis.Redis(
         host=hostname,
         port=port,
