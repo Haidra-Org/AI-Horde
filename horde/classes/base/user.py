@@ -237,6 +237,7 @@ class User(db.Model):
     def get_concurrency(self, models_requested = [], models_dict = {}):
         if not self.is_anon() or len(models_requested) == 0:
             return(self.concurrency)
+        return self.concurrency # FIXME: Later
         found_workers = []
         for model_name in models_requested:
             model_dict = models_dict.get(model_name)
