@@ -334,21 +334,35 @@ class JobPop(Resource):
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
-        self.priority_users = [self.user]
+        # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        for priority_username in self.priority_usernames:
-            priority_user = database.find_user_by_username(priority_username)
-            if priority_user:
-               self.priority_users.append(priority_user)
-        for priority_user in self.priority_users:
-            wp_list = database.get_all_wps()
-            for wp in wp_list:
-                if wp.user == priority_user and wp.needs_gen():
-                    self.prioritized_wp.append(wp)
+
+        priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
+        self.priority_user_ids = [self.user.id]
+        # TODO move to database class
+        p_users_id_from_db = db.session.query(User.id).filter(User.username._in(priority_user_ids)).all()
+        if p_users_id_from_db:
+            self.priority_user_ids.extend(p_users_id_from_db)
+
+        # for priority_username in self.priority_usernames:
+        #     priority_user = database.find_user_by_username(priority_username)
+        #     if priority_user:
+        #        self.priority_users.append(priority_user)
+
+        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id._in(self.priority_user_ids)).all()
+        for wp in wp_list:
+            self.prioritized_wp.append(wp)
+        # for priority_user in self.priority_users:
+        #     wp_list = database.get_all_wps()
+        #     for wp in wp_list:
+        #         if wp.user == priority_user and wp.needs_gen():
+        #             self.prioritized_wp.append(wp)
+
         ## End prioritize by bridge request ##
-        for wp in database.get_waiting_wp_by_kudos():
+        for wp in database.get_waiting_wp_by_kudos():  # This is just the top 50 - TODO need to filter by models
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
+
         for wp in self.prioritized_wp:
             check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:

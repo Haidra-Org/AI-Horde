@@ -61,7 +61,7 @@ class WaitingPrompt(db.Model):
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
     # The amount of jobs still to do
-    n = db.Column(db.Integer, default=0, nullable=False)
+    n = db.Column(db.Integer, default=0, nullable=False, index=True)
     # This stores the original amount of jobs requested
     jobs = db.Column(db.Integer, default=0, nullable=False)
     things = db.Column(db.BigInteger, default=0, nullable=False)
@@ -79,7 +79,7 @@ class WaitingPrompt(db.Model):
     updated = db.Column(
         db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow
     )
-    created = db.Column(db.DateTime, default=datetime.utcnow)
+    created = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -129,13 +129,11 @@ class WaitingPrompt(db.Model):
         self.gen_payload = self.params
         db.session.commit()
     
-    def get_job_payload(self,procgen):
+    def get_job_payload(self, procgen):
         return(self.gen_payload)
 
     def needs_gen(self):
-        if self.n > 0:
-            return(True)
-        return(False)
+        return self.n > 0
 
     def start_generation(self, worker):
         if self.n <= 0:

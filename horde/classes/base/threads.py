@@ -55,7 +55,9 @@ class WPCleaner:
                         if wp.is_stale():
                             wp.delete()
                             break
-                        wp.extra_priority += 50
+                        # wp.extra_priority += 50
+                        # NOT IN LOOP
+                        # db.session.query(WaitingPrompt).update({WaitingPrompt.extra_priority: WaitingPrompt.extra_priority + 50})
                         db.session.commit()
                     except Exception as e:
                         logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
