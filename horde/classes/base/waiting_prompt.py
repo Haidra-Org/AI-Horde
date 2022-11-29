@@ -69,10 +69,10 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp")
-    tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp")
-    workers = db.relationship("WPAllowedWorkers", back_populates="wp")
-    models = db.relationship("WPModels", back_populates="wp")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp", cascade="all, delete")
+    tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", cascade="all, delete")
+    workers = db.relationship("WPAllowedWorkers", back_populates="wp", cascade="all, delete")
+    models = db.relationship("WPModels", back_populates="wp", cascade="all, delete")
 
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 
@@ -139,8 +139,9 @@ class WaitingPrompt(db.Model):
     def start_generation(self, worker):
         if self.n <= 0:
             return
-        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.n -= 1
+        db.session.commit()
+        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.refresh()
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
         return self.get_pop_payload(new_gen)

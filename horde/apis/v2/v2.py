@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import random
 
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
@@ -29,6 +30,7 @@ api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
 parsers = ParsersV2()
 
+logger.info([parsers.generate_parser,models.input_model_generation_payload])
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
@@ -258,8 +260,10 @@ class AsyncStatus(Resource):
             active_worker_count=database.count_active_workers()
         )
         # If the status is retrieved after the wp is done we clear it to free the ram
-        if wp_status["done"]:
-            wp.delete()
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # if wp_status["done"]:
+            # wp.delete()
         return(wp_status, 200)
 
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
@@ -278,7 +282,9 @@ class AsyncStatus(Resource):
             active_worker_count=database.count_active_workers()
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
-        wp.delete()
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # wp.delete()
         return(wp_status, 200)
 
 
@@ -374,6 +380,7 @@ class JobPop(Resource):
                 continue
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
+            time.sleep(random.uniform(0, 1))
             if not wp.needs_gen():
                 continue
             return(self.start_worker(wp), 200)
@@ -421,7 +428,8 @@ class JobPop(Resource):
             if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                raise e.TooManySameIPs(self.user.username)
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
             self.worker = Worker(
                 user_id=self.user.id,
                 name=self.worker_name,
@@ -510,6 +518,7 @@ class Workers(Resource):
         '''A List with the details of all registered and active workers
         '''
         workers_ret = []
+        return(workers_ret,200)
         # I could do this with a comprehension, but this is clearer to understand
         for worker in database.get_active_workers():
             workers_ret.append(worker.get_details())
@@ -674,6 +683,7 @@ class Users(Resource):
     def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
         '''
+        return ([],200) #FIXME: Debat
         all_users = db.session.query(User)
         users_list = [user.get_details() for user in all_users]
         return(users_list,200)
@@ -1138,4 +1148,12 @@ class OperationsIP(Resource):
         CounterMeasures.delete_timeout(self.args.ipaddr)
         return({"message":'OK'}, 200)
 
+
+class Heartbeat(Resource):
+    # decorators = [limiter.limit("20/minute")]
+    @logger.catch(reraise=True)
+    def get(self):
+        '''If this loads, this node is available
+        '''
+        return({'message': 'OK'},200)
         

@@ -32,9 +32,9 @@ class WaitingPromptExtended(WaitingPrompt):
             self.seed = self.seed_to_int(self.params.pop('seed'))
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
-        # To avoid unnecessary calculations, we do it once here.
-        # logger.message(self.params)
-        self.things = self.params['width'] * self.params['height'] * self.get_accurate_steps()
+        logger.message(self.params)
+        logger.message([self.params['prompt'],self.params['width'],self.params['sampler_name']])
+        self.things = self.params.get('width',512) * self.params.get('height',512) * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(self.params)
         self.calculate_kudos()
@@ -136,7 +136,7 @@ class WaitingPromptExtended(WaitingPrompt):
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self):
-        result = pow((self.params['width'] * self.params['height']) - (64*64), 1.75) / pow((1024*1024) - (64*64), 1.75)
+        result = pow((self.params.get('width', 512) * self.params.get('height', 512)) - (64*64), 1.75) / pow((1024*1024) - (64*64), 1.75)
         # We need to calculate the steps, without affecting the actual steps requested
         # because some samplers are effectively doubling their steps
         steps = self.get_accurate_steps()
@@ -176,7 +176,7 @@ class WaitingPromptExtended(WaitingPrompt):
             # so we just calculate it as an average 50 steps
             return(50)
         steps = self.params['steps']
-        if self.params['sampler_name'] in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
+        if self.params.get('sampler_name', 'k_euler_a') in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
             # These samplerS do double steps per iteration, so they're at half the speed
             # So we adjust the things to take that into account
             steps *= 2

@@ -85,6 +85,7 @@ class AsyncGenerate(AsyncGenerate):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
+        logger.message(self.params)
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
@@ -128,6 +129,7 @@ class SyncGenerate(SyncGenerate):
     
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
+        logger.message(self.params)
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
@@ -203,6 +205,7 @@ api.add_resource(HordeModes, "/status/modes")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(Models, "/status/models")
 api.add_resource(HordeNews, "/status/news")
+api.add_resource(Heartbeat, "/status/heartbeat")
 api.add_resource(Teams, "/teams")
 api.add_resource(TeamSingle, "/teams/<string:team_id>")
 api.add_resource(OperationsIP, "/operations/ipaddr")

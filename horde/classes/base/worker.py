@@ -84,11 +84,11 @@ class Worker(db.Model):
     team_id = db.Column(UUID(as_uuid=True), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", back_populates="workers")
 
-    stats = db.relationship("WorkerStats", back_populates="worker")
-    performance = db.relationship("WorkerPerformance", back_populates="worker")
-    blacklist = db.relationship("WorkerBlackList", back_populates="worker")
-    suspicions = db.relationship("WorkerSuspicions", back_populates="worker")
-    models = db.relationship("WorkerModel", back_populates="worker")
+    stats = db.relationship("WorkerStats", back_populates="worker", cascade="all, delete")
+    performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete")
+    blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete")
+    suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete")
+    models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete")
     processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
 
     def create(self, **kwargs):

@@ -138,6 +138,7 @@ def get_available_models(lite_dict=False):
 
     for model in available_worker_models:
         model_name = model.model
+        models_dict[model_name] = {}
         models_dict[model_name]["name"] = model_name
         models_dict[model_name]["count"] = model.total_models
 
