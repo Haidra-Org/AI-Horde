@@ -88,7 +88,7 @@ class AsyncGenerate(AsyncGenerate):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
-        import datetime
+        from datetime import datetime
         logger.warning(datetime.utcnow())
         logger.message(self.params)
         self.wp = WaitingPrompt(
