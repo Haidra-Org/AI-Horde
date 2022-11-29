@@ -20,6 +20,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.n = self.params.pop('n', 1)
         self.params['width'] = self.params.get('width', 512)
         self.params['height'] = self.params.get('height', 512)
+        self.params['sampler_name'] = self.params.get('sampler_name',k_euler_a)
         self.jobs = self.n 
         # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
         if self.n > 20:
