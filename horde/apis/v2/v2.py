@@ -340,7 +340,7 @@ class JobPop(Resource):
         priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
-        p_users_id_from_db = db.session.query(User.id).filter(User.username.any(priority_user_ids)).all()
+        p_users_id_from_db = db.session.query(User.id).filter(User.id._in(priority_user_ids)).all()
         if p_users_id_from_db:
             self.priority_user_ids.extend(p_users_id_from_db)
 
