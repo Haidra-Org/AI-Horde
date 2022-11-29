@@ -3,6 +3,7 @@ import os
 import re
 import time
 import random
+from datetime import datetime
 
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
@@ -87,7 +88,6 @@ def get_request_path():
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
     def post(self):
-        from datetime import datetime
         logger.warning(datetime.utcnow())
         self.args = parsers.generate_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
@@ -106,13 +106,10 @@ class GenerateTemplate(Resource):
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
-        from datetime import datetime
         logger.warning(datetime.utcnow())
         self.initiate_waiting_prompt()
-        from datetime import datetime
         logger.warning(datetime.utcnow())
         self.activate_waiting_prompt()
-        from datetime import datetime
         logger.warning(datetime.utcnow())
 
     # We split this into its own function, so that it may be overriden and extended
