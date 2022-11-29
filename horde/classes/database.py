@@ -224,9 +224,9 @@ def count_waiting_requests(user, models = []):
     count = 0
     for wp in db.session.query(WaitingPrompt).all(): # TODO this can likely be improved
         model_names = wp.get_model_names()
-        logger.warning(datetime.utcnow())
+        # logger.warning(datetime.utcnow())
         if wp.user == user and not wp.is_completed():
-            logger.warning(datetime.utcnow())
+            # logger.warning(datetime.utcnow())
             # If we pass a list of models, we want to count only the WP for these particular models.
             if len(models) > 0:
                 matching_model = False
