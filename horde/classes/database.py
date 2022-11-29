@@ -223,6 +223,7 @@ def convert_things_to_kudos(things, **kwargs):
 def count_waiting_requests(user, models = []):
     count = 0
     for wp in db.session.query(WaitingPrompt).all(): # TODO this can likely be improved
+        model_names = wp.get_model_names()
         logger.warning(datetime.utcnow())
         if wp.user == user and not wp.is_completed():
             logger.warning(datetime.utcnow())
@@ -230,7 +231,7 @@ def count_waiting_requests(user, models = []):
             if len(models) > 0:
                 matching_model = False
                 for model in models:
-                    if model in wp.get_model_names():
+                    if model in model_names:
                         logger.warning(datetime.utcnow())
                         matching_model = True
                         break
