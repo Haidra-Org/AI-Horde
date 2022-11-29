@@ -12,7 +12,7 @@ ipaddr_db = 2
 cache_db = 3
 ipaddr_supicion_db = 4
 ipaddr_timeout_db = 5
-
+logger.error(hostname)
 def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((hostname, port)) == 0
