@@ -1,6 +1,8 @@
 import time
 from datetime import datetime, timedelta
 from sqlalchemy import func
+
+from horde.classes.base.worker import WorkerModel
 from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
@@ -44,8 +46,6 @@ def get_top_worker():
     ).first()
     return top_worker
 
-def get_all_workers():
-    return db.session.query(Worker).all()
 
 def get_active_workers():
     active_workers = db.session.query(Worker).filter(
@@ -61,18 +61,13 @@ def count_active_workers():
         return active_workers.threads
     return 0
 
-def compile_workers_by_ip():
-    workers_per_ip = {}
-    for worker in db.session.query(Worker).all():
-        if worker.ipaddr not in workers_per_ip:
-            workers_per_ip[worker.ipaddr] = []
-        workers_per_ip[worker.ipaddr].append(worker)
-    return(workers_per_ip)
+
+def count_workers_on_ip(ip_addr):
+    return db.session.query(Worker).filter_by(ipaddr=ip_addr).count()
+
 
 def count_workers_in_ipaddr(ipaddr):
-    workers_per_ip = compile_workers_by_ip()
-    found_workers = workers_per_ip.get(ipaddr,[])
-    return(len(found_workers))
+    return count_workers_on_ip(ipaddr)
 
 
 def get_total_usage():
@@ -133,39 +128,53 @@ def find_team_by_name(team_name):
     return(team)
 
 def get_available_models(lite_dict=False):
+    # TODO I HAVE MASSIVELY RIPPED THIS FUNCTION TO MUCH SMALLER
     models_dict = {}
-    for worker in get_active_workers():
-        model_name = None
-        for model_name in worker.get_model_names():
-            if not model_name: continue
-            mode_dict_template = {
-                "name": model_name,
-                "count": 0,
-                "workers": [],
-                "performance": stats.get_model_avg(model_name),
-                "queued": 0,
-                "eta": 0,
-            }
-            models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
-            models_dict[model_name]["count"] += worker.threads
-            models_dict[model_name]["workers"].append(worker)
-    if lite_dict:
-        return(models_dict)
-    things_per_model = count_things_per_model()
-    # If we request a lite_dict, we only want worker count per model and a dict format
-    for model_name in things_per_model:
-        # This shouldn't happen, but I'm checking anyway
-        if model_name not in models_dict:
-            # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
-            continue
-        models_dict[model_name]['queued'] = things_per_model[model_name]
-        total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
-        # We don't want a division by zero when there's no workers for this model.
-        if total_performance_on_model > 0:
-            models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
-        else:
-            models_dict[model_name]['eta'] = -1
-    return(list(models_dict.values()))
+
+    available_worker_models = db.session.query(
+        WorkerModel.model,
+        func.sum(WorkerModel).label('total_models'),
+    ).group_by(WorkerModel.model).all()
+
+    for model in available_worker_models:
+        model_name = model.model
+        models_dict[model_name]["name"] = model_name
+        models_dict[model_name]["count"] = model.total_models
+
+    return models_dict
+
+    # for worker in get_active_workers():
+    #     model_name = None
+    #     for model_name in worker.get_model_names():
+    #         if not model_name: continue
+    #         mode_dict_template = {
+    #             "name": model_name,
+    #             "count": 0,
+    #             "workers": [],
+    #             "performance": stats.get_model_avg(model_name),
+    #             "queued": 0,
+    #             "eta": 0,
+    #         }
+    #         models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
+    #         models_dict[model_name]["count"] += worker.threads
+    #         models_dict[model_name]["workers"].append(worker)
+    # if lite_dict:
+    #     return(models_dict)
+    # things_per_model = count_things_per_model()
+    # # If we request a lite_dict, we only want worker count per model and a dict format
+    # for model_name in things_per_model:
+    #     # This shouldn't happen, but I'm checking anyway
+    #     if model_name not in models_dict:
+    #         # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
+    #         continue
+    #     models_dict[model_name]['queued'] = things_per_model[model_name]
+    #     total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
+    #     # We don't want a division by zero when there's no workers for this model.
+    #     if total_performance_on_model > 0:
+    #         models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
+    #     else:
+    #         models_dict[model_name]['eta'] = -1
+    # return(list(models_dict.values()))
 
 def transfer_kudos(source_user, dest_user, amount):
     if source_user.is_suspicious():
@@ -292,13 +301,6 @@ def get_wp_queue_stats(wp):
     # -1 means the WP is done and not in the queue
     return(-1,0,0)
 
-def get_organized_procgens_by_model():
-    org = {}
-    for procgen in db.session.query(ProcessingGeneration).all():
-        if procgen.model not in org:
-            org[procgen.model] = []
-        org[procgen.model].append(procgen)
-    return(org)
 
 def get_wp_by_id(uuid):
     return db.session.query(WaitingPrompt).filter_by(id=uuid).first()
@@ -309,8 +311,6 @@ def get_progen_by_id(uuid):
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
-def get_progens():
-    return db.session.query(ProcessingGeneration).all()
 
 def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
@@ -323,4 +323,4 @@ def wp_has_valid_workers(wp, limited_workers_ids = []):
         if worker.can_generate(wp)[0]:
             worker_found = True
             break
-    return(worker_found)
+    return worker_found

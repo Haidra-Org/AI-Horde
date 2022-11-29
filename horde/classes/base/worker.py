@@ -46,7 +46,7 @@ class WorkerModel(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(UUID(as_uuid=True), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="models")
-    model = db.Column(db.String(30), primary_key=False)
+    model = db.Column(db.String(30))  # TODO model should be a foreign key to a model table
 
 class Worker(db.Model):
     __tablename__ = "workers"
@@ -64,7 +64,7 @@ class Worker(db.Model):
     ipaddr = db.Column(db.String(15))
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
-    last_check_in = db.Column(db.DateTime, default=datetime.utcnow)
+    last_check_in = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     last_aborted_job = db.Column(db.DateTime, default=datetime.utcnow)
 
     kudos = db.Column(db.BigInteger, default=0, nullable=False)

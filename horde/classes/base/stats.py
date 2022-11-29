@@ -76,7 +76,7 @@ def get_model_performance(model_name):
 def get_model_avg(model):
     model_performances = get_model_performance(model)
     if model_performances.count() == 0:
-        return(0)
+        return 0
     avg = sum([m.performance for m in model_performances]) / model_performances.count()
     return(round(avg,1))
 

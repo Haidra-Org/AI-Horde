@@ -43,7 +43,7 @@ class User(db.Model):
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
 
-    kudos = db.Column(db.BigInteger, default=0, nullable=False)
+    kudos = db.Column(db.BigInteger, default=0, nullable=False, index=True)
     monthly_kudos = db.Column(db.Integer, default=0, nullable=False)
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)

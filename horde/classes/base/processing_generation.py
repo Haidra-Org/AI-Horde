@@ -110,16 +110,12 @@ class ProcessingGeneration(db.Model):
         return(False)
 
     def is_faulted(self):
-        if self.faulted:
-            return(True)
-        return(False)
+        return self.faulted
 
     def is_stale(self, ttl):
         if self.is_completed() or self.is_faulted():
-            return(False)
-        if (datetime.utcnow() - self.start_time).seconds > ttl:
-            return(True)
-        return(False)
+            return False
+        return (datetime.utcnow() - self.start_time).seconds > ttl
 
     def delete(self):
         db.session.delete(self)

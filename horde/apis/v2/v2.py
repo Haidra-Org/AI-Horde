@@ -109,7 +109,7 @@ class GenerateTemplate(Resource):
     def validate(self):
         if maintenance.active:
             raise e.MaintenanceMode('Generate')
-        with HORDE.app_context():
+        with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             if self.args.apikey:
                 self.user = database.find_user_by_api_key(self.args['apikey'])
             if not self.user:
