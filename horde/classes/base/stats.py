@@ -51,7 +51,7 @@ def get_things_per_min():
         FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
         ).delete(synchronize_session=False)
         db.session.commit()
-    logger.debug("Pruned fulfillments")
+        logger.debug("Pruned fulfillments")
     last_minute_fulfillments = db.session.query(FulfillmentPerformance).filter(
        FulfillmentPerformance.created >= datetime.utcnow() - timedelta(seconds=60)
     )

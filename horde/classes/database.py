@@ -228,6 +228,7 @@ def count_totals():
         "queued_requests": 0,
         queued_thing: 0,
     }
+    return ret_dict # TODO: Fix later
     for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
         current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
         ret_dict["queued_requests"] += current_wp_queue
