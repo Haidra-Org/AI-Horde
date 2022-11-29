@@ -11,7 +11,10 @@ HORDE = Flask(__name__)
 HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
 # HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
 HORDE.config["SQLALCHEMY_DATABASE_URI"] = f"postgresql://postgres:{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
-HORDE.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_size": 1000}
+HORDE.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_size": 1000,
+    "max_overflow": -1,
+}
 HORDE.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(HORDE)
 db.init_app(HORDE)

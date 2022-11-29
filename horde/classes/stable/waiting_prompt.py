@@ -11,7 +11,7 @@ class WaitingPromptExtended(WaitingPrompt):
     source_processing = db.Column(db.String(10), default='img2img', nullable=False)
     source_mask = db.Column(db.Text, default=None)
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
-    seed = db.Column(db.Integer, default=None, nullable=False)
+    seed = db.Column(db.BigInteger, default=None, nullable=True)
     seed_variation = db.Column(db.Integer, default=None)
     kudos = db.Column(db.Float, default=0, nullable=False)
 
@@ -29,10 +29,11 @@ class WaitingPromptExtended(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         if 'seed' in self.params and self.params['seed'] is not None:
             # logger.warning([self,'seed' in params, params])
-            self.seed = self.params.pop('seed')
+            self.seed = self.seed_to_int(self.params.pop('seed'))
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
         # To avoid unnecessary calculations, we do it once here.
+        # logger.message(self.params)
         self.things = self.params['width'] * self.params['height'] * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(self.params)
@@ -169,7 +170,7 @@ class WaitingPromptExtended(WaitingPrompt):
         return(False,max_res)
 
     def get_accurate_steps(self):
-        if self.params['sampler_name'] in ['k_dpm_adaptive']:
+        if self.params.get('sampler_name', 'k_euler_a') in ['k_dpm_adaptive']:
             # This sampler chooses the steps amount automatically 
             # and disregards the steps value from the user
             # so we just calculate it as an average 50 steps

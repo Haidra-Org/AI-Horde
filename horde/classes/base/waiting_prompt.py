@@ -74,7 +74,7 @@ class WaitingPrompt(db.Model):
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")
     models = db.relationship("WPModels", back_populates="wp")
 
-    expiry = db.Column(db.DateTime, default=get_expiry_date)
+    expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 
     updated = db.Column(
         db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow

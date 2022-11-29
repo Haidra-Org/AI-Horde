@@ -66,4 +66,4 @@ def hash_api_key(unhashed_api_key):
     return hashed_key
 
 def get_expiry_date():
-    return datetime.utcnow() + relativedelta.relativedelta(minutes=+20)
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)

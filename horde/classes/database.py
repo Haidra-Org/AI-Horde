@@ -237,6 +237,7 @@ def count_totals():
         "queued_requests": 0,
         queued_thing: 0,
     }
+    return ret_dict # TODO: Fix later
     for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
         current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
         ret_dict["queued_requests"] += current_wp_queue
@@ -316,6 +317,7 @@ def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
 
 def wp_has_valid_workers(wp, limited_workers_ids = []):
+    return True
     worker_found = False
     for worker in get_active_workers():
         if len(limited_workers_ids) and worker not in wp.get_worker_ids():
