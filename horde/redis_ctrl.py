@@ -31,6 +31,7 @@ def get_horde_db():
     return(rdb)
 
 def get_ipaddr_db():
+    logger.error(hostname)
     rdb = redis.Redis(
         host=hostname,
         port=port,
