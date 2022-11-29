@@ -227,7 +227,8 @@ def count_waiting_requests(user, models = []):
     ).Join(WaitingPrompt).filter(
         WPModels.model.in_(models),
         WaitingPrompt.user_id == user.id,
-        (WaitingPrompt.is_faulted or WaitingPrompt.n < 1),  # or proc_gen is completed or faulted
+        not WaitingPrompt.is_faulted, # or proc_gen is completed or faulted (Db0: no because there's many procgens. If they're all faulted, the WP will be faulted too)
+        WaitingPrompt.n >= 1, 
     ).group_by(WPModels.model).count()
 
     # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
