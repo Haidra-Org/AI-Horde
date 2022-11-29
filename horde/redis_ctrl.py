@@ -2,6 +2,8 @@ import os
 import socket
 import redis
 
+from horde.logger import logger
+
 hostname = os.getenv('REDIS_IP')
 port = 6379
 address = f"redis://{hostname}:{port}"
