@@ -395,7 +395,7 @@ class JobPop(Resource):
                 continue
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
-            time.sleep(random.uniform(0, 1))
+            # time.sleep(random.uniform(0, 1))
             if not wp.needs_gen():
                 continue
             return(self.start_worker(wp), 200)

@@ -2,6 +2,7 @@ import time
 from datetime import datetime, timedelta
 from sqlalchemy import func
 
+from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
 from horde.flask import db
 from horde.logger import logger
@@ -221,25 +222,32 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 def count_waiting_requests(user, models = []):
-    count = 0
-    for wp in db.session.query(WaitingPrompt).all(): # TODO this can likely be improved
-        model_names = wp.get_model_names()
-        logger.warning(datetime.utcnow())
-        if wp.user == user and not wp.is_completed():
-            logger.warning(datetime.utcnow())
-            # If we pass a list of models, we want to count only the WP for these particular models.
-            if len(models) > 0:
-                matching_model = False
-                for model in models:
-                    if model in model_names:
-                        logger.warning(datetime.utcnow())
-                        matching_model = True
-                        break
-                if not matching_model:
-                    continue
-            count += wp.n
-    logger.warning(datetime.utcnow())
-    return(count)
+    return db.session.query(
+        WPModels,
+    ).Join(WaitingPrompt).filter(
+        WPModels.model.in_(models),
+        WaitingPrompt.user_id == user.id,
+        (WaitingPrompt.is_faulted or WaitingPrompt.n < 1),  # or proc_gen is completed or faulted
+    ).group_by(WPModels.model).count()
+
+    # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
+    #     model_names = wp.get_model_names()
+    #     logger.warning(datetime.utcnow())
+    #     if wp.user == user and not wp.is_completed():
+    #         logger.warning(datetime.utcnow())
+    #         # If we pass a list of models, we want to count only the WP for these particular models.
+    #         if len(models) > 0:
+    #             matching_model = False
+    #             for model in models:
+    #                 if model in model_names:
+    #                     logger.warning(datetime.utcnow())
+    #                     matching_model = True
+    #                     break
+    #             if not matching_model:
+    #                 continue
+    #         count += wp.n
+    # logger.warning(datetime.utcnow())
+    # return(count)
 
 def count_totals():
     queued_thing = f"queued_{thing_name}"
@@ -247,7 +255,7 @@ def count_totals():
         "queued_requests": 0,
         queued_thing: 0,
     }
-    return ret_dict # TODO: Fix later
+    return ret_dict  # TODO: Fix later
     for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
         current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
         ret_dict["queued_requests"] += current_wp_queue
