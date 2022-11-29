@@ -22,6 +22,6 @@ if __name__ == "__main__":
     if args.insecure:
         allowed_host = "0.0.0.0"
         logger.init_warn("WSGI Mode", status="Insecure")
-    serve(HORDE, host=allowed_host, port=args.port, url_scheme=url_scheme, threads=300, connection_limit=4096, asyncore_use_poll=True)
+    serve(HORDE, host=allowed_host, port=args.port, url_scheme=url_scheme, threads=1, connection_limit=4096, asyncore_use_poll=True)
     # HORDE.run(debug=True,host="0.0.0.0",port="5001")
     logger.init("WSGI Server", status="Stopped")
