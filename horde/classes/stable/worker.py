@@ -36,7 +36,7 @@ class WorkerExtended(Worker):
         skipped_reason = can_generate[1]
         if not is_matching:
             return [is_matching, skipped_reason]
-        if self.max_pixels < waiting_prompt.params['width'] * waiting_prompt.params['height']:
+        if self.max_pixels < waiting_prompt.params.get('width', 512) * waiting_prompt.params.get('height', 512):
             is_matching = False
             skipped_reason = 'max_pixels'
         if waiting_prompt.source_image and self.bridge_version < 2:
