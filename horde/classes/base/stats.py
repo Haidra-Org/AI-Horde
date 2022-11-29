@@ -1,8 +1,10 @@
+
 from datetime import datetime, timedelta
 
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
+from horde.argparser import args
 
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
@@ -32,8 +34,8 @@ def record_fulfilment(procgen, worker_performances):
     model_performances = db.session.query(ModelPerformance).filter_by(model=model).order_by(
         ModelPerformance.created.asc()
     )
-    if model_performances.count() >= 20:
-        model_performances.first().delete()
+    if model_performances.count() >= 20 and not args.secondary:
+        db.session.delete(model_performances.first())
     new_performance = ModelPerformance(model=model,performance=things_per_sec)
     new_fulfillment = FulfillmentPerformance(things=things)
     db.session.add(new_performance)
@@ -44,10 +46,11 @@ def get_things_per_min():
     total_things = 0
     pruned_array = []
     # clear up old requests (older than 5 mins)
-    db.session.query(FulfillmentPerformance).filter(
-       FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
-    ).delete(synchronize_session=False)
-    db.session.commit()
+    if not args.secondary:
+        db.session.query(FulfillmentPerformance).filter(
+        FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
+        ).delete(synchronize_session=False)
+        db.session.commit()
     logger.debug("Pruned fulfillments")
     last_minute_fulfillments = db.session.query(FulfillmentPerformance).filter(
        FulfillmentPerformance.created >= datetime.utcnow() - timedelta(seconds=60)
