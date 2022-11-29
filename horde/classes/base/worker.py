@@ -4,6 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 
+from horde.classes.base.waiting_prompt import WPModels
 from horde.logger import logger
 from horde.argparser import raid
 from horde.flask import db, SQLITE_MODE
@@ -292,9 +293,19 @@ class Worker(db.Model):
             is_matching = False
             skipped_reason = 'blacklist'
         logger.warning(datetime.utcnow())
-        if len(waiting_prompt.models) > 0 and not any(m.model in waiting_prompt.get_model_names() for m in self.models):
-            is_matching = False
-            skipped_reason = 'models'
+
+        my_model_names = self.get_model_names()
+        wp_model_names = waiting_prompt.get_model_names()
+        if len(wp_model_names) > 0:
+            found_matching_model = False
+            for model_name in my_model_names:
+                if model_name in wp_model_names:
+                    found_matching_model = True
+                    break
+            if not found_matching_model:
+                is_matching = False
+                skipped_reason = 'model'
+
         # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
         # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
         # if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
