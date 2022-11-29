@@ -74,6 +74,7 @@ def get_model_performance(model_name):
     ).limit(10)
 
 def get_model_avg(model):
+    return 1
     model_performances = get_model_performance(model)
     if model_performances.count() == 0:
         return(0)
