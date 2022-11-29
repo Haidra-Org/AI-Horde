@@ -1,5 +1,6 @@
 from flask_restx import fields
 from . import v2
+from horde.logger import logger
 
 
 class Parsers(v2.Parsers):
