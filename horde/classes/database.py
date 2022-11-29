@@ -133,13 +133,17 @@ def get_available_models(lite_dict=False):
 
     available_worker_models = db.session.query(
         WorkerModel.model,
-        func.sum(WorkerModel).label('total_models'),
+        func.count(WorkerModel.model).label('total_models'),
     ).group_by(WorkerModel.model).all()
 
     for model in available_worker_models:
         model_name = model.model
         models_dict[model_name]["name"] = model_name
         models_dict[model_name]["count"] = model.total_models
+
+        # TODO
+        models_dict[model_name]['queued'] = 0
+        models_dict[model_name]['eta'] = 0
 
     return models_dict
 

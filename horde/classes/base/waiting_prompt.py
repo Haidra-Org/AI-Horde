@@ -34,7 +34,7 @@ class WPTrickedWorkers(db.Model):
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
-    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False)
+    wp_id = db.Column(UUID(as_uuid=True), db.ForeignKey("waiting_prompts.id"), nullable=False, cascade="all, delete-orphan")
     wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
     model = db.Column(db.String(20), nullable=False)
 
