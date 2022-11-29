@@ -1,7 +1,7 @@
 import socket
 import redis
 
-hostname = "localhost"
+hostname = os.getenv('REDIS_IP')
 port = 6379
 address = f"redis://{hostname}:{port}"
 
