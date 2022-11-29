@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy import JSON
+from sqlalchemy import JSON, func
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -113,7 +113,9 @@ class WaitingPrompt(db.Model):
         db.session.commit()
 
     def get_model_names(self):
-        return set([m.model for m in self.models])
+        # Could also do this based on self.models, but no need
+        model_names = db.session.query(func.distinct(WPModels.model).label('name')).filter(WPModels.wp_id == self.id).all()
+        return [m.name for m in model_names]
 
     # These are typically horde-specific so they will be defined in the specific class for this horde type
     def extract_params(self):
@@ -205,11 +207,11 @@ class WaitingPrompt(db.Model):
             lite = False
         ):
         ret_dict = self.count_processing_gens()
-        ret_dict["waiting"] = self.n
+        ret_dict["waiting"] = max(self.n, 0)
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
-        if ret_dict["waiting"] < 0:
+        if self.n < 0:
             logger.error("Request was popped more times than requested!")
-            ret_dict["waiting"] = 0
+
         ret_dict["done"] = self.is_completed()
         ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
@@ -218,11 +220,12 @@ class WaitingPrompt(db.Model):
             for procgen in self.processing_gens:
                 if procgen.is_completed():
                     ret_dict["generations"].append(procgen.get_details())
+
         queue_pos, queued_things, queued_n = wp_queue_stats
         # We increment the priority by 1, because it starts at -1
         # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        # If there's less requests than the number of active workers
+        # If there's fewer requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_worker_count:
             active_worker_count = queued_n
