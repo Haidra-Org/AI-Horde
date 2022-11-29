@@ -176,7 +176,7 @@ class WaitingPromptExtended(WaitingPrompt):
             # so we just calculate it as an average 50 steps
             return(50)
         steps = self.params['steps']
-        if self.params['sampler_name'] in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
+        if self.params.get('sampler_name', 'k_euler_a') in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
             # These samplerS do double steps per iteration, so they're at half the speed
             # So we adjust the things to take that into account
             steps *= 2
