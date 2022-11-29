@@ -72,6 +72,7 @@ with HORDE.app_context():
             concurrency=500
         )
         anon.create()
-
-wp_cleaner = WPCleaner()
-monthly_kudos = MonthlyKudos()
+        
+if not args.secondary:
+    wp_cleaner = WPCleaner()
+    monthly_kudos = MonthlyKudos()
