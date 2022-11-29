@@ -3,6 +3,8 @@ import bleach
 import secrets
 import hashlib
 import os
+from datetime import datetime
+import dateutil.relativedelta
 from profanity_check  import predict
 from better_profanity import profanity
 from horde.logger import logger
@@ -62,3 +64,6 @@ def hash_api_key(unhashed_api_key):
     salt = os.getenv("secret_key", "s0m3s3cr3t") # Note default here, just so it can run without env file
     hashed_key = hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
     return hashed_key
+
+def get_expiry_date():
+    return datetime.utcnow() + relativedelta.relativedelta(minutes=+20)

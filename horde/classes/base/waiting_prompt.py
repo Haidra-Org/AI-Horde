@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
-from horde.utils import is_profane, get_db_uuid
+from horde.utils import is_profane, get_db_uuid, get_expiry_date
 
 from horde.classes import ProcessingGeneration
 
@@ -56,7 +56,7 @@ class WaitingPrompt(db.Model):
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
-    last_process_time = db.Column(db.DateTime, default=datetime.utcnow())
+    last_process_time = db.Column(db.DateTime, default=datetime.utcnow)
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -74,7 +74,7 @@ class WaitingPrompt(db.Model):
     workers = db.relationship("WPAllowedWorkers", back_populates="wp")
     models = db.relationship("WPModels", back_populates="wp")
 
-    ttl = db.Column(db.Integer, default=1200, nullable=False)
+    expiry = db.Column(db.DateTime, default=get_expiry_date)
 
     updated = db.Column(
         db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow
