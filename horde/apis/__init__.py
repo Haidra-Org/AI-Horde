@@ -1,5 +1,6 @@
 from horde.argparser import args
 from importlib import import_module
+from horde.logger import logger
 
 ModelsV2 = import_module(name=f'horde.apis.models.{args.horde}_v2').Models
 ParsersV2 = import_module(name=f'horde.apis.models.{args.horde}_v2').Parsers
