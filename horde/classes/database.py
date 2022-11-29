@@ -316,6 +316,7 @@ def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
 
 def wp_has_valid_workers(wp, limited_workers_ids = []):
+    return True
     worker_found = False
     for worker in get_active_workers():
         if len(limited_workers_ids) and worker not in wp.get_worker_ids():
