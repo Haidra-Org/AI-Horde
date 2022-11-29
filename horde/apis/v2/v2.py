@@ -1146,4 +1146,12 @@ class OperationsIP(Resource):
         CounterMeasures.delete_timeout(self.args.ipaddr)
         return({"message":'OK'}, 200)
 
+
+class Heartbeat(Resource):
+    # decorators = [limiter.limit("20/minute")]
+    @logger.catch(reraise=True)
+    def get(self):
+        '''If this loads, this node is available
+        '''
+        return({'message': 'OK'},200)
         
