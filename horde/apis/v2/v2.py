@@ -338,7 +338,7 @@ class JobPop(Resource):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
-        logger.warning(datetime.utcnow())
+        # logger.warning(datetime.utcnow())
         self.args = parsers.job_pop_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -379,12 +379,12 @@ class JobPop(Resource):
         #     for wp in wp_list:
         #         if wp.user == priority_user and wp.needs_gen():
         #             self.prioritized_wp.append(wp)
-        logger.warning(datetime.utcnow())
+        # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
         for wp in database.get_waiting_wp_by_kudos():  # This is just the top 50 - TODO need to filter by models
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
-        logger.warning(datetime.utcnow())
+        # logger.warning(datetime.utcnow())
         iter = 0
         for wp in self.prioritized_wp:
             # logger.warning([datetime.utcnow(), iter])
