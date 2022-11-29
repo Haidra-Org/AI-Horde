@@ -38,7 +38,7 @@ class WPCleaner:
         while True:
             with HORDE.app_context():
                 db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry > datetime.utcnow()).delete()
-                all_proc_gen = db.session.query(ProcessingGeneration).filter(generation=None).filter().all()
+                all_proc_gen = db.session.query(ProcessingGeneration).filter(ProcessingGeneration.generation=None).filter().all()
                 for proc_gen in all_proc_gen:
                     proc_gen = proc_gen.Join(WaitingPrompt, WaitingPrompt.id == ProcessingGeneration.wp_id).filter(WaitingPrompt.faulted == False)
                     if proc_gen.is_stale(wp.job_ttl):
