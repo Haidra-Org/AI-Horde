@@ -30,7 +30,7 @@ api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
 parsers = ParsersV2()
 
-logger.info(parsers.generate_parser,models.input_model_generation_payload)
+logger.info([parsers.generate_parser,models.input_model_generation_payload])
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
