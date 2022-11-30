@@ -141,9 +141,10 @@ class WaitingPrompt(db.Model):
         return self.n > 0
 
     def start_generation(self, worker):
-        if not db.session.query(WaitingPrompt).filter(WaitingPrompt.id == self.id, WaitingPrompt.n > 0).with_for_update().first():
+        myself_refresh = db.session.query(WaitingPrompt).filter(WaitingPrompt.id == self.id, WaitingPrompt.n > 0).with_for_update().first()
+        if not myself_refresh:
             return None
-        self.n -= 1
+        myself_refresh.n -= 1
         db.session.commit()
         new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.refresh()
