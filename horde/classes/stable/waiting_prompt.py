@@ -53,6 +53,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.gen_payload["seed"] = self.seed
         del self.gen_payload["steps"]
         db.session.commit()
+        logger.debug(self.gen_payload["seed"])
 
     @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
