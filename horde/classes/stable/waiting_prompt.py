@@ -29,7 +29,7 @@ class WaitingPromptExtended(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         if self.params['seed'] == '':
             self.seed = None
-        if 'seed' in self.params and self.params['seed'] is not None:
+        elif 'seed' in self.params and self.params['seed'] is not None:
             # logger.warning([self,'seed' in params, params])
             self.seed = self.seed_to_int(self.params.pop('seed'))
         if "seed_variation" in self.params:
