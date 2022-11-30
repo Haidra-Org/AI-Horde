@@ -90,7 +90,7 @@ class AsyncGenerate(AsyncGenerate):
     def initiate_waiting_prompt(self):
         from datetime import datetime
         #logger.warning(datetime.utcnow())
-        logger.message(self.params)
+        logger.debug(self.params)
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
@@ -134,7 +134,7 @@ class SyncGenerate(SyncGenerate):
     
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
-        logger.message(self.params)
+        logger.debug(self.params)
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
