@@ -143,8 +143,10 @@ class WaitingPrompt(db.Model):
     def start_generation(self, worker):
         # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
         with db.session() as session2:
+            session2.expire_on_commit
             myself_refresh = session2.query(WaitingPrompt).filter(WaitingPrompt.id == self.id, WaitingPrompt.n > 0).with_for_update().first()
             if not myself_refresh:
+                session2.close()
                 return None
             myself_refresh.n -= 1
             session2.commit()
