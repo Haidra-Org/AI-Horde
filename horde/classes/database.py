@@ -147,6 +147,7 @@ def get_available_models(lite_dict=False):
         # TODO
         models_dict[model_name]['queued'] = 0
         models_dict[model_name]['eta'] = 0
+        models_dict[model_name]['performance'] = 0
     logger.trace(list(models_dict.values()))
     return list(models_dict.values())
 
