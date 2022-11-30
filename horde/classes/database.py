@@ -297,9 +297,9 @@ def get_waiting_wp_by_kudos():
     # TODO: Filter by Model
     # TODO: Filter by WP.width * WP.height <= worker.max_pixels
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
-    # TODO: Retrieve WPs with .source_image, only if self.allow_img2img == True
-    # TODO: Retrieve WPs with safe.ip == False, only if Worker.allow_unsafe_ipaddr = True
-    # TODO: Retrieve only user's WPs, if Worker.maintenance == True
+    # TODO: Retrieve WPs with WP.source_image != None, __ONLY IF__ self.allow_img2img == True
+    # TODO: Retrieve WPs with safe.ip == False, __ONLY IF__ Worker.allow_unsafe_ipaddr = True
+    # TODO: Filter by WP.user == Worker.user __ONLY IF__  Worker.maintenance == True
     # TODO: Filter by WP.last_process_time <= 1200 (or WP.STALE_TIME (Constant, not in DB! We can put the constant here))
     # TODO: Filter by WP.faulted != True
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
