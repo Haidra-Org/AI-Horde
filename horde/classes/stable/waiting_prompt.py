@@ -27,6 +27,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if self.get_model_names() == ["stable_diffusion_2.0"]:
             self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
+        logger.debug(f"Incoming seed: {self.seed}")
         if 'seed' in self.params and self.params['seed'] is not None:
             # logger.warning([self,'seed' in params, params])
             self.seed = self.seed_to_int(self.params.pop('seed'))
