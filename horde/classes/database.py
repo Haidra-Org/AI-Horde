@@ -350,7 +350,7 @@ def get_wp_queue_stats(wp):
         return(-1,0,0)
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
-    priority_sorted_list = get_waiting_wp_by_kudos()
+    priority_sorted_list = get_waiting_wp_by_kudos(None)
     for iter in range(len(priority_sorted_list)):
         things_ahead_in_queue += priority_sorted_list[iter].get_queued_things()
         n_ahead_in_queue += priority_sorted_list[iter].n
