@@ -222,6 +222,16 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 def count_waiting_requests(user, models = []):
+    return 1 # FIXME: Below doesn't work. Stack:
+    # # sqlalchemy.exc.ProgrammingError: (psycopg2.errors.GroupingError) column "wp_models.id" must appear in the GROUP BY clause or be used in an aggregate function
+    # # LINE 2: FROM (SELECT wp_models.id AS wp_models_id, wp_models.wp_id A...
+    # #                      ^
+
+    # # [SQL: SELECT count(*) AS count_1
+    # # FROM (SELECT wp_models.id AS wp_models_id, wp_models.wp_id AS wp_models_wp_id, wp_models.model AS wp_models_model
+    # # FROM wp_models JOIN waiting_prompts ON waiting_prompts.id = wp_models.wp_id
+    # # WHERE false GROUP BY wp_models.model) AS anon_1]
+    # # (Background on this error at: https://sqlalche.me/e/14/f405)
     return db.session.query(
         WPModels,
     ).join(WaitingPrompt).filter(
