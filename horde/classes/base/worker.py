@@ -18,7 +18,7 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, default=0, nullable=False)
@@ -26,7 +26,7 @@ class WorkerStats(db.Model):
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
     created = db.Column(db.DateTime, default=datetime.utcnow) # TODO maybe index here, but I'm not sure how big this table is
@@ -34,21 +34,21 @@ class WorkerPerformance(db.Model):
 class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="blacklist")
     word = db.Column(db.String(20), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 class WorkerModel(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"WorkerExtended", back_populates="models")
     model = db.Column(db.String(30))  # TODO model should be a foreign key to a model table
 
@@ -61,7 +61,7 @@ class Worker(db.Model):
 
     # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
     id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user = db.relationship("User", back_populates="workers")
     name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     info = db.Column(db.String(1000))

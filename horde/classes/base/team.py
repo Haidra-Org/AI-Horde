@@ -15,7 +15,7 @@ class Team(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', unique=True, nullable=False)
-    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     owner = db.relationship(f"User", back_populates="teams")
 
     contributions = db.Column(db.BigInteger, default=0, nullable=False)

@@ -14,7 +14,7 @@ from horde.utils import is_profane, sanitize_string, generate_client_id
 class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, nullable=False)
@@ -23,7 +23,7 @@ class UserStats(db.Model):
 class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
