@@ -404,12 +404,11 @@ class JobPop(Resource):
             # time.sleep(random.uniform(0, 1))
             if not wp.needs_gen():  # this says if < 1
                 continue
-            wp = db.session.query(WaitingPrompt).filter(WaitingPrompt.id == wp.id, WaitingPrompt.n > 0).with_for_update().first()
-            if wp:
-                wp.n -= 1
-                db.session.commit()
-                #logger.warning(datetime.utcnow())
-                return(self.start_worker(wp), 200)
+            worker_ret = self.start_worker(wp)
+            logger.debug(worker_ret)
+            if worker_start is None:
+                continue
+            return(self.start_worker(wp), 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
