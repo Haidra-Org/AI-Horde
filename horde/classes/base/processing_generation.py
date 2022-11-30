@@ -35,7 +35,6 @@ class ProcessingGeneration(db.Model):
         # If there has been no explicit model requested by the user, we just choose the first available from the worker
         db.session.add(self)
         db.session.commit()
-        logger.debug([kwargs['worker_id'],self.worker])
         worker_models = self.worker.get_model_names()
         if len(worker_models):
             self.model = worker_models[0]
