@@ -406,9 +406,9 @@ class JobPop(Resource):
                 continue
             worker_ret = self.start_worker(wp)
             logger.debug(worker_ret)
-            if worker_start is None:
+            if worker_ret is None:
                 continue
-            return(self.start_worker(wp), 200)
+            return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
