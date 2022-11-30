@@ -15,7 +15,7 @@ class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    user = db.relationship("User", back_populates="stats")
+    user = db.relationship("User", back_populates="stats", cascade="all, delete-orphan")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, nullable=False)
 
@@ -24,7 +24,7 @@ class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    user = db.relationship("User", back_populates="suspicions")
+    user = db.relationship("User", back_populates="suspicions", cascade="all, delete-orphan")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
@@ -59,11 +59,11 @@ class User(db.Model):
     trusted = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
-    workers = db.relationship(f"WorkerExtended", back_populates="user", cascade="all, delete")
-    teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete")
-    suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete")
-    stats = db.relationship("UserStats", back_populates="user", cascade="all, delete")
-    waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user", cascade="all, delete")
+    workers = db.relationship(f"WorkerExtended", back_populates="user", cascade="all, delete-orphan")
+    teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
+    suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
+    stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
+    waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user", cascade="all, delete-orphan")
 
     def create(self):
         self.check_for_bad_actor()

@@ -22,7 +22,7 @@ class WPAllowedWorkers(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers", cascade="all, delete")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers", cascade="all, delete-orphan")
 
 
 class WPTrickedWorkers(db.Model):
@@ -31,14 +31,14 @@ class WPTrickedWorkers(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers", cascade="all, delete")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers", cascade="all, delete-orphan")
 
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="models", cascade="all, delete")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="models", cascade="all, delete-orphan")
     model = db.Column(db.String(30), nullable=False)
 
 
@@ -50,7 +50,7 @@ class WaitingPrompt(db.Model):
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    user = db.relationship("User", back_populates="waiting_prompts")
+    user = db.relationship("User", back_populates="waiting_prompts", cascade="all, delete-orphan")
 
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
     gen_payload = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
@@ -71,10 +71,10 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp", cascade="all, delete")
-    tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", cascade="all, delete")
-    workers = db.relationship("WPAllowedWorkers", back_populates="wp", cascade="all, delete")
-    models = db.relationship("WPModels", back_populates="wp", cascade="all, delete")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="wp", cascade="all, delete-orphan")
+    tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", cascade="all, delete-orphan")
+    workers = db.relationship("WPAllowedWorkers", back_populates="wp", cascade="all, delete-orphan")
+    models = db.relationship("WPModels", back_populates="wp", cascade="all, delete-orphan")
 
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 

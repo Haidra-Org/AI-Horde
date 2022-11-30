@@ -16,7 +16,7 @@ class Team(db.Model):
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', unique=True, nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    owner = db.relationship(f"User", back_populates="teams")
+    owner = db.relationship(f"User", back_populates="teams", cascade="all, delete-orphan")
 
     contributions = db.Column(db.BigInteger, default=0, nullable=False)
     fulfilments = db.Column(db.Integer, default=0, nullable=False)
