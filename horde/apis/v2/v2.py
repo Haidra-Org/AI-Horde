@@ -371,7 +371,7 @@ class JobPop(Resource):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
 
-        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids)).all()
+        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
         for wp in wp_list:
             self.prioritized_wp.append(wp)
         # for priority_user in self.priority_users:
@@ -381,7 +381,7 @@ class JobPop(Resource):
         #             self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
-        for wp in database.get_waiting_wp_by_kudos():
+        for wp in database.get_waiting_wp_by_kudos(): # TODO this should also filter on .n>0
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
@@ -402,10 +402,14 @@ class JobPop(Resource):
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
             # time.sleep(random.uniform(0, 1))
-            if not wp.needs_gen():
+            if not wp.needs_gen():  # this says if < 1
                 continue
-            #logger.warning(datetime.utcnow())
-            return(self.start_worker(wp), 200)
+            wp = db.session.query(WaitingPrompt).filter(WaitingPrompt.id == wp.id, WaitingPrompt.n > 0).with_for_update().first()
+            if wp:
+                wp.n -= 1
+                db.session.commit()
+                #logger.warning(datetime.utcnow())
+                return(self.start_worker(wp), 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
