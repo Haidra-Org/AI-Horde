@@ -34,7 +34,7 @@ def record_fulfilment(procgen, worker_performances):
     model_performances = db.session.query(ModelPerformance).filter_by(model=model).order_by(
         ModelPerformance.created.asc()
     )
-    if model_performances.count() >= 20 and not args.secondary:
+    if model_performances.count() >= 20 and args.primary:
         db.session.delete(model_performances.first())
     new_performance = ModelPerformance(model=model,performance=things_per_sec)
     new_fulfillment = FulfillmentPerformance(things=things)
