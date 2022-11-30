@@ -30,6 +30,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if 'seed' in self.params and self.params['seed'] is not None:
             # logger.warning([self,'seed' in params, params])
             self.seed = self.seed_to_int(self.params.pop('seed'))
+            logger.debug(f"set seed to {self.seed}")
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
         logger.message(self.params)
@@ -51,6 +52,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.gen_payload["seed"] = self.seed
         del self.gen_payload["steps"]
         db.session.commit()
+        logger.debug(f"set job payload seed to {self.gen_payload['seed']}")
 
     @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
@@ -60,6 +62,7 @@ class WaitingPromptExtended(WaitingPrompt):
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
         else:
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
+            logger.debug(f"set job payload seed to {self.gen_payload['seed']}")
         if procgen.worker.bridge_version >= 2:
             if not self.nsfw and self.censor_nsfw:
                 self.gen_payload["use_nsfw_censor"] = True
