@@ -22,7 +22,7 @@ class WPAllowedWorkers(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers", cascade="all, delete-orphan")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="workers")
 
 
 class WPTrickedWorkers(db.Model):
@@ -31,14 +31,14 @@ class WPTrickedWorkers(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship(f"WorkerExtended")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers", cascade="all, delete-orphan")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="tricked_workers")
 
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
     id = db.Column(db.Integer, primary_key=True)
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id"), nullable=False)
-    wp = db.relationship(f"WaitingPromptExtended", back_populates="models", cascade="all, delete-orphan")
+    wp = db.relationship(f"WaitingPromptExtended", back_populates="models")
     model = db.Column(db.String(30), nullable=False)
 
 
@@ -50,7 +50,7 @@ class WaitingPrompt(db.Model):
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    user = db.relationship("User", back_populates="waiting_prompts", cascade="all, delete-orphan")
+    user = db.relationship("User", back_populates="waiting_prompts")
 
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
     gen_payload = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)

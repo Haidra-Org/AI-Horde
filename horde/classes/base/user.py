@@ -15,7 +15,7 @@ class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    user = db.relationship("User", back_populates="stats", cascade="all, delete-orphan")
+    user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, nullable=False)
 
@@ -24,7 +24,7 @@ class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    user = db.relationship("User", back_populates="suspicions", cascade="all, delete-orphan")
+    user = db.relationship("User", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
