@@ -349,7 +349,7 @@ class Worker(db.Model):
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
             db.session.commit()
-        logger.debug([kudos_details,kudos_details.value])
+        logger.trace([kudos_details,kudos_details.value])
 
     def log_aborted_job(self):
         # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.
