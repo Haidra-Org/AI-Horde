@@ -132,10 +132,12 @@ def find_team_by_name(team_name):
 def get_available_models(lite_dict=False):
     # TODO I HAVE MASSIVELY RIPPED THIS FUNCTION TO MUCH SMALLER
     models_dict = {}
-
+    # TODO: Only count models where model datetime.utcnow() - self.last_check_in).seconds > 300
     available_worker_models = db.session.query(
         WorkerModel.model,
-        func.count(WorkerModel.model).label('total_models'),
+        func.count(WorkerModel.model).filter(
+            WorkerModel.worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        ).label('total_models'),
     ).group_by(WorkerModel.model).all()
 
     for model in available_worker_models:
