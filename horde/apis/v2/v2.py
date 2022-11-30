@@ -381,7 +381,7 @@ class JobPop(Resource):
         #             self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
-        for wp in database.get_waiting_wp_by_kudos(): # TODO this should also filter on .n>0
+        for wp in database.get_waiting_wp_by_kudos(self.worker): # TODO this should also filter on .n>0
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())

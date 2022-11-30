@@ -317,8 +317,8 @@ def count_things_per_model():
         things_per_model[model] = round(things_per_model.get(model,0),2)
     return(things_per_model)
 
-def get_waiting_wp_by_kudos(): 
-    # This is just the top 50 - Adjust method to send Worker object. Filters to add.
+def get_waiting_wp_by_kudos(worker): 
+    # This is just the top 50 - Adjusted method to send Worker object. Filters to add.
     # TODO: Filter by Model
     # TODO: Filter by WP.width * WP.height <= worker.max_pixels
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
@@ -326,7 +326,7 @@ def get_waiting_wp_by_kudos():
     # TODO: Retrieve WPs with safe.ip == False, __ONLY IF__ Worker.allow_unsafe_ipaddr = True
     # TODO: Filter by WP.user == Worker.user __ONLY IF__  Worker.maintenance == True
     # TODO: Filter by WP.last_process_time <= 1200 (or WP.STALE_TIME (Constant, not in DB! We can put the constant here))
-    # TODO: Filter by WP.faulted != True
+    # TODO: Filter by WP.faulted == False
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
     # TODO: Filter by WP.nsfw == False __ONLY IF__ Worker.nsfw == False
     # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
