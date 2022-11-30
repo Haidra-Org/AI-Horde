@@ -280,7 +280,6 @@ class Worker(db.Model):
         #logger.warning(datetime.utcnow())
         if waiting_prompt.trusted_workers and not self.user.trusted:
             is_matching = False
-            logger.debug('adasao')
             skipped_reason = 'untrusted'
         # If the worker has been tricked once by this prompt, we don't want to resend it it
         # as it may give up the jig

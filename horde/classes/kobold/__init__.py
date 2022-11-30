@@ -66,7 +66,7 @@ class WorkerExtended(Worker):
         self.max_length = max_length
         self.max_content_length = max_content_length
         self.softprompts = softprompts
-        logger.debug(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
+        logger.trace(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
     @logger.catch(reraise=True)
     def calculate_uptime_reward(self):

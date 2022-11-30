@@ -898,7 +898,7 @@ class HordeNews(Resource):
         '''Read the latest happenings on the horde
         '''
         news = News()
-        logger.debug(news.sorted_news())
+        # logger.debug(news.sorted_news())
         return(news.sorted_news(),200)
     
 
