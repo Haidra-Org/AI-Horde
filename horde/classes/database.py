@@ -115,7 +115,11 @@ def find_worker_by_name(worker_name):
     return(worker)
 
 def find_worker_by_id(worker_id):
-    worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
+    try:
+        worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
+    except ValueError as e: 
+        logger.error(f"Worker appears to have a bad UUID {worker_id}. - Error: {e}")
+        raise e
     return(worker)
 
 def get_all_teams():
