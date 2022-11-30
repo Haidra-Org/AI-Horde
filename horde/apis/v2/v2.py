@@ -385,12 +385,8 @@ class JobPop(Resource):
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
-        iter = 0
         for wp in self.prioritized_wp:
-            # logger.warning([datetime.utcnow(), iter])
-            iter += 1
             check_gen = self.worker.can_generate(wp)
-            #logger.warning(datetime.utcnow())
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
                 # We don't report on secret skipped reasons
