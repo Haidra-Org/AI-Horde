@@ -26,7 +26,7 @@ class WorkerExtended(Worker):
         if self.paused:
             paused_string = '(Paused) '
         db.session.commit()
-        logger.debug(f"{paused_string}Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
+        logger.trace(f"{paused_string}Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return 50
