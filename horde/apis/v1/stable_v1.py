@@ -299,7 +299,7 @@ class PromptPop(Resource):
                 if wp.user == priority_user and wp.needs_gen():
                     prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
-        for wp in database.get_waiting_wp_by_kudos(server):
+        for wp in database.get_sorted_wp_filtered_to_worker(server):
             if wp not in prioritized_wp:
                 prioritized_wp.append(wp)
         for wp in prioritized_wp:

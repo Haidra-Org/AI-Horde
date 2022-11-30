@@ -317,7 +317,8 @@ def count_things_per_model():
         things_per_model[model] = round(things_per_model.get(model,0),2)
     return(things_per_model)
 
-def get_waiting_wp_by_kudos(worker): 
+
+def get_sorted_wp_filtered_to_worker(worker): 
     # This is just the top 50 - Adjusted method to send Worker object. Filters to add.
     # TODO: Filter by Model
     # TODO: Filter by WP.width * WP.height <= worker.max_pixels
@@ -350,11 +351,23 @@ def get_wp_queue_stats(wp):
         return(-1,0,0)
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
-    priority_sorted_list = get_waiting_wp_by_kudos(None)
+    priority_sorted_list = db.session.query(
+            WaitingPrompt.id, 
+            WaitingPrompt.things, 
+            WaitingPrompt.n, 
+            WaitingPrompt.extra_priority, 
+            WaitingPrompt.created,
+        ).filter(
+            WaitingPrompt.n > 0
+        ).order_by(
+            WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
+        ).limit(50).all()
     for iter in range(len(priority_sorted_list)):
-        things_ahead_in_queue += priority_sorted_list[iter].get_queued_things()
-        n_ahead_in_queue += priority_sorted_list[iter].n
-        if priority_sorted_list[iter] == wp:
+        iter_wp = priority_sorted_list[iter]
+        queued_things = round(iter_wp.things * iter_wp.n/thing_divisor,2)
+        things_ahead_in_queue += queued_things
+        n_ahead_in_queue += iter_wp.n
+        if iter_wp.id == wp.id:
             things_ahead_in_queue = round(things_ahead_in_queue,2)
             return(iter, things_ahead_in_queue, n_ahead_in_queue)
     # -1 means the WP is done and not in the queue
