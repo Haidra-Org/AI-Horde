@@ -141,6 +141,7 @@ class WaitingPrompt(db.Model):
         return self.n > 0
 
     def start_generation(self, worker):
+        # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
         myself_refresh = db.session.query(WaitingPrompt).filter(WaitingPrompt.id == self.id, WaitingPrompt.n > 0).with_for_update().first()
         if not myself_refresh:
             return None
