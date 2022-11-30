@@ -224,7 +224,7 @@ def convert_things_to_kudos(things, **kwargs):
 def count_waiting_requests(user, models = []):
     return db.session.query(
         WPModels,
-    ).Join(WaitingPrompt).filter(
+    ).join(WaitingPrompt).filter(
         WPModels.model.in_(models),
         WaitingPrompt.user_id == user.id,
         not WaitingPrompt.is_faulted, # or proc_gen is completed or faulted (Db0: no because there's many procgens. If they're all faulted, the WP will be faulted too)
