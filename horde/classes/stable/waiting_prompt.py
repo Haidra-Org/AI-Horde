@@ -56,7 +56,7 @@ class WaitingPromptExtended(WaitingPrompt):
 
     @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
-        if self.seed_variation and self.jobs - self.n == 0:
+        if self.seed_variation and self.jobs - self.n != 0:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
