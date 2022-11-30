@@ -147,8 +147,8 @@ def get_available_models(lite_dict=False):
         # TODO
         models_dict[model_name]['queued'] = 0
         models_dict[model_name]['eta'] = 0
-    # logger.warning(models_dict) # FIXME: returns nulls
-    return models_dict.values()
+    logger.warning(list(models_dict.values())) # FIXME: returns nulls
+    return list(models_dict.values())
 
     # for worker in get_active_workers():
     #     model_name = None
