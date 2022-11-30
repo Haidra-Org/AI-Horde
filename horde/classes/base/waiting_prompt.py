@@ -149,7 +149,7 @@ class WaitingPrompt(db.Model):
                 return None
             myself_refresh.n -= 1
             session2.commit()
-        logger.debug(session)
+        logger.debug(db.session)
         new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.refresh()
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
