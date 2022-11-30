@@ -361,7 +361,7 @@ def get_wp_queue_stats(wp):
             WaitingPrompt.n > 0
         ).order_by(
             WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
-        ).limit(50).all()
+        ).all()
     for iter in range(len(priority_sorted_list)):
         iter_wp = priority_sorted_list[iter]
         queued_things = round(iter_wp.things * iter_wp.n/thing_divisor,2)
