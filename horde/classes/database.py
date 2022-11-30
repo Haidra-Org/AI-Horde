@@ -1,4 +1,5 @@
 import time
+import uuid
 from datetime import datetime, timedelta
 from sqlalchemy import func
 
@@ -114,7 +115,7 @@ def find_worker_by_name(worker_name):
     return(worker)
 
 def find_worker_by_id(worker_id):
-    worker = db.session.query(Worker).filter_by(id=worker_id).first()
+    worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
     return(worker)
 
 def get_all_teams():
