@@ -18,6 +18,7 @@ from horde.classes import stats, Worker, Team, WaitingPrompt, News, User
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
+from horde.horde_redis import horde_r
 
 # Not used yet
 authorizations = {
@@ -543,12 +544,17 @@ class Workers(Resource):
     def get(self):
         '''A List with the details of all registered and active workers
         '''
-        workers_ret = []
-        return(workers_ret,200)
-        # I could do this with a comprehension, but this is clearer to understand
-        for worker in database.get_active_workers():
-            workers_ret.append(worker.get_details())
-        return(workers_ret,200)
+        return (self.retrieve_workers_details(),200)
+
+    @logger.catch(reraise=True)
+    def retrieve_workers_details(self):
+        cached_workers = horde_r.get('worker_cache')
+        if cached_workers is None:
+            workers_ret = []
+            for worker in database.get_active_workers():
+                workers_ret.append(worker.get_details())
+            return workers_ret
+        return json.loads(cached_queue)
 
 class WorkerSingle(Resource):
 
