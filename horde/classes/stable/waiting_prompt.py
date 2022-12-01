@@ -23,6 +23,9 @@ class WaitingPromptExtended(WaitingPrompt):
         if self.n > 20:
             logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
+        # We store width and height individually in the DB to allow us to index them easier
+        self.width = self.params["width"]
+        self.height = self.params["height"]
         # Silent change
         if self.get_model_names() == ["stable_diffusion_2.0"]:
             self.params['sampler_name'] = "dpmsolver"
@@ -41,7 +44,7 @@ class WaitingPromptExtended(WaitingPrompt):
                 self.seed = self.seed_to_int(self.seed)
         logger.debug(self.params)
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
-        self.things = self.params.get('width',512) * self.params.get('height',512) * self.get_accurate_steps()
+        self.things = self.width * self.height * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(self.params)
         self.calculate_kudos()
@@ -118,7 +121,7 @@ class WaitingPromptExtended(WaitingPrompt):
             prompt_type = self.source_processing
         logger.info(
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): "
-            f"w:{self.params['width']} * h:{self.params['height']} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
+            f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
         )
 
     def seed_to_int(self, s = None):
@@ -171,7 +174,7 @@ class WaitingPromptExtended(WaitingPrompt):
             max_res = 1024
         if self.get_accurate_steps() > 50:
             return(True,max_res)
-        if self.params['width'] * self.params['height'] > max_res*max_res:
+        if self.width * self.height > max_res*max_res:
             return(True,max_res)
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
@@ -198,13 +201,13 @@ class WaitingPromptExtended(WaitingPrompt):
         # default is 2 minutes. Then we scale up based on resolution.
         # This will be more accurate with a newer formula
         self.job_ttl = 120
-        if self.params['width'] * self.height > 2048*2048:
+        if self.width * self.height > 2048*2048:
             self.job_ttl = 800
-        elif self.params['width'] * self.height > 1024*1024:
+        elif self.width * self.height > 1024*1024:
             self.job_ttl = 400
-        elif self.params['width'] * self.height > 728*728:
+        elif self.width * self.height > 728*728:
             self.job_ttl = 260
-        elif self.params['width'] * self.height >= 512*512:
+        elif self.width * self.height >= 512*512:
             self.job_ttl = 150
         db.session.commit()
 

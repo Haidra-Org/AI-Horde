@@ -174,7 +174,16 @@ class JobPop(JobPop):
             allow_painting = self.args.allow_painting,
             allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
         )
-  
+
+    def get_sorted_wp(self):
+        '''We're sending the lists directly, to avoid having to join tables'''
+        return database.get_sorted_wp_filtered_to_worker(
+            self.worker,
+            self.models,
+            self.blacklist,
+        )
+
+
 class HordeLoad(HordeLoad):
     # When we extend the actual method, we need to re-apply the decorators
     @logger.catch(reraise=True)

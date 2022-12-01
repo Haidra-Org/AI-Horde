@@ -2,7 +2,7 @@ import time
 import uuid
 import json
 from datetime import datetime, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -316,22 +316,65 @@ def count_things_per_model():
     return(things_per_model)
 
 
-def get_sorted_wp_filtered_to_worker(worker): 
+def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None): 
     # This is just the top 50 - Adjusted method to send Worker object. Filters to add.
-    # TODO: Filter by Model
-    # TODO: Filter by WP.width * WP.height <= worker.max_pixels
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
-    # TODO: Retrieve WPs with WP.source_image != None, __ONLY IF__ self.allow_img2img == True
-    # TODO: Retrieve WPs with safe.ip == False, __ONLY IF__ Worker.allow_unsafe_ipaddr = True
-    # TODO: Filter by WP.user == Worker.user __ONLY IF__  Worker.maintenance == True
-    # TODO: Filter by WP.expiry < utcnow()
-    # TODO: Filter by WP.faulted == False
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
-    # TODO: Filter by WP.nsfw == False __ONLY IF__ Worker.nsfw == False
     # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
-    return db.session.query(WaitingPrompt).filter(WaitingPrompt.n > 0).order_by(WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()).limit(50).all()
+    worker_models = worker.get_model_names()
+    return db.session.query(
+        WaitingPrompt
+    ).join(
+        WPModels
+    ).filter(
+        WPModels.model.in_(models_list),
+        WaitingPrompt.n > 0,
+        WaitingPrompt.width * WaitingPrompt.height <= worker.max_pixels,
+        WaitingPrompt.active == True,
+        WaitingPrompt.faulted == False,
+        WaitingPrompt.expiry > datetime.utcnow(),
+        or_(
+            WaitingPrompt.source_image == None,
+            and_(
+                WaitingPrompt.source_image != None,
+                worker.max_pixels == True,
+            ),
+            
+        ),
+        or_(
+            WaitingPrompt.safe_ip == True,
+            and_(
+                WaitingPrompt.safe_ip == False,
+                worker.allow_unsafe_ipaddr == True,
+            ),
+        ),
+        or_(
+            WaitingPrompt.workers == True,
+            and_(
+                WaitingPrompt.safe_ip == False,
+                worker.allow_unsafe_ipaddr == True,
+            ),
+        ),
+        or_(
+            WaitingPrompt.nsfw == False,
+            and_(
+                WaitingPrompt.nsfw == True,
+                worker.nsfw == True,
+            ),
+        ),
+        or_(
+            worker.maintenance == False,
+            and_(
+                worker.maintenance == True,
+                WaitingPrompt.user_id == worker.user_id,
+            ),
+        ),
+    ).order_by(
+        WaitingPrompt.extra_priority.desc(), 
+        WaitingPrompt.created.desc()
+    ).limit(100).all()
     # sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
     # final_wp_list = []
     # for wp in sorted_wp_list:
@@ -381,6 +424,8 @@ def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
 
 def wp_has_valid_workers(wp, limited_workers_ids = []):
+    # FIXME: Too heavy
+    # TODO: Redis cached
     return True
     worker_found = False
     for worker in get_active_workers():
@@ -419,6 +464,7 @@ def query_prioritized_wps():
             ).filter(
                 WaitingPrompt.n > 0,
                 WaitingPrompt.faulted == False,
+                WaitingPrompt.active == True,
             ).order_by(
                 WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
             ).all()

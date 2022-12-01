@@ -381,7 +381,7 @@ class JobPop(Resource):
         #             self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
-        for wp in database.get_sorted_wp_filtered_to_worker(self.worker): # TODO this should also filter on .n>0
+        for wp in self.get_sorted_wp(): # TODO this should also filter on .n>0
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
@@ -410,6 +410,10 @@ class JobPop(Resource):
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
         # logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
+
+    def get_sorted_wp(self):
+        '''Extendable class to retrieve the sorted WP list for this worker'''
+        return database.get_sorted_wp_filtered_to_worker(self.worker)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):

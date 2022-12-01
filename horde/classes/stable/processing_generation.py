@@ -22,7 +22,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
     def log_aborted_generation(self):
         logger.info(
             f"Aborted Stale Generation {self.id} "
-            f"({self.wp.params['width']}x{self.wp.params['height']}x{self.wp.params['steps']}@{self.wp.params['sampler_name']})"
+            f"({self.wp.width}x{self.wp.height}x{self.wp.params['steps']}@{self.wp.params['sampler_name']})"
             f" from by worker: {self.worker.name} ({self.worker.id})"
         )
 
