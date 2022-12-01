@@ -1,5 +1,6 @@
 import time
 import uuid
+import json
 from datetime import datetime, timedelta
 from sqlalchemy import func
 
@@ -10,6 +11,7 @@ from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 from horde.utils import hash_api_key
+from horde.horde_redis import horde_r
 
 ALLOW_ANONYMOUS = True
 
@@ -351,17 +353,21 @@ def get_wp_queue_stats(wp):
         return(-1,0,0)
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
-    priority_sorted_list = db.session.query(
-            WaitingPrompt.id, 
-            WaitingPrompt.things, 
-            WaitingPrompt.n, 
-            WaitingPrompt.extra_priority, 
-            WaitingPrompt.created,
-        ).filter(
-            WaitingPrompt.n > 0
-        ).order_by(
-            WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
-        ).all()
+    priority_sorted_list = retrieve_prioritized_wp_queue()
+    if not priority_sorted_list:
+        priority_sorted_list = db.session.query(
+                WaitingPrompt.id, 
+                WaitingPrompt.things, 
+                WaitingPrompt.n, 
+                WaitingPrompt.extra_priority, 
+                WaitingPrompt.created,
+            ).filter(
+                WaitingPrompt.n > 0
+            ).order_by(
+                WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
+            ).all()
+        store_prioritized_wp_queue(priority_sorted_list)
+    # logger.info(priority_sorted_list)
     for iter in range(len(priority_sorted_list)):
         iter_wp = priority_sorted_list[iter]
         queued_things = round(iter_wp.things * iter_wp.n/thing_divisor,2)
@@ -397,3 +403,48 @@ def wp_has_valid_workers(wp, limited_workers_ids = []):
             worker_found = True
             break
     return worker_found
+
+@logger.catch(reraise=True)
+def store_prioritized_wp_queue(wp_queue):
+    '''Stores the retrieved WP queue as json for 1 second horde-wide'''
+    serialized_wp_list = []
+    for wp in wp_queue:
+        wp_json = {
+            "id": str(wp.id),
+            "things": wp.things, 
+            "n": wp.n, 
+            "extra_priority": wp.extra_priority, 
+            "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        serialized_wp_list.append(wp_json)
+    try:
+        cached_queue = json.dumps(serialized_wp_list)
+        horde_r.setex('wp_cache', timedelta(seconds=5), cached_queue)
+    except (TypeError, OverflowError) as e:
+        logger.error(f"Failed serializing with error: {e}")
+
+
+@logger.catch(reraise=True)
+def retrieve_prioritized_wp_queue():
+    cached_queue = horde_r.get('wp_cache')
+    if cached_queue is None:
+        return None
+    try:
+        retrieved_json_list = json.loads(cached_queue)
+    except (TypeError, OverflowError) as e:
+        logger.error(f"Failed deserializing with error: {e}")
+        return None
+
+    class FakeWPRow:
+        def __init__(self,json_row):
+            self.id = uuid.UUID(json_row["id"])
+            self.things = json_row["things"]
+            self.n = json_row["n"]
+            self.extra_priority = json_row["extra_priority"]
+            self.created = datetime.strptime(json_row["created"],"%Y-%m-%d %H:%M:%S")
+            
+    deserialized_wp_list = []
+    for json_row in retrieved_json_list:
+        fake_wp_row = FakeWPRow(json_row)
+        deserialized_wp_list.append(fake_wp_row)
+    return deserialized_wp_list

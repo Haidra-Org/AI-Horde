@@ -14,7 +14,6 @@ ipaddr_db = 2
 cache_db = 3
 ipaddr_supicion_db = 4
 ipaddr_timeout_db = 5
-logger.warning(f"Redis hostname is set to {redis_hostname}")
 def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((redis_hostname, redis_port)) == 0
@@ -33,7 +32,6 @@ def get_horde_db():
     return(rdb)
 
 def get_ipaddr_db():
-    logger.error(redis_hostname)
     rdb = redis.Redis(
         host=redis_hostname,
         port=redis_port,

@@ -18,7 +18,7 @@ if SQLITE_MODE:
 else:
     HORDE.config["SQLALCHEMY_DATABASE_URI"] = f"postgresql://postgres:{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
     HORDE.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        "pool_size": 1000,
+        "pool_size": 200,
         "max_overflow": -1,
     }
 HORDE.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
