@@ -50,7 +50,13 @@ class WaitingPromptExtended(WaitingPrompt):
         # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.params['steps']
-        self.gen_payload["seed"] = self.seed_to_int(self.seed)
+        # I set the seed_to_int now, because it's anyway going to be incremented by the seed_variation
+        # I am not doing it in get_job_payload() because there seems to be a race condition in where even though I set self.gen_payload["seed"] to seed_to_int()
+        # It then crashes in self.gen_payload["seed"] += self.seed_variation trying to None + Int
+        if self.seed_variation:
+            self.gen_payload["seed"] = self.seed_to_int(self.seed)
+        else:
+            self.gen_payload["seed"] = self.seed
         del self.gen_payload["steps"]
         db.session.commit()
 
