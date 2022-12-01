@@ -233,24 +233,28 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 def count_waiting_requests(user, models = []):
-    return 1 # FIXME: Below doesn't work. Stack:
-    # # sqlalchemy.exc.ProgrammingError: (psycopg2.errors.GroupingError) column "wp_models.id" must appear in the GROUP BY clause or be used in an aggregate function
-    # # LINE 2: FROM (SELECT wp_models.id AS wp_models_id, wp_models.wp_id A...
-    # #                      ^
+    if len(models):
+        return db.session.query(
+            WPModels.id,
+        ).join(
+            WaitingPrompt
+        ).filter(
+            WPModels.model.in_(models),
+            WaitingPrompt.user_id == user.id,
+            WaitingPrompt.faulted == False,
+            WaitingPrompt.n >= 1, 
+        ).group_by(WPModels.id).count()
+    else:
+        return db.session.query(
+            WPModels.id,
+        ).join(
+            WaitingPrompt
+        ).filter(
+            WaitingPrompt.user_id == user.id,
+            WaitingPrompt.faulted == False,
+            WaitingPrompt.n >= 1, 
+        ).group_by(WPModels.id).count()
 
-    # # [SQL: SELECT count(*) AS count_1
-    # # FROM (SELECT wp_models.id AS wp_models_id, wp_models.wp_id AS wp_models_wp_id, wp_models.model AS wp_models_model
-    # # FROM wp_models JOIN waiting_prompts ON waiting_prompts.id = wp_models.wp_id
-    # # WHERE false GROUP BY wp_models.model) AS anon_1]
-    # # (Background on this error at: https://sqlalche.me/e/14/f405)
-    return db.session.query(
-        WPModels,
-    ).join(WaitingPrompt).filter(
-        WPModels.model.in_(models),
-        WaitingPrompt.user_id == user.id,
-        not WaitingPrompt.faulted, # or proc_gen is completed or faulted (Db0: no because there's many procgens. If they're all faulted, the WP will be faulted too)
-        WaitingPrompt.n >= 1, 
-    ).group_by(WPModels.model).count()
 
     # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
     #     model_names = wp.get_model_names()
@@ -403,7 +407,7 @@ def retrieve_prioritized_wp_queue():
     for json_row in retrieved_json_list:
         fake_wp_row = FakeWPRow(json_row)
         deserialized_wp_list.append(fake_wp_row)
-    logger.debug(len(deserialized_wp_list))
+    # logger.debug(len(deserialized_wp_list))
     return deserialized_wp_list
 
 def query_prioritized_wps():
