@@ -1182,8 +1182,7 @@ class OperationsIP(Resource):
 
 
 class Heartbeat(Resource):
-    # @limiter.exempt
-    decorators = [limiter.limit("1/minute")]
+    @limiter.exempt
     def get(self):
         '''If this loads, this node is available
         '''
