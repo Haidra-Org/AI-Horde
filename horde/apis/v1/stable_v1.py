@@ -8,7 +8,7 @@ from flask_restx import Namespace, Resource, reqparse, fields
 
 from horde.argparser import maintenance, invite_only
 from horde.classes import Worker, WaitingPrompt
-from horde.classes import database
+import horde.database
 from horde.classes.base import stats
 from horde.countermeasures import CounterMeasures
 from horde.flask import db

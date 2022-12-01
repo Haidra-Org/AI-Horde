@@ -9,8 +9,9 @@ from flask_dance.contrib.github import github
 from flask_dance.contrib.google import google
 from markdown import markdown
 
+import horde.database
 from horde.argparser import args, maintenance
-from horde.classes import News, User, stats, database
+from horde.classes import News, User, stats
 from horde.flask import HORDE, cache
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key

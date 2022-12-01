@@ -5,6 +5,7 @@ import time
 import random
 from datetime import datetime
 
+import horde.database
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
 from horde.flask import cache, db, HORDE
@@ -13,7 +14,7 @@ from horde.logger import logger
 from horde.argparser import maintenance, invite_only, raid
 from horde.apis import ModelsV2, ParsersV2
 from horde.apis import exceptions as e
-from horde.classes import database, stats, Worker, Team, WaitingPrompt, News, User
+from horde.classes import stats, Worker, Team, WaitingPrompt, News, User
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures

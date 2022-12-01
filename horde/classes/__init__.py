@@ -51,9 +51,6 @@ try:
 except (ModuleNotFoundError,AttributeError):
     stats = import_module(name='horde.classes.base.stats')
 
-# from horde.classes.base import stats
-from horde.classes import database
-
 with HORDE.app_context():
     db.create_all()
 
