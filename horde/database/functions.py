@@ -329,8 +329,8 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     ).join(
         WPModels
     ).filter(
-        WPModels.model.in_(models_list),
         WaitingPrompt.n > 0,
+        WPModels.model.in_(models_list),
         WaitingPrompt.width * WaitingPrompt.height <= worker.max_pixels,
         WaitingPrompt.active == True,
         WaitingPrompt.faulted == False,
@@ -345,13 +345,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ),
         or_(
             WaitingPrompt.safe_ip == True,
-            and_(
-                WaitingPrompt.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
-        ),
-        or_(
-            WaitingPrompt.workers == True,
             and_(
                 WaitingPrompt.safe_ip == False,
                 worker.allow_unsafe_ipaddr == True,
