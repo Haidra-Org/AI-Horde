@@ -430,7 +430,7 @@ class Worker(db.Model):
         '''We display these in the workers list json'''
         ret_dict = {
             "name": self.name,
-            "id": self.id,
+            "id": str(self.id),
             "requests_fulfilled": self.fulfilments,
             "uncompleted_jobs": self.uncompleted_jobs,
             "kudos_rewards": self.kudos,
