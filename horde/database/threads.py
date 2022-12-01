@@ -9,7 +9,7 @@ from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
 from horde.flask import HORDE, db
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps
+from horde.database.functions import query_prioritized_wps, get_active_workers
 
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
@@ -53,7 +53,7 @@ def store_worker_list():
     with HORDE.app_context():
         serialized_workers = []
         # I could do this with a comprehension, but this is clearer to understand
-        for worker in database.get_active_workers():
+        for worker in get_active_workers():
             serialized_workers.append(worker.get_details())
         json_workers = json.dumps(serialized_workers)
         try:
