@@ -246,14 +246,12 @@ def count_waiting_requests(user, models = []):
         ).group_by(WPModels.id).count()
     else:
         return db.session.query(
-            WPModels.id,
-        ).join(
             WaitingPrompt
         ).filter(
             WaitingPrompt.user_id == user.id,
             WaitingPrompt.faulted == False,
             WaitingPrompt.n >= 1, 
-        ).group_by(WPModels.id).count()
+        ).count()
 
 
     # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
