@@ -322,7 +322,7 @@ def get_sorted_wp_filtered_to_worker(worker):
     # TODO: Retrieve WPs with WP.source_image != None, __ONLY IF__ self.allow_img2img == True
     # TODO: Retrieve WPs with safe.ip == False, __ONLY IF__ Worker.allow_unsafe_ipaddr = True
     # TODO: Filter by WP.user == Worker.user __ONLY IF__  Worker.maintenance == True
-    # TODO: Filter by WP.last_process_time <= 1200 (or WP.STALE_TIME (Constant, not in DB! We can put the constant here))
+    # TODO: Filter by WP.expiry < utcnow()
     # TODO: Filter by WP.faulted == False
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
     # TODO: Filter by WP.nsfw == False __ONLY IF__ Worker.nsfw == False
@@ -390,29 +390,6 @@ def wp_has_valid_workers(wp, limited_workers_ids = []):
     return worker_found
 
 @logger.catch(reraise=True)
-def store_prioritized_wp_queue():
-    '''Stores the retrieved WP queue as json for 1 second horde-wide'''
-    wp_queue = query_prioritized_wps()
-    serialized_wp_list = []
-    for wp in wp_queue:
-        wp_json = {
-            "id": str(wp.id),
-            "things": wp.things, 
-            "n": wp.n, 
-            "extra_priority": wp.extra_priority, 
-            "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        serialized_wp_list.append(wp_json)
-    try:
-        cached_queue = json.dumps(serialized_wp_list)
-        # We set the expiry in redis to 5 seconds, in case the primary thread dies
-        # However the primary thread is set to set the cache every 1 second
-        horde_r.setex('wp_cache', timedelta(seconds=5), cached_queue)
-    except (TypeError, OverflowError) as e:
-        logger.error(f"Failed serializing with error: {e}")
-
-
-@logger.catch(reraise=True)
 def retrieve_prioritized_wp_queue():
     cached_queue = horde_r.get('wp_cache')
     if cached_queue is None:
@@ -436,8 +413,10 @@ def query_prioritized_wps():
                 WaitingPrompt.n, 
                 WaitingPrompt.extra_priority, 
                 WaitingPrompt.created,
+                WaitingPrompt.expiry,
             ).filter(
-                WaitingPrompt.n > 0
+                WaitingPrompt.n > 0,
+                WaitingPrompt.faulted == False,
             ).order_by(
                 WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
             ).all()

@@ -45,7 +45,6 @@ class WPModels(db.Model):
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
-    STALE_TIME = 1200
     id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
     prompt = db.Column(db.Text, nullable=False)
 
@@ -58,7 +57,6 @@ class WaitingPrompt(db.Model):
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
-    last_process_time = db.Column(db.DateTime, default=datetime.utcnow)
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -78,10 +76,7 @@ class WaitingPrompt(db.Model):
 
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 
-    updated = db.Column(
-        db.DateTime(timezone=False), nullable=True, onupdate=datetime.utcnow
-    )
-    created = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -264,7 +259,7 @@ class WaitingPrompt(db.Model):
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()
 
-    def log_faulted_job(self):
+    def log_faulted_prompt(self):
         '''Extendable function to log why a request was aborted'''
         logger.warning(f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
 
@@ -290,11 +285,11 @@ class WaitingPrompt(db.Model):
         db.session.commit()
 
     def refresh(self):
-        self.last_process_time = datetime.utcnow()
+        self.expiry = get_expiry_date()
         db.session.commit()
 
     def is_stale(self):
-        if (datetime.utcnow() - self.last_process_time).seconds > self.STALE_TIME:
+        if datetime.utcnow() > self.expiry:
             return(True)
         return(False)
 

@@ -208,7 +208,7 @@ class WaitingPromptExtended(WaitingPrompt):
             self.job_ttl = 150
         db.session.commit()
 
-    def log_faulted_job(self):
+    def log_faulted_prompt(self):
         source_processing = 'txt2img'
         if self.source_image:
             source_processing = self.source_processing

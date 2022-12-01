@@ -39,14 +39,6 @@ try:
 except (ModuleNotFoundError,AttributeError):
     News = import_module(name=f'horde.classes.{args.horde}.news').News
 try:
-    WPCleaner = import_module(name=f'horde.classes.{args.horde}.threads').WPCleanerExtended
-except (ModuleNotFoundError,AttributeError):
-    WPCleaner = import_module(name='horde.classes.base.threads').WPCleaner
-try:
-    MonthlyKudos = import_module(name=f'horde.classes.{args.horde}.threads').MonthlyKudosExtended
-except (ModuleNotFoundError,AttributeError):
-    MonthlyKudos = import_module(name='horde.classes.base.threads').MonthlyKudos
-try:
     stats = import_module(name=f'horde.classes.{args.horde}.stats')
 except (ModuleNotFoundError,AttributeError):
     stats = import_module(name='horde.classes.base.stats')
@@ -69,7 +61,3 @@ with HORDE.app_context():
             concurrency=500
         )
         anon.create()
-
-if args.primary:
-    wp_cleaner = WPCleaner()
-    monthly_kudos = MonthlyKudos()
