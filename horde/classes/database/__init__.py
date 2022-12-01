@@ -3,6 +3,7 @@ import uuid
 import json
 from datetime import datetime, timedelta
 from sqlalchemy import func
+from threading import Timer
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -12,9 +13,10 @@ from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
-from .classes import FakeWPRow
+from horde.database.classes import FakeWPRow
 
 ALLOW_ANONYMOUS = True
+
 
 
 def initiate_save(seconds = 1):
