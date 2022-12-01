@@ -40,7 +40,7 @@ class WaitingPromptExtended(WaitingPrompt):
             if self.seed is None:
                 self.seed = self.seed_to_int(self.seed)
         logger.debug(self.params)
-        logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
+        # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.params.get('width',512) * self.params.get('height',512) * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload(self.params)
@@ -68,7 +68,7 @@ class WaitingPromptExtended(WaitingPrompt):
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
-        logger.debug([self.gen_payload["seed"],self.seed_variation])
+        # logger.debug([self.gen_payload["seed"],self.seed_variation])
         if procgen.worker.bridge_version >= 2:
             if not self.nsfw and self.censor_nsfw:
                 self.gen_payload["use_nsfw_censor"] = True
