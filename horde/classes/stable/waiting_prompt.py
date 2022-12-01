@@ -34,6 +34,11 @@ class WaitingPromptExtended(WaitingPrompt):
             self.seed = self.seed_to_int(self.params.pop('seed'))
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
+            # I set the seed_to_int now, because it's anyway going to be incremented by the seed_variation
+            # I am not doing it in get_job_payload() because there seems to be a race condition in where even though I set self.gen_payload["seed"] to seed_to_int()
+            # It then crashes in self.gen_payload["seed"] += self.seed_variation trying to None + Int
+            if self.seed is None:
+                self.seed = self.seed_to_int(self.seed)
         logger.debug(self.params)
         logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.params.get('width',512) * self.params.get('height',512) * self.get_accurate_steps()
@@ -50,23 +55,20 @@ class WaitingPromptExtended(WaitingPrompt):
         # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.params['steps']
-        # I set the seed_to_int now, because it's anyway going to be incremented by the seed_variation
-        # I am not doing it in get_job_payload() because there seems to be a race condition in where even though I set self.gen_payload["seed"] to seed_to_int()
-        # It then crashes in self.gen_payload["seed"] += self.seed_variation trying to None + Int
-        if self.seed_variation:
-            self.gen_payload["seed"] = self.seed_to_int(self.seed)
-        else:
-            self.gen_payload["seed"] = self.seed
+        self.gen_payload["seed"] = self.seed
         del self.gen_payload["steps"]
         db.session.commit()
 
     @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
-        logger.debug([self.gen_payload["seed"],self.seed_variation])
+        # If self.seed is None, we randomize the seed we send to the worker each time.
+        if self.seed is None:
+            self.gen_payload["seed"] = self.seed_to_int(self.seed)
         if self.seed_variation and self.jobs - self.n > 1:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
+        logger.debug([self.gen_payload["seed"],self.seed_variation])
         if procgen.worker.bridge_version >= 2:
             if not self.nsfw and self.censor_nsfw:
                 self.gen_payload["use_nsfw_censor"] = True
