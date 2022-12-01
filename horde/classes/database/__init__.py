@@ -12,6 +12,7 @@ from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
+from .classes import FakeWPRow
 
 ALLOW_ANONYMOUS = True
 
@@ -435,14 +436,6 @@ def retrieve_prioritized_wp_queue():
         logger.error(f"Failed deserializing with error: {e}")
         return None
 
-    class FakeWPRow:
-        def __init__(self,json_row):
-            self.id = uuid.UUID(json_row["id"])
-            self.things = json_row["things"]
-            self.n = json_row["n"]
-            self.extra_priority = json_row["extra_priority"]
-            self.created = datetime.strptime(json_row["created"],"%Y-%m-%d %H:%M:%S")
-            
     deserialized_wp_list = []
     for json_row in retrieved_json_list:
         fake_wp_row = FakeWPRow(json_row)

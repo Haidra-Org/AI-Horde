@@ -56,12 +56,12 @@ class WaitingPromptExtended(WaitingPrompt):
 
     @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
+        if not self.gen_payload["seed"] is None:
+            self.gen_payload["seed"] = self.seed_to_int(self.seed)
         if self.seed_variation and self.jobs - self.n > 1:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
-        else:
-            self.gen_payload["seed"] = self.seed_to_int(self.seed)
         if procgen.worker.bridge_version >= 2:
             if not self.nsfw and self.censor_nsfw:
                 self.gen_payload["use_nsfw_censor"] = True
