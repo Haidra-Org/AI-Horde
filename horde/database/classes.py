@@ -34,9 +34,9 @@ class PrimaryTimedFunction:
             # This allows me to change the primary node on-the-fly
             if self.cancel:
                 break
-            # if not args.primary:
-            #     time.sleep(self.interval)
-            #     continue
+            if not args.primary:
+                time.sleep(self.interval)
+                continue
             try:
                 self.function(*self.args, **self.kwargs)
             except Exception as e:
