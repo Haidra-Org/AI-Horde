@@ -50,14 +50,12 @@ class WaitingPromptExtended(WaitingPrompt):
         # We always send only 1 iteration to Stable Diffusion
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.params['steps']
-        self.gen_payload["seed"] = self.seed
+        self.gen_payload["seed"] = self.seed_to_int(self.seed)
         del self.gen_payload["steps"]
         db.session.commit()
 
     @logger.catch(reraise=True)
     def get_job_payload(self,procgen):
-        if not self.gen_payload["seed"] is None:
-            self.gen_payload["seed"] = self.seed_to_int(self.seed)
         if self.seed_variation and self.jobs - self.n > 1:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
