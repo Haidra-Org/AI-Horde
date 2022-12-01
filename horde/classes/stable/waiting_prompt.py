@@ -76,6 +76,7 @@ class WaitingPromptExtended(WaitingPrompt):
             if "denoising_strength" in self.gen_payload:
                 del self.gen_payload["denoising_strength"]
         db.session.commit()
+        logger.debug(self.gen_payload)
         return(self.gen_payload)
 
     def get_pop_payload(self, procgen):
