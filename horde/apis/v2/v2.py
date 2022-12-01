@@ -554,7 +554,7 @@ class Workers(Resource):
             for worker in database.get_active_workers():
                 workers_ret.append(worker.get_details())
             return workers_ret
-        return json.loads(cached_queue)
+        return json.loads(cached_workers)
 
 class WorkerSingle(Resource):
 
