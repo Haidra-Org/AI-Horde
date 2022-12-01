@@ -52,7 +52,6 @@ class WaitingPromptExtended(WaitingPrompt):
         self.gen_payload["ddim_steps"] = self.params['steps']
         self.gen_payload["seed"] = self.seed_to_int(self.seed)
         del self.gen_payload["steps"]
-        logger.debug(self.gen_payload)
         db.session.commit()
 
     @logger.catch(reraise=True)
@@ -77,7 +76,6 @@ class WaitingPromptExtended(WaitingPrompt):
             if "denoising_strength" in self.gen_payload:
                 del self.gen_payload["denoising_strength"]
         db.session.commit()
-        logger.debug(self.gen_payload)
         return(self.gen_payload)
 
     def get_pop_payload(self, procgen):
