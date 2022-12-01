@@ -9,7 +9,7 @@ from flask_dance.contrib.github import github
 from flask_dance.contrib.google import google
 from markdown import markdown
 
-import horde.database
+from horde import database
 from horde.argparser import args, maintenance
 from horde.classes import News, User, stats
 from horde.flask import HORDE, cache

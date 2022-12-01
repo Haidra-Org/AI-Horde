@@ -5,7 +5,7 @@ import time
 import random
 from datetime import datetime
 
-import horde.database
+from horde import database
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
 from horde.flask import cache, db, HORDE

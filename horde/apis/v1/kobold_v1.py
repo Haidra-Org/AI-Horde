@@ -2,7 +2,7 @@ from flask_restx import Namespace, Resource, reqparse, fields
 from flask import request
 from horde import limiter
 from horde.logger import logger
-import horde.database
+from horde import database
 from horde.classes.base import stats
 from horde.classes import processing_generations,waiting_prompts,Worker,WaitingPrompt
 from horde import maintenance, cm

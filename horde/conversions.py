@@ -3,7 +3,7 @@ import os
 import json
 from datetime import datetime
 
-import horde.database
+from horde import database
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor, raw_thing_name
