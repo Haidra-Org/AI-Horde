@@ -232,7 +232,8 @@ def convert_things_to_kudos(things, **kwargs):
     kudos = round(things,2)
     return(kudos)
 
-def count_waiting_requests(user, models = []):
+def count_waiting_requests(user, models = None):
+    if not models: models = []
     if len(models):
         return db.session.query(
             WPModels.id,
@@ -416,7 +417,8 @@ def get_all_wps():
 def get_worker_performances():
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
 
-def wp_has_valid_workers(wp, limited_workers_ids = []):
+def wp_has_valid_workers(wp, limited_workers_ids = None):
+    if not limited_workers_ids: limited_workers_ids = []
     # FIXME: Too heavy
     # TODO: Redis cached
     return True

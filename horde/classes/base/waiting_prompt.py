@@ -88,13 +88,15 @@ class WaitingPrompt(db.Model):
         self.set_models(models)
         self.extract_params()
 
-    def set_workers(self, worker_ids = []):
+    def set_workers(self, worker_ids = None):
+        if not worker_ids: worker_ids = []
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
         for wid in worker_ids:
             worker_entry = WPAllowedWorkers(worker_id=wid,wp_id=self.id)
             db.session.add(worker_entry)
 
-    def set_models(self, model_names = []):
+    def set_models(self, model_names = None):
+        if not model_names: model_names = []
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
         logger.debug(model_names)
         for model in model_names:

@@ -114,7 +114,8 @@ class Worker(db.Model):
         if is_profane(self.name):
             self.report_suspicion(reason = Suspicions.WORKER_PROFANITY, formats = [self.name])
 
-    def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = []):
+    def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = None):
+        if not formats: formats = []
         # Unreasonable Fast can be added multiple times and it increases suspicion each time
         if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
             return

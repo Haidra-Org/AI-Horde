@@ -23,7 +23,8 @@ class WaitingPrompt(WaitingPrompt):
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
 
-    def prepare_job_payload(self, initial_dict = {}):
+    def prepare_job_payload(self, initial_dict = None):
+        if not initial_dict: initial_dict = {}
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = initial_dict
         self.gen_payload["prompt"] = self.prompt

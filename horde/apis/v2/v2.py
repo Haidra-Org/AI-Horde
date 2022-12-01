@@ -203,7 +203,13 @@ class AsyncGenerate(GenerateTemplate):
         Perhaps some will appear in the next 10 minutes.
         Asynchronous requests live for 10 minutes before being considered stale and being deleted.
         '''
-        super().post()
+        try:
+            super().post()
+        except KeyError:
+            logger.error(f"caught missing Key.")
+            logger.error(self.args)
+            logger.error(self.args.params)
+            return {"message": "Internal Server Error"},500
         ret_dict = {"id":self.wp.id}
         if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
             ret_dict['message'] = self.get_size_too_big_message()

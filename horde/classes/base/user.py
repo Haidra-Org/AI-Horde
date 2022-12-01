@@ -234,7 +234,9 @@ class User(db.Model):
         except ValueError:
             return(False)
 
-    def get_concurrency(self, models_requested = [], models_dict = {}):
+    def get_concurrency(self, models_requested = None, models_dict = None):
+        if not models_requested: models_requested=[]
+        if not models_dict: models_dict={}
         if not self.is_anon() or len(models_requested) == 0:
             return(self.concurrency)
         return self.concurrency # FIXME: Later
@@ -250,7 +252,8 @@ class User(db.Model):
         # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
         return(allowed_concurrency)
 
-    def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = []):
+    def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = None):
+        if not formats: format = []
         # Anon is never considered suspicious
         if self.is_anon():
             return

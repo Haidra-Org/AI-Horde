@@ -24,6 +24,18 @@ class WaitingPromptExtended(WaitingPrompt):
             logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
         # We store width and height individually in the DB to allow us to index them easier
+        if "width" not in self.params:
+            self.params["width"] = 512
+        if "height" not in self.params:
+            self.params["height"] = 512
+        if "steps" not in self.params:
+            self.params["steps"] = 30
+        if "sampler_name" not in self.params:
+            self.params["sampler_name"] = "k_euler_a"
+        if "cfg_scale" not in self.params:
+            self.params["cfg_scale"] = 5.0
+        if "karras" not in self.params:
+            self.params["karras"] = True
         self.width = self.params["width"]
         self.height = self.params["height"]
         # Silent change
@@ -51,8 +63,9 @@ class WaitingPromptExtended(WaitingPrompt):
         # Commit will happen in prepare_job_payload()
 
     @logger.catch(reraise=True)
-    def prepare_job_payload(self, initial_dict = {}):
+    def prepare_job_payload(self, initial_dict = None):
         '''Prepares the default job payload. This might be further adjusted per job in get_job_payload()'''
+        if not initial_dict: initial_dict = {}
         self.gen_payload = initial_dict.copy()
         self.gen_payload["prompt"] = self.prompt
         # We always send only 1 iteration to Stable Diffusion
