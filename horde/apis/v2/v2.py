@@ -5,7 +5,7 @@ import time
 import random
 from datetime import datetime
 
-from horde import database
+from horde.database import functions as database
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
 from horde.flask import cache, db, HORDE
@@ -32,7 +32,6 @@ api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
 parsers = ParsersV2()
 
-logger.info([parsers.generate_parser,models.input_model_generation_payload])
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
@@ -955,10 +954,10 @@ class HordeModes(Resource):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
             logger.critical(f"Horde entered maintenance mode")
-            database.initiate_save()
             for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = maintenance.active
+        #TODO: Replace this with a node-offline call
         if self.args.shutdown is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')

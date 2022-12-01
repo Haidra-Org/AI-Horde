@@ -1,0 +1,443 @@
+import time
+import uuid
+import json
+from datetime import datetime, timedelta
+from sqlalchemy import func
+
+from horde.classes.base.waiting_prompt import WPModels
+from horde.classes.base.worker import WorkerModel
+from horde.flask import db
+from horde.logger import logger
+from horde.vars import thing_name,thing_divisor
+from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.utils import hash_api_key
+from horde.horde_redis import horde_r
+from horde.database.classes import FakeWPRow, PrimaryTimedFunction
+
+ALLOW_ANONYMOUS = True
+
+def get_anon():
+    return find_user_by_api_key('anon')
+
+#TODO: Switch this to take this node out of operation instead?
+# Or maybe just delete this
+def shutdown(seconds):
+    if seconds > 0:
+        logger.critical(f"Initiating shutdown in {seconds} seconds")
+        time.sleep(seconds)
+    logger.critical(f"DB written to disk. You can now SIGTERM.")
+
+def get_top_contributor():
+    top_contribution = 0
+    top_contributor = None
+    #TODO Exclude anon
+    top_contributor = db.session.query(User).order_by(
+        User.contributed_thing.desc()
+    ).first()
+    return top_contributor
+
+def get_top_worker():
+    top_worker = None
+    top_worker_contribution = 0
+    top_worker = db.session.query(Worker).order_by(
+        Worker.contributions.desc()
+    ).first()
+    return top_worker
+
+
+def get_active_workers():
+    active_workers = db.session.query(Worker).filter(
+        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    ).all()
+    return active_workers
+
+def count_active_workers():
+    active_workers = db.session.query(func.sum(Worker.threads).label('threads')).filter(
+        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    ).first()
+    if active_workers and active_workers.threads:
+        return active_workers.threads
+    return 0
+
+
+def count_workers_on_ip(ip_addr):
+    return db.session.query(Worker).filter_by(ipaddr=ip_addr).count()
+
+
+def count_workers_in_ipaddr(ipaddr):
+    return count_workers_on_ip(ipaddr)
+
+
+def get_total_usage():
+    totals = {
+        thing_name: 0,
+        "fulfilments": 0,
+    }
+    result = db.session.query(func.sum(Worker.contributions).label('contributions'), func.sum(Worker.fulfilments).label('fulfilments')).first()
+    if result:
+        totals[thing_name] = result.contributions if result.contributions else 0
+        totals["fulfilments"] = result.fulfilments if result.fulfilments else 0
+    return totals
+
+
+def find_user_by_oauth_id(oauth_id):
+    if oauth_id == 'anon' and not ALLOW_ANONYMOUS:
+        return None
+    return db.session.query(User).filter_by(oauth_id=oauth_id).first()
+
+
+def find_user_by_username(username):
+    ulist = username.split('#')
+    if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
+        return(None)
+    # This approach handles someone cheekily putting # in their username
+    user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
+    return(user)
+
+def find_user_by_id(user_id):
+    if int(user_id) == 0 and not ALLOW_ANONYMOUS:
+        return(None)
+    user = db.session.query(User).filter_by(id=user_id).first()
+    return(user)
+
+def find_user_by_api_key(api_key):
+    if api_key == 0000000000 and not ALLOW_ANONYMOUS:
+        return(None)
+    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
+    return(user)
+
+def find_worker_by_name(worker_name):
+    worker = db.session.query(Worker).filter_by(name=worker_name).first()
+    return(worker)
+
+def find_worker_by_id(worker_id):
+    try:
+        worker_uuid = uuid.UUID(worker_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID worker_id sent: '{worker_id}'.")
+        return None
+    worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
+    return(worker)
+
+def get_all_teams():
+    return db.session.query(Team).all()
+
+def find_team_by_id(team_id):
+    team = db.session.query(Team).filter_by(id=team_id).first()
+    return(team)
+
+def find_team_by_name(team_name):
+    team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
+    return(team)
+
+def get_available_models(lite_dict=False):
+    # TODO I HAVE MASSIVELY RIPPED THIS FUNCTION TO MUCH SMALLER
+    models_dict = {}
+    # TODO: Only count models where worker is not stale. It tried the below but it fails with
+    ## AttributeError: Neither 'InstrumentedAttribute' object nor 'Comparator' object associated with WorkerModel.worker has an attribute 'last_check_in'
+    # available_worker_models = db.session.query(
+    #     WorkerModel.model,
+    #     func.count(WorkerModel.model).filter(
+    #         WorkerModel.worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    #     ).label('total_models'),
+    # ).group_by(WorkerModel.model).all()
+
+    available_worker_models = db.session.query(
+        WorkerModel.model,
+        func.count(WorkerModel.model).label('total_models'),
+    ).group_by(WorkerModel.model).all()
+
+    for model in available_worker_models:
+        model_name = model.model
+        models_dict[model_name] = {}
+        models_dict[model_name]["name"] = model_name
+        models_dict[model_name]["count"] = model.total_models
+
+        # TODO
+        models_dict[model_name]['queued'] = 0
+        models_dict[model_name]['eta'] = 0
+        models_dict[model_name]['performance'] = 1
+    logger.trace(list(models_dict.values()))
+    return list(models_dict.values())
+
+    # for worker in get_active_workers():
+    #     model_name = None
+    #     for model_name in worker.get_model_names():
+    #         if not model_name: continue
+    #         mode_dict_template = {
+    #             "name": model_name,
+    #             "count": 0,
+    #             "workers": [],
+    #             "performance": stats.get_model_avg(model_name),
+    #             "queued": 0,
+    #             "eta": 0,
+    #         }
+    #         models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
+    #         models_dict[model_name]["count"] += worker.threads
+    #         models_dict[model_name]["workers"].append(worker)
+    # if lite_dict:
+    #     return(models_dict)
+    # things_per_model = count_things_per_model()
+    # # If we request a lite_dict, we only want worker count per model and a dict format
+    # for model_name in things_per_model:
+    #     # This shouldn't happen, but I'm checking anyway
+    #     if model_name not in models_dict:
+    #         # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
+    #         continue
+    #     models_dict[model_name]['queued'] = things_per_model[model_name]
+    #     total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
+    #     # We don't want a division by zero when there's no workers for this model.
+    #     if total_performance_on_model > 0:
+    #         models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
+    #     else:
+    #         models_dict[model_name]['eta'] = -1
+    # return(list(models_dict.values()))
+
+def transfer_kudos(source_user, dest_user, amount):
+    if source_user.is_suspicious():
+        return([0,'Something went wrong when sending kudos. Please contact the mods.'])
+    if dest_user.is_suspicious():
+        return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
+    if amount < 0:
+        return([0,'Nice try...'])
+    if amount > source_user.kudos - source_user.get_min_kudos():
+        return([0,'Not enough kudos.'])
+    source_user.modify_kudos(-amount, 'gifted')
+    dest_user.modify_kudos(amount, 'received')
+    return([amount,'OK'])
+
+def transfer_kudos_to_username(source_user, dest_username, amount):
+    dest_user = find_user_by_username(dest_username)
+    if not dest_user:
+        return([0,'Invalid target username.'])
+    if dest_user == get_anon():
+        return([0,'Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.'])
+    if dest_user == source_user:
+        return([0,'Cannot send kudos to yourself, ya monkey!'])
+    kudos = transfer_kudos(source_user,dest_user, amount)
+    return(kudos)
+
+def transfer_kudos_from_apikey_to_username(source_api_key, dest_username, amount):
+    source_user = find_user_by_api_key(source_api_key)
+    if not source_user:
+        return([0,'Invalid API Key.'])
+    if source_user == get_anon():
+        return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
+    kudos = transfer_kudos_to_username(source_user, dest_username, amount)
+    return(kudos)
+
+# Should be overriden
+def convert_things_to_kudos(things, **kwargs):
+    # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
+    kudos = round(things,2)
+    return(kudos)
+
+def count_waiting_requests(user, models = []):
+    return 1 # FIXME: Below doesn't work. Stack:
+    # # sqlalchemy.exc.ProgrammingError: (psycopg2.errors.GroupingError) column "wp_models.id" must appear in the GROUP BY clause or be used in an aggregate function
+    # # LINE 2: FROM (SELECT wp_models.id AS wp_models_id, wp_models.wp_id A...
+    # #                      ^
+
+    # # [SQL: SELECT count(*) AS count_1
+    # # FROM (SELECT wp_models.id AS wp_models_id, wp_models.wp_id AS wp_models_wp_id, wp_models.model AS wp_models_model
+    # # FROM wp_models JOIN waiting_prompts ON waiting_prompts.id = wp_models.wp_id
+    # # WHERE false GROUP BY wp_models.model) AS anon_1]
+    # # (Background on this error at: https://sqlalche.me/e/14/f405)
+    return db.session.query(
+        WPModels,
+    ).join(WaitingPrompt).filter(
+        WPModels.model.in_(models),
+        WaitingPrompt.user_id == user.id,
+        not WaitingPrompt.faulted, # or proc_gen is completed or faulted (Db0: no because there's many procgens. If they're all faulted, the WP will be faulted too)
+        WaitingPrompt.n >= 1, 
+    ).group_by(WPModels.model).count()
+
+    # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
+    #     model_names = wp.get_model_names()
+    #     #logger.warning(datetime.utcnow())
+    #     if wp.user == user and not wp.is_completed():
+    #         #logger.warning(datetime.utcnow())
+    #         # If we pass a list of models, we want to count only the WP for these particular models.
+    #         if len(models) > 0:
+    #             matching_model = False
+    #             for model in models:
+    #                 if model in model_names:
+    #                     #logger.warning(datetime.utcnow())
+    #                     matching_model = True
+    #                     break
+    #             if not matching_model:
+    #                 continue
+    #         count += wp.n
+    # #logger.warning(datetime.utcnow())
+    # return(count)
+
+def count_totals():
+    queued_thing = f"queued_{thing_name}"
+    ret_dict = {
+        "queued_requests": 0,
+        queued_thing: 0,
+    }
+    return ret_dict  # TODO: Fix later
+    for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
+        current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+        ret_dict["queued_requests"] += current_wp_queue
+        if current_wp_queue > 0:
+            ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
+    # We round the end result to avoid to many decimals
+    ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
+    return(ret_dict)
+
+
+def get_organized_wps_by_model():
+    org = {}
+    #TODO: Offload the sorting to the DB through join() + SELECT statements
+    all_wps = db.session.query(WaitingPrompt).all() # TODO this can likely be improved
+    for wp in all_wps:
+        # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
+        # This will inflate the overall expected times, but it shouldn't be by much.
+        # I don't see a way to do this calculation more accurately though
+        for model in wp.get_model_names():
+            if model not in org:
+                org[model] = []
+            org[model].append(wp)
+    return(org)    
+
+def count_things_per_model():
+    things_per_model = {}
+    org = get_organized_wps_by_model()
+    for model in org:
+        for wp in org[model]:
+            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
+            if current_wp_queue > 0:
+                things_per_model[model] = things_per_model.get(model,0) + wp.things
+        things_per_model[model] = round(things_per_model.get(model,0),2)
+    return(things_per_model)
+
+
+def get_sorted_wp_filtered_to_worker(worker): 
+    # This is just the top 50 - Adjusted method to send Worker object. Filters to add.
+    # TODO: Filter by Model
+    # TODO: Filter by WP.width * WP.height <= worker.max_pixels
+    # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
+    # TODO: Retrieve WPs with WP.source_image != None, __ONLY IF__ self.allow_img2img == True
+    # TODO: Retrieve WPs with safe.ip == False, __ONLY IF__ Worker.allow_unsafe_ipaddr = True
+    # TODO: Filter by WP.user == Worker.user __ONLY IF__  Worker.maintenance == True
+    # TODO: Filter by WP.last_process_time <= 1200 (or WP.STALE_TIME (Constant, not in DB! We can put the constant here))
+    # TODO: Filter by WP.faulted == False
+    # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
+    # TODO: Filter by WP.nsfw == False __ONLY IF__ Worker.nsfw == False
+    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
+    # TODO: Filter by Worker not in WP.tricked_worker
+    # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
+    return db.session.query(WaitingPrompt).filter(WaitingPrompt.n > 0).order_by(WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()).limit(50).all()
+    # sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
+    # final_wp_list = []
+    # for wp in sorted_wp_list:
+    #     if wp.needs_gen():
+    #         final_wp_list.append(wp)
+    # logger.debug([(wp,wp.get_priority()) for wp in final_wp_list])
+
+    return final_wp_list
+
+# Returns the queue position of the provided WP based on kudos
+# Also returns the amount of things until the wp is generated
+# Also returns the amount of different gens queued
+def get_wp_queue_stats(wp):
+    if not wp.needs_gen():
+        return(-1,0,0)
+    things_ahead_in_queue = 0
+    n_ahead_in_queue = 0
+    priority_sorted_list = retrieve_prioritized_wp_queue()
+    # In case the primary thread has borked, we fall back to the DB
+    if priority_sorted_list is None:
+        logger.warning("Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!")
+        priority_sorted_list = query_prioritized_wps()
+    # logger.info(priority_sorted_list)
+    for iter in range(len(priority_sorted_list)):
+        iter_wp = priority_sorted_list[iter]
+        queued_things = round(iter_wp.things * iter_wp.n/thing_divisor,2)
+        things_ahead_in_queue += queued_things
+        n_ahead_in_queue += iter_wp.n
+        if iter_wp.id == wp.id:
+            things_ahead_in_queue = round(things_ahead_in_queue,2)
+            return(iter, things_ahead_in_queue, n_ahead_in_queue)
+    # -1 means the WP is done and not in the queue
+    return(-1,0,0)
+
+
+def get_wp_by_id(uuid):
+    return db.session.query(WaitingPrompt).filter_by(id=uuid).first()
+
+def get_progen_by_id(uuid):
+    return db.session.query(ProcessingGeneration).filter_by(id=uuid).first()
+
+def get_all_wps():
+    return db.session.query(WaitingPrompt).filter_by(active=True).all()
+
+
+def get_worker_performances():
+    return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+
+def wp_has_valid_workers(wp, limited_workers_ids = []):
+    return True
+    worker_found = False
+    for worker in get_active_workers():
+        if len(limited_workers_ids) and worker not in wp.get_worker_ids():
+            continue
+        if worker.can_generate(wp)[0]:
+            worker_found = True
+            break
+    return worker_found
+
+@logger.catch(reraise=True)
+def store_prioritized_wp_queue():
+    '''Stores the retrieved WP queue as json for 1 second horde-wide'''
+    wp_queue = query_prioritized_wps()
+    serialized_wp_list = []
+    for wp in wp_queue:
+        wp_json = {
+            "id": str(wp.id),
+            "things": wp.things, 
+            "n": wp.n, 
+            "extra_priority": wp.extra_priority, 
+            "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        serialized_wp_list.append(wp_json)
+    try:
+        cached_queue = json.dumps(serialized_wp_list)
+        # We set the expiry in redis to 5 seconds, in case the primary thread dies
+        # However the primary thread is set to set the cache every 1 second
+        horde_r.setex('wp_cache', timedelta(seconds=5), cached_queue)
+    except (TypeError, OverflowError) as e:
+        logger.error(f"Failed serializing with error: {e}")
+
+
+@logger.catch(reraise=True)
+def retrieve_prioritized_wp_queue():
+    cached_queue = horde_r.get('wp_cache')
+    if cached_queue is None:
+        return None
+    try:
+        retrieved_json_list = json.loads(cached_queue)
+    except (TypeError, OverflowError) as e:
+        logger.error(f"Failed deserializing with error: {e}")
+        return None
+    deserialized_wp_list = []
+    for json_row in retrieved_json_list:
+        fake_wp_row = FakeWPRow(json_row)
+        deserialized_wp_list.append(fake_wp_row)
+    logger.debug(len(deserialized_wp_list))
+    return deserialized_wp_list
+
+def query_prioritized_wps():
+    return db.session.query(
+                WaitingPrompt.id, 
+                WaitingPrompt.things, 
+                WaitingPrompt.n, 
+                WaitingPrompt.extra_priority, 
+                WaitingPrompt.created,
+            ).filter(
+                WaitingPrompt.n > 0
+            ).order_by(
+                WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
+            ).all()
