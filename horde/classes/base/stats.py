@@ -66,35 +66,15 @@ def get_request_avg(worker_performances):
     avg = sum(worker_performances) / len(worker_performances)
     return(round(avg,1))
 
-def get_model_performance(model_name):
-    return db.session.query(ModelPerformance).filter_by(
+def get_model_avg(model):
+    return 1000000 #TODO
+    # TODO: Add the sum / coun calculation as part of the query
+    model_performances = db.session.query(ModelPerformance).filter_by(
         model=model_name
     ).order_by(
         ModelPerformance.created.desc()
     ).limit(10)
-
-def get_model_avg(model):
-    return 1
-    model_performances = get_model_performance(model)
     if model_performances.count() == 0:
         return 0
     avg = sum([m.performance for m in model_performances]) / model_performances.count()
     return(round(avg,1))
-
-    # TODO: Migrate to DB
-    # @logger.catch(reraise=True)
-    # def serialize(self):
-    #     serialized_fulfillments = []
-    #     for fulfillment in self.fulfillments.copy():
-    #         json_fulfillment = {
-    #             raw_thing_name: fulfillment[raw_thing_name],
-    #             "start_time": fulfillment["start_time"].strftime("%Y-%m-%d %H:%M:%S"),
-    #             "deliver_time": fulfillment["deliver_time"].strftime("%Y-%m-%d %H:%M:%S"),
-    #         }
-    #         serialized_fulfillments.append(json_fulfillment)
-    #     ret_dict = {
-    #         "worker_performances": self.worker_performances,
-    #         "model_performances": self.model_performances,
-    #         "fulfillments": serialized_fulfillments,
-    #     }
-    #     return(ret_dict)

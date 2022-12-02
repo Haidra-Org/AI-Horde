@@ -142,7 +142,7 @@ class GenerateTemplate(Resource):
             n = 1
             if self.args.params:
                 n = self.args.params.get('n',1)
-            user_limit = self.user.get_concurrency(self.args["models"],database.get_available_models(lite_dict=True))
+            user_limit = self.user.get_concurrency(self.args["models"],database.retrieve_available_models)
             #logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
                 raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
@@ -890,7 +890,7 @@ class Models(Resource):
     def get(self):
         '''Returns a list of models active currently in this horde
         '''
-        return(database.get_available_models(),200)
+        return(database.retrieve_available_models(),200)
 
 
 class HordeLoad(Resource):

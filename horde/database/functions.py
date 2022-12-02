@@ -130,68 +130,52 @@ def find_team_by_name(team_name):
     team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
     return(team)
 
-def get_available_models(lite_dict=False):
-    # TODO I HAVE MASSIVELY RIPPED THIS FUNCTION TO MUCH SMALLER
+def get_available_models():
     models_dict = {}
-    # TODO: Only count models where worker is not stale. It tried the below but it fails with
-    ## AttributeError: Neither 'InstrumentedAttribute' object nor 'Comparator' object associated with WorkerModel.worker has an attribute 'last_check_in'
-    # available_worker_models = db.session.query(
-    #     WorkerModel.model,
-    #     func.count(WorkerModel.model).filter(
-    #         WorkerModel.worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    #     ).label('total_models'),
-    # ).group_by(WorkerModel.model).all()
-
     available_worker_models = db.session.query(
         WorkerModel.model,
-        func.count(WorkerModel.model).label('total_models'),
+        func.count(WorkerModel.model).label('total_models'), # TODO: This needs to be multiplied by this worker's threads
+        # Worker.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
+    ).join(
+        Worker,
+    ).filter(
+        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).group_by(WorkerModel.model).all()
 
-    for model in available_worker_models:
-        model_name = model.model
+    for model_row in available_worker_models:
+        model_name = model_row.model
         models_dict[model_name] = {}
         models_dict[model_name]["name"] = model_name
-        models_dict[model_name]["count"] = model.total_models
+        models_dict[model_name]["count"] = model_row.total_models
 
         # TODO
         models_dict[model_name]['queued'] = 0
         models_dict[model_name]['eta'] = 0
-        models_dict[model_name]['performance'] = 1
+        models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
+        models_dict[model_name]['workers'] = []
     logger.trace(list(models_dict.values()))
-    return list(models_dict.values())
+    things_per_model = count_things_per_model()
+    # If we request a lite_dict, we only want worker count per model and a dict format
+    for model_name in things_per_model:
+        # This shouldn't happen, but I'm checking anyway
+        if model_name not in models_dict:
+            # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
+            continue
+        models_dict[model_name]['queued'] = things_per_model[model_name]
+        total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
+        # We don't want a division by zero when there's no workers for this model.
+        if total_performance_on_model > 0:
+            models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
+        else:
+            models_dict[model_name]['eta'] = -1
+    return(list(models_dict.values()))
 
-    # for worker in get_active_workers():
-    #     model_name = None
-    #     for model_name in worker.get_model_names():
-    #         if not model_name: continue
-    #         mode_dict_template = {
-    #             "name": model_name,
-    #             "count": 0,
-    #             "workers": [],
-    #             "performance": stats.get_model_avg(model_name),
-    #             "queued": 0,
-    #             "eta": 0,
-    #         }
-    #         models_dict[model_name] = models_dict.get(model_name, mode_dict_template)
-    #         models_dict[model_name]["count"] += worker.threads
-    #         models_dict[model_name]["workers"].append(worker)
-    # if lite_dict:
-    #     return(models_dict)
-    # things_per_model = count_things_per_model()
-    # # If we request a lite_dict, we only want worker count per model and a dict format
-    # for model_name in things_per_model:
-    #     # This shouldn't happen, but I'm checking anyway
-    #     if model_name not in models_dict:
-    #         # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
-    #         continue
-    #     models_dict[model_name]['queued'] = things_per_model[model_name]
-    #     total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
-    #     # We don't want a division by zero when there's no workers for this model.
-    #     if total_performance_on_model > 0:
-    #         models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
-    #     else:
-    #         models_dict[model_name]['eta'] = -1
-    # return(list(models_dict.values()))
+def retrieve_available_models():
+    '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
+    models_ret = horde_r.get('models_cache')
+    if models_ret is None:
+        models_ret = get_available_models()
+    return(models_ret)
 
 def transfer_kudos(source_user, dest_user, amount):
     if source_user.is_suspicious():
@@ -294,7 +278,12 @@ def count_totals():
 def get_organized_wps_by_model():
     org = {}
     #TODO: Offload the sorting to the DB through join() + SELECT statements
-    all_wps = db.session.query(WaitingPrompt).all() # TODO this can likely be improved
+    all_wps = db.session.query(
+        WaitingPrompt
+    ).filter(
+        WaitingPrompt.faulted == False,
+        WaitingPrompt.n >= 1,
+    ).all() # TODO this can likely be improved
     for wp in all_wps:
         # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
         # This will inflate the overall expected times, but it shouldn't be by much.

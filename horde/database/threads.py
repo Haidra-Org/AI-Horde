@@ -9,7 +9,7 @@ from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
 from horde.flask import HORDE, db
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps, get_active_workers
+from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models
 
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
@@ -96,29 +96,14 @@ def check_waiting_prompts():
         for wp in waiting_prompts.all():
             wp.log_faulted_prompt()
 
-                # for wp in db.session.query(WaitingPrompt).all():  # TODO - all this logic can likely be moved into a prompt when it gets processed, ie, how many did i fail first, then delete
-                #     try:
-                #         # The below check if any jobs have been running too long and aborts them
-                #         faulted_requests = 0
-                #         for gen in wp.processing_gens:
-                #             # We don't want to recheck if we've faulted already
-                #             if wp.faulted:
-                #                 break
-                #             if gen.is_stale(wp.job_ttl):    # if completed or faulted - it's not stale - else (datetime.utcnow() - self.start_time).seconds > ttl
-                #                 # If the request took too long to complete, we cancel it and add it to the retry
-                #                 gen.abort()
-                #                 wp.n += 1
-                #             if gen.is_faulted():
-                #                 faulted_requests += 1
-                #             # If 3 or more jobs have failed, we assume there's something wrong with this request and mark it as faulted.
-                #             if faulted_requests >= 3:
-                #                 wp.faulted = True
-                #                 wp.log_faulted_prompt()
-                #
-                #         # wp.extra_priority += 50
-                #         # NOT IN LOOP
-                #         # db.session.query(WaitingPrompt).update({WaitingPrompt.extra_priority: WaitingPrompt.extra_priority + 50})
-                #         db.session.commit()
-                #     except Exception as e:
-                #         logger.critical(f"Exception {e} detected. Handing to avoid crashing thread.")
-                #     time.sleep(10)
+
+@logger.catch(reraise=True)
+def store_available_models():
+    '''Stores the retrieved model details as json for 5 seconds horde-wide'''
+    with HORDE.app_context():
+        json_models = json.dumps(get_available_models())
+        try:
+            horde_r.setex('model_cache', timedelta(seconds=5), json_models)
+        except (TypeError, OverflowError) as e:
+            logger.error(f"Failed serializing workers with error: {e}")
+
