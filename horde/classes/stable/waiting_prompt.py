@@ -141,7 +141,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if type(s) is int:
             return s
         if s is None or s == '':
-            return random.randint(0, 2**32 - 1)
+            return random.SystemRandom().randint(0, 2**32 - 1)
         n = abs(int(s) if s.isdigit() else int.from_bytes(s.encode(), 'little'))
         while n >= 2**32:
             n = n >> 32
