@@ -340,7 +340,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             WaitingPrompt.source_image == None,
             and_(
                 WaitingPrompt.source_image != None,
-                worker.max_pixels == True,
+                worker.allow_img2img == True,
             ),
             
         ),
@@ -367,7 +367,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ),
     ).order_by(
         WaitingPrompt.extra_priority.desc(), 
-        WaitingPrompt.created.desc()
+        WaitingPrompt.created.asc()
     ).limit(100).all()
     # sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
     # final_wp_list = []
@@ -461,5 +461,5 @@ def query_prioritized_wps():
                 WaitingPrompt.faulted == False,
                 WaitingPrompt.active == True,
             ).order_by(
-                WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.desc()
+                WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.asc()
             ).all()

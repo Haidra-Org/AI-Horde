@@ -408,7 +408,7 @@ class JobPop(Resource):
             if not wp.needs_gen():  # this says if < 1
                 continue
             worker_ret = self.start_worker(wp)
-            logger.debug(worker_ret)
+            # logger.debug(worker_ret)
             if worker_ret is None:
                 continue
             return(worker_ret, 200)
