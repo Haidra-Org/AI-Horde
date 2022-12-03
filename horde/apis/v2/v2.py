@@ -872,12 +872,15 @@ class FindUser(Resource):
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Worker Details', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self):
         '''Lookup user details based on their API key
         This can be used to verify a user exists
         '''
         self.args = self.get_parser.parse_args()
+        if not self.args.apikey:
+            raise e.InvalidAPIKey('GET FindUser')
         user = database.find_user_by_api_key(self.args.apikey)
         if not user:
             raise e.UserNotFound(self.args.apikey, 'api_key')
