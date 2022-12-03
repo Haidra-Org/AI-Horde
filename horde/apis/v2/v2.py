@@ -799,7 +799,7 @@ class UserSingle(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_monthly_kudos(self.args.monthly_kudos)
-            ret_dict["monthly_kudos"] = user.monthly_kudos['amount']
+            ret_dict["monthly_kudos"] = user.monthly_kudos
         if self.args.usage_multiplier is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')

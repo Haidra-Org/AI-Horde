@@ -387,30 +387,3 @@ class User(db.Model):
             new_kd = UserStats(user_id=self.id, action=key, value=kudos_details[key])
             db.session.add(new_kd)
         db.session.commit()
-
-
-
-
-# # get the request, and update the ipaddr
-# prompt_req2 = db.session.query(PromptRequest).filter_by(id=prompt_req_id).first()  # will be first or None
-# prompt_req2.ipaddr = "new ip address"
-# db.session.commit()
-
-
-# # get a larger group of requests
-# db.session.query(PromptRequest).order_by(PromptRequest.created.desc()).all()
-
-
-# # get queue for worker
-# get_the_queue_for_worker = db.session.query(PromptRequest).Join(User).filter(
-#     PromptRequest.model._in(["models", "i", "have"])
-# ).order_by(
-#     User.kudos.desc(),
-#     PromptRequest.created.asc()
-# ).limit(10).all()
-
-
-# # clear up old requests (older than 5 mins)
-# db.session.query(PromptRequest).filter(
-#     PromptRequest.model.created <datetime.utcnow() - datetime.timedelta(seconds=1200)
-# ).delete(synchronize_session=False)
