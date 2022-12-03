@@ -62,6 +62,21 @@ def store_worker_list():
             logger.error(f"Failed serializing workers with error: {e}")
 
 
+# @logger.catch(reraise=True)
+# def store_user_list():
+#     '''Stores the retrieved worker details as json for 30 seconds horde-wide'''
+#     with HORDE.app_context():
+#         serialized_workers = []
+#         # I could do this with a comprehension, but this is clearer to understand
+#         for worker in get_active_workers():
+#             serialized_workers.append(worker.get_details())
+#         json_workers = json.dumps(serialized_workers)
+#         try:
+#             horde_r.setex('worker_cache', timedelta(seconds=30), json_workers)
+#         except (TypeError, OverflowError) as e:
+#             logger.error(f"Failed serializing workers with error: {e}")
+
+
 
 @logger.catch(reraise=True)
 def check_waiting_prompts():

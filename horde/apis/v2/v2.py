@@ -240,14 +240,13 @@ class SyncGenerate(GenerateTemplate):
                 raise e.RequestExpired(self.username)
             if self.wp.is_completed():
                 break
+            # logger.debug(self.wp.is_completed())
         ret_dict = self.wp.get_status(
             request_avg=stats.get_request_avg(database.get_worker_performances()),
             has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
             wp_queue_stats=database.get_wp_queue_stats(self.wp),
             active_worker_count=database.count_active_workers()
         )
-        # We delete it from memory immediately to ensure we don't run out
-        self.wp.delete()
         return(ret_dict, 200)
 
     # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue

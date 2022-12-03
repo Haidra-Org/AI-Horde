@@ -203,7 +203,7 @@ class HordeNews(HordeNews):
         return(horde_news + stable_horde_news)
 
 
-api.add_resource(SyncGenerate, "/generate/sync")
+# api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
 api.add_resource(AsyncStatus, "/generate/status/<string:id>")
 api.add_resource(AsyncCheck, "/generate/check/<string:id>")

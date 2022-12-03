@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy import JSON, func
+from sqlalchemy import JSON, func, or_
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -175,9 +175,17 @@ class WaitingPrompt(db.Model):
             return True
         if self.needs_gen():
             return False
-        for procgen in self.processing_gens:
-            if not procgen.is_completed() and not procgen.is_faulted():
-                return False
+        finished_procgens = db.session.query(
+            ProcessingGeneration.wp_id
+        ).filter(
+            ProcessingGeneration.wp_id == self.id,
+            or_(
+                ProcessingGeneration.faulted == True,
+                ProcessingGeneration.generation != None,
+            )
+        ).count()
+        if finished_procgens < self.jobs:
+            return False
         return True
 
     def count_processing_gens(self):

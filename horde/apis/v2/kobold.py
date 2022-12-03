@@ -95,7 +95,7 @@ class HordeLoad(HordeLoad):
         load_dict["past_minute_tokens"] = stats.get_things_per_min()
         return(load_dict,200)
 
-api.add_resource(SyncGenerate, "/generate/sync")
+# api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
 api.add_resource(AsyncStatus, "/generate/status/<string:id>")
 api.add_resource(AsyncCheck, "/generate/check/<string:id>")
