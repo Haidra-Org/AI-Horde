@@ -63,7 +63,7 @@ def sanitize_string(text):
 def hash_api_key(unhashed_api_key):
     salt = os.getenv("secret_key", "s0m3s3cr3t") # Note default here, just so it can run without env file
     hashed_key = hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
-    logger.warning([os.getenv("secret_key", "s0m3s3cr3t"), hashed_key,unhashed_api_key])
+    # logger.warning([os.getenv("secret_key", "s0m3s3cr3t"), hashed_key,unhashed_api_key])
     return hashed_key
 
 def get_expiry_date():
