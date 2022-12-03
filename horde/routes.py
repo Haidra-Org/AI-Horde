@@ -176,6 +176,7 @@ def register():
                 return render_template('bad_username.html', page_title="Bad Username")
             user.username = username
             user.api_key = hashed_api_key
+            db.session.commit()
         else:
             # Triggered when the user created a username without logging in
             if is_profane(request.form['username']):
