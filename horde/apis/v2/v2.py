@@ -229,7 +229,8 @@ class SyncGenerate(GenerateTemplate):
     # @api.response(503, 'Maintenance Mode', models.response_model_error)
     @api.response(501, 'Decommissioned', models.response_model_error)
     def post(self):
-        '''Initiate a Synchronous request to generate images.
+        '''THIS ENDPOINT HAS BEEN DECOMMISSIONED.
+        Initiate a Synchronous request to generate images
         This connection will only terminate when the images have been generated, or an error occured.
         If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
         '''
