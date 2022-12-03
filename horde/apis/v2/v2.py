@@ -221,18 +221,19 @@ class AsyncGenerate(GenerateTemplate):
 
 class SyncGenerate(GenerateTemplate):
 
-    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
+    # @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Images Generated')
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(503, 'Maintenance Mode', models.response_model_error)
-    @api.response(429, 'Too Many Prompts', models.response_model_error)
+    # @api.marshal_with(models.response_model_wp_status_full, code=200, description='Images Generated')
+    # @api.response(400, 'Validation Error', models.response_model_error)
+    # @api.response(401, 'Invalid API Key', models.response_model_error)
+    # @api.response(503, 'Maintenance Mode', models.response_model_error)
+    @api.response(501, 'Decommissioned', models.response_model_error)
     def post(self):
         '''Initiate a Synchronous request to generate images.
         This connection will only terminate when the images have been generated, or an error occured.
         If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
         '''
+        return({"message": "This functionality has been decommissioned. Please use /api/v2/generate/async instead"}, 501)
         super().post()
         while True:
             time.sleep(1)
