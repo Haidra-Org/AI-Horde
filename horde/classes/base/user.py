@@ -67,8 +67,10 @@ class User(db.Model):
 
     def create(self):
         self.check_for_bad_actor()
+        logger.debug(self.api_key)
         db.session.add(self)
         db.session.commit()
+        logger.debug(self.api_key)
         logger.info(f"New User Created {self.get_unique_alias()}")
         
 
@@ -328,7 +330,7 @@ class User(db.Model):
         return kudos_details_dict
 
     def compile_usage_details(self):
-        usage_dict = {
+        usage_dict = {  
             thing_name: self.usage_thing,
             "requests": self.usage_requests
         }
