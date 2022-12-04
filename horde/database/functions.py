@@ -175,7 +175,7 @@ def retrieve_available_models():
     models_ret = horde_r.get('models_cache')
     if models_ret is None:
         models_ret = get_available_models()
-    return(json.loads(models_ret))
+    return(models_ret)
 
 def transfer_kudos(source_user, dest_user, amount):
     if source_user.is_suspicious():
