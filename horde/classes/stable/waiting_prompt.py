@@ -3,6 +3,7 @@ import random
 from horde.logger import logger
 from horde.vars import thing_divisor
 from horde.flask import db
+from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
 
 
@@ -79,9 +80,7 @@ class WaitingPromptExtended(WaitingPrompt):
     def get_job_payload(self,procgen):
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
-            new_seed = self.seed_to_int(self.seed)
-            logger.warning([self, self.seed, new_seed])
-            self.gen_payload["seed"] = new_seed
+            self.gen_payload["seed"] = self.seed_to_int(self.seed)
         if self.seed_variation and self.jobs - self.n > 1:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
@@ -143,7 +142,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if type(s) is int:
             return s
         if s is None or s == '':
-            return random.randint(0, 2**32 - 1)
+            return get_random_seed()
         n = abs(int(s) if s.isdigit() else int.from_bytes(s.encode(), 'little'))
         while n >= 2**32:
             n = n >> 32

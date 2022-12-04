@@ -3,12 +3,15 @@ import bleach
 import secrets
 import hashlib
 import os
+import random
 from datetime import datetime
 import dateutil.relativedelta
 from profanity_check  import predict
 from better_profanity import profanity
 from horde.logger import logger
 profanity.load_censor_words()
+
+random.seed(random.SystemRandom())
 
 def is_profane(text):
     if profanity.contains_profanity(text):
@@ -68,3 +71,7 @@ def hash_api_key(unhashed_api_key):
 
 def get_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)
+
+def get_random_seed():
+    '''Generated a random seed, using a random number unique per node'''
+    return random.randint(0, 2**32 - 1)
