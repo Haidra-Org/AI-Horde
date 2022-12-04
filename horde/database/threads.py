@@ -39,9 +39,9 @@ def store_prioritized_wp_queue():
             serialized_wp_list.append(wp_json)
         try:
             cached_queue = json.dumps(serialized_wp_list)
-            # We set the expiry in redis to 5 seconds, in case the primary thread dies
+            # We set the expiry in redis to 10 seconds, in case the primary thread dies
             # However the primary thread is set to set the cache every 1 second
-            horde_r.setex('wp_cache', timedelta(seconds=5), cached_queue)
+            horde_r.setex('wp_cache', timedelta(seconds=10), cached_queue)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing with error: {e}")
 
@@ -118,7 +118,7 @@ def store_available_models():
     with HORDE.app_context():
         json_models = json.dumps(get_available_models())
         try:
-            horde_r.setex('model_cache', timedelta(seconds=5), json_models)
+            horde_r.setex('model_cache', timedelta(seconds=10), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
