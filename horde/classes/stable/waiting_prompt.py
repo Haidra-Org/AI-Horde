@@ -79,7 +79,9 @@ class WaitingPromptExtended(WaitingPrompt):
     def get_job_payload(self,procgen):
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
-            self.gen_payload["seed"] = self.seed_to_int(self.seed)
+            new_seed = self.seed_to_int(self.seed)
+            logger.warning([self, self.seed, new_seed])
+            self.gen_payload["seed"] = new_seed
         if self.seed_variation and self.jobs - self.n > 1:
             self.gen_payload["seed"] += self.seed_variation
             while self.gen_payload["seed"] >= 2**32:
@@ -141,7 +143,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if type(s) is int:
             return s
         if s is None or s == '':
-            return random.SystemRandom().randint(0, 2**32 - 1)
+            return random.randint(0, 2**32 - 1)
         n = abs(int(s) if s.isdigit() else int.from_bytes(s.encode(), 'little'))
         while n >= 2**32:
             n = n >> 32
