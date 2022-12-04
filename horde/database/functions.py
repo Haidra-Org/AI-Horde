@@ -175,7 +175,7 @@ def retrieve_available_models():
     models_ret = horde_r.get('models_cache')
     if models_ret is None:
         models_ret = get_available_models()
-    return(models_ret)
+    return(json.loads(models_ret))
 
 def transfer_kudos(source_user, dest_user, amount):
     if source_user.is_suspicious():
@@ -297,7 +297,7 @@ def retrieve_totals():
             "queued_requests": 0,
             queued_thing: 0,
         }
-    return(totals_ret)
+    return(json.loads(totals_ret))
 
 def get_organized_wps_by_model():
     org = {}
