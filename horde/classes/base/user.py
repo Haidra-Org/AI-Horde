@@ -255,7 +255,7 @@ class User(db.Model):
         return(allowed_concurrency)
 
     def report_suspicion(self, amount = 1, reason = Suspicions.USERNAME_PROFANITY, formats = None):
-        if not formats: format = []
+        if not formats: formats = []
         # Anon is never considered suspicious
         if self.is_anon():
             return
