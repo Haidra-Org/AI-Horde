@@ -542,7 +542,7 @@ class UserSingle(Resource):
 class HordeLoad(Resource):
     @logger.catch(reraise=True)
     def get(self):
-        load_dict = database.count_totals()
+        load_dict = database.retrieve_totals()
         load_dict["megapixelsteps_per_min"] = stats.get_things_per_min()
         load_dict["server_count"] = database.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active

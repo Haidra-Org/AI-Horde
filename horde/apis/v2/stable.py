@@ -106,7 +106,7 @@ class AsyncGenerate(AsyncGenerate):
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
         )
-        needs_kudos,resolution = self.wp.requires_upfront_kudos(database.count_totals())
+        needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
@@ -150,7 +150,7 @@ class SyncGenerate(SyncGenerate):
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
         )
-        needs_kudos,resolution = self.wp.requires_upfront_kudos(database.count_totals())
+        needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:

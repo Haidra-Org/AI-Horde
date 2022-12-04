@@ -9,7 +9,7 @@ from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
 from horde.flask import HORDE, db
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models
+from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals
 
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
@@ -121,4 +121,14 @@ def store_available_models():
             horde_r.setex('model_cache', timedelta(seconds=10), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
+
+@logger.catch(reraise=True)
+def store_totals():
+    '''Stores the calculated totals as json. This is never expired to avoid ending up with massive operations in case the thread dies'''
+    with HORDE.app_context():
+        json_totals = json.dumps(count_totals())
+        try:
+            horde_r.set('totals_cache', json_totals)
+        except (TypeError, OverflowError) as e:
+            logger.error(f"Failed serializing totals with error: {e}")
 

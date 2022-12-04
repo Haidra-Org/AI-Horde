@@ -905,7 +905,7 @@ class HordeLoad(Resource):
     def get(self):
         '''Details about the current performance of this Horde
         '''
-        load_dict = database.count_totals()
+        load_dict = database.retrieve_totals()
         load_dict["worker_count"] = database.count_active_workers()
         return(load_dict,200)
 

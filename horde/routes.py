@@ -67,7 +67,7 @@ This is the worker which has generated the most pixels for the horde.
         news += f"* {sorted_news[iter]['newspiece']}\n"
         if iter > 1: break
     totals = database.get_total_usage()
-    wp_totals = database.count_totals()
+    wp_totals = database.retrieve_totals()
     active_worker_count = database.count_active_workers()
     avg_performance = ConvertAmount(
         stats.get_request_avg(database.get_worker_performances())
