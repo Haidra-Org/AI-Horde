@@ -133,4 +133,7 @@ db/*
 cliRequestsData.py
 *horde_generation*
 test_commands.txt
+SQL_statements.txt
 horde.log
+horde.db
+/.idea

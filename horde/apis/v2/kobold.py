@@ -7,16 +7,15 @@ class AsyncGenerate(AsyncGenerate):
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
         self.wp = WaitingPrompt(
-            db,
-            waiting_prompts,
-            processing_generations,
-            self.args["prompt"],
-            self.user,
-            self.params,
+            prompt = self.args.prompt,
+            user_id = self.user.id,
+            params = self.params,
             workers = self.workers,
             models = self.models,
             softprompts = self.softprompts,
             trusted_workers = self.args["trusted_workers"],
+            ipaddr=self.ipaddr,
+            safe_ip=self.safe_ip,
         )
 
     def get_size_too_big_message(self):
@@ -93,7 +92,7 @@ class HordeLoad(HordeLoad):
         '''Details about the current performance of this Horde
         '''
         load_dict = super().get()[0]
-        load_dict["past_minute_tokens"] = db.stats.get_things_per_min()
+        load_dict["past_minute_tokens"] = stats.get_things_per_min()
         return(load_dict,200)
 
 api.add_resource(SyncGenerate, "/generate/sync")
@@ -112,6 +111,7 @@ api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(HordeModes, "/status/modes")
 api.add_resource(Models, "/status/models")
 api.add_resource(HordeNews, "/status/news")
+api.add_resource(Heartbeat, "/status/heartbeat")
 api.add_resource(Teams, "/teams")
 api.add_resource(TeamSingle, "/teams/<string:team_id>")
 api.add_resource(OperationsIP, "/operations/ipaddr")

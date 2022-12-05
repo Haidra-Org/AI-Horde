@@ -1,5 +1,6 @@
-from flask_restx import fields, reqparse
+from flask_restx import fields
 from . import v2
+from horde.logger import logger
 
 
 class Parsers(v2.Parsers):
@@ -31,10 +32,10 @@ class Models(v2.Models):
             'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver"]), 
             'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Obsolete Toggles used in the SD Webui. To be removed. Do not modify unless you know what you're doing."), 
             'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
-            'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0, multiple=0.01), 
+            'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
             'seed': fields.String(required=False,description="The seed to use to generete this request"),
-            'height': fields.Integer(required=False,default=512,description="The height of the image to generate", min=64, max=3072, multiple=64), 
-            'width': fields.Integer(required=False,default=512,description="The width of the image to generate", min=64, max=3072, multiple=64), 
+            'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
+            'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
             'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus"]),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
@@ -46,8 +47,8 @@ class Models(v2.Models):
             'use_nsfw_censor': fields.Boolean(description="When true will apply NSFW censoring model on the generation"),
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
-            'steps': fields.Integer(example=50, min = 1, max=500), 
-            'n': fields.Integer(example=1, description="The amount of images to generate", min = 1, max=20), 
+            'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
+            'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min = 1, max=20), 
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),

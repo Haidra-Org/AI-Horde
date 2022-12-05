@@ -1,13 +1,19 @@
-from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
-from flask import request
-from ... import limiter
-from ...logger import logger
-from ...classes import db as _db
-from ...classes import processing_generations,waiting_prompts,Worker,User,WaitingPrompt
-from ... import maintenance, invite_only, raid, cm
+import json
+import os
+import time
 from enum import Enum
-import os, time, json
 
+from flask import request
+from flask_restx import Namespace, Resource, reqparse, fields
+
+from horde.argparser import maintenance, invite_only
+from horde.classes import Worker, WaitingPrompt
+from horde.database import functions as database
+from horde.classes.base import stats
+from horde.countermeasures import CounterMeasures
+from horde.flask import db
+from horde.limiter import limiter
+from horde.logger import logger
 
 api = Namespace('v1', 'API Version 1' )
 
@@ -29,9 +35,9 @@ response_model_wp_status_lite = api.model('RequestStatusCheckStableV1', {
 response_model_wp_status_full = api.inherit('RequestStatusStableV1', response_model_wp_status_lite, {
     'generations': fields.List(fields.Nested(response_model_generation)),
 })
-# Used to for the flas limiter, to limit requests per url paths
+# Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
-    return(request.path)
+    return request.path
 
 class ServerErrors(Enum):
     WRONG_CREDENTIALS = 0
@@ -51,40 +57,40 @@ class ServerErrors(Enum):
 def get_error(error, **kwargs):
     if error == ServerErrors.INVALID_API_KEY:
         logger.warning(f'Invalid API Key sent for {kwargs["subject"]}.')
-        return(f'No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?')
+        return 'No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?'
     if error == ServerErrors.WRONG_CREDENTIALS:
         logger.warning(f'User "{kwargs["username"]}" sent wrong credentials for utilizing instance {kwargs["kai_instance"]}')
-        return(f'wrong credentials for utilizing instance {kwargs["kai_instance"]}')
+        return f'wrong credentials for utilizing instance {kwargs["kai_instance"]}'
     if error == ServerErrors.INVALID_PROCGEN:
         logger.warning(f'Server attempted to provide generation for {kwargs["id"]} but it did not exist')
-        return(f'Processing Generation with ID {kwargs["id"]} does not exist')
+        return f'Processing Generation with ID {kwargs["id"]} does not exist'
     if error == ServerErrors.DUPLICATE_GEN:
         logger.warning(f'Server attempted to provide duplicate generation for {kwargs["id"]} ')
-        return(f'Processing Generation with ID {kwargs["id"]} already submitted')
+        return f'Processing Generation with ID {kwargs["id"]} already submitted'
     if error == ServerErrors.TOO_MANY_PROMPTS:
         logger.warning(f'User "{kwargs["username"]}" has already requested too many parallel requests ({kwargs["wp_count"]}). Aborting!')
-        return(f"Parallel requests exceeded user limit ({kwargs['wp_count']}). Please try again later or request to increase your concurrency.")
+        return f"Parallel requests exceeded user limit ({kwargs['wp_count']}). Please try again later or request to increase your concurrency."
     if error == ServerErrors.EMPTY_PROMPT:
         logger.warning(f'User "{kwargs["username"]}" sent an empty prompt. Aborting!')
-        return("You cannot specify an empty prompt.")
+        return "You cannot specify an empty prompt."
     if error == ServerErrors.INVALID_SIZE:
         logger.warning(f'User "{kwargs["username"]}" sent an invalid size. Aborting!')
-        return("Invalid size. The image dimentions have to be multiples of 64.")
+        return "Invalid size. The image dimentions have to be multiples of 64."
     if error == ServerErrors.TOO_MANY_STEPS:
         logger.warning(f'User "{kwargs["username"]}" sent too many steps ({kwargs["steps"]}). Aborting!')
-        return("Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps.")
+        return "Too many sampling steps. To allow resources for everyone, we allow only up to 100 steps."
     if error == ServerErrors.NO_PROXY:
         logger.warning(f'Attempt to access outside reverse proxy')
-        return(f'Access allowed only through https')
+        return 'Access allowed only through https'
     if error == ServerErrors.NOT_ADMIN:
         logger.warning(f'Non-admin user "{kwargs["username"]}" tried to use admin endpoint: "{kwargs["endpoint"]}". Aborting!')
-        return("You're not an admin. Sod off!")
+        return "You're not an admin. Sod off!"
     if error == ServerErrors.MAINTENANCE_MODE:
         logger.info(f'Rejecting endpoint "{kwargs["endpoint"]}" because server in maintenance mode.')
-        return("Server has entered maintenance mode. Please try again later.")
+        return "Server has entered maintenance mode. Please try again later."
     if error == ServerErrors.NOT_OWNER:
         logger.warning(f'User "{kwargs["username"]}" tried to modify server they do not own: "{kwargs["server_name"]}". Aborting!')
-        return("You're not the owner of this server!")
+        return "You're not the owner of this server!"
 
 
 
@@ -105,23 +111,23 @@ class SyncGenerate(Resource):
         username = 'Anonymous'
         user = None
         if maintenance.active:
-            return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'SyncGenerate')}",503)
+            return f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'SyncGenerate')}", 503
         if args.api_key:
-            user = _db.find_user_by_api_key(args['api_key'])
+            user = database.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
+            return f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}", 401
         username = user.get_unique_alias()
         if args['prompt'] == '':
-            return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
-        wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(waiting_prompts,lite_dict=True)):
-            return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
+            return f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}", 400
+        wp_count = database.count_waiting_requests(user)
+        if wp_count >= user.get_concurrency(args["models"],database.retrieve_available_models()):
+            return f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}", 503
         if args["params"].get("height",512)%64 or args["params"].get("height",512) <= 0:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+            return f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400
         if args["params"].get("width",512)%64 or args["params"].get("width",512) <= 0:
-            return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
+            return f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400
         if args["params"].get("steps",50) > 100:
-            return(f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}",400)
+            return f"{get_error(ServerErrors.TOO_MANY_STEPS, username = username, steps = args['params']['steps'])}", 400
         wp = WaitingPrompt(
             _db,
             waiting_prompts,
@@ -149,7 +155,11 @@ class SyncGenerate(Resource):
                 return("Prompt Request Expired", 500)
             if wp.is_completed():
                 break
-        ret_dict = wp.get_status()['generations']
+        ret_dict = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            active_worker_count=database.count_active_workers()
+        )['generations']
         # We delete it from memory immediately to ensure we don't run out
         wp.delete()
         return(ret_dict, 200)
@@ -160,10 +170,14 @@ class AsyncStatus(Resource):
     @logger.catch(reraise=True)
     @api.marshal_with(response_model_wp_status_full, code=200, description='Images Generated')
     def get(self, id = ''):
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             return("ID not found", 404)
-        wp_status = wp.get_status()
+        wp_status = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            active_worker_count=database.count_active_workers()
+        )
         # If the status is retrieved after the wp is done we clear it to free the ram
         if wp_status["done"]:
             wp.delete()
@@ -175,10 +189,16 @@ class AsyncCheck(Resource):
     decorators = [limiter.limit("10/second")]
     @logger.catch(reraise=True)
     def get(self, id = ''):
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             return("ID not found", 404)
-        return(wp.get_lite_status(), 200)
+        lite_status = wp.get_lite_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        return(lite_status, 200)
 
 
 class AsyncGenerate(Resource):
@@ -196,14 +216,14 @@ class AsyncGenerate(Resource):
         if maintenance.active:
             return(f"{get_error(ServerErrors.MAINTENANCE_MODE, endpoint = 'AsyncGenerate')}",503)
         if args.api_key:
-            user = _db.find_user_by_api_key(args['api_key'])
+            user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'prompt generation')}",401)
         username = user.get_unique_alias()
         if args['prompt'] == '':
             return(f"{get_error(ServerErrors.EMPTY_PROMPT, username = username)}",400)
-        wp_count = waiting_prompts.count_waiting_requests(user)
-        if wp_count >= user.get_concurrency(args["models"],_db.get_available_models(waiting_prompts,lite_dict=True)):
+        wp_count = database.count_waiting_requests(user)
+        if wp_count >= user.get_concurrency(args["models"],database.retrieve_available_models()):
             return(f"{get_error(ServerErrors.TOO_MANY_PROMPTS, username = username, wp_count = wp_count)}",503)
         if args["params"].get("height",512)%64 or args["params"].get("height",512) <= 0:
             return(f"{get_error(ServerErrors.INVALID_SIZE, username = username)}",400)
@@ -245,40 +265,41 @@ class PromptPop(Resource):
     decorators = [limiter.limit("45/second")]
     @api.expect(parser)
     def post(self):
-        if not cm.is_ip_safe(request.remote_addr):
-            return(f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.",403)
+        if not CounterMeasures.is_ip_safe(request.remote_addr):
+            return f"Due to abuse prevention, we cannot accept workers from your IP address. Please contact us on Discord if you feel this is a mistake.", 403
         args = self.parser.parse_args()
         skipped = {}
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = database.find_user_by_api_key(args['api_key'])
         if not user:
-            return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}",401)
-        server = _db.find_worker_by_name(args['name'])
+            return f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server promptpop: ' + args['name'])}", 401
+        server = db.session.query(Worker).filter(name=args["name"]).first()
         if not server:
             if invite_only.active:
-                return(f"Horde in worker invite mode only. Please use APIv2 if you have an invite.",401)
-            server = Worker(_db)
+                return f"Horde in worker invite mode only. Please use APIv2 if you have an invite.", 401
+            server = Worker()
             server.create(user, args['name'])
         if user != server.user:
-            return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
+            return f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}", 401
         server.check_in(args['max_pixels'])
         if server.maintenance:
-            return(f"Server has been put into maintenance mode by the owner",403)
+            return f"Server has been put into maintenance mode by the owner", 403
         if server.paused:
-            return({"id": None, "skipped": {}},200)
+            return {"id": None, "skipped": {}}, 200
         # This ensures that the priority requested by the bridge is respected
         prioritized_wp = []
         priority_users = [user]
+
         ## Start prioritize by bridge request ##
         for priority_username in args.priority_usernames:
-            priority_user = _db.find_user_by_username(priority_username)
+            priority_user = database.find_user_by_username(priority_username)
             if priority_user:
                 priority_users.append(priority_user)
         for priority_user in priority_users:
-            for wp in waiting_prompts.get_all():
+            for wp in database.get_all_wps():
                 if wp.user == priority_user and wp.needs_gen():
                     prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
-        for wp in waiting_prompts.get_waiting_wp_by_kudos():
+        for wp in database.get_sorted_wp_filtered_to_worker(server):
             if wp not in prioritized_wp:
                 prioritized_wp.append(wp)
         for wp in prioritized_wp:
@@ -302,10 +323,10 @@ class SubmitGeneration(Resource):
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
-        procgen = processing_generations.get_item(args['id'])
+        procgen = database.get_progen_by_id(args['id'])
         if not procgen:
             return(f"{get_error(ServerErrors.INVALID_PROCGEN,id = args['id'])}",404)
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'server submit: ' + args['name'])}",401)
         if user != procgen.worker.user:
@@ -324,10 +345,10 @@ class TransferKudos(Resource):
     @api.expect(parser)
     def post(self):
         args = self.parser.parse_args()
-        user = _db.find_user_by_api_key(args['api_key'])
+        user = database.find_user_by_api_key(args['api_key'])
         if not user:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'kudos transfer to: ' + args['username'])}",401)
-        ret = _db.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
+        ret = database.transfer_kudos_from_apikey_to_username(args['api_key'],args['username'],args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
@@ -343,7 +364,7 @@ class AdminMaintenanceMode(Resource):
     @api.expect(parser)
     def put(self):
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = database.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'AdminMaintenanceMode')}",401)
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
@@ -377,7 +398,7 @@ class Servers(Resource):
 class ServerSingle(Resource):
     @logger.catch(reraise=True)
     def get(self, server_id = ''):
-        server = _db.find_worker_by_id(server_id)
+        server = database.find_worker_by_id(server_id)
         if server:
             sdict = {
                 "name": server.name,
@@ -400,23 +421,23 @@ class ServerSingle(Resource):
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
     def put(self, server_id = ''):
-        server = _db.find_worker_by_id(server_id)
+        server = database.find_worker_by_id(server_id)
         if not server:
             return("Invalid Server ID", 404)
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = database.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
         ret_dict = {}
         # Both admins and owners can set the server to maintenance
-        if args.maintenance != None:
+        if args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != server.user:
                     return(f"{get_error(ServerErrors.NOT_OWNER, username = admin.get_unique_alias(), server_name = server.name)}",401)
             server.maintenance = args.maintenance
             ret_dict["maintenance"] = server.maintenance
         # Only admins can set a server as paused
-        if args.paused != None:
+        if args.paused is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 return(f"{get_error(ServerErrors.NOT_ADMIN, username = admin.get_unique_alias(), endpoint = 'AdminModifyServer')}",401)
             server.paused = args.paused
@@ -435,7 +456,7 @@ class ServerSingle(Resource):
     #     if not server:
     #         return("Invalid Server ID", 404)
     #     args = self.parser.parse_args()
-    #     admin = _db.find_user_by_api_key(args['api_key'])
+    #     admin = database.find_user_by_api_key(args['api_key'])
     #     if not admin:
     #         return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'User action: ' + 'PUT ServerSingle')}",401)
     #     sdict = {
@@ -472,7 +493,7 @@ class UserSingle(Resource):
     @logger.catch(reraise=True)
     def get(self, user_id = ''):
         logger.debug(user_id)
-        user = _db.find_user_by_id(user_id)
+        user = database.find_user_by_id(user_id)
         if user:
             udict = {
                 "username": user.get_unique_alias(),
@@ -494,11 +515,11 @@ class UserSingle(Resource):
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
     def put(self, user_id = ''):
-        user = user = _db.find_user_by_id(user_id)
+        user = user = database.find_user_by_id(user_id)
         if not user:
             return(f"Invalid user_id: {user_id}",400)        
         args = self.parser.parse_args()
-        admin = _db.find_user_by_api_key(args['api_key'])
+        admin = database.find_user_by_api_key(args['api_key'])
         if not admin:
             return(f"{get_error(ServerErrors.INVALID_API_KEY, subject = 'Admin action: ' + 'PUT UserSingle')}",401)
         if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
@@ -521,9 +542,9 @@ class UserSingle(Resource):
 class HordeLoad(Resource):
     @logger.catch(reraise=True)
     def get(self):
-        load_dict = waiting_prompts.count_totals()
-        load_dict["megapixelsteps_per_min"] = _db.stats.get_things_per_min()
-        load_dict["server_count"] = _db.count_active_workers()
+        load_dict = database.retrieve_totals()
+        load_dict["megapixelsteps_per_min"] = stats.get_things_per_min()
+        load_dict["server_count"] = database.count_active_workers()
         load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)
 
