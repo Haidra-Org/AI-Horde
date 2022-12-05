@@ -19,6 +19,7 @@ from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
 from horde.horde_redis import horde_r
+from sqlalchemy import func, or_, and_
 
 # Not used yet
 authorizations = {
@@ -389,7 +390,7 @@ class JobPop(Resource):
         #             self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
-        for wp in self.get_sorted_wp(): # TODO this should also filter on .n>0
+        for wp in self.get_sorted_wp():
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
@@ -412,6 +413,7 @@ class JobPop(Resource):
             # logger.debug(worker_ret)
             if worker_ret is None:
                 continue
+            # logger.debug(worker_ret)
             return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:

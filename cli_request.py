@@ -43,7 +43,8 @@ class RequestData(object):
                 "nsfw": False,
                 "censor_nsfw": False,
                 "trusted_workers": False,
-                "models": ["stable_diffusion"]
+                "models": ["stable_diffusion"],
+                "r2": True
             }
             self.source_image = None
             self.source_processing = "img2img"
@@ -160,14 +161,22 @@ def generate():
             return
         results = results_json['generations']
         for iter in range(len(results)):
-            b64img = results[iter]["img"]
-            base64_bytes = b64img.encode('utf-8')
-            img_bytes = base64.b64decode(base64_bytes)
-            img = Image.open(BytesIO(img_bytes))
             final_filename = request_data.filename
             if len(results) > 1:
                 final_filename = f"{iter}_{request_data.filename}"
-            img.save(final_filename)
+            if request_data.get_submit_dict()["r2"]:
+                try:
+                    img_data = requests.get(results[iter]["img"]).content
+                except:
+                    logger.error("Received b64 again")
+                with open(final_filename, 'wb') as handler:
+                    handler.write(img_data)
+            else:
+                b64img = results[iter]["img"]
+                base64_bytes = b64img.encode('utf-8')
+                img_bytes = base64.b64decode(base64_bytes)
+                img = Image.open(BytesIO(img_bytes))
+                img.save(final_filename)
             logger.info(f"Saved {final_filename}")
     else:
         logger.error(submit_req.text)

@@ -269,11 +269,6 @@ class Worker(db.Model):
             # We don't consider stale workers in the request, so we don't need to report a reason
             is_matching = False
             return([is_matching,skipped_reason])
-        # If the request specified only specific workers to fulfill it, and we're not one of them, we skip
-        #logger.warning(datetime.utcnow())
-        if len(waiting_prompt.workers) >= 1 and self not in waiting_prompt.workers:
-            is_matching = False
-            skipped_reason = 'worker_id'
         #logger.warning(datetime.utcnow())
         if waiting_prompt.nsfw and not self.nsfw:
             is_matching = False

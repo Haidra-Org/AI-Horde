@@ -105,6 +105,7 @@ class AsyncGenerate(AsyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
+            r2=self.args.r2,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
@@ -149,6 +150,7 @@ class SyncGenerate(SyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
+            r2=self.args.r2,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:

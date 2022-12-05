@@ -378,6 +378,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
                 WaitingPrompt.user_id == worker.user_id,
             ),
         ),
+        or_(
+            worker.bridge_version >= 8,
+            and_(
+                worker.bridge_version < 8,
+                WaitingPrompt.r2 == False,
+            ),
+        ),
     ).order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
