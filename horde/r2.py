@@ -36,3 +36,10 @@ def generate_upload_url(procgen_id):
 
 def generate_download_url(procgen_id):
     return generate_presigned_url("get_object", {'Bucket': "stable-horde", 'Key': f"{procgen_id}.webp"}, 1800)
+
+def delete_procgen_image(procgen_id):
+    response = s3_client.delete_object(
+        Bucket="stable-horde",
+        Key=f"{procgen_id}.webp"
+    )
+    logger.info(response)

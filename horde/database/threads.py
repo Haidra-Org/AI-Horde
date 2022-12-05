@@ -12,6 +12,7 @@ from horde.logger import logger
 from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
 from horde import horde_instance_id
 from horde.argparser import args
+from horde.r2 import delete_procgen_image
 
 
 @logger.catch(reraise=True)
@@ -102,6 +103,15 @@ def check_waiting_prompts():
     with HORDE.app_context():
         # Cleans expired WPs
         expired_wps = db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry < datetime.utcnow())
+        expired_r_wps = expired_wps.filter(WaitingPrompt.r2 == True)
+        all_wp_r_id = [wp.id for wp in expired_r_wps.all()]
+        expired_r2_procgens = db.session.query(
+            ProcessingGeneration.id,
+        ).filter(
+            ProcessingGeneration.wp_id.in_(all_wp_r_id)
+        ).all()
+        for procgen in expired_r2_procgens:
+            delete_procgen_image(procgen.id)
         logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
         expired_wps.delete()
         db.session.commit()
