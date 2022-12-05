@@ -19,7 +19,6 @@ from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
 from horde.horde_redis import horde_r
-from sqlalchemy import func, or_, and_
 
 # Not used yet
 authorizations = {
