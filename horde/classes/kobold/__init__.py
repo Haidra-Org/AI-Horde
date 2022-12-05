@@ -1,4 +1,7 @@
-from ..base import *
+from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.logger import logger
+from horde.vars import thing_divisor
 
 class WaitingPrompt(WaitingPrompt):
 
@@ -20,7 +23,8 @@ class WaitingPrompt(WaitingPrompt):
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
 
-    def prepare_job_payload(self, initial_dict = {}):
+    def prepare_job_payload(self, initial_dict = None):
+        if not initial_dict: initial_dict = {}
         # This is what we send to KoboldAI to the /generate/ API
         self.gen_payload = initial_dict
         self.gen_payload["prompt"] = self.prompt
@@ -56,14 +60,14 @@ class ProcessingGeneration(ProcessingGeneration):
         }
         return(ret_dict)
 
-class Worker(Worker):
+class WorkerExtended(Worker):
 
     def check_in(self, max_length, max_content_length, softprompts, **kwargs):
         super().check_in(**kwargs)
         self.max_length = max_length
         self.max_content_length = max_content_length
         self.softprompts = softprompts
-        logger.debug(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
+        logger.trace(f"Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
 
     @logger.catch(reraise=True)
     def calculate_uptime_reward(self):
@@ -115,6 +119,8 @@ class Worker(Worker):
         self.max_length = saved_dict["max_length"]
         self.max_content_length = saved_dict["max_content_length"]
 
+
+# TODO This doesnt exist to override
 class Stats(Stats):
 
     model_mulitpliers = {}
@@ -155,11 +161,11 @@ class Database(Database):
         return(kudos)
 
     def new_worker(self):
-        return(Worker(self))
+        return Worker(self)
     def new_user(self):
-        return(User(self))
+        return User(self)
     def new_stats(self):
-        return(Stats(self))
+        return Stats(self)
 
 
 class News(News):

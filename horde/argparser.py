@@ -1,4 +1,6 @@
-import  argparse
+import argparse
+
+from horde.switch import Switch
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-i', '--insecure', action="store_true", help="If set, will use http instead of https (useful for testing)")
@@ -11,3 +13,12 @@ arg_parser.add_argument('--worker_invite', action="store_true", help="If set, Wi
 arg_parser.add_argument('--raid', action="store_true", help="If set, Will start the horde in raid prevention mode")
 arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, will consider all IPs safe")
 args = arg_parser.parse_args()
+
+maintenance = Switch()
+invite_only = Switch()
+raid = Switch()
+
+if args.worker_invite:
+    invite_only.activate()
+if args.raid:
+    raid.activate()

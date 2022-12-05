@@ -1,4 +1,4 @@
-from . import args
+from horde.argparser import args
 
 thing_names = {
     "stable": "megapixelsteps",

@@ -1,12 +1,24 @@
-from flask_restx import Namespace, Resource, reqparse, fields, Api, abort
+import json
+import os
+import re
+import time
+import random
+from datetime import datetime
+
+from horde.database import functions as database
 from flask import request
-from ... import limiter, logger, maintenance, invite_only, raid, cm, cache
-from ...classes import db,processing_generations,waiting_prompts,Worker,User,Team,WaitingPrompt,News,Suspicions
-from enum import Enum
-from .. import exceptions as e
-import os, time, json, re, bleach
-from .. import ModelsV2, ParsersV2
-from ...utils import is_profane
+from flask_restx import Namespace, Resource, reqparse
+from horde.flask import cache, db, HORDE
+from horde.limiter import limiter
+from horde.logger import logger
+from horde.argparser import maintenance, invite_only, raid
+from horde.apis import ModelsV2, ParsersV2
+from horde.apis import exceptions as e
+from horde.classes import stats, Worker, Team, WaitingPrompt, News, User
+from horde.suspicions import Suspicions
+from horde.utils import is_profane, sanitize_string
+from horde.countermeasures import CounterMeasures
+from horde.horde_redis import horde_r
 
 # Not used yet
 authorizations = {
@@ -76,8 +88,8 @@ def get_request_path():
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
-
     def post(self):
+        #logger.warning(datetime.utcnow())
         self.args = parsers.generate_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -90,78 +102,86 @@ class GenerateTemplate(Resource):
         self.workers = []
         if self.args.workers:
             self.workers = self.args.workers
-        self.username = 'Anonymous'
         self.user = None
         self.user_ip = request.remote_addr
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
+        #logger.warning(datetime.utcnow())
         self.initiate_waiting_prompt()
-        worker_found = False
-        for worker in list(db.workers.values()):
-            if len(self.workers) and worker.id not in self.workers:
-                continue
-            if worker.can_generate(self.wp)[0]:
-                worker_found = True
-                break
+        #logger.warning(datetime.utcnow())
         self.activate_waiting_prompt()
+        #logger.warning(datetime.utcnow())
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
         if maintenance.active:
             raise e.MaintenanceMode('Generate')
-        if self.args.apikey:
-            self.user = db.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('generation')
-        self.username = self.user.get_unique_alias()
-        if self.args['prompt'] == '':
-            raise e.MissingPrompt(self.username)
-        if self.user.is_anon():
-            wp_count = waiting_prompts.count_waiting_requests(self.user,self.args["models"])
-        else:
-            wp_count = waiting_prompts.count_waiting_requests(self.user)
-        if len(self.workers):
-            for worker_id in self.workers:
-                if not db.find_worker_by_id(worker_id):
-                    raise e.WorkerNotFound(worker_id)
-        n = 1
-        if self.args.params:
-            n = self.args.params.get('n',1)
-        user_limit = self.user.get_concurrency(self.args["models"],db.get_available_models(waiting_prompts,lite_dict=True))
-        if wp_count + n > user_limit:
-            raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
-        ip_timeout = cm.retrieve_timeout(self.user_ip)
-        if ip_timeout:
-            raise e.TimeoutIP(self.user_ip, ip_timeout)
-        prompt_suspicion = 0
-        if "###" in self.args.prompt:
-            prompt, negprompt = self.args.prompt.split("###", 1)
-        else:
-            prompt = self.args.prompt
-        for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
-            for blacklist in blacklist_regex:
-                if blacklist.search(prompt):
-                    prompt_suspicion += 1
-                    break
-        if prompt_suspicion >= 2:
-            self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
-            cm.report_suspicion(self.user_ip)
-            raise e.CorruptPrompt(self.username, self.user_ip, prompt)
+        with HORDE.app_context():  # TODO DOUBLE CHECK THIS
+            #logger.warning(datetime.utcnow())
+            if self.args.apikey:
+                self.user = database.find_user_by_api_key(self.args['apikey'])
+            #logger.warning(datetime.utcnow())
+            if not self.user:
+                raise e.InvalidAPIKey('generation')
+            self.username = self.user.get_unique_alias()
+            #logger.warning(datetime.utcnow())
+            if self.args['prompt'] == '':
+                raise e.MissingPrompt(self.username)
+            if self.user.is_anon():
+                wp_count = database.count_waiting_requests(self.user,self.args["models"])
+                #logger.warning(datetime.utcnow())
+            else:
+                wp_count = database.count_waiting_requests(self.user)
+                #logger.warning(datetime.utcnow())
+            if len(self.workers):
+                for worker_id in self.workers:
+                    if not database.find_worker_by_id(worker_id):
+                        raise e.WorkerNotFound(worker_id)
+            #logger.warning(datetime.utcnow())
+            n = 1
+            if self.args.params:
+                n = self.args.params.get('n',1)
+            user_limit = self.user.get_concurrency(self.args["models"],database.retrieve_available_models)
+            #logger.warning(datetime.utcnow())
+            if wp_count + n > user_limit:
+                raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
+            ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
+            #logger.warning(datetime.utcnow())
+            if ip_timeout:
+                raise e.TimeoutIP(self.user_ip, ip_timeout)
+            #logger.warning(datetime.utcnow())
+            prompt_suspicion = 0
+            if "###" in self.args.prompt:
+                prompt, negprompt = self.args.prompt.split("###", 1)
+            else:
+                prompt = self.args.prompt
+            for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
+                for blacklist in blacklist_regex:
+                    if blacklist.search(prompt):
+                        prompt_suspicion += 1
+                        break
+            #logger.warning(datetime.utcnow())
+            if prompt_suspicion >= 2:
+                # Moderators do not get ip blocked to allow for experiments
+                if not self.user.moderator:
+                    self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
+                    CounterMeasures.report_suspicion(self.user_ip)
+                raise e.CorruptPrompt(self.username, self.user_ip, prompt)
 
     
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
-            db,
-            waiting_prompts,
-            processing_generations,
-            self.args["prompt"],
-            self.user,
-            self.params,
-            workers=self.args["workers"],
-            nsfw=self.args["nsfw"],
-            trusted_workers=self.args["trusted_workers"],
+            self.workers,
+            self.models,
+            prompt = self.args["prompt"],
+            user_id = self.user.id,
+            params = self.params,
+            nsfw = self.args.nsfw,
+            censor_nsfw = self.args.censor_nsfw,
+            trusted_workers = self.args.trusted_workers,
+            ipaddr = self.user_ip,
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -183,9 +203,15 @@ class AsyncGenerate(GenerateTemplate):
         Perhaps some will appear in the next 10 minutes.
         Asynchronous requests live for 10 minutes before being considered stale and being deleted.
         '''
-        super().post()
+        try:
+            super().post()
+        except KeyError:
+            logger.error(f"caught missing Key.")
+            logger.error(self.args)
+            logger.error(self.args.params)
+            return {"message": "Internal Server Error"},500
         ret_dict = {"id":self.wp.id}
-        if not self.wp.has_valid_workers() and not raid.active:
+        if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
@@ -195,18 +221,20 @@ class AsyncGenerate(GenerateTemplate):
 
 class SyncGenerate(GenerateTemplate):
 
-    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
+    # @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Images Generated')
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(503, 'Maintenance Mode', models.response_model_error)
-    @api.response(429, 'Too Many Prompts', models.response_model_error)
+    # @api.marshal_with(models.response_model_wp_status_full, code=200, description='Images Generated')
+    # @api.response(400, 'Validation Error', models.response_model_error)
+    # @api.response(401, 'Invalid API Key', models.response_model_error)
+    # @api.response(503, 'Maintenance Mode', models.response_model_error)
+    @api.response(501, 'Decommissioned', models.response_model_error)
     def post(self):
-        '''Initiate a Synchronous request to generate images.
+        '''THIS ENDPOINT HAS BEEN DECOMMISSIONED.
+        Initiate a Synchronous request to generate images
         This connection will only terminate when the images have been generated, or an error occured.
         If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
         '''
+        return({"message": "This functionality has been decommissioned. Please use /api/v2/generate/async instead"}, 501)
         super().post()
         while True:
             time.sleep(1)
@@ -214,17 +242,22 @@ class SyncGenerate(GenerateTemplate):
                 raise e.RequestExpired(self.username)
             if self.wp.is_completed():
                 break
-        ret_dict = self.wp.get_status()
-        # We delete it from memory immediately to ensure we don't run out
-        self.wp.delete()
+            # logger.debug(self.wp.is_completed())
+        ret_dict = self.wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
+            wp_queue_stats=database.get_wp_queue_stats(self.wp),
+            active_worker_count=database.count_active_workers()
+        )
         return(ret_dict, 200)
 
     # We extend this function so we can check if any workers can fulfil the request, before adding it to the queue
     def activate_waiting_prompt(self):
         # We don't want to keep synchronous requests up unless there's someone who can fulfill them
-        if not self.wp.has_valid_workers():
+        if not database.wp_has_valid_workers(self.wp, self.workers):
             # We don't need to call .delete() on the wp because it's not activated yet
             # And therefore not added to the waiting_prompt dict.
+            self.wp.delete()
             raise e.NoValidWorkers(self.username)
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
@@ -240,13 +273,20 @@ class AsyncStatus(Resource):
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
         This endpoint is limited to 1 request per minute
         '''
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        wp_status = wp.get_status()
+        wp_status = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
         # If the status is retrieved after the wp is done we clear it to free the ram
-        if wp_status["done"]:
-            wp.delete()
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # if wp_status["done"]:
+            # wp.delete()
         return(wp_status, 200)
 
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
@@ -255,12 +295,19 @@ class AsyncStatus(Resource):
         '''Cancel an unfinished request.
         This request will include all already generated images in base64 encoded .webp files.
         '''
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        wp_status = wp.get_status()
+        wp_status = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
-        wp.delete()
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # wp.delete()
         return(wp_status, 200)
 
 
@@ -275,10 +322,16 @@ class AsyncCheck(Resource):
         '''Retrieve the status of an Asynchronous generation request without images.
         Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
         '''
-        wp = waiting_prompts.get_item(id)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
-        return(wp.get_lite_status(), 200)
+        lite_status = wp.get_lite_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        return(lite_status, 200)
 
 
 class JobPop(Resource):
@@ -293,6 +346,7 @@ class JobPop(Resource):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
+        # logger.warning(datetime.utcnow())
         self.args = parsers.job_pop_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -310,21 +364,35 @@ class JobPop(Resource):
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
-        self.priority_users = [self.user]
+        # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        for priority_username in self.priority_usernames:
-            priority_user = db.find_user_by_username(priority_username)
-            if priority_user:
-               self.priority_users.append(priority_user)
-        for priority_user in self.priority_users:
-            wp_list = waiting_prompts.get_all()
-            for wp in wp_list:
-                if wp.user == priority_user and wp.needs_gen():
-                    self.prioritized_wp.append(wp)
+
+        pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
+        self.priority_user_ids = [self.user.id]
+        # TODO move to database class
+        p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
+        if p_users_id_from_db:
+            self.priority_user_ids.extend([x.id for x in p_users_id_from_db])
+
+        # for priority_username in self.priority_usernames:
+        #     priority_user = database.find_user_by_username(priority_username)
+        #     if priority_user:
+        #        self.priority_users.append(priority_user)
+
+        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
+        for wp in wp_list:
+            self.prioritized_wp.append(wp)
+        # for priority_user in self.priority_users:
+        #     wp_list = database.get_all_wps()
+        #     for wp in wp_list:
+        #         if wp.user == priority_user and wp.needs_gen():
+        #             self.prioritized_wp.append(wp)
+        # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
-        for wp in waiting_prompts.get_waiting_wp_by_kudos():
+        for wp in self.get_sorted_wp(): # TODO this should also filter on .n>0
             if wp not in self.prioritized_wp:
                 self.prioritized_wp.append(wp)
+        # logger.warning(datetime.utcnow())
         for wp in self.prioritized_wp:
             check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:
@@ -333,16 +401,27 @@ class JobPop(Resource):
                 # as they're typically countermeasures to raids
                 if skipped_reason != "secret":
                     self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
+                #logger.warning(datetime.utcnow())
                 continue
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
-            if not wp.needs_gen():
+            # time.sleep(random.uniform(0, 1))
+            if not wp.needs_gen():  # this says if < 1
                 continue
-            return(self.start_worker(wp), 200)
+            worker_ret = self.start_worker(wp)
+            # logger.debug(worker_ret)
+            if worker_ret is None:
+                continue
+            return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
+        # logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
+
+    def get_sorted_wp(self):
+        '''Extendable class to retrieve the sorted WP list for this worker'''
+        return database.get_sorted_wp_filtered_to_worker(self.worker)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):
@@ -358,20 +437,20 @@ class JobPop(Resource):
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
         self.skipped = {}
-        self.user = db.find_user_by_api_key(self.args['apikey'])
+        self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
-        self.worker_name = bleach.clean(self.args['name'])
-        self.worker = db.find_worker_by_name(self.worker_name)
+        self.worker_name = sanitize_string(self.args['name'])
+        self.worker = database.find_worker_by_name(self.worker_name)
         self.safe_ip = True
         if not self.worker or not self.worker.user.trusted:
-            self.safe_ip = cm.is_ip_safe(self.worker_ip)
-            if self.safe_ip == None:
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip == False:
+            if self.safe_ip is False:
                 # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
                 # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and db.count_workers_in_ipaddr(self.worker_ip) == 0:
+                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
                 #     self.safe_ip = True
                 # if a raid is ongoing, we do not inform the suspicious IPs we detected them
                 if not self.safe_ip and not raid.active:
@@ -383,11 +462,18 @@ class JobPop(Resource):
             if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                raise e.TooManySameIPs(self.user.username)
-            self.worker = Worker(db)
-            self.worker.create(self.user, self.worker_name)
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
+            self.worker = Worker(
+                user_id=self.user.id,
+                name=self.worker_name,
+            )
+            self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+        for model in self.models:
+            if is_profane(model) and not "Hentai" in model:
+                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
     
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
@@ -416,15 +502,20 @@ class JobSubmit(Resource):
         return({"reward": self.kudos}, 200)
 
     def validate(self):
-        self.procgen = processing_generations.get_item(self.args['id'])
+        self.procgen = database.get_progen_by_id(self.args['id'])
         if not self.procgen:
             raise e.InvalidProcGen(self.args['id'])
-        self.user = db.find_user_by_api_key(self.args['apikey'])
+        self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        self.kudos = self.procgen.set_generation(self.args['generation'], seed=self.args['seed'])
+        things_per_sec = stats.record_fulfilment(self.procgen)
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args['seed']
+        )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 
@@ -443,10 +534,10 @@ class TransferKudos(Resource):
         '''Transfer Kudos to another registed user
         '''
         self.args = self.parser.parse_args()
-        user = db.find_user_by_api_key(self.args['apikey'])
+        user = database.find_user_by_api_key(self.args['apikey'])
         if not user:
             raise e.InvalidAPIKey('kudos transfer to: ' + self.args['username'])
-        ret = db.transfer_kudos_from_apikey_to_username(self.args['apikey'],self.args['username'],self.args['amount'])
+        ret = database.transfer_kudos_from_apikey_to_username(self.args['apikey'],self.args['username'],self.args['amount'])
         kudos = ret[0]
         error = ret[1]
         if error != 'OK':
@@ -460,13 +551,17 @@ class Workers(Resource):
     def get(self):
         '''A List with the details of all registered and active workers
         '''
-        workers_ret = []
-        # I could do this with a comprehension, but this is clearer to understand
-        for worker in list(db.workers.values()):
-            if worker.is_stale():
-                continue
-            workers_ret.append(worker.get_details())
-        return(workers_ret,200)
+        return (self.retrieve_workers_details(),200)
+
+    @logger.catch(reraise=True)
+    def retrieve_workers_details(self):
+        cached_workers = horde_r.get('worker_cache')
+        if cached_workers is None:
+            workers_ret = []
+            for worker in database.get_active_workers():
+                workers_ret.append(worker.get_details())
+            return workers_ret
+        return json.loads(cached_workers)
 
 class WorkerSingle(Resource):
 
@@ -484,13 +579,13 @@ class WorkerSingle(Resource):
         Can retrieve the details of a worker even if inactive
         (A worker is considered inactive if it has not checked in for 5 minutes)
         '''
-        worker = db.find_worker_by_id(worker_id)
+        worker = database.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
         details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
-            admin = db.find_user_by_api_key(self.args['apikey'])
+            admin = database.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('admin worker details')
             if not admin.moderator:
@@ -522,23 +617,23 @@ class WorkerSingle(Resource):
         Paused can be set only by the admins of this Horde.
         When in paused mode, the worker will not be given any requests to generate.
         '''
-        worker = db.find_worker_by_id(worker_id)
+        worker = database.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
         self.args = self.put_parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
+        admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
         ret_dict = {}
         # Both admins and owners can set the worker to maintenance
-        if self.args.maintenance != None:
+        if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 if admin != worker.user:
                     raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.toggle_maintenance(self.args.maintenance, self.args.maintenance_msg)
             ret_dict["maintenance"] = worker.maintenance
         # Only owners can set info notes
-        if self.args.info != None:
+        if self.args.info is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
             if admin.is_anon():
@@ -550,12 +645,12 @@ class WorkerSingle(Resource):
                 raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, 'worker info')
             ret_dict["info"] = worker.info
         # Only mods can set a worker as paused
-        if self.args.paused != None:
+        if self.args.paused is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             worker.paused = self.args.paused
             ret_dict["paused"] = worker.paused
-        if self.args.name != None:
+        if self.args.name is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             if admin.is_anon():
@@ -568,7 +663,7 @@ class WorkerSingle(Resource):
             if ret == "Already Exists":
                 raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
             ret_dict["name"] = worker.name
-        if self.args.team != None:
+        if self.args.team is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
             if admin.is_anon():
@@ -577,7 +672,7 @@ class WorkerSingle(Resource):
                 worker.set_team(None)
                 ret_dict["team"] = 'None'
             else:
-                team = db.find_team_by_id(self.args.team)
+                team = database.find_team_by_id(self.args.team)
                 if not team:
                     raise e.TeamNotFound(self.args.team)
                 ret = worker.set_team(team)
@@ -601,11 +696,11 @@ class WorkerSingle(Resource):
         Only the worker's owner and an admin can use this endpoint.
         This action is unrecoverable!
         '''
-        worker = db.find_worker_by_id(worker_id)
+        worker = database.find_worker_by_id(worker_id)
         if not worker:
             raise e.WorkerNotFound(worker_id)
         self.args = self.delete_parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
+        admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
         if not admin.moderator and admin != worker.user:
@@ -624,11 +719,11 @@ class Users(Resource):
     decorators = [limiter.limit("30/minute")]
     @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
-    def get(self):
+    def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
         '''
-        # To avoid the the dict changing size while we're iterating it
-        all_users = list(db.users.values())
+        return ([],200) #FIXME: Debat
+        all_users = db.session.query(User)
         users_list = [user.get_details() for user in all_users]
         return(users_list,200)
 
@@ -645,13 +740,13 @@ class UserSingle(Resource):
     def get(self, user_id = ''):
         '''Details and statistics about a specific user
         '''
-        user = db.find_user_by_id(user_id)
+        user = database.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
         details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
-            admin = db.find_user_by_api_key(self.args['apikey'])
+            admin = database.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('privileged user details')
             if admin.moderator:
@@ -687,65 +782,65 @@ class UserSingle(Resource):
     def put(self, user_id = ''):
         '''Endpoint for horde admins to perform operations on users
         '''
-        user = user = db.find_user_by_id(user_id)
+        user = user = database.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
         self.args = self.parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
+        admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT UserSingle')
         ret_dict = {}
         # Admin Access
-        if self.args.kudos != None:
+        if self.args.kudos is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_kudos(self.args.kudos, 'admin')
             ret_dict["new_kudos"] = user.kudos
-        if self.args.monthly_kudos != None:
+        if self.args.monthly_kudos is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.modify_monthly_kudos(self.args.monthly_kudos)
-            ret_dict["monthly_kudos"] = user.monthly_kudos['amount']
-        if self.args.usage_multiplier != None:
+            ret_dict["monthly_kudos"] = user.monthly_kudos
+        if self.args.usage_multiplier is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.usage_multiplier = self.args.usage_multiplier
             ret_dict["usage_multiplier"] = user.usage_multiplier
-        if self.args.moderator != None:
+        if self.args.moderator is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_moderator(self.args.moderator)
             ret_dict["moderator"] = user.moderator
         # Moderator Access
-        if self.args.concurrency != None:
+        if self.args.concurrency is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.concurrency = self.args.concurrency
             ret_dict["concurrency"] = user.concurrency
-        if self.args.worker_invite != None:
+        if self.args.worker_invite is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.worker_invited = self.args.worker_invite
             ret_dict["worker_invited"] = user.worker_invited
-        if self.args.trusted != None:
+        if self.args.trusted is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_trusted(self.args.trusted)
             ret_dict["trusted"] = user.trusted
-        if self.args.reset_suspicion != None:
+        if self.args.reset_suspicion is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.reset_suspicion()
-            ret_dict["new_suspicion"] = user.suspicious
+            ret_dict["new_suspicion"] = user.get_suspicion()
         # User Access
-        if self.args.public_workers != None:
+        if self.args.public_workers is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             if admin.is_anon():
                 raise e.AnonForbidden()
             user.public_workers = self.args.public_workers
             ret_dict["public_workers"] = user.public_workers
-        if self.args.username != None:
+        if self.args.username is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             if admin.is_anon():
@@ -756,7 +851,7 @@ class UserSingle(Resource):
             if ret == "Too Long":
                 raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, 'username')
             ret_dict["username"] = user.username
-        if self.args.contact != None:
+        if self.args.contact is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             if admin.is_anon():
@@ -777,13 +872,16 @@ class FindUser(Resource):
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Worker Details', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self):
         '''Lookup user details based on their API key
         This can be used to verify a user exists
         '''
         self.args = self.get_parser.parse_args()
-        user = db.find_user_by_api_key(self.args.apikey)
+        if not self.args.apikey:
+            raise e.InvalidAPIKey('GET FindUser')
+        user = database.find_user_by_api_key(self.args.apikey)
         if not user:
             raise e.UserNotFound(self.args.apikey, 'api_key')
         return(user.get_details(1),200)
@@ -796,7 +894,7 @@ class Models(Resource):
     def get(self):
         '''Returns a list of models active currently in this horde
         '''
-        return(db.get_available_models(waiting_prompts),200)
+        return(database.retrieve_available_models(),200)
 
 
 class HordeLoad(Resource):
@@ -807,8 +905,8 @@ class HordeLoad(Resource):
     def get(self):
         '''Details about the current performance of this Horde
         '''
-        load_dict = waiting_prompts.count_totals()
-        load_dict["worker_count"] = db.count_active_workers()
+        load_dict = database.retrieve_totals()
+        load_dict["worker_count"] = database.count_active_workers()
         return(load_dict,200)
 
 class HordeNews(Resource):
@@ -819,7 +917,7 @@ class HordeNews(Resource):
         '''Read the latest happenings on the horde
         '''
         news = News()
-        logger.debug(news.sorted_news())
+        # logger.debug(news.sorted_news())
         return(news.sorted_news(),200)
     
 
@@ -842,7 +940,7 @@ class HordeModes(Resource):
         is_privileged = False
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
-            admin = db.find_user_by_api_key(self.args['apikey'])
+            admin = database.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('admin worker details')
             if not admin.moderator:
@@ -867,33 +965,33 @@ class HordeModes(Resource):
         Endpoint for admins to (un)set the horde into maintenance, invite_only or raid modes.
         '''
         self.args = self.parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
+        admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
         ret_dict = {}
-        if self.args.maintenance != None:
+        if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.toggle(self.args.maintenance)
             logger.critical(f"Horde entered maintenance mode")
-            db.initiate_save(10)
-            for wp in waiting_prompts.get_all():
+            for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = maintenance.active
-        if self.args.shutdown != None:
+        #TODO: Replace this with a node-offline call
+        if self.args.shutdown is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
             maintenance.activate()
-            for wp in waiting_prompts.get_all():
+            for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
-            db.shutdown(self.args.shutdown)
+            database.shutdown(self.args.shutdown)
             ret_dict["maintenance_mode"] = maintenance.active
-        if self.args.invite_only != None:
+        if self.args.invite_only is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
             invite_only.toggle(self.args.invite_only)
             ret_dict["invite_only_mode"] = invite_only.active
-        if self.args.raid != None:
+        if self.args.raid is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
             raid.toggle(self.args.raid)
@@ -911,7 +1009,7 @@ class Teams(Resource):
         '''
         teams_ret = []
         # I could do this with a comprehension, but this is clearer to understand
-        for team in list(db.teams.values()):
+        for team in database.get_all_teams():
             teams_ret.append(team.get_details())
         return(teams_ret,200)
 
@@ -932,27 +1030,35 @@ class Teams(Resource):
         Only trusted users can create new teams.
         '''
         self.args = self.post_parser.parse_args()
-        user = db.find_user_by_api_key(self.args['apikey'])
-        if not user:
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
             raise e.InvalidAPIKey('User action: ' + 'PUT Teams')
-        if user.is_anon():
+        if self.user.is_anon():
             raise e.AnonForbidden()
-        if not user.trusted:
+        if not self.user.trusted:
             raise e.NotTrusted
         ret_dict = {}
-        team = Team(db)
-        ret = team.set_name(self.args.name)
-        if ret == "Profanity":
-            raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'team name')
-        if ret == "Already Exists":
-            raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
-        ret_dict["name"] = team.name
-        if self.args.info != None:
-            ret = team.set_info(self.args.info)
-            if ret == "Profanity":
-                raise e.Profanity(user.get_unique_alias(), self.args.info, 'team info')
-            ret_dict["info"] = team.info
-        team.create(user)
+
+        self.team_name = sanitize_string(self.args.name)
+        self.team = database.find_team_by_name(self.team_name)
+        self.team_info = self.args.info
+        if self.team_info is not None:
+            self.team_info = sanitize_string(self.team_info)
+
+        if self.team:
+            raise e.NameAlreadyExists(self.user.get_unique_alias(), self.team_name, self.args.name, 'team')
+        if is_profane(self.team_name):
+            raise e.Profanity(self.user.get_unique_alias(), self.team_name, 'team name')
+        if self.team_info and is_profane(self.team_info):
+            raise e.Profanity(self.user.get_unique_alias(), self.team_info, 'team info')
+        team = Team(
+            owner_id=self.user.id, 
+            name=self.team_name,
+            info=self.team_info,
+        )
+        team.create()
+        ret_dict["name"] = self.team_name
+        ret_dict["info"] = self.team_info
         ret_dict["id"] = team.id
         return(ret_dict, 200)
 
@@ -970,13 +1076,13 @@ class TeamSingle(Resource):
     @api.response(404, 'Team Not Found', models.response_model_error)
     def get(self, team_id = ''):
         '''Details of a worker Team'''
-        team = db.find_team_by_id(team_id)
+        team = database.find_team_by_id(team_id)
         if not team:
             raise e.TeamNotFound(team_id)
         details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
-            admin = db.find_user_by_api_key(self.args['apikey'])
+            admin = database.find_user_by_api_key(self.args['apikey'])
             if not admin:
                 raise e.InvalidAPIKey('admin team details')
             if not admin.moderator:
@@ -1000,23 +1106,23 @@ class TeamSingle(Resource):
     def patch(self, team_id = ''):
         '''Update a Team's information
         '''
-        team = db.find_team_by_id(team_id)
+        team = database.find_team_by_id(team_id)
         if not team:
             raise e.TeamNotFound(team_id)
         self.args = self.patch_parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
+        admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PATCH TeamSingle')
         ret_dict = {}
         # Only creators can set info notes
-        if self.args.info != None:
+        if self.args.info is not None:
             if not admin.moderator and admin != team.user:
                 raise e.NotOwner(admin.get_unique_alias(), team.name)
             ret = team.set_info(self.args.info)
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.info, 'team info')
             ret_dict["info"] = team.info
-        if self.args.name != None:
+        if self.args.name is not None:
             if not admin.moderator and admin != team.user:
                 raise e.NotModerator(admin.get_unique_alias(), 'PATCH TeamSingle')
             ret = team.set_name(self.args.name)
@@ -1043,11 +1149,11 @@ class TeamSingle(Resource):
         Only the team's creator or a horde moderator can use this endpoint.
         This action is unrecoverable!
         '''
-        team = db.find_team_by_id(team_id)
+        team = database.find_team_by_id(team_id)
         if not team:
             raise e.TeamNotFound(team_id)
         self.args = self.delete_parser.parse_args()
-        admin = db.find_user_by_api_key(self.args['apikey'])
+        admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'DELETE TeamSingle')
         if not admin.moderator and admin != team.user:
@@ -1076,12 +1182,19 @@ class OperationsIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.delete_parser.parse_args()
-        mod = db.find_user_by_api_key(self.args['apikey'])
+        mod = database.find_user_by_api_key(self.args['apikey'])
         if not mod:
             raise e.InvalidAPIKey('User action: ' + 'DELETE OperationsIP')
         if not mod.moderator:
             raise e.NotModerator(mod.get_unique_alias(), 'DELETE OperationsIP')
-        cm.delete_timeout(self.args.ipaddr)
+        CounterMeasures.delete_timeout(self.args.ipaddr)
         return({"message":'OK'}, 200)
 
+
+class Heartbeat(Resource):
+    decorators = [limiter.exempt]
+    def get(self):
+        '''If this loads, this node is available
+        '''
+        return({'message': 'OK'},200)
         

@@ -1,21 +1,63 @@
-from .. import logger, args
+from horde.logger import logger
+from horde.argparser import args
 from importlib import import_module
-from horde.classes.base import Suspicions
+from horde.flask import db, HORDE
+from horde.utils import hash_api_key
 
 # Should figure out an elegant way to do this with a for loop
-WaitingPrompt = import_module(name=f'horde.classes.{args.horde}').WaitingPrompt
-ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}').ProcessingGeneration
-Worker = import_module(name=f'horde.classes.{args.horde}').Worker
-PromptsIndex = import_module(name=f'horde.classes.{args.horde}').PromptsIndex
-GenerationsIndex = import_module(name=f'horde.classes.{args.horde}').GenerationsIndex
-User = import_module(name=f'horde.classes.{args.horde}').User
-Team = import_module(name=f'horde.classes.{args.horde}').Team
-Database = import_module(name=f'horde.classes.{args.horde}').Database
-News = import_module(name=f'horde.classes.{args.horde}').News
+# stats = import_module(name=f'horde.classes.{args.horde}').stats
+try:
+    ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
+except (ModuleNotFoundError,AttributeError):
+    ProcessingGeneration = import_module(name='horde.classes.base.processing_generation').ProcessingGeneration
+try:
+    WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
+except (ModuleNotFoundError,AttributeError):
+    WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
+try:
+    WPAllowedWorkers = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WPAllowedWorkers
+except (ModuleNotFoundError,AttributeError):
+    WPAllowedWorkers = import_module(name='horde.classes.base.waiting_prompt').WPAllowedWorkers
+try:
+    User = import_module(name=f'horde.classes.{args.horde}.user').UserExtended
+except (ModuleNotFoundError,AttributeError):
+    User = import_module(name='horde.classes.base.user').User
+try:
+    Team = import_module(name=f'horde.classes.{args.horde}.team').TeamExtended
+except (ModuleNotFoundError,AttributeError):
+    Team = import_module(name='horde.classes.base.team').Team
+try:
+    Worker = import_module(name=f'horde.classes.{args.horde}.worker').WorkerExtended
+except (ModuleNotFoundError,AttributeError):
+    Worker = import_module(name='horde.classes.base.worker').Worker
+try:
+    WorkerPerformance = import_module(name=f'horde.classes.{args.horde}.worker').WorkerPerformanceExtended
+except (ModuleNotFoundError,AttributeError):
+    WorkerPerformance = import_module(name='horde.classes.base.worker').WorkerPerformance
+try:
+    News = import_module(name=f'horde.classes.{args.horde}.news').NewsExtended
+except (ModuleNotFoundError,AttributeError):
+    News = import_module(name=f'horde.classes.{args.horde}.news').News
+try:
+    stats = import_module(name=f'horde.classes.{args.horde}.stats')
+except (ModuleNotFoundError,AttributeError):
+    stats = import_module(name='horde.classes.base.stats')
 
+with HORDE.app_context():
+    db.create_all()
 
-# from .base import WaitingPrompt,ProcessingGeneration,Worker,PromptsIndex,GenerationsIndex,User,Database
+    if args.convert_flag == "SQL":
+        from horde.conversions import convert_json_db
+        convert_json_db()
 
-db = Database(convert_flag=args.convert_flag)
-waiting_prompts = PromptsIndex()
-processing_generations = GenerationsIndex()
+    anon = db.session.query(User).filter_by(oauth_id="anon").first()
+    if not anon:
+        anon = User(
+            id=0,
+            username="Anonymous",
+            oauth_id="anon",
+            api_key=hash_api_key("0000000000"),
+            public_workers=True,
+            concurrency=500
+        )
+        anon.create()

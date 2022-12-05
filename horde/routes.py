@@ -1,27 +1,32 @@
+import oauthlib
+import random
+import secrets
+from uuid import uuid4
+
 from flask import render_template, redirect, url_for, request
-import random, time, os, oauthlib, secrets, logging
-from flask_dance.contrib.google import google
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
+from flask_dance.contrib.google import google
 from markdown import markdown
-from uuid import uuid4
-from . import logger, maintenance, args, HORDE, cache
+
+from horde.database import functions as database
+from horde.argparser import args, maintenance
+from horde.classes import News, User, stats
+from horde.flask import HORDE, cache, db
+from horde.logger import logger
+from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
-from .classes import db
-from .classes import waiting_prompts,User,News
-import bleach
-from .utils import ConvertAmount, is_profane
 
 dance_return_to = '/'
 
 @logger.catch(reraise=True)
 @HORDE.route('/')
-@cache.cached()
+@cache.cached(timeout=300)
 def index():
     with open(f'index_{args.horde}.md') as index_file:
         index = index_file.read()
-    top_contributor = db.get_top_contributor()
-    top_worker = db.get_top_worker()
+    top_contributor = database.get_top_contributor()
+    top_worker = database.get_top_worker()
     align_image = 0
     big_image = align_image
     while big_image == align_image:
@@ -30,8 +35,8 @@ def index():
         top_contributors = f'\n<img src="{img_url}/{big_image}.jpg" width="800" />'
     else:
         # We don't use the prefix char, so we just discard it
-        top_contrib_things = ConvertAmount(top_contributor.contributions[thing_name] * thing_divisor)
-        top_contrib_fulfillments = ConvertAmount(top_contributor.contributions['fulfillments'])
+        top_contrib_things = ConvertAmount(top_contributor.contributed_thing * thing_divisor)
+        top_contrib_fulfillments = ConvertAmount(top_contributor.contributed_fulfillments)
         top_worker_things = ConvertAmount(top_worker.contributions * thing_divisor)
         top_worker_fulfillments = ConvertAmount(top_worker.fulfilments)
         top_contributors = f"""\n## Top Contributors
@@ -61,10 +66,13 @@ This is the worker which has generated the most pixels for the horde.
     for iter in range(len(sorted_news)):
         news += f"* {sorted_news[iter]['newspiece']}\n"
         if iter > 1: break
-    totals = db.get_total_usage()
-    wp_totals = waiting_prompts.count_totals()
-    active_worker_count = db.count_active_workers()
-    avg_performance = ConvertAmount(db.stats.get_request_avg() * active_worker_count)
+    totals = database.get_total_usage()
+    wp_totals = database.retrieve_totals()
+    active_worker_count = database.count_active_workers()
+    avg_performance = ConvertAmount(
+        stats.get_request_avg(database.get_worker_performances())
+        * active_worker_count
+    )
     # We multiple with the divisor again, to get the raw amount, which we can conver to prefix accurately
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
@@ -156,17 +164,19 @@ def register():
     pseudonymous = False
     oauth_id = get_oauth_id()
     if oauth_id:
-        user = db.find_user_by_oauth_id(oauth_id)
+        user = database.find_user_by_oauth_id(oauth_id)
         if user:
             username = user.username
     if request.method == 'POST':
         api_key = secrets.token_urlsafe(16)
+        hashed_api_key = hash_api_key(api_key)
         if user:
-            username = bleach.clean(request.form['username'])
+            username = sanitize_string(request.form['username'])
             if is_profane(username):
                 return render_template('bad_username.html', page_title="Bad Username")
             user.username = username
-            user.api_key = api_key
+            user.api_key = hashed_api_key
+            db.session.commit()
         else:
             # Triggered when the user created a username without logging in
             if is_profane(request.form['username']):
@@ -174,9 +184,12 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
-            user = User(db)
-            user.create(request.form['username'], oauth_id, api_key, None)
-            username = bleach.clean(request.form['username'])
+            username = sanitize_string(request.form['username'])
+            user = User(
+                username=username,
+                oauth_id=oauth_id,
+                api_key=hashed_api_key)
+            user.create()
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
@@ -200,7 +213,7 @@ def transfer():
     welcome = 'Welcome'
     oauth_id = get_oauth_id()
     if oauth_id:
-        src_user = db.find_user_by_oauth_id(oauth_id)
+        src_user = database.find_user_by_oauth_id(oauth_id)
         if not src_user:
             # This probably means the user was deleted
             oauth_id = None
@@ -212,11 +225,11 @@ def transfer():
             error = "Please enter a number in the kudos field"
         # Triggered when the user submited without logging in
         elif src_user:
-            ret = db.transfer_kudos_to_username(src_user,dest_username,int(amount))
+            ret = database.transfer_kudos_to_username(src_user,dest_username,int(amount))
             kudos = ret[0]
             error = ret[1]
         else:
-            ret = db.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
+            ret = database.transfer_kudos_from_apikey_to_username(request.form['src_api_key'],dest_username,int(amount))
             kudos = ret[0]
             error = ret[1]
     if src_user:

@@ -198,7 +198,7 @@ class Models:
             "worker_invited": fields.Integer(description="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode."),
             "moderator": fields.Boolean(example=False,description="Set to true to Make this user a horde moderator"),
             "public_workers": fields.Boolean(example=False,description="Set to true to Make this user a display their worker IDs"),
-            "monthly_kudos": fields.Integer(description="When specified, will start assigning the user monthly kudos, starting now!",min=0),
+            "monthly_kudos": fields.Integer(description="When specified, will start assigning the user monthly kudos, starting now!"),
             "username": fields.String(description="When specified, will change the username. No profanity allowed!",min_length=3,max_length=100),
             "trusted": fields.Boolean(example=False,description="When set to true,the user and their servers will not be affected by suspicion"),
             "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0"),

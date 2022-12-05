@@ -5,8 +5,8 @@ from importlib import import_module
 from ..vars import horde_title
 
 if args.horde == 'kobold':
-    v1 = import_module(name=f'.{args.horde}_v1', package=f'horde.apis.v1').api
-v2 = import_module(name=f'.{args.horde}', package=f'horde.apis.v2').api
+    v1 = import_module(name=f'.{args.horde}_v1', package='horde.apis.v1').api
+v2 = import_module(name=f'.{args.horde}', package='horde.apis.v2').api
 
 blueprint = Blueprint('apiv2', __name__, url_prefix='/api')
 api = Api(blueprint,

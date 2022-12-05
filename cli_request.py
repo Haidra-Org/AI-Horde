@@ -2,6 +2,7 @@ import requests, json, os, time, argparse, base64
 from cli_logger import logger, set_logger_verbosity, quiesce_logger, test_logger
 from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
 from io import BytesIO
+from requests.exceptions import ConnectionError
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('-n', '--amount', action="store", required=False, type=int, help="The amount of images to generate with this prompt")
@@ -127,15 +128,24 @@ def generate():
         logger.debug(submit_results)
         req_id = submit_results['id']
         is_done = False
+        retry = 0
         while not is_done:
-            chk_req = requests.get(f'{args.horde}/api/v2/generate/check/{req_id}')
-            if not chk_req.ok:
-                logger.error(chk_req.text)
-                return
-            chk_results = chk_req.json()
-            logger.info(chk_results)
-            is_done = chk_results['done']
-            time.sleep(0.8)
+            try:
+                chk_req = requests.get(f'{args.horde}/api/v2/generate/check/{req_id}')
+                if not chk_req.ok:
+                    logger.error(chk_req.text)
+                    return
+                chk_results = chk_req.json()
+                logger.info(chk_results)
+                is_done = chk_results['done']
+                time.sleep(0.8)
+            except ConnectionError as e:
+                retry += 1
+                logger.error(f"Error {e} when retrieving status. Retry {retry}/10")
+                if retry < 10:
+                    time.sleep(1)
+                    continue
+                raise e
         retrieve_req = requests.get(f'{args.horde}/api/v2/generate/status/{req_id}')
         if not retrieve_req.ok:
             logger.error(retrieve_req.text)
