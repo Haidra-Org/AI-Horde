@@ -9,7 +9,7 @@ from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
 from horde.flask import HORDE, db
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_performances
+from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
 from horde import horde_instance_id
 from horde.argparser import args
 
@@ -152,7 +152,7 @@ def store_totals():
             logger.error(f"Failed serializing totals with error: {e}")
 
 @logger.catch(reraise=True)
-def prune_performances():
+def prune_stats():
     '''Prunes performances which are too old'''
     with HORDE.app_context():
-        prune_expired_performances()
+        prune_expired_stats()

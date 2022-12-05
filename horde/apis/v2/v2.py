@@ -510,7 +510,7 @@ class JobSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        things_per_sec = stats.record_fulfilment(self.procgen, database.get_worker_performances())
+        things_per_sec = stats.record_fulfilment(self.procgen)
         self.kudos = self.procgen.set_generation(
             generation=self.args['generation'], 
             things_per_sec=things_per_sec, 

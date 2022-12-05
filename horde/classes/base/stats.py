@@ -5,7 +5,6 @@ from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
 from horde.argparser import args
-from horde.database import quorum
 
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
@@ -22,7 +21,7 @@ class FulfillmentPerformance(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-def record_fulfilment(procgen, worker_performances):
+def record_fulfilment(procgen):
     things = procgen.wp.things
     starting_time = procgen.start_time
     model = procgen.model
@@ -31,12 +30,6 @@ def record_fulfilment(procgen, worker_performances):
         things_per_sec = 1
     else:
         things_per_sec = round(things / seconds_taken,1)
-    worker_performances = worker_performances
-    model_performances = db.session.query(ModelPerformance).filter_by(model=model).order_by(
-        ModelPerformance.created.asc()
-    )
-    if model_performances.count() >= 20 and quorum.is_primary():
-        db.session.delete(model_performances.first())
     new_performance = ModelPerformance(model=model,performance=things_per_sec)
     new_fulfillment = FulfillmentPerformance(things=things)
     db.session.add(new_performance)
