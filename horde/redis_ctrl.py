@@ -28,7 +28,8 @@ def get_horde_db():
     rdb = redis.Redis(
         host=redis_hostname,
         port=redis_port,
-        db = horde_db)
+        db = horde_db,
+        decode_responses=True)
     return(rdb)
 
 def get_ipaddr_db():

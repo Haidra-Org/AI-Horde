@@ -1,4 +1,7 @@
 import os
+from uuid import uuid4
+
+horde_instance_id = str(uuid4())
 
 from flask_dance.contrib.discord import make_discord_blueprint
 from flask_dance.contrib.github import make_github_blueprint

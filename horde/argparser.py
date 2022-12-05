@@ -12,8 +12,6 @@ arg_parser.add_argument('--horde', action='store', default='stable', required=Tr
 arg_parser.add_argument('--worker_invite', action="store_true", help="If set, Will start the horde in worker invite-only mode")
 arg_parser.add_argument('--raid', action="store_true", help="If set, Will start the horde in raid prevention mode")
 arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, will consider all IPs safe")
-#TODO: Change this to a redis-stored quorum which can change dynamically. This will avoid forgetting it, or the primary going down and then someone not being around to turn it on again
-arg_parser.add_argument('--primary', action="store_true", help="If set, will perform cleanup operations on the DB")
 args = arg_parser.parse_args()
 
 maintenance = Switch()

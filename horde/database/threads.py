@@ -9,7 +9,26 @@ from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
 from horde.flask import HORDE, db
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals
+from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_performances
+from horde import horde_instance_id
+from horde.argparser import args
+
+
+@logger.catch(reraise=True)
+def get_quorum():
+    '''Attempts to grab the primary quorum, if it's not set by a different node'''
+    quorum = horde_r.get('horde_quorum')
+    if not quorum:
+        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        logger.warning(f"Quorum changed to port {args.port} with ID {horde_instance_id}")
+        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
+        return None
+    if quorum == horde_instance_id:
+        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        logger.debug(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
+        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
+    return(quorum)
+
 
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
@@ -132,3 +151,8 @@ def store_totals():
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing totals with error: {e}")
 
+@logger.catch(reraise=True)
+def prune_performances():
+    '''Prunes performances which are too old'''
+    with HORDE.app_context():
+        prune_expired_performances()

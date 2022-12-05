@@ -476,3 +476,12 @@ def query_prioritized_wps():
             ).order_by(
                 WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.asc()
             ).all()
+
+
+def prune_expired_performances():
+    # clear up old requests (older than 5 mins)
+    db.session.query(FulfillmentPerformance).filter(
+        FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
+    ).delete(synchronize_session=False)
+    db.session.commit()
+    logger.debug("Pruned fulfillments")
