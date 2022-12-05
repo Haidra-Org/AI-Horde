@@ -485,10 +485,10 @@ def prune_expired_stats():
     ).filter(
         stats.FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
     ).delete(synchronize_session=False)
-    model_performances = db.session.query(
+    db.session.query(
         stats.ModelPerformance
     ).filter(
-        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=6)
+        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=1)
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned Expired Stats")
