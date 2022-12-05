@@ -480,15 +480,15 @@ def query_prioritized_wps():
 
 def prune_expired_stats():
     # clear up old requests (older than 5 mins)
-    db.session.query(stats.FulfillmentPerformance).filter(
+    db.session.query(
+        stats.FulfillmentPerformance
+    ).filter(
         stats.FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
     ).delete(synchronize_session=False)
     model_performances = db.session.query(
         stats.ModelPerformance
-    ).filter_by(
-        model=model
-    ).order_by(
-        stats.ModelPerformance.created.desc()
-    ).offset(20).delete(synchronize_session=False)
+    ).filter(
+        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=6)
+    ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned Expired Stats")
