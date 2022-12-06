@@ -12,6 +12,7 @@ arg_parser.add_argument('--horde', action='store', default='stable', required=Tr
 arg_parser.add_argument('--worker_invite', action="store_true", help="If set, Will start the horde in worker invite-only mode")
 arg_parser.add_argument('--raid', action="store_true", help="If set, Will start the horde in raid prevention mode")
 arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, will consider all IPs safe")
+arg_parser.add_argument('--quorum', action="store_true", help="If set, will forcefully grab the quorum")
 args = arg_parser.parse_args()
 
 maintenance = Switch()

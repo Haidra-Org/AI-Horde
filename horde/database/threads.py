@@ -13,6 +13,7 @@ from horde.database.functions import query_prioritized_wps, get_active_workers, 
 from horde import horde_instance_id
 from horde.argparser import args
 from horde.r2 import delete_procgen_image
+from horde.argparser import args
 
 
 @logger.catch(reraise=True)
@@ -27,6 +28,10 @@ def get_quorum():
     if quorum == horde_instance_id:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
+        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
+    elif args.quorum:
+        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     return(quorum)
 
@@ -110,8 +115,9 @@ def check_waiting_prompts():
         ).filter(
             ProcessingGeneration.wp_id.in_(all_wp_r_id)
         ).all()
+        # logger.debug([expired_r_wps, expired_r2_procgens])
         for procgen in expired_r2_procgens:
-            delete_procgen_image(procgen.id)
+            delete_procgen_image(str(procgen.id))
         logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
         expired_wps.delete()
         db.session.commit()
