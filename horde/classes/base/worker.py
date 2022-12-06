@@ -130,7 +130,7 @@ class Worker(db.Model):
 
     def reset_suspicion(self):
         '''Clears the worker's suspicion and resets their reasons'''
-        #TODO Select from WorkerSuspicions DB and delete all matching user ID   
+        db.session.query(WorkerSuspicions).filter_by(worker_id=self.id).delete()
         db.session.commit()   
 
     def get_suspicion(self):
