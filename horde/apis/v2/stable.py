@@ -74,9 +74,9 @@ class AsyncGenerate(AsyncGenerate):
         if self.args.source_image:
             if self.args.source_processing == "img2img" and self.params.get("sampler_name") in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]:
                 raise e.UnsupportedSampler
-            if "stable_diffusion_2.0" in self.args.models:
+            if "stable_diffusion_2." in self.args.models:
                 raise e.UnsupportedModel
-        if self.args.models != ["stable_diffusion_2.0"] and self.params.get("sampler_name") in ["dpmsolver"]:
+        if self.args.models not in ["stable_diffusion_2.0", "stable_diffusion_2.1"] and self.params.get("sampler_name") in ["dpmsolver"]:
             raise e.UnsupportedSampler
         # if self.args.models == ["stable_diffusion_2.0"] and self.params.get("sampler_name") not in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
