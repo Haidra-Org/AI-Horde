@@ -300,7 +300,9 @@ def retrieve_totals():
     return(json.loads(totals_ret))
 
 def get_organized_wps_by_model():
+    tick = time.time()
     org = {}
+    return org
     #TODO: Offload the sorting to the DB through join() + SELECT statements
     all_wps = db.session.query(
         WaitingPrompt
@@ -308,6 +310,7 @@ def get_organized_wps_by_model():
         WaitingPrompt.faulted == False,
         WaitingPrompt.n >= 1,
     ).all() # TODO this can likely be improved
+    logger.debug(f"Tick = {time.time() - tick}")
     for wp in all_wps:
         # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
         # This will inflate the overall expected times, but it shouldn't be by much.
@@ -316,6 +319,7 @@ def get_organized_wps_by_model():
             if model not in org:
                 org[model] = []
             org[model].append(wp)
+    logger.debug(f"Tock = {time.time() - tick}")
     return(org)    
 
 def count_things_per_model():

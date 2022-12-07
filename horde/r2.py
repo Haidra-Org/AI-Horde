@@ -42,4 +42,3 @@ def delete_procgen_image(procgen_id):
         Bucket="stable-horde",
         Key=f"{procgen_id}.webp"
     )
-    logger.info(response)

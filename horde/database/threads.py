@@ -122,12 +122,19 @@ def check_waiting_prompts():
         expired_wps.delete()
         db.session.commit()
         # Faults stale ProcGens
-        all_proc_gen = db.session.query(ProcessingGeneration).filter(ProcessingGeneration.generation is None).filter().all()
+        all_proc_gen = db.session.query(
+            ProcessingGeneration,
+        ).join(
+            WaitingPrompt, 
+        ).filter(
+            ProcessingGeneration.generation is None,
+            ProcessingGeneration.faulted == False,
+            # datetime.utcnow() - ProcessingGeneration.start_time > WaitingPrompt.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
+        ).all()
         for proc_gen in all_proc_gen:
-            proc_gen = proc_gen.Join(WaitingPrompt, WaitingPrompt.id == ProcessingGeneration.wp_id).filter(WaitingPrompt.faulted == False).filter(ProcessingGeneration.faulted == False)
-            if proc_gen.is_stale(wp.job_ttl):
+            if proc_gen.is_stale(proc_gen.wp.job_ttl):
                 proc_gen.abort()
-                wp.n += 1
+                proc_gen.wp.n += 1
                 db.session.commit()
 
         # Faults WP with 3 or more faulted Procgens
@@ -153,7 +160,7 @@ def store_available_models():
     with HORDE.app_context():
         json_models = json.dumps(get_available_models())
         try:
-            horde_r.setex('model_cache', timedelta(seconds=10), json_models)
+            horde_r.setex('models_cache', timedelta(seconds=10), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
