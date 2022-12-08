@@ -184,7 +184,7 @@ class Worker(db.Model):
 
     def set_models(self, models):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        models = [sanitize_string(model_name[0:30]) for model_name in models]
+        models = [sanitize_string(model_name[0:60]) for model_name in models]
         del models[50:]
         models = set(models)
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
@@ -287,6 +287,10 @@ class Worker(db.Model):
         if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
+        # Skips working prompts which require a specific worker from a list, and our ID is not in that list
+        if len(waiting_prompt.workers) and self.id not in [wref.worker_id for wref in waiting_prompt.workers]:
+            is_matching = False
+            skipped_reason = 'worker_id'
         #logger.warning(datetime.utcnow())
 
         my_model_names = self.get_model_names()

@@ -19,6 +19,7 @@ from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
 from horde.horde_redis import horde_r
+from horde.patreon import patrons
 
 # Not used yet
 authorizations = {
@@ -444,7 +445,7 @@ class JobPop(Resource):
         self.worker_name = sanitize_string(self.args['name'])
         self.worker = database.find_worker_by_name(self.worker_name)
         self.safe_ip = True
-        if not self.worker or not self.worker.user.trusted:
+        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
             self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
             if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)

@@ -1,6 +1,8 @@
 import time
 import json
 import uuid
+import patreon
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_
@@ -14,7 +16,7 @@ from horde import horde_instance_id
 from horde.argparser import args
 from horde.r2 import delete_procgen_image
 from horde.argparser import args
-
+from horde.patreon import patrons
 
 @logger.catch(reraise=True)
 def get_quorum():
@@ -35,17 +37,21 @@ def get_quorum():
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     return(quorum)
 
-
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
     with HORDE.app_context():
+        patron_ids = patrons.get_ids()
+        for pid in patron_ids:
+            logger.debug(patrons.get_monthly_kudos(pid))
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
         or_conditions.append(User.moderator == True)
+        or_conditions.append(User.id.in_(patron_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
         logger.debug(f"Found {users.count()} users with Monthly Kudos Assignment")
         for user in users.all():
             user.receive_monthly_kudos()
+  
 
 @logger.catch(reraise=True)
 def store_prioritized_wp_queue():
@@ -179,3 +185,63 @@ def prune_stats():
     '''Prunes performances which are too old'''
     with HORDE.app_context():
         prune_expired_stats()
+
+
+@logger.catch(reraise=True)
+def store_patreon_members():
+    api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
+    # campaign_id = api_client.get_campaigns(10).data()[0].id()
+    cursor = None
+    members = []
+    while True:
+        members_response = api_client.get_campaigns_by_id_members(
+            77119, 100, 
+            cursor=cursor,
+            includes=["user"],
+            fields={
+                # See patreon/schemas/member.py
+                "member": ["patron_status", "full_name", "email", "currently_entitled_amount_cents", "note"]
+            }
+            )
+        members += members_response.data()
+        if members_response.json_data.get("links") is None:
+            # Avoid Exception: ('Provided cursor path did not result in a link' ..
+            break
+        cursor = api_client.extract_cursor(members_response)
+    active_members = {}
+    for member in members:
+        if member.attribute('patron_status') != "active_patron":
+            continue
+        # If we do not have a user ID, we cannot use it
+        if member.attribute('note') in [None, ""]:
+            continue
+        member_dict = {
+            "name": member.attribute('full_name'),
+            "email": member.attribute('email'),
+            "entitlement_amount": member.attribute('currently_entitled_amount_cents') / 100,
+        }
+        note = json.loads(member.attribute('note'))
+        if f"{args.horde}_id" not in note:
+            continue
+        user_id = note[f"{args.horde}_id"]
+        if '#' in user_id:
+            user_id = user_id.split("#")[-1]
+        if "alias" in note:
+            member_dict["alias"] = note["alias"]
+        active_members[user_id] = member_dict
+    cached_patreons = json.dumps(active_members)
+    horde_r.set('patreon_cache', cached_patreons)
+
+
+@logger.catch(reraise=True)
+def increment_extra_priority():
+    '''Increases the priority of every WP currently in the queue by 50 kudos'''
+    with HORDE.app_context():
+        wp_queue = db.session.query(
+            WaitingPrompt
+        ).update(
+            {
+                WaitingPrompt.extra_priority: WaitingPrompt.extra_priority + 50
+            }, synchronize_session=False
+        )
+        db.session.commit()

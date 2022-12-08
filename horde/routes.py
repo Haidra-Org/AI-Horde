@@ -1,6 +1,7 @@
 import oauthlib
 import random
 import secrets
+import patreon
 from uuid import uuid4
 
 from flask import render_template, redirect, url_for, request
@@ -15,7 +16,8 @@ from horde.classes import News, User, stats
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
-from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
+from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title, horde_url
+from horde.patreon import patrons
 
 dance_return_to = '/'
 
@@ -78,7 +80,7 @@ This is the worker which has generated the most pixels for the horde.
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
     total_fulfillments = ConvertAmount(totals["fulfilments"])
     findex = index.format(
-        horde_title = horde_title,
+        page_title = horde_title,
         horde_img_url = img_url,
         horde_image = align_image,
         avg_performance= avg_performance.amount,
@@ -117,11 +119,23 @@ This is the worker which has generated the most pixels for the horde.
     return(head + markdown(findex + top_contributors + policies))
 
 
+@HORDE.route('/sponsors')
+@logger.catch(reraise=True)
+@cache.cached(timeout=300)
+def patrons_route():
+    all_patrons = ", ".join(patrons.get_names(min_entitlement=3))
+    return render_template('sponsors.html',
+                           page_title="Sponsors",
+                           all_patrons=all_patrons,)
+
+
+
 @logger.catch(reraise=True)
 def get_oauth_id():
     google_data = None
     discord_data = None
     github_data = None
+    patreon_data = None
     authorized = False
     if google.authorized:
         google_user_info_endpoint = '/oauth2/v2/userinfo'
@@ -144,6 +158,13 @@ def get_oauth_id():
             authorized = True
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
+    # if not authorized and patreon.OAuth(os.getenv("PATREON_CLIENT_ID"), os.getenv("PATREON_CLIENT_SECRET")):
+    #     patreon_info_endpoint = '/api/oauth2/token'
+    #     try:
+    #         patreon_data = github.get(patreon_info_endpoint).json()
+    #         authorized = True
+    #     except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+    #         pass
     oauth_id = None
     if google_data:
         oauth_id = f'g_{google_data["id"]}'
@@ -151,6 +172,8 @@ def get_oauth_id():
         oauth_id = f'd_{discord_data["id"]}'
     elif github_data:
         oauth_id = f'gh_{github_data["id"]}'
+    elif patreon_data:
+        oauth_id = f'p_{patreon_data["id"]}'
     return(oauth_id)
 
 
@@ -193,7 +216,7 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
-                           page_title="Join the Stable Horde!",
+                           page_title=f"Join the {horde_title} Horde!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
@@ -263,6 +286,12 @@ def github_login(return_to):
     dance_return_to = '/' + return_to
     return redirect(url_for('github.login'))
 
+# @HORDE.route('/patreon/<return_to>')
+# def patreon_login(return_to):
+#     global dance_return_to
+#     dance_return_to = '/' + return_to
+#     return redirect('/patreon/patreon')
+
 
 @HORDE.route('/finish_dance')
 def finish_dance():
@@ -274,8 +303,12 @@ def finish_dance():
 
 @HORDE.route('/privacy')
 def privacy():
-    return render_template('privacy_policy.html')
+    return render_template('privacy_policy.html',
+                            horde_title=horde_title,
+                            horde_url=horde_url)
 
 @HORDE.route('/terms')
 def terms():
-    return render_template('terms_of_service.html')
+    return render_template('terms_of_service.html',
+                            horde_title=horde_title,
+                            horde_url=horde_url)
