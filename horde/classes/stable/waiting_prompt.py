@@ -42,7 +42,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.width = self.params["width"]
         self.height = self.params["height"]
         # Silent change
-        if self.get_model_names() in ["stable_diffusion_2.0", "stable_diffusion_2.1"]:
+        if any(model_name.startswith("stable_diffusion_2") for model_name in self.get_model_names()):
             self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
         if self.params.get('seed') == '':
@@ -186,7 +186,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if max_res < 576:
             max_res = 576
             # SD 2.0 requires at least 768 to do its thing
-            if max_res < 768 and len(self.models) > 1 and "stable_diffusion_2." in self.models:
+            if max_res < 768 and len(self.models) >= 1 and "stable_diffusion_2." in self.models:
                 max_res = 768
         if max_res > 1024:
             max_res = 1024
