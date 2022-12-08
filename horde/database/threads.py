@@ -83,6 +83,7 @@ def assign_monthly_kudos():
         for user in users.all():
             user.receive_monthly_kudos()
 
+
 @logger.catch(reraise=True)
 def store_prioritized_wp_queue():
     '''Stores the retrieved WP queue as json for 1 second horde-wide'''

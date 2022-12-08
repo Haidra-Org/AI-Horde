@@ -33,18 +33,19 @@ class PrimaryTimedFunction:
 
     def run(self):
         while True:
-            # Everything starts the thread, but only the primary does something with it.
-            # This allows me to change the primary node on-the-fly
-            if self.cancel:
-                break
-            if self.quorum_thread and self.quorum_thread.quorum != horde_instance_id:
-                time.sleep(self.interval)
-                continue
             try:
+                # Everything starts the thread, but only the primary does something with it.
+                # This allows me to change the primary node on-the-fly
+                if self.cancel:
+                    break
+                if self.quorum_thread and self.quorum_thread.quorum != horde_instance_id:
+                    time.sleep(self.interval)
+                    continue
                 self.call_function()
+                time.sleep(self.interval)
             except Exception as e:
                 logger.error(f"Exception caught in PrimaryTimer for method {self.function.__name__}(). Avoiding! {e}")
-            time.sleep(self.interval)
+                time.sleep(10)
 
     # Putting this in its own method, so I can extend it
     def call_function(self):
