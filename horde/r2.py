@@ -23,10 +23,9 @@ def generate_presigned_url(client_method, method_parameters, expires_in):
             Params=method_parameters,
             ExpiresIn=expires_in
         )
-        logger.info("Got presigned URL: %s", url)
     except ClientError:
         logger.exception(
-            "Couldn't get a presigned URL for client method '%s'.", client_method)
+            f"Couldn't get a presigned URL for client method {client_method}", )
         raise
     # logger.debug(url)
     return url
