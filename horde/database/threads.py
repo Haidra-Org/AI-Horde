@@ -2,6 +2,7 @@ import time
 import json
 import uuid
 import patreon
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_
@@ -35,42 +36,6 @@ def get_quorum():
         logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     return(quorum)
-
-@logger.catch(reraise=True)
-def grab_patreon_members():
-    api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
-    # campaign_id = api_client.get_campaigns(10).data()[0].id()
-    cursor = None
-    members = []
-    while True:
-        members_response = api_client.get_campaigns_by_id_members(
-            77119, 100, 
-            cursor=cursor,
-            includes=["user"],
-            fields={
-                # See patreon/schemas/member.py
-                "member": ["patron_status", "full_name", "email", "currently_entitled_amount_cents"]
-            }
-            )
-        members += members_response.data()
-        if members_response.json_data.get("links") is None:
-            # Avoid Exception: ('Provided cursor path did not result in a link' ..
-            break
-        cursor = api_client.extract_cursor(members_response)
-
-    active_members = []
-    for member in members:
-        if member.attribute('patron_status') != "active_patron":
-            continue
-        member_dict = {
-            "user": member.attribute('full_name'),
-            "email": member.attribute('email'),
-            "entitlement_amount": member.attribute('currently_entitled_amount_cents') / 100,
-            "note": member.attribute('note') / 100
-        }
-        active_members.append(member_dict)
-        cached_patreons = json.dumps(active_members)
-        horde_r.set('wp_cache', cached_patreons)
 
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
@@ -216,3 +181,46 @@ def prune_stats():
     '''Prunes performances which are too old'''
     with HORDE.app_context():
         prune_expired_stats()
+
+
+@logger.catch(reraise=True)
+def store_patreon_members():
+    logger.debug('a')
+    api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
+    # campaign_id = api_client.get_campaigns(10).data()[0].id()
+    cursor = None
+    members = []
+    while True:
+        members_response = api_client.get_campaigns_by_id_members(
+            77119, 100, 
+            cursor=cursor,
+            includes=["user"],
+            fields={
+                # See patreon/schemas/member.py
+                "member": ["patron_status", "full_name", "email", "currently_entitled_amount_cents", "note"]
+            }
+            )
+        members += members_response.data()
+        if members_response.json_data.get("links") is None:
+            # Avoid Exception: ('Provided cursor path did not result in a link' ..
+            break
+        cursor = api_client.extract_cursor(members_response)
+    active_members = {}
+    for member in members:
+        if member.attribute('patron_status') != "active_patron":
+            continue
+        # If we do not have a user ID, we cannot use it
+        if member.attribute('note') in [None, ""]:
+            continue
+        member_dict = {
+            "name": member.attribute('full_name'),
+            "email": member.attribute('email'),
+            "entitlement_amount": member.attribute('currently_entitled_amount_cents') / 100,
+        }
+        if '#' in member.attribute('note'):
+            user_id = member.attribute('note').split("#")[-1]
+        else:
+            user_id = member.attribute('note')
+        active_members[user_id] = member_dict
+    cached_patreons = json.dumps(active_members)
+    horde_r.set('patreon_cache', cached_patreons)
