@@ -98,7 +98,6 @@ class WaitingPrompt(db.Model):
     def set_models(self, model_names = None):
         if not model_names: model_names = []
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        logger.debug(model_names)
         for model in model_names:
             model_entry = WPModels(model=model,wp_id=self.id)
             db.session.add(model_entry)

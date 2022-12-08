@@ -12,6 +12,8 @@ from horde.logger import logger
 from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
 from horde import horde_instance_id
 from horde.argparser import args
+from horde.r2 import delete_procgen_image
+from horde.argparser import args
 
 
 @logger.catch(reraise=True)
@@ -26,6 +28,10 @@ def get_quorum():
     if quorum == horde_instance_id:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
+        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
+    elif args.quorum:
+        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     return(quorum)
 
@@ -102,16 +108,33 @@ def check_waiting_prompts():
     with HORDE.app_context():
         # Cleans expired WPs
         expired_wps = db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry < datetime.utcnow())
+        expired_r_wps = expired_wps.filter(WaitingPrompt.r2 == True)
+        all_wp_r_id = [wp.id for wp in expired_r_wps.all()]
+        expired_r2_procgens = db.session.query(
+            ProcessingGeneration.id,
+        ).filter(
+            ProcessingGeneration.wp_id.in_(all_wp_r_id)
+        ).all()
+        # logger.debug([expired_r_wps, expired_r2_procgens])
+        for procgen in expired_r2_procgens:
+            delete_procgen_image(str(procgen.id))
         logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
         expired_wps.delete()
         db.session.commit()
         # Faults stale ProcGens
-        all_proc_gen = db.session.query(ProcessingGeneration).filter(ProcessingGeneration.generation is None).filter().all()
+        all_proc_gen = db.session.query(
+            ProcessingGeneration,
+        ).join(
+            WaitingPrompt, 
+        ).filter(
+            ProcessingGeneration.generation is None,
+            ProcessingGeneration.faulted == False,
+            # datetime.utcnow() - ProcessingGeneration.start_time > WaitingPrompt.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
+        ).all()
         for proc_gen in all_proc_gen:
-            proc_gen = proc_gen.Join(WaitingPrompt, WaitingPrompt.id == ProcessingGeneration.wp_id).filter(WaitingPrompt.faulted == False).filter(ProcessingGeneration.faulted == False)
-            if proc_gen.is_stale(wp.job_ttl):
+            if proc_gen.is_stale(proc_gen.wp.job_ttl):
                 proc_gen.abort()
-                wp.n += 1
+                proc_gen.wp.n += 1
                 db.session.commit()
 
         # Faults WP with 3 or more faulted Procgens
@@ -137,7 +160,7 @@ def store_available_models():
     with HORDE.app_context():
         json_models = json.dumps(get_available_models())
         try:
-            horde_r.setex('model_cache', timedelta(seconds=10), json_models)
+            horde_r.setex('models_cache', timedelta(seconds=10), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 

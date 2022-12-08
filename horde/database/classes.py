@@ -37,8 +37,6 @@ class PrimaryTimedFunction:
             # This allows me to change the primary node on-the-fly
             if self.cancel:
                 break
-            if self.quorum_thread:
-                logger.debug(self.quorum_thread.quorum)
             if self.quorum_thread and self.quorum_thread.quorum != horde_instance_id:
                 time.sleep(self.interval)
                 continue
