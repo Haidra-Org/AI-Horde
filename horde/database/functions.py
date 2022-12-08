@@ -172,7 +172,12 @@ def get_available_models():
 
 def retrieve_available_models():
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
-    models_ret = json.loads(horde_r.get('models_cache'))
+    model_cache = horde_r.get('models_cache')
+    try:
+        models_ret = json.loads(model_cache)
+    except TypeError as e:
+        logger.error(f"Model cache could not be loaded: {model_cache}")
+        return([])
     if models_ret is None:
         models_ret = get_available_models()
     return(models_ret)
