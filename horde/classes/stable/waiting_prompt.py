@@ -5,6 +5,7 @@ from horde.vars import thing_divisor
 from horde.flask import db
 from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.r2 import generate_upload_url
 
 
 class WaitingPromptExtended(WaitingPrompt):
@@ -15,6 +16,7 @@ class WaitingPromptExtended(WaitingPrompt):
     seed = db.Column(db.BigInteger, default=None, nullable=True)
     seed_variation = db.Column(db.Integer, default=None)
     kudos = db.Column(db.Float, default=0, nullable=False)
+    r2 = db.Column(db.Boolean, default=False, nullable=False)
 
     @logger.catch(reraise=True)
     def extract_params(self):
@@ -40,7 +42,7 @@ class WaitingPromptExtended(WaitingPrompt):
         self.width = self.params["width"]
         self.height = self.params["height"]
         # Silent change
-        if self.get_model_names() == ["stable_diffusion_2.0"]:
+        if any(model_name.startswith("stable_diffusion_2") for model_name in self.get_model_names()):
             self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
         if self.params.get('seed') == '':
@@ -55,7 +57,7 @@ class WaitingPromptExtended(WaitingPrompt):
             # It then crashes in self.gen_payload["seed"] += self.seed_variation trying to None + Int
             if self.seed is None:
                 self.seed = self.seed_to_int(self.seed)
-        logger.debug(self.params)
+        # logger.debug(self.params)
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.width * self.height * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / thing_divisor,2)
@@ -119,6 +121,8 @@ class WaitingPromptExtended(WaitingPrompt):
                 prompt_payload["source_processing"] = self.source_processing
                 if self.source_mask:
                     prompt_payload["source_mask"] = self.source_mask
+            if procgen.worker.bridge_version >= 8 and self.r2:
+                prompt_payload["r2_upload"] = generate_upload_url(str(procgen.id))
         else:
             prompt_payload = {}
             self.faulted = True
@@ -182,7 +186,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if max_res < 576:
             max_res = 576
             # SD 2.0 requires at least 768 to do its thing
-            if max_res < 768 and len(self.models) > 1 and "stable_diffusion_2.0" in self.models:
+            if max_res < 768 and len(self.models) >= 1 and "stable_diffusion_2." in self.models:
                 max_res = 768
         if max_res > 1024:
             max_res = 1024

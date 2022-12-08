@@ -172,7 +172,7 @@ def get_available_models():
 
 def retrieve_available_models():
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
-    models_ret = horde_r.get('models_cache')
+    models_ret = json.loads(horde_r.get('models_cache'))
     if models_ret is None:
         models_ret = get_available_models()
     return(models_ret)
@@ -376,6 +376,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             and_(
                 worker.maintenance == True,
                 WaitingPrompt.user_id == worker.user_id,
+            ),
+        ),
+        or_(
+            worker.bridge_version >= 8,
+            and_(
+                worker.bridge_version < 8,
+                WaitingPrompt.r2 == False,
             ),
         ),
     ).order_by(

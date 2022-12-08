@@ -74,9 +74,9 @@ class AsyncGenerate(AsyncGenerate):
         if self.args.source_image:
             if self.args.source_processing == "img2img" and self.params.get("sampler_name") in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]:
                 raise e.UnsupportedSampler
-            if "stable_diffusion_2.0" in self.args.models:
+            if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
                 raise e.UnsupportedModel
-        if self.args.models != ["stable_diffusion_2.0"] and self.params.get("sampler_name") in ["dpmsolver"]:
+        if not any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models) and self.params.get("sampler_name") in ["dpmsolver"]:
             raise e.UnsupportedSampler
         # if self.args.models == ["stable_diffusion_2.0"] and self.params.get("sampler_name") not in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
@@ -105,6 +105,7 @@ class AsyncGenerate(AsyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
+            r2=self.args.r2,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
@@ -149,6 +150,7 @@ class SyncGenerate(SyncGenerate):
             source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
+            r2=self.args.r2,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:

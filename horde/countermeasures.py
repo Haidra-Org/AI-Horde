@@ -70,7 +70,7 @@ class CounterMeasures:
 				if probability == int(os.getenv("IP_CHECKER_LC")):
 					is_safe = CounterMeasures.set_safe(ipaddr,True)
 				else:
-					is_safe = CounterMeasures.set_safe(ipaddr,False)
+					is_safe = CounterMeasures.set_safe(ipaddr,True) # True until I can improve my load
 					logger.error(f"An error occured while validating IP. Return Code: {result.text}")
 			else:
 				probability = float(result.content)

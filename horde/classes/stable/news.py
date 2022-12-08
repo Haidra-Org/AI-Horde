@@ -2,7 +2,13 @@ from horde.classes.base.news import News
 
 class NewsExtended(News):
 
+
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2022-12-08",
+            "newspiece": "The Stable Horde workers now support dynamically swapping models. This means that models will always switch to support the most in demand models every minute, allowing us to support demand much better!",
+            "importance": "Information"
+        },
         {
             "date_published": "2022-11-28",
             "newspiece": "The Horde has undertaken a massive code refactoring to allow me to move to a proper SQL DB. This will finally allow me to scale the frontend systems horizontally and allow for way more capacity!",

@@ -272,13 +272,13 @@ class User(db.Model):
         '''Clears the user's suspicion and resets their reasons'''
         if self.is_anon():
             return
-        #TODO Select from UserSuspicions DB and delete all matching user ID
+        db.session.query(UserSuspicions).filter_by(user_id=self.id).delete()
         db.session.commit()
         for worker in self.workers:
             worker.reset_suspicion()
 
     def get_suspicion(self):
-        return(db.session.query(UserSuspicions).filter(user_id=self.id).count())
+        return(db.session.query(UserSuspicions).filter_by(user_id=self.id).count())
 
     def count_workers(self):
         return(len(self.workers))
@@ -374,7 +374,7 @@ class User(db.Model):
             }
             ret_dict["evaluating_kudos"] = self.evaluating_kudos
             ret_dict["monthly_kudos"] = mk_dict
-            ret_dict["suspicious"] = self.suspicious
+            ret_dict["suspicious"] = len(self.suspicions)
         return(ret_dict)
 
 
