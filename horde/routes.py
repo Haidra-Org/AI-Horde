@@ -1,6 +1,7 @@
 import oauthlib
 import random
 import secrets
+import patreon
 from uuid import uuid4
 
 from flask import render_template, redirect, url_for, request
@@ -122,6 +123,7 @@ def get_oauth_id():
     google_data = None
     discord_data = None
     github_data = None
+    patreon_data = None
     authorized = False
     if google.authorized:
         google_user_info_endpoint = '/oauth2/v2/userinfo'
@@ -144,6 +146,13 @@ def get_oauth_id():
             authorized = True
         except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
             pass
+    # if not authorized and patreon.OAuth(os.getenv("PATREON_CLIENT_ID"), os.getenv("PATREON_CLIENT_SECRET")):
+    #     patreon_info_endpoint = '/api/oauth2/token'
+    #     try:
+    #         patreon_data = github.get(patreon_info_endpoint).json()
+    #         authorized = True
+    #     except oauthlib.oauth2.rfc6749.errors.TokenExpiredError:
+    #         pass
     oauth_id = None
     if google_data:
         oauth_id = f'g_{google_data["id"]}'
@@ -151,6 +160,8 @@ def get_oauth_id():
         oauth_id = f'd_{discord_data["id"]}'
     elif github_data:
         oauth_id = f'gh_{github_data["id"]}'
+    elif patreon_data:
+        oauth_id = f'p_{patreon_data["id"]}'
     return(oauth_id)
 
 
@@ -262,6 +273,12 @@ def github_login(return_to):
     global dance_return_to
     dance_return_to = '/' + return_to
     return redirect(url_for('github.login'))
+
+# @HORDE.route('/patreon/<return_to>')
+# def patreon_login(return_to):
+#     global dance_return_to
+#     dance_return_to = '/' + return_to
+#     return redirect('/patreon/patreon')
 
 
 @HORDE.route('/finish_dance')

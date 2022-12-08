@@ -58,3 +58,10 @@ github_blueprint = make_github_blueprint(
     redirect_url='/finish_dance',
 )
 HORDE.register_blueprint(github_blueprint, url_prefix="/github")
+# patreon_blueprint = make_patreon_blueprint(
+#     client_id=patreon_client_id,
+#     client_secret=patreon_client_secret,
+#     scope=["identify"],
+#     redirect_url='/finish_dance',
+# )
+# HORDE.register_blueprint(patreon_blueprint, url_prefix="/patreon")

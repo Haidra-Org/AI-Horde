@@ -1,5 +1,5 @@
 from horde.database.classes import PrimaryTimedFunction, Quorum
-from horde.database.threads import get_quorum, store_prioritized_wp_queue, check_waiting_prompts, assign_monthly_kudos, store_worker_list, store_available_models, store_totals, prune_stats
+from horde.database.threads import get_quorum, store_prioritized_wp_queue, check_waiting_prompts, assign_monthly_kudos, store_worker_list, store_available_models, store_totals, prune_stats, grab_patreon_members
 
 # Threads
 quorum = Quorum(1, get_quorum)
