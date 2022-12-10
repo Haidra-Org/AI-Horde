@@ -17,6 +17,7 @@ from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
 from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
+from horde.patreon import patrons
 
 dance_return_to = '/'
 
@@ -116,6 +117,17 @@ This is the worker which has generated the most pixels for the horde.
     </head>
     """
     return(head + markdown(findex + top_contributors + policies))
+
+
+@HORDE.route('/sponsors')
+@logger.catch(reraise=True)
+# @cache.cached(timeout=300)
+def patrons_route():
+    all_patrons = ", ".join(patrons.get_names(min_entitlement=3))
+    return render_template('sponsors.html',
+                           page_title="Sponsors",
+                           all_patrons=all_patrons,)
+
 
 
 @logger.catch(reraise=True)

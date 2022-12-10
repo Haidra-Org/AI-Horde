@@ -236,9 +236,6 @@ def store_patreon_members():
 def increment_extra_priority():
     '''Increases the priority of every WP currently in the queue by 50 kudos'''
     with HORDE.app_context():
-        # stmt = db.session.update(WaitingPrompt).values(extra_priority=WaitingPrompt.c.extra_priority + 50)
-        # logger.debug(stmt)
-        # db.session.rollback()
         wp_queue = db.session.query(
             WaitingPrompt
         ).update(
