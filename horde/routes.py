@@ -80,7 +80,7 @@ This is the worker which has generated the most pixels for the horde.
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
     total_fulfillments = ConvertAmount(totals["fulfilments"])
     findex = index.format(
-        horde_title = horde_title,
+        page_title = horde_title,
         horde_img_url = img_url,
         horde_image = align_image,
         avg_performance= avg_performance.amount,
@@ -216,7 +216,7 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
-                           page_title="Join the Stable Horde!",
+                           page_title=f"Join the {horde_title} Horde!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
