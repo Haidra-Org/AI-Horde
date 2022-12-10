@@ -9,6 +9,7 @@ from horde.flask import db
 from horde.vars import thing_name, thing_divisor
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
+from horde.patreon import patrons
 
 
 class UserStats(db.Model):
@@ -204,6 +205,7 @@ class User(db.Model):
         base_amount = self.monthly_kudos
         if self.moderator:
             base_amount += 100000
+        base.amount += patrons.get_monthly_kudos(self.id)
         return(base_amount)
 
     def modify_kudos(self, kudos, action = 'accumulated'):

@@ -13,5 +13,3 @@ monthly_kudos = PrimaryTimedFunction(86400, assign_monthly_kudos, quorum=quorum)
 store_totals = PrimaryTimedFunction(60, store_totals, quorum=quorum)
 prune_stats = PrimaryTimedFunction(60, prune_stats, quorum=quorum)
 patreon_cacher = PrimaryTimedFunction(3600, store_patreon_members, quorum=quorum)
-
-store_patreon_members()

@@ -16,7 +16,7 @@ from horde import horde_instance_id
 from horde.argparser import args
 from horde.r2 import delete_procgen_image
 from horde.argparser import args
-
+from horde.patreon import patrons
 
 @logger.catch(reraise=True)
 def get_quorum():
@@ -40,14 +40,18 @@ def get_quorum():
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
     with HORDE.app_context():
+        patron_ids = patrons.get_ids()
+        for pid in patron_ids:
+            logger.debug(patrons.get_monthly_kudos(pid))
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
         or_conditions.append(User.moderator == True)
+        or_conditions.append(User.id.in_(patron_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
         logger.debug(f"Found {users.count()} users with Monthly Kudos Assignment")
         for user in users.all():
             user.receive_monthly_kudos()
-
+  
 
 @logger.catch(reraise=True)
 def store_prioritized_wp_queue():
@@ -217,10 +221,12 @@ def store_patreon_members():
             "email": member.attribute('email'),
             "entitlement_amount": member.attribute('currently_entitled_amount_cents') / 100,
         }
-        if '#' in member.attribute('note'):
-            user_id = member.attribute('note').split("#")[-1]
-        else:
-            user_id = member.attribute('note')
+        note = json.loads(member.attribute('note'))
+        if f"{args.horde}_id" not in note:
+            continue
+        user_id = note[f"{args.horde}_id"]
+        if '#' in user_id:
+            user_id = user_id.split("#")[-1]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
     horde_r.set('patreon_cache', cached_patreons)
