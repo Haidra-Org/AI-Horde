@@ -1,6 +1,6 @@
 from horde.threads import PrimaryTimedFunction
 from horde.database.classes import Quorum
-from horde.database.threads import get_quorum, store_prioritized_wp_queue, check_waiting_prompts, assign_monthly_kudos, store_worker_list, store_available_models, store_totals, prune_stats, store_patreon_members
+from horde.database.threads import get_quorum, store_prioritized_wp_queue, check_waiting_prompts, assign_monthly_kudos, store_worker_list, store_available_models, store_totals, prune_stats, store_patreon_members, increment_extra_priority
 from horde.horde_redis import horde_r
 
 # Threads
@@ -13,3 +13,4 @@ monthly_kudos = PrimaryTimedFunction(86400, assign_monthly_kudos, quorum=quorum)
 store_totals = PrimaryTimedFunction(60, store_totals, quorum=quorum)
 prune_stats = PrimaryTimedFunction(60, prune_stats, quorum=quorum)
 patreon_cacher = PrimaryTimedFunction(3600, store_patreon_members, quorum=quorum)
+priority_increaser = PrimaryTimedFunction(10, increment_extra_priority, quorum=quorum)
