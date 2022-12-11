@@ -287,6 +287,10 @@ class Worker(db.Model):
         if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
             is_matching = False
             skipped_reason = 'blacklist'
+        # Skips working prompts which require a specific worker from a list, and our ID is not in that list
+        if len(waiting_prompt.workers) and self.id not in [worker.id for worker in waiting_prompt.workers]:
+            is_matching = False
+            skipped_reason = 'worker_id'
         #logger.warning(datetime.utcnow())
 
         my_model_names = self.get_model_names()
