@@ -32,7 +32,10 @@ class PatreonCache(PrimaryTimedFunction):
         return list(self.get_patrons(**kwargs).keys())
 
     def get_names(self, **kwargs):
-        return [p["name"] for p in self.get_sorted_patrons(**kwargs)]
+        '''Returns the name of each patron, unless they have an alias defined in their note
+        in which case it returns their alias instead
+        '''
+        return [p.get("alias", p["name"]) for p in self.get_sorted_patrons(**kwargs)]
 
     def get_sorted_patrons(self, **kwargs):
         all_patrons = self.get_patrons(**kwargs)

@@ -189,7 +189,6 @@ def prune_stats():
 
 @logger.catch(reraise=True)
 def store_patreon_members():
-    logger.debug('a')
     api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
     # campaign_id = api_client.get_campaigns(10).data()[0].id()
     cursor = None
@@ -227,6 +226,8 @@ def store_patreon_members():
         user_id = note[f"{args.horde}_id"]
         if '#' in user_id:
             user_id = user_id.split("#")[-1]
+        if "alias" in note:
+            member_dict["alias"] = note["alias"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
     horde_r.set('patreon_cache', cached_patreons)
