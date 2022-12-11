@@ -83,6 +83,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 These are the people who made this sotware possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
-* [Sygic-Dev](https://github.com/Sygil-Dev) - Worker backend code.
+* [Sygil-Dev](https://github.com/Sygil-Dev) - Worker backend code.
+* [Sponsors](/sponsors) - See our complete sponsor list including our patreon supporters
 
 And of course, everyone contributing their SD to the horde!
