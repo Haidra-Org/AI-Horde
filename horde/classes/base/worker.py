@@ -288,7 +288,7 @@ class Worker(db.Model):
             is_matching = False
             skipped_reason = 'blacklist'
         # Skips working prompts which require a specific worker from a list, and our ID is not in that list
-        if len(waiting_prompt.workers) and self.id not in [worker.id for worker in waiting_prompt.workers]:
+        if len(waiting_prompt.workers) and self.id not in [wref.worker_id for wref in waiting_prompt.workers]:
             is_matching = False
             skipped_reason = 'worker_id'
         #logger.warning(datetime.utcnow())

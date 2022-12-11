@@ -343,7 +343,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     worker_models = worker.get_model_names()
-    return db.session.query(
+    final_wp_list = db.session.query(
         WaitingPrompt
     ).join(
         WPModels
@@ -394,13 +394,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
     ).limit(100).all()
-    # sorted_wp_list = sorted(wplist, key=lambda x: x.get_priority(), reverse=True)
-    # final_wp_list = []
-    # for wp in sorted_wp_list:
-    #     if wp.needs_gen():
-    #         final_wp_list.append(wp)
-    # logger.debug([(wp,wp.get_priority()) for wp in final_wp_list])
-
     return final_wp_list
 
 # Returns the queue position of the provided WP based on kudos
