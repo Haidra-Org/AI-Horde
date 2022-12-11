@@ -39,3 +39,6 @@ img_url = f"https://raw.githubusercontent.com/db0/Stable-Horde/main/img_{args.ho
 horde_title = args.horde.capitalize()
 if args.horde == "kobold":
     horde_title = "KoboldAI"
+horde_url = "https://stablehorde.net"
+if args.horde == "kobold":
+    horde_url = "https://koboldai.net"

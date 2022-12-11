@@ -16,7 +16,7 @@ from horde.classes import News, User, stats
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
-from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title
+from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title, horde_url
 from horde.patreon import patrons
 
 dance_return_to = '/'
@@ -121,7 +121,7 @@ This is the worker which has generated the most pixels for the horde.
 
 @HORDE.route('/sponsors')
 @logger.catch(reraise=True)
-# @cache.cached(timeout=300)
+@cache.cached(timeout=300)
 def patrons_route():
     all_patrons = ", ".join(patrons.get_names(min_entitlement=3))
     return render_template('sponsors.html',
@@ -303,8 +303,12 @@ def finish_dance():
 
 @HORDE.route('/privacy')
 def privacy():
-    return render_template('privacy_policy.html')
+    return render_template('privacy_policy.html',
+                            horde_title=horde_title,
+                            horde_url=horde_url)
 
 @HORDE.route('/terms')
 def terms():
-    return render_template('terms_of_service.html')
+    return render_template('terms_of_service.html',
+                            horde_title=horde_title,
+                            horde_url=horde_url)
