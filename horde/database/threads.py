@@ -133,7 +133,7 @@ def check_waiting_prompts():
         ).join(
             WaitingPrompt, 
         ).filter(
-            ProcessingGeneration.generation is None,
+            ProcessingGeneration.generation == None,
             ProcessingGeneration.faulted == False,
             # datetime.utcnow() - ProcessingGeneration.start_time > WaitingPrompt.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
         ).all()
