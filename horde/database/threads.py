@@ -41,8 +41,8 @@ def get_quorum():
 def assign_monthly_kudos():
     with HORDE.app_context():
         patron_ids = patrons.get_ids()
-        for pid in patron_ids:
-            logger.debug(patrons.get_monthly_kudos(pid))
+        # for pid in patron_ids:
+        #     logger.debug(patrons.get_monthly_kudos(pid))
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
         or_conditions.append(User.moderator == True)
@@ -133,7 +133,7 @@ def check_waiting_prompts():
         ).join(
             WaitingPrompt, 
         ).filter(
-            ProcessingGeneration.generation is None,
+            ProcessingGeneration.generation == None,
             ProcessingGeneration.faulted == False,
             # datetime.utcnow() - ProcessingGeneration.start_time > WaitingPrompt.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
         ).all()
@@ -226,6 +226,7 @@ def store_patreon_members():
         user_id = note[f"{args.horde}_id"]
         if '#' in user_id:
             user_id = user_id.split("#")[-1]
+        user_id = int(user_id)
         if "alias" in note:
             member_dict["alias"] = note["alias"]
         active_members[user_id] = member_dict

@@ -1,5 +1,5 @@
 import json
-
+import pprint
 from horde.logger import logger
 from horde.horde_redis import horde_r
 from horde.threads import PrimaryTimedFunction
@@ -10,7 +10,10 @@ class PatreonCache(PrimaryTimedFunction):
 
     def call_function(self):
         try:
-            self.patrons = json.loads(horde_r.get("patreon_cache"))
+            patrons_json = json.loads(horde_r.get("patreon_cache"))
+            # json keys are always strings, so we need to convert them to ints to easily index user ids later
+            for pid in patrons_json:
+                self.patrons[int(pid)] = patrons_json[pid]
             # logger.debug(self.patrons)
         except TypeError:
             logger.warning("Patreon cache could not be retrieved from redis. Leaving existing cache.")
@@ -59,3 +62,5 @@ class PatreonCache(PrimaryTimedFunction):
 patrons = PatreonCache(3600, None)
 # We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
 patrons.call_function()
+# pp = pprint.PrettyPrinter(depth=3)
+# pp.pprint(patrons.patrons)

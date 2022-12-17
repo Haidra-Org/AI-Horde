@@ -33,14 +33,17 @@ def record_fulfilment(procgen):
     new_performance = ModelPerformance(model=model,performance=things_per_sec)
     new_fulfillment = FulfillmentPerformance(things=things)
     db.session.add(new_performance)
+    db.session.add(new_fulfillment)
     db.session.commit()
     return(things_per_sec)
 
 def get_things_per_min():
     total_things = 0
-    last_minute_fulfillments = db.session.query(FulfillmentPerformance).filter(
+    last_minute_fulfillments = db.session.query(
+        FulfillmentPerformance
+    ).filter(
        FulfillmentPerformance.created >= datetime.utcnow() - timedelta(seconds=60)
-    )
+    ).all()
     for fulfillment in last_minute_fulfillments:
         total_things += fulfillment.things
     things_per_min = round(total_things / thing_divisor,2)
