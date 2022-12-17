@@ -205,7 +205,7 @@ class User(db.Model):
         base_amount = self.monthly_kudos
         if self.moderator:
             base_amount += 100000
-        base.amount += patrons.get_monthly_kudos(self.id)
+        base_amount += patrons.get_monthly_kudos(self.id)
         return(base_amount)
 
     def modify_kudos(self, kudos, action = 'accumulated'):
