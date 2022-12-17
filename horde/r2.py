@@ -30,10 +30,10 @@ def generate_presigned_url(client_method, method_parameters, expires_in):
     # logger.debug(url)
     return url
 
-def generate_upload_url(procgen_id):
+def generate_procgen_upload_url(procgen_id):
     return generate_presigned_url("put_object", {'Bucket': "stable-horde", 'Key': f"{procgen_id}.webp"}, 1800)
 
-def generate_download_url(procgen_id):
+def generate_procgen_download_url(procgen_id):
     return generate_presigned_url("get_object", {'Bucket': "stable-horde", 'Key': f"{procgen_id}.webp"}, 1800)
 
 def delete_procgen_image(procgen_id):
@@ -41,3 +41,10 @@ def delete_procgen_image(procgen_id):
         Bucket="stable-horde",
         Key=f"{procgen_id}.webp"
     )
+
+
+def generate_img_upload_url(img_uuid, imgtype):
+    return generate_presigned_url("put_object", {'Bucket': "stable-horde", 'Key': f"{img_uuid}.{imgtype}"}, 1800)
+
+def generate_img_download_url(img_uuid, imgtype):
+    return generate_presigned_url("get_object", {'Bucket': "stable-horde", 'Key': f"{img_uuid}.{imgtype}"}, 1800)

@@ -1,6 +1,6 @@
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.r2 import generate_download_url
+from horde.r2 import generate_procgen_download_url
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
@@ -9,7 +9,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         '''Returns a dictionary with details about this processing generation'''
         generation = self.generation
         if generation == "R2":
-            generation = generate_download_url(str(self.id))
+            generation = generate_procgen_download_url(str(self.id))
         ret_dict = {
             "img": generation,
             "seed": self.seed,
