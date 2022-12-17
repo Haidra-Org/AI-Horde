@@ -226,6 +226,7 @@ def store_patreon_members():
         user_id = note[f"{args.horde}_id"]
         if '#' in user_id:
             user_id = user_id.split("#")[-1]
+        user_id = int(user_id)
         if "alias" in note:
             member_dict["alias"] = note["alias"]
         active_members[user_id] = member_dict
