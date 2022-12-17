@@ -41,8 +41,8 @@ def get_quorum():
 def assign_monthly_kudos():
     with HORDE.app_context():
         patron_ids = patrons.get_ids()
-        for pid in patron_ids:
-            logger.debug(patrons.get_monthly_kudos(pid))
+        # for pid in patron_ids:
+        #     logger.debug(patrons.get_monthly_kudos(pid))
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
         or_conditions.append(User.moderator == True)
