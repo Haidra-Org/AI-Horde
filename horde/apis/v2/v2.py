@@ -652,7 +652,7 @@ class WorkerSingle(Resource):
         if self.args.paused is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
-            worker.paused = self.args.paused
+            worker.toggle_paused(self.args.paused)
             ret_dict["paused"] = worker.paused
         if self.args.name is not None:
             if not admin.moderator and admin != worker.user:
