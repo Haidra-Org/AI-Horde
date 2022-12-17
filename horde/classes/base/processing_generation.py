@@ -81,11 +81,11 @@ class ProcessingGeneration(db.Model):
         if self.fake and self.worker.user == self.wp.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
-            logger.info(f"Fake{cancel_txt} Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name}")
+            logger.info(f"Fake{cancel_txt} Generation worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {wp.id}")
         else:
             self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
             self.wp.record_usage(raw_things = self.wp.things, kudos = kudos)
-            logger.info(f"New{cancel_txt} Generation worth {kudos} kudos, delivered by worker: {self.worker.name}")
+            logger.info(f"New{cancel_txt} Generation worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {wp.id}")
 
     def abort(self):
         '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''

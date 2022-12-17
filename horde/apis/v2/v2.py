@@ -264,7 +264,7 @@ class SyncGenerate(GenerateTemplate):
         super().activate_waiting_prompt()
 
 class AsyncStatus(Resource):
-    decorators = [limiter.limit("2/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', models.response_model_error)
