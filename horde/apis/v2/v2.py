@@ -308,7 +308,8 @@ class AsyncStatus(Resource):
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway
-        # wp.delete()
+        wp.n = 0
+        db.session.commit()
         return(wp_status, 200)
 
 
