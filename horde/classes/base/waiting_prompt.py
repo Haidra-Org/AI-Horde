@@ -147,7 +147,7 @@ class WaitingPrompt(db.Model):
         db.session.commit()
         new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.refresh()
-        logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
+        logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
         return self.get_pop_payload(new_gen)
 
     def fake_generation(self, worker):
