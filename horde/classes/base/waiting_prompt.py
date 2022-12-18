@@ -147,19 +147,22 @@ class WaitingPrompt(db.Model):
         db.session.commit()
         new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
         self.refresh()
-        logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
+        logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
         return self.get_pop_payload(new_gen)
 
     def fake_generation(self, worker):
-        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
-        new_gen.fake = True
+        new_gen = ProcessingGeneration(
+            wp_id=self.id, 
+            worker_id=worker.id,
+            fake=True)
         new_trick = WPTrickedWorkers(wp_id=self.id, worker_id=worker.id)
         db.session.add(new_trick)
         db.session.commit()
+        logger.audit(f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
         return self.get_pop_payload(new_gen)
     
     def tricked_worker(self, worker):
-        return worker in self.tricked_workers
+        return worker.id in [w.worker_id for w in self.tricked_workers]
 
     def get_pop_payload(self, procgen):
         prompt_payload = {
@@ -178,6 +181,7 @@ class WaitingPrompt(db.Model):
             ProcessingGeneration.wp_id
         ).filter(
             ProcessingGeneration.wp_id == self.id,
+            ProcessingGeneration.fake == False,
             or_(
                 ProcessingGeneration.faulted == True,
                 ProcessingGeneration.generation != None,
@@ -194,6 +198,8 @@ class WaitingPrompt(db.Model):
             "restarted": 0,
         }
         for procgen in self.processing_gens:
+            if procgen.fake:
+                continue
             if procgen.is_completed():
                 ret_dict["finished"] += 1
             elif procgen.is_faulted():
@@ -226,6 +232,8 @@ class WaitingPrompt(db.Model):
         if not lite:
             ret_dict["generations"] = []
             for procgen in self.processing_gens:
+                if procgen.fake:
+                    continue
                 if procgen.is_completed():
                     ret_dict["generations"].append(procgen.get_details())
 

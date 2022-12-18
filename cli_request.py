@@ -130,24 +130,31 @@ def generate():
         req_id = submit_results['id']
         is_done = False
         retry = 0
-        while not is_done:
-            try:
-                chk_req = requests.get(f'{args.horde}/api/v2/generate/check/{req_id}')
-                if not chk_req.ok:
-                    logger.error(chk_req.text)
-                    return
-                chk_results = chk_req.json()
-                logger.info(chk_results)
-                is_done = chk_results['done']
-                time.sleep(0.8)
-            except ConnectionError as e:
-                retry += 1
-                logger.error(f"Error {e} when retrieving status. Retry {retry}/10")
-                if retry < 10:
-                    time.sleep(1)
-                    continue
-                raise e
-        retrieve_req = requests.get(f'{args.horde}/api/v2/generate/status/{req_id}')
+        cancelled = False
+        try:
+            while not is_done:
+                try:
+                    chk_req = requests.get(f'{args.horde}/api/v2/generate/check/{req_id}')
+                    if not chk_req.ok:
+                        logger.error(chk_req.text)
+                        return
+                    chk_results = chk_req.json()
+                    logger.info(chk_results)
+                    is_done = chk_results['done']
+                    time.sleep(0.8)
+                except ConnectionError as e:
+                    retry += 1
+                    logger.error(f"Error {e} when retrieving status. Retry {retry}/10")
+                    if retry < 10:
+                        time.sleep(1)
+                        continue
+                    raise
+        except KeyboardInterrupt:
+            logger.info(f"Cancelling {req_id}...")
+            cancelled = True
+            retrieve_req = requests.delete(f'{args.horde}/api/v2/generate/status/{req_id}')
+        if not cancelled:
+            retrieve_req = requests.get(f'{args.horde}/api/v2/generate/status/{req_id}')
         if not retrieve_req.ok:
             logger.error(retrieve_req.text)
             return
