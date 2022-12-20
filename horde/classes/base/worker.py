@@ -187,8 +187,8 @@ class Worker(db.Model):
         db.session.commit()   
 
     def set_models(self, models):
-        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        models = [sanitize_string(model_name[0:60]) for model_name in models]
+        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
+        models = [sanitize_string(model_name[0:100]) for model_name in models]
         del models[50:]
         models = set(models)
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
