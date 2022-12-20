@@ -3,6 +3,7 @@ import uuid
 import json
 from datetime import datetime, timedelta
 from sqlalchemy import func, or_, and_
+from sqlalchemy.exc import DataError
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -123,6 +124,11 @@ def get_all_teams():
     return db.session.query(Team).all()
 
 def find_team_by_id(team_id):
+    try:
+        team_uuid = uuid.UUID(team_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID team_id sent: '{team_id}'.")
+        return None
     team = db.session.query(Team).filter_by(id=team_id).first()
     return(team)
 
@@ -422,11 +428,21 @@ def get_wp_queue_stats(wp):
     return(-1,0,0)
 
 
-def get_wp_by_id(uuid):
-    return db.session.query(WaitingPrompt).filter_by(id=uuid).first()
+def get_wp_by_id(wp_id):
+    try:
+        wp_uuid = uuid.UUID(wp_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID wp_id sent: '{wp_id}'.")
+        return None
+    return db.session.query(WaitingPrompt).filter_by(id=wp_uuid).first()
 
-def get_progen_by_id(uuid):
-    return db.session.query(ProcessingGeneration).filter_by(id=uuid).first()
+def get_progen_by_id(procgen_id):
+    try:
+        procgen_uuid = uuid.UUID(procgen_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID procgen_id sent: '{procgen_id}'.")
+        return None
+    return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
 
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
