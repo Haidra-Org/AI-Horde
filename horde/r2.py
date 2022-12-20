@@ -43,8 +43,25 @@ def delete_procgen_image(procgen_id):
     )
 
 
-def generate_img_upload_url(img_uuid, imgtype):
-    return generate_presigned_url("put_object", {'Bucket': "stable-horde", 'Key': f"{img_uuid}.{imgtype}"}, 1800)
+def upload_image(filename):
+    try:
+        response = s3_client.upload_file(
+            filename, "stable-horde", filename
+        )
+    except ClientError as e:
+        logger.error(f"Error encountered while uploading {filename}: {e}")
+        return False
+    return provide_img_public_url(filename)
 
-def generate_img_download_url(img_uuid, imgtype):
-    return generate_presigned_url("get_object", {'Bucket': "stable-horde", 'Key': f"{img_uuid}.{imgtype}"}, 1800)
+def generate_img_download_url(filename):
+    return generate_presigned_url("get_object", {'Bucket': "stable-horde", 'Key': filename}, 1800)
+
+def generate_img_upload_url(filename):
+    return generate_presigned_url("put_object", {'Bucket': "stable-horde", 'Key': filename}, 1800)
+
+def generate_uuid_img_upload_url(img_uuid, imgtype):
+    return generate_img_upload_url(f"{img_uuid}.{imgtype}")
+
+def generate_uuid_img_download_url(img_uuid, imgtype):
+    return generate_img_download_url(f"{img_uuid}.{imgtype}")
+

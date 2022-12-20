@@ -11,6 +11,7 @@ from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.classes.stable import Interrogation
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
@@ -443,6 +444,15 @@ def get_progen_by_id(procgen_id):
         logger.debug(f"Non-UUID procgen_id sent: '{procgen_id}'.")
         return None
     return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
+
+
+def get_interrogation_by_id(i_id):
+    try:
+        i_uuid = uuid.UUID(i_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID i_id sent: '{i_id}'.")
+        return None
+    return db.session.query(Interrogation).filter_by(id=i_uuid).first()
 
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()

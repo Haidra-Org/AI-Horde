@@ -99,7 +99,7 @@ class GenerateTemplate(Resource):
             self.params = self.args.params
         self.models = []
         if self.args.models:
-            self.models = self.args.models
+            self.models = self.args.models.copy()
         self.workers = []
         if self.args.workers:
             self.workers = self.args.workers
@@ -270,9 +270,9 @@ class AsyncStatus(Resource):
     @api.response(404, 'Request Not found', models.response_model_error)
     def get(self, id = ''):
         '''Retrieve the full status of an Asynchronous generation request.
-        This request will include all already generated images in base64 encoded .webp files.
+        This request will include all already generated images in download URL or base64 encoded .webp files.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
-        This endpoint is limited to 1 request per minute
+        This endpoint is limited to 10 request per minute
         '''
         wp = database.get_wp_by_id(id)
         if not wp:

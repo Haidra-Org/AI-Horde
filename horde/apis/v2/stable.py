@@ -3,10 +3,42 @@ from io import BytesIO
 from PIL import Image
 
 from .v2 import *
+from horde.classes.interrogation import Interrogation
 from horde.countermeasures import CounterMeasures
+from horde.r2 import upload_image, generate_img_download_url
 from horde.logger import logger
 from ..exceptions import ImageValidationFailed
 
+
+def convert_source_image_to_pil(source_image):
+    base64_bytes = source_image_b64.encode('utf-8')
+    img_bytes = base64.b64decode(base64_bytes)
+    image = Image.open(BytesIO(img_bytes))
+    width, height = image.size
+    resolution = width * height
+    resolution_threshold = 3072*3072
+    if resolution > resolution_threshold:
+        except_msg = "Image size cannot exceed 3072*3072 pixels"
+        # Not sure e exists here?
+        raise e.ImageValidationFailed()
+    quality = 100
+    # We adjust the amount of compression based on the starting image to avoid running out of bandwidth
+    if resolution > resolution_threshold * 0.9:
+        quality = 50
+    elif resolution > resolution_threshold * 0.8:
+        quality = 60
+    elif resolution > resolution_threshold * 0.6:
+        logger.debug([resolution,resolution_threshold * 0.6])
+        quality = 70
+    elif resolution > resolution_threshold * 0.4:
+        logger.debug([resolution,resolution_threshold * 0.4])
+        quality = 80
+    elif resolution > resolution_threshold * 0.3:
+        logger.debug([resolution,resolution_threshold * 0.4])
+        quality = 90
+    elif resolution > resolution_threshold * 0.15:
+        quality = 95
+    return image,quality
 
 def convert_source_image_to_webp(source_image_b64):
     '''Convert img2img sources to 90% compressed webp, to avoid wasting bandwidth, while still supporting all types'''
@@ -14,34 +46,8 @@ def convert_source_image_to_webp(source_image_b64):
     try:
         if source_image_b64 is None:
             return(source_image_b64)
-        base64_bytes = source_image_b64.encode('utf-8')
-        img_bytes = base64.b64decode(base64_bytes)
-        image = Image.open(BytesIO(img_bytes))
-        width, height = image.size
-        resolution = width * height
-        resolution_threshold = 3072*3072
-        if resolution > resolution_threshold:
-            except_msg = "Image size cannot exceed 3072*3072 pixels"
-            # Not sure e exists here?
-            raise e.ImageValidationFailed()
+        image, quality = convert_source_image_to_pil(source_image_b64)
         buffer = BytesIO()
-        quality = 100
-        # We adjust the amount of compression based on the starting image to avoid running out of bandwidth
-        if resolution > resolution_threshold * 0.9:
-            quality = 50
-        elif resolution > resolution_threshold * 0.8:
-            quality = 60
-        elif resolution > resolution_threshold * 0.6:
-            logger.debug([resolution,resolution_threshold * 0.6])
-            quality = 70
-        elif resolution > resolution_threshold * 0.4:
-            logger.debug([resolution,resolution_threshold * 0.4])
-            quality = 80
-        elif resolution > resolution_threshold * 0.3:
-            logger.debug([resolution,resolution_threshold * 0.4])
-            quality = 90
-        elif resolution > resolution_threshold * 0.15:
-            quality = 95
         image.save(buffer, format="WebP", quality=quality)
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
         logger.debug(f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars")
@@ -51,6 +57,31 @@ def convert_source_image_to_webp(source_image_b64):
     except Exception as e:
         logger.error(e)
         raise e.ImageValidationFailed
+
+def upload_source_image_to_r2(source_image_b64, uuid_string):
+    '''Convert source images to webp and uploads it to r2, to avoid wasting bandwidth, while still supporting all types'''
+    except_msg = None
+    try:
+        if source_image_b64 is None:
+            return(source_image_b64)
+        image, quality = convert_source_image_to_pil(source_image_b64)
+        filename = f"{uuid_string}.webp"
+        image.save(filename, format="WebP", quality=quality)
+        upload_image(filename)
+        os.remove(filename)
+        return generate_img_download_url(filename)
+    except ImageValidationFailed as e:
+        raise e.ImageValidationFailed(except_msg)
+    except Exception as e:
+        logger.error(e)
+        raise e.ImageValidationFailed
+
+
+def ensure_source_image_uploaded(source_image_string, uuid_string):
+    if "http" in source_image_string:
+        return source_image_string
+    else:
+        return upload_source_image_to_r2(source_image_string, uuid_string)
 
 
 class AsyncGenerate(AsyncGenerate):
@@ -185,6 +216,126 @@ class JobPop(JobPop):
             self.blacklist,
         )
 
+
+
+# I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
+class Interrogate(Resource):
+
+
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
+    post_parser.add_argument("forms", type=list, required=False, default=None, help="The acceptable forms with which to interrogate", location="json")
+    post_parser.add_argument("source_image", type=str, required=True, location="json")
+
+    @api.expect(post_parser, models.input_interrogate_request_generation, validate=True)
+    @api.marshal_with(models.response_model_interrogate_request, code=202, description='Interrogation Queued', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(503, 'Maintenance Mode', models.response_model_error)
+    @api.response(429, 'Too Many Prompts', models.response_model_error)
+    def post(self):
+        '''Initiate an Asynchronous request to interrogate an image.
+        This endpoint will immediately return with the UUID of the request for interrogation.
+        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
+        Perhaps some will appear in the next 20 minutes.
+        Asynchronous requests live for 20 minutes before being considered stale and being deleted.
+        '''
+        #logger.warning(datetime.utcnow())
+        self.args = post_parser.parse_args()
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.forms = []
+        if self.args.forms:
+            self.forms = self.args.forms
+        self.user = None
+        self.user_ip = request.remote_addr
+        # For now this is checked on validate()
+        self.safe_ip = True
+        self.validate()
+        #logger.warning(datetime.utcnow())
+        self.interrogation = Interrogation(
+            self.workers,
+            self.models,
+            source_image = ensure_source_image_uploaded(self.args.source_image, self),
+            user_id = self.user.id,
+            params = self.params,
+            nsfw = self.args.nsfw,
+            censor_nsfw = self.args.censor_nsfw,
+            trusted_workers = self.args.trusted_workers,
+            ipaddr = self.user_ip,
+        )
+        self.source_image = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
+        self.interrogation.set_source_image(self.source_image)
+        ret_dict = {"id":self.interrogation.id}
+        return(ret_dict, 202)
+
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self):
+        if maintenance.active:
+            raise e.MaintenanceMode('Interrogate')
+        with HORDE.app_context():
+            if self.args.apikey:
+                self.user = database.find_user_by_api_key(self.args['apikey'])
+            if not self.user:
+                raise e.InvalidAPIKey('generation')
+            self.username = self.user.get_unique_alias()
+            wp_count = database.count_waiting_requests(self.user)
+            user_limit = self.user.get_concurrency()
+            if wp_count + n > user_limit:
+                raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
+            ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
+            if ip_timeout:
+                raise e.TimeoutIP(self.user_ip, ip_timeout)
+
+
+class InterrogationStatus(Resource):
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
+     # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    @api.marshal_with(models.response_model_interrogate_status, code=200, description='Interrogation Full Status')
+    @api.response(404, 'Request Not found', models.response_model_error)
+    def get(self, id = ''):
+        '''Retrieve the full status of an interrogation request.
+        This request will include all already generated images in base64 encoded .webp files.
+        As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
+        This endpoint is limited to 1 request per minute
+        '''
+        interrogation = database.get_interrogation_by_id(id)
+        if not interrogation:
+            raise e.RequestNotFound(id)
+        i_status = interrogation.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        # If the status is retrieved after the wp is done we clear it to free the ram
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        # if wp_status["done"]:
+            # wp.delete()
+        return(wp_status, 200)
+
+    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.response(404, 'Request Not found', models.response_model_error)
+    def delete(self, id = ''):
+        '''Cancel an unfinished request.
+        This request will include all already generated images in base64 encoded .webp files.
+        '''
+        wp = database.get_wp_by_id(id)
+        if not wp:
+            raise e.RequestNotFound(id)
+        wp_status = wp.get_status(
+            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        logger.info(f"Request with ID {wp.id} has been cancelled.")
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        wp.n = 0
+        db.session.commit()
+        return(wp_status, 200)
 
 class HordeLoad(HordeLoad):
     # When we extend the actual method, we need to re-apply the decorators
