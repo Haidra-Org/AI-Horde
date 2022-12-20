@@ -264,7 +264,7 @@ class SyncGenerate(GenerateTemplate):
         super().activate_waiting_prompt()
 
 class AsyncStatus(Resource):
-    decorators = [limiter.limit("2/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', models.response_model_error)
@@ -308,7 +308,8 @@ class AsyncStatus(Resource):
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway
-        # wp.delete()
+        wp.n = 0
+        db.session.commit()
         return(wp_status, 200)
 
 
@@ -407,6 +408,7 @@ class JobPop(Resource):
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
             # time.sleep(random.uniform(0, 1))
+            wp.refresh()
             if not wp.needs_gen():  # this says if < 1
                 continue
             worker_ret = self.start_worker(wp)
@@ -650,7 +652,7 @@ class WorkerSingle(Resource):
         if self.args.paused is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT WorkerSingle')
-            worker.paused = self.args.paused
+            worker.toggle_paused(self.args.paused)
             ret_dict["paused"] = worker.paused
         if self.args.name is not None:
             if not admin.moderator and admin != worker.user:
