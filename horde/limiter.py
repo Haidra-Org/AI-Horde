@@ -23,7 +23,7 @@ if is_redis_up():
     except Exception as e:
         logger.error(f"Failed to connect to Limiter Cache: {e}")
 
-# Allow local workatation run
+# Allow local workstation run
 if limiter is None:
     limiter = Limiter(
         HORDE,
