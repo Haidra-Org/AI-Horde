@@ -44,7 +44,7 @@ if is_redis_up():
         logger.error(f"Flask Cache Failed: {e}")
         pass
 
-# Allow local workatation run
+# Allow local workstation run
 if cache is None:
     cache_config = {
         "CACHE_TYPE": "SimpleCache",

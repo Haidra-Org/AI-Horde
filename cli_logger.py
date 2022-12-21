@@ -13,7 +13,7 @@ def set_logger_verbosity(count):
     global verbosity
     # The count comes reversed. So count = 0 means minimum verbosity
     # While count 5 means maximum verbosity
-    # So the more count we have, the lowe we drop the versbosity maximum
+    # So the more count we have, the lower we drop the verbosity maximum
     verbosity = 40 - (count * 10)
 
 def quiesce_logger(count):

@@ -4,7 +4,7 @@
 
 ### Features 
 
-* Increased the jobs dropped needed to think a worker is supicious
+* Increased the jobs dropped needed to think a worker is suspicious
 * Added thread locking for starting generations to avoid the n going negative
 
 # Changelog
@@ -134,7 +134,7 @@ Please check the API documentation for each new field.
 
 ### Features
 
-* New requests for specific server IDs will abort immediately if that ID does not correspons to a server
+* New requests for specific server IDs will abort immediately if that ID does not corresponds to a server
 * Workers in maintenance can now accept requests from their owner only. Workers in maintenance do not gain kudos for uptime.
 * Takes into account denoising strength for kudos calculations on img2img
 

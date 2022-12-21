@@ -27,7 +27,7 @@ People want to contribute to the horde for many reasons
 * They want to provide constant processing power for tools they've built on top of Stable Diffusion or KoboldAI, such as video games, chat bots or software plugins
 * They want to accumulate Kudos so that when it's time to generate their own requests they can get them done faster.
 * They want to warm their room productively (this is indeed a literal reason people have given)
-* They are just nice people and want to support this endeavour.
+* They are just nice people and want to support this endeavor.
 
 ### Can workers spy on my prompts or generations?
 
@@ -129,7 +129,7 @@ No, the horde itself is not storing such details. The prompts and the generation
 
 ### Why should I use the Horde and not my local PC?
 
-Not everyone has a power GPU in their PC. The horde allows anyone to use fast Stable Diffusion and KoboldAI, not only the ones privileded enough to be able to afford an expensive graphics card. 
+Not everyone has a power GPU in their PC. The horde allows anyone to use fast Stable Diffusion and KoboldAI, not only the ones privileged enough to be able to afford an expensive graphics card. 
 
 Furthermore, local clients, even at the best of times, are difficult to setup up and often error prone due to python dependencies. They also need plenty of internet bandwidth to download 4GB of models. The stable horde provides no-install clients, as well as browser clients you can use even on your phone!
 
