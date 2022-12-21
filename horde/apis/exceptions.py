@@ -23,7 +23,7 @@ class NoValidActions(wze.BadRequest):
 
 class InvalidSize(wze.BadRequest):
     def __init__(self, username):
-        self.specific = "Invalid size. The image dimentions have to be multiples of 64."
+        self.specific = "Invalid size. The image dimensions have to be multiples of 64."
         self.log = f"User '{username}' sent an invalid size. Aborting!"
 
 class InvalidPromptSize(wze.BadRequest):
