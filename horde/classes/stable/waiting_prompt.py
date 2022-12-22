@@ -162,6 +162,8 @@ class WaitingPromptExtended(WaitingPrompt):
             kudos = kudos * 1.5
         if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
+        if 'CodeFormers' in self.gen_payload.get('post_processing', []):
+            kudos = kudos * 1.3
         super().record_usage(raw_things, kudos)
 
     # We can calculate the kudos in advance as they model doesn't affect them

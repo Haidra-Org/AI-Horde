@@ -38,7 +38,7 @@ class Models(v2.Models):
             'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
             'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
-            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus"]),unique=True),
+            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "CodeFormers", "RealESRGAN_x4plus"]),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
