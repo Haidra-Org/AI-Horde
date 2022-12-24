@@ -75,6 +75,9 @@ class WorkerExtended(Worker):
         if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and self.bridge_version < 7:
             is_matching = False
             skipped_reason = 'bridge_version'
+        if "CodeFormers" in waiting_prompt.gen_payload.get('post_processing', []) and self.bridge_version < 9:
+            is_matching = False
+            skipped_reason = 'bridge_version'
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
             is_matching = False
