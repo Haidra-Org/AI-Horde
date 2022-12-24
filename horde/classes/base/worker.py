@@ -123,7 +123,7 @@ class Worker(db.Model):
         self.user.report_suspicion(amount, reason, formats)
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
-            logger.warning(f"Worker '{self.id}' suspicion increased to {self.suspicious}. Reason: {reason_log}")
+            logger.warning(f"Worker '{self.id}' suspicion increased. Reason: {reason_log}")
         if self.is_suspicious():
             self.paused = True
         db.session.commit()
