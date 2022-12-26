@@ -204,7 +204,9 @@ def transfer_kudos(source_user, dest_user, amount):
 def transfer_kudos_to_username(source_user, dest_username, amount):
     dest_user = find_user_by_username(dest_username)
     if not dest_user:
-        return([0,'Invalid target username.'])
+        dest_user = find_user_by_api_key(dest_username)
+        if not dest_user:
+            return([0,'Invalid target username/API key.'])
     if dest_user == get_anon():
         return([0,'Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.'])
     if dest_user == source_user:
