@@ -50,6 +50,8 @@ class PatreonCache(PrimaryTimedFunction):
         eamount = int(self.patrons[user_id]["entitlement_amount"] )
         if eamount == 25:
             return(300000)
+        if eamount == 24:
+            return(200000)
         elif eamount == 10:
             return(50000)
         elif eamount < 10:
