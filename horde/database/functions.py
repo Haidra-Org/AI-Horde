@@ -1,3 +1,4 @@
+import requests
 import time
 import uuid
 import json
@@ -154,12 +155,36 @@ def get_available_models():
         models_dict[model_name]["name"] = model_name
         models_dict[model_name]["count"] = model_row.total_models
 
-        # TODO
         models_dict[model_name]['queued'] = 0
         models_dict[model_name]['eta'] = 0
         models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
         models_dict[model_name]['workers'] = []
-    logger.trace(list(models_dict.values()))
+
+    # We don't want to report on any random model name a client might request
+    try:
+        r = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
+        known_models = list(r.keys())
+    except Exception:
+        logger.error(f"Error when downloading known models list: {e}")
+        known_models = []
+    ophan_models = db.session.query(
+        WPModels.model,
+    ).join(
+        WaitingPrompt,
+    ).filter(
+        WPModels.model.not_in(list(models_dict.keys())),
+        WPModels.model.in_(known_models),
+        WaitingPrompt.n > 0,
+    ).group_by(WPModels.model).all()
+    for model_row in ophan_models:
+        model_name = model_row.model
+        models_dict[model_name] = {}
+        models_dict[model_name]["name"] = model_name
+        models_dict[model_name]["count"] = 0
+        models_dict[model_name]['queued'] = 0
+        models_dict[model_name]['eta'] = 0
+        models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
+        models_dict[model_name]['workers'] = []
     things_per_model = count_things_per_model()
     # If we request a lite_dict, we only want worker count per model and a dict format
     for model_name in things_per_model:
@@ -173,7 +198,7 @@ def get_available_models():
         if total_performance_on_model > 0:
             models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
         else:
-            models_dict[model_name]['eta'] = -1
+            models_dict[model_name]['eta'] = 10000
     return(list(models_dict.values()))
 
 def retrieve_available_models():
