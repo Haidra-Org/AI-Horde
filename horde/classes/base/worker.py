@@ -189,7 +189,7 @@ class Worker(db.Model):
     def set_models(self, models):
         # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
         models = [sanitize_string(model_name[0:100]) for model_name in models]
-        del models[50:]
+        del models[100:]
         models = set(models)
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
         existing_model_names = set([m.model for m in existing_models.all()])
