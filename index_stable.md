@@ -80,7 +80,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 ## Credits
 
-These are the people who made this sotware possible.
+These are the people who made this software possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
 * [Sygil-Dev](https://github.com/Sygil-Dev) - Worker backend code.

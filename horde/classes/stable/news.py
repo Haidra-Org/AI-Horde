@@ -5,6 +5,11 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2022-12-24",
+            "newspiece": "Stable Horde has now support for [CodeFormer](https://shangchenzhou.com/projects/CodeFormer/). Simply use 'CodeFormers' for your postprocessor (case sensitive). This will fix any faces and upscale 2x. Be aware that due to the processing cost of this model, the kudos requirement will be 50% higher!",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-12-08",
             "newspiece": "The Stable Horde workers now support dynamically swapping models. This means that models will always switch to support the most in demand models every minute, allowing us to support demand much better!",
             "importance": "Information"

@@ -51,7 +51,7 @@ First [Register an account](/register) which will generate for you an API key. S
 
 ## Credits
 
-These are the people who made this sotware possible.
+These are the people who made this software possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
 * VE VORBYDERNE - REST API 

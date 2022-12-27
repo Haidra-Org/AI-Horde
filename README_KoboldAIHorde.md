@@ -10,7 +10,7 @@ Information specific to the Text generation
 
 ### Specifying servers
 
-You can optionally specify only specific servers to generate for you. Grab one or more server IDs from `/servers` and then send it with your payload as a list in the "servers" arg. Your generation will only be fulfiled by servers with the specified IDs
+You can optionally specify only specific servers to generate for you. Grab one or more server IDs from `/servers` and then send it with your payload as a list in the "servers" arg. Your generation will only be fulfilled by servers with the specified IDs
 
 ### Specifying softprompts
 
