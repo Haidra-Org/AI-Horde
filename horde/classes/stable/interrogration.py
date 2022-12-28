@@ -8,7 +8,7 @@ from enum import Enum
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
-from horde.utils import get_expiry_date
+from horde.utils import get_expiry_date, get_interrogation_form_expiry_date
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -23,20 +23,27 @@ class State(Enum):
 
 
 class InterrogationsForms(db.Model):
+    """For storing the details of each image interrogation form"""
     __tablename__ = "interrogation_forms"
     id = db.Column(db.Integer, primary_key=True)
     i_id = db.Column(uuid_column_type(), db.ForeignKey("interrogations.id", ondelete="CASCADE"), nullable=False)
     interrogation = db.relationship(f"Interrogation", back_populates="forms")
     name = db.Column(db.String(30), nullable=False)
     state = db.Column(Enum(State), default=0, nullable=False) 
+    payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
-    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"))
-    worker = db.relationship("WorkerExtended", back_populates="processing_gens")
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
+    worker = db.relationship("WorkerExtended", back_populates="interrogation_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    expiry = db.Column(db.DateTime, default=None, index=True)
+
+    def pop(self):
+        self.expiry = get_interrogation_form_expiry_date()
+        db.session.commit()
 
 
 class Interrogation(db.Model):
-    """For storing the upload and download links for an image"""
+    """For storing the request for interrogating an image"""
     __tablename__ = "interrogations"
     id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4) 
     source_image = db.Column(db.Text, nullable=False)
@@ -72,11 +79,18 @@ class Interrogation(db.Model):
             return(True)
         return(False)
 
-    def set_forms(self, forms_names = None):
-        if not forms_names: forms_names = []
-        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        for form in forms_names:
-            form_entry = InterrogationsForms(name=form,i_id=self.id)
+    def set_forms(self, forms = None):
+        if not forms: forms = []
+        seen_names = []
+        for form in forms:
+            # We don't allow the same interrogation type twice
+            if form["name"] in seen_names:
+                continue
+            form_entry = InterrogationsForms(
+                name=form["name"],
+                payload=form.get("payload"),
+                i_id=self.id
+            )
             db.session.add(form_entry)
 
     def get_form_names(self):

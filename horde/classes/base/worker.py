@@ -94,6 +94,7 @@ class Worker(db.Model):
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
     models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete-orphan")
     processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
+    interrogation_forms = db.relationship("InterrogationsForms", back_populates="worker")
 
     def create(self, **kwargs):
         self.check_for_bad_actor()

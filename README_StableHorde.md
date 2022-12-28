@@ -57,6 +57,7 @@ If this is the first time you run the bridge, afterwards continue to the "Initia
 ## Windows Steps
 1. Go to [this repository](https://github.com/sd-webui/nataili) and download [the zipped version](https://github.com/sd-webui/nataili/archive/refs/heads/main.zip)
 1. Extract it to any folder of your choice
+1. Run `update-runtime.cmd` by double-clicking on it from your explorer of from a `cmd` terminal. Wait until it's finished. This will take approximately 15 mins.
 1. Run `horde-bridge.cmd` by double-clicking on it from your explorer of from a `cmd` terminal.
 
 ## Linux Steps
@@ -65,6 +66,7 @@ Open a bash terminal and run these commands (just copy-paste them all together)
 ```bash
 git clone https://github.com/sd-webui/nataili.git
 cd nataili
+update-runtime.sh
 horde-bridge.sh
 ```
 

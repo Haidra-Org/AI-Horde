@@ -72,6 +72,9 @@ def hash_api_key(unhashed_api_key):
 def get_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)
 
+def get_interrogation_form_expiry_date():
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+3)
+
 def get_random_seed():
     '''Generated a random seed, using a random number unique per node'''
     return random.randint(0, 2**32 - 1)
