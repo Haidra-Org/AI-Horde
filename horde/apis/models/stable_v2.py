@@ -15,6 +15,7 @@ class Parsers(v2.Parsers):
         self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
         self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
+        self.job_pop_parser.add_argument("allow_post_processing", type=bool, required=False, default=True, help="If True, this worker will pick up requests requesting post-processing.", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
 
 class Models(v2.Models):
@@ -56,6 +57,7 @@ class Models(v2.Models):
             'unsafe_ip': fields.Integer(description="How many waiting requests were skipped because they came from an unsafe IP"),
             'img2img': fields.Integer(description="How many waiting requests were skipped because they requested img2img"),
             'painting': fields.Integer(description="How many waiting requests were skipped because they requested inpainting/outpainting"),
+            'post-processing': fields.Integer(description="How many waiting requests were skipped because they requested post-processing"),
         })
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
@@ -72,6 +74,7 @@ class Models(v2.Models):
             'allow_img2img': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests"),
             'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
+            'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
         })
 
         self.input_model_request_generation = api.model('GenerationInput', {
@@ -92,6 +95,7 @@ class Models(v2.Models):
             "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
             'img2img': fields.Boolean(default=True,description="If True, this worker supports and allows img2img requests."),
             'painting': fields.Boolean(default=True,description="If True, this worker supports and allows inpainting requests."),
+            'post-processing': fields.Boolean(default=True,description="If True, this worker supports and allows post-processing requests."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
