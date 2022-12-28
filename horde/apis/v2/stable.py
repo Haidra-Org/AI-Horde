@@ -206,6 +206,7 @@ class JobPop(JobPop):
             allow_img2img = self.args.allow_img2img,
             allow_painting = self.args.allow_painting,
             allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
+            allow_post_processing = self.args.allow_post_processing,
         )
 
     def get_sorted_wp(self):

@@ -10,6 +10,7 @@ class WorkerExtended(Worker):
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
+    allow_post_processing = True
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
@@ -20,6 +21,7 @@ class WorkerExtended(Worker):
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
         self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
+        self.allow_post_processing = kwargs.get('allow_post_processing', True)
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])
         paused_string = ''
@@ -104,6 +106,9 @@ class WorkerExtended(Worker):
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
                 is_matching = False
                 skipped_reason = 'untrusted'
+        if not self.allow_post_processing and len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1:
+            is_matching = False
+            skipped_reason = 'post-processing'
         return [is_matching, skipped_reason]
 
     def get_details(self, is_privileged=False):

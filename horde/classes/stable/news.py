@@ -5,8 +5,13 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2022-12-28",
+            "newspiece": "Stable Horde workers can now opt-in to loading post-processors. Check your bridge_data.py for options. This should help workers who started being more unstable due to the PP requirements.",
+            "importance": "Workers"
+        },
+        {
             "date_published": "2022-12-24",
-            "newspiece": "Stable Horde has now support for [CodeFormer](https://shangchenzhou.com/projects/CodeFormer/). Simply use 'CodeFormers' for your postprocessor (case sensitive). This will fix any faces and upscale 2x. Be aware that due to the processing cost of this model, the kudos requirement will be 50% higher!",
+            "newspiece": "Stable Horde has now support for [CodeFormer](https://shangchenzhou.com/projects/CodeFormer/). Simply use 'CodeFormers' for your postprocessor (case sensitive). This will fix any faces in the image. Be aware that due to the processing cost of this model, the kudos requirement will be 50% higher!  Note: The inbuilt upscaler has been disabled",
             "importance": "Information"
         },
         {
