@@ -66,18 +66,17 @@ class InterrogationsForms(db.Model):
         # Each interrogation rewards 1 kudos
         self.state = State.DONE
         kudos = 1
-        self.record(things_per_sec, kudos)
+        self.record(kudos)
         db.session.commit()
         return(kudos)
 
     def cancel(self):
-        if self.state != State.PROCESSING:
-            return(0)
-        self.result = None
-        # Each interrogation rewards 1 kudos
-        self.state = State.CANCELLED
-        kudos = 1
-        self.record(things_per_sec, kudos)
+        if self.state != State.DONE:
+            self.result = None
+            self.state = State.CANCELLED
+        if self.state == State.PROCESSING:
+            kudos = 1
+            self.record(kudos)
         db.session.commit()
         return(kudos)
 
@@ -86,8 +85,8 @@ class InterrogationsForms(db.Model):
         if self.state == State.CANCELLED:
             cancel_txt = " CANCELLED"
         self.worker.record_interrogation(kudos = kudos, seconds_taken = (datetime.utcnow() - self.initiated).seconds)
-        self.interrogation.record_usage(raw_things = self.wp.things, kudos = kudos)
-        logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.interrogation.id}")
+        self.interrogation.record_usage(kudos = kudos + 1)
+        logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}")
 
 
     def abort(self):
@@ -107,7 +106,7 @@ class InterrogationsForms(db.Model):
     def is_completed(self):
         return self.state == State.DONE
 
-    def is_FAULTED(self):
+    def is_faulted(self):
         return self.state == State.FAULTED
 
     def is_stale(self, ttl):
@@ -124,12 +123,13 @@ class Interrogation(db.Model):
     """For storing the request for interrogating an image"""
     __tablename__ = "interrogations"
     id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4) 
-    source_image = db.Column(db.Text, nullable=False)
+    source_image = db.Column(db.Text, nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user = db.relationship("User", back_populates="interrogations")
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
+    # This is used so I know to delete up the image 30 mins after this request expires
     r2stored = db.Column(db.Boolean, default=False, nullable=False)
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
@@ -143,8 +143,9 @@ class Interrogation(db.Model):
         self.set_forms(forms)
 
 
-    def set_source_image(self, source_image):
+    def set_source_image(self, source_image, r2stored):
         self.source_image = source_image
+        self.r2stored = r2stored
         db.session.commit()
 
     def refresh(self):
@@ -217,7 +218,7 @@ class Interrogation(db.Model):
         processing = False
         for form in self.forms:
             form_dict = {
-                "name": form.name,
+                "form": form.name,
                 "state": form.state.name,
                 "result": form.result,
             }
@@ -241,3 +242,8 @@ class Interrogation(db.Model):
         '''
         self.user.record_usage(0, kudos)
         self.refresh()
+    
+    def cancel(self):
+        for form in self.forms:
+            form.cancel()
+        

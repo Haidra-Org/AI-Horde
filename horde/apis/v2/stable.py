@@ -79,9 +79,9 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 
 def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
-        return source_image_string
+        return source_image_string, False
     else:
-        return upload_source_image_to_r2(source_image_string, uuid_string)
+        return upload_source_image_to_r2(source_image_string, uuid_string), True
 
 
 class AsyncGenerate(AsyncGenerate):
@@ -227,9 +227,10 @@ class Interrogate(Resource):
     post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
     post_parser.add_argument("forms", type=list, required=False, default=None, help="The acceptable forms with which to interrogate", location="json")
     post_parser.add_argument("source_image", type=str, required=True, location="json")
+    post_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
 
     @api.expect(post_parser, models.input_interrogate_request_generation, validate=True)
-    @api.marshal_with(models.response_model_interrogate_request, code=202, description='Interrogation Queued', skip_none=True)
+    @api.marshal_with(models.response_model_interrogation, code=202, description='Interrogation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(503, 'Maintenance Mode', models.response_model_error)
@@ -255,18 +256,20 @@ class Interrogate(Resource):
         self.validate()
         #logger.warning(datetime.utcnow())
         self.interrogation = Interrogation(
-            self.workers,
-            self.models,
-            source_image = ensure_source_image_uploaded(self.args.source_image, self),
+            self.forms,
             user_id = self.user.id,
-            params = self.params,
-            nsfw = self.args.nsfw,
-            censor_nsfw = self.args.censor_nsfw,
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
+            safe_ip = self.safe_ip,
         )
-        self.source_image = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
-        self.interrogation.set_source_image(self.source_image)
+        # If anything goes wrong when uploading an image, we don't want to leave garbage around
+        try:
+            self.source_image, self.r2stored = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
+        except Exception as e:
+            db.session.delete(self.interrogation)
+            db.session.commit()
+            raise e
+        self.interrogation.set_source_image(self.source_image, self.r2stored)
         ret_dict = {"id":self.interrogation.id}
         return(ret_dict, 202)
 
@@ -287,56 +290,46 @@ class Interrogate(Resource):
             ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
+        if not self.user.trusted and not patrons.is_patron(self.user.id):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
+            # We allow unsafe IPs when being rate limited as they're only temporary
+            if self.safe_ip is None:
+                self.safe_ip = True
+            # We actually block unsafe IPs for now to combat CP
+            if not self.safe_ip:
+                raise e.NotTrusted
 
 
 class InterrogationStatus(Resource):
     decorators = [limiter.limit("10/minute", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    @api.marshal_with(models.response_model_interrogate_status, code=200, description='Interrogation Full Status')
+    @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
     def get(self, id = ''):
         '''Retrieve the full status of an interrogation request.
-        This request will include all already generated images in base64 encoded .webp files.
+        This request will include all already generated images.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
-        This endpoint is limited to 1 request per minute
+        This endpoint is limited to 10 requests per minute
         '''
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
             raise e.RequestNotFound(id)
-        i_status = interrogation.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        # If the status is retrieved after the wp is done we clear it to free the ram
-        # FIXME: I pevent it at the moment due to the race conditions
-        # The WPCleaner is going to clean it up anyway
-        # if wp_status["done"]:
-            # wp.delete()
-        return(wp_status, 200)
+        i_status = interrogation.get_status()
+        return(i_status, 200)
 
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
     def delete(self, id = ''):
-        '''Cancel an unfinished request.
-        This request will include all already generated images in base64 encoded .webp files.
+        '''Cancel an unfinished interrogation request.
+        This request will return all already interrogated image results.
         '''
-        wp = database.get_wp_by_id(id)
-        if not wp:
+        interrogation = database.get_interrogation_by_id(id)
+        if not interrogation:
             raise e.RequestNotFound(id)
-        wp_status = wp.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        logger.info(f"Request with ID {wp.id} has been cancelled.")
-        # FIXME: I pevent it at the moment due to the race conditions
-        # The WPCleaner is going to clean it up anyway
-        wp.n = 0
-        db.session.commit()
-        return(wp_status, 200)
+        interrogation.cancel()
+        i_status = interrogation.get_status()
+        logger.info(f"Interrogation with ID {interrogation.id} has been cancelled.")
+        return(i_status, 200)
 
 class HordeLoad(HordeLoad):
     # When we extend the actual method, we need to re-apply the decorators
@@ -377,3 +370,5 @@ api.add_resource(Heartbeat, "/status/heartbeat")
 api.add_resource(Teams, "/teams")
 api.add_resource(TeamSingle, "/teams/<string:team_id>")
 api.add_resource(OperationsIP, "/operations/ipaddr")
+api.add_resource(Interrogate, "/interrogate/async")
+api.add_resource(InterrogationStatus, "/interrogate/status/<string:id>")

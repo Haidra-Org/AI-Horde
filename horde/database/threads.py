@@ -9,7 +9,7 @@ from sqlalchemy import func, or_
 
 from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
-from horde.flask import HORDE, db
+from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger
 from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
 from horde import horde_instance_id
@@ -21,6 +21,9 @@ from horde.patreon import patrons
 @logger.catch(reraise=True)
 def get_quorum():
     '''Attempts to grab the primary quorum, if it's not set by a different node'''
+    # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
+    if SQLITE_MODE: 
+        return None
     quorum = horde_r.get('horde_quorum')
     if not quorum:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
@@ -30,11 +33,9 @@ def get_quorum():
     if quorum == horde_instance_id:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
-        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     elif args.quorum:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
-        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     return(quorum)
 
 @logger.catch(reraise=True)

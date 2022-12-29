@@ -62,7 +62,7 @@ class Models(v2.Models):
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
-            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
+            'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True),
             'model': fields.String(description="Which of the available models to use for this request"),
             'source_image': fields.String(description="The Base64-encoded webp to use for img2img"),
             'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
@@ -118,4 +118,31 @@ class Models(v2.Models):
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
             "performance": fields.Float(description="The average performance of the workers in this team, in megapixelsteps per second."),
             "speed": fields.Float(description="The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second."),
+        })
+        # Intentionally left blank to allow to add payloads later
+        self.input_model_interrogation_form_payload = api.model('ModelInterrogationFormPayloadStable', {
+        })
+        self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
+            'name': fields.String(required=True, enum=["caption", "clip", "nsfw"], description="The type of interrogation this is"), 
+            'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
+        })
+        self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {
+            'forms': fields.List(fields.Nested(self.input_model_interrogation_form)),
+            'source_image': fields.String(required=False, description="The public URL of the image to interrogate"),
+        })
+        self.response_model_interrogation = api.model('RequestInterrogationResponse', {
+            'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
+            'message': fields.String(default=None,description="Any extra information from the horde about this request"),
+        })
+        self.response_model_interrogation_result = api.model('InterrogationResult', {
+            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which interrogated this image"),
+            'worker_name': fields.String(title="Worker Name", description="The name of the worker which interrogated this image"),
+            'form': fields.String(title="Interrogation Form", description="The form which interrogated this image"),
+            'state': fields.String(title="Interrogation Form State", description="The status of this interrogation form"),
+            'nsfw': fields.Boolean(title="NSFW", description="If true, this image has been detected to have NSFW context"),
+            'caption': fields.String(title="Caption", description="The caption generated for this image")
+        })
+        self.response_model_interrogation_status = api.model('InterrogationStatus', {
+            'results': fields.List(fields.Nested(self.response_model_interrogation_result, skip_none=True)),
+            'state': fields.String(title="Interrogation State", description="The overall status of this interrogation"),
         })
