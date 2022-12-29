@@ -1,6 +1,6 @@
 import json
 import os
-import re
+import regex as re
 import time
 import random
 from datetime import datetime
