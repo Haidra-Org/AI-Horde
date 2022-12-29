@@ -1,9 +1,16 @@
 from datetime import datetime
 from horde.logger import logger
 from horde.flask import db
-from horde.classes.base.worker import Worker
+from horde.classes.base.worker import Worker, uuid_column_type
 from horde.suspicions import Suspicions
 
+class InterrogationPerformance(db.Model):
+    __tablename__ = "worker_interrogation_performances"
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
+    worker = db.relationship(f"WorkerExtended", back_populates="interrogation_performance")
+    performance = db.Column(db.Float, primary_key=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow) # TODO maybe index here, but I'm not sure how big this table is
 
 class WorkerExtended(Worker):
     max_pixels = db.Column(db.Integer, default=512 * 512, nullable=False)
@@ -11,6 +18,7 @@ class WorkerExtended(Worker):
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = True
+    interrogation_performance = db.relationship("InterrogationPerformance", back_populates="worker", cascade="all, delete-orphan")
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
@@ -122,3 +130,21 @@ class WorkerExtended(Worker):
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
         return ret_dict
+
+
+    @logger.catch(reraise=True)
+    def record_interrogation(self, kudos, seconds_taken):
+        '''We record the servers newest interrogation contribution
+        '''
+        self.user.record_contributions(raw_things = 0, kudos = kudos)
+        self.modify_kudos(kudos,'interrogated')
+        converted_amount = self.convert_contribution(raw_things)
+        self.fulfilments += 1
+        performances = db.session.query(InterrogationPerformance).filter_by(worker_id=self.id).order_by(InterrogationPerformance.created.asc())
+        if performances.count() >= 20:
+            db.session.delete(performances.first())
+        new_performance = InterrogationPerformance(worker_id=self.id, performance=seconds_taken)
+        db.session.add(new_performance)
+        db.session.commit()
+        # if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
+        #     self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])

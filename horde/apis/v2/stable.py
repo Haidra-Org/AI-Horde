@@ -3,7 +3,7 @@ from io import BytesIO
 from PIL import Image
 
 from .v2 import *
-from horde.classes.interrogation import Interrogation
+from horde.classes import Interrogation
 from horde.countermeasures import CounterMeasures
 from horde.r2 import upload_image, generate_img_download_url
 from horde.logger import logger

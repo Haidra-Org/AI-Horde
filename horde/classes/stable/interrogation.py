@@ -1,9 +1,9 @@
 import uuid
+import enum
 
 from datetime import datetime
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import func, or_
-from enum import Enum
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Enum, JSON, func, or_
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -14,11 +14,12 @@ from horde.utils import get_expiry_date, get_interrogation_form_expiry_date
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
-class State(Enum):
-    Waiting = 0
-    Processing = 1
-    Done = 2
-    Faulted = 3
+class State(enum.Enum):
+    WAITING = 0
+    PROCESSING = 1
+    DONE = 2
+    CANCELLED = 3
+    FAULTED = 4
 
 
 
@@ -35,10 +36,87 @@ class InterrogationsForms(db.Model):
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
     worker = db.relationship("WorkerExtended", back_populates="interrogation_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    initiated =  db.Column(db.DateTime, default=None, index=True)
     expiry = db.Column(db.DateTime, default=None, index=True)
 
-    def pop(self):
+    def pop(self, worker):
+        myself_refresh = db.session.query(
+            InterrogationsForms
+        ).filter(
+            InterrogationsForms.id == self.id, 
+            InterrogationsForms.state == State.WAITING
+        ).with_for_update().first()
+        if not myself_refresh:
+            return None
+        myself_refresh.state = State.PROCESSING
+        db.session.commit()
         self.expiry = get_interrogation_form_expiry_date()
+        self.initiated = datetime.utcnow()
+        self.worker_id = worker.id
+        db.session.commit()
+        return {
+            "name": self.name,
+            "payload": self.payload,
+        }
+    
+    def deliver(self, result):
+        if self.state != State.PROCESSING:
+            return(0)
+        self.result = result
+        # Each interrogation rewards 1 kudos
+        self.state = State.DONE
+        kudos = 1
+        self.record(things_per_sec, kudos)
+        db.session.commit()
+        return(kudos)
+
+    def cancel(self):
+        if self.state != State.PROCESSING:
+            return(0)
+        self.result = None
+        # Each interrogation rewards 1 kudos
+        self.state = State.CANCELLED
+        kudos = 1
+        self.record(things_per_sec, kudos)
+        db.session.commit()
+        return(kudos)
+
+    def record(self, kudos):
+        cancel_txt = ""
+        if self.state == State.CANCELLED:
+            cancel_txt = " CANCELLED"
+        self.worker.record_interrogation(kudos = kudos, seconds_taken = (datetime.utcnow() - self.initiated).seconds)
+        self.interrogation.record_usage(raw_things = self.wp.things, kudos = kudos)
+        logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.interrogation.id}")
+
+
+    def abort(self):
+        '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
+        if self.state != State.PROCESSING:
+            return        
+        self.state = State.FAULTED
+        self.worker.log_aborted_job()
+        self.log_aborted_interrogation()
+        # We return it to WAITING to let another worker pick it up
+        self.state = State.WAITING
+        db.session.commit()
+        
+    def log_aborted_interrogation(self):
+        logger.info(f"Aborted Stale Interrogation {self.id} ({self.name}) from by worker: {self.worker.name} ({self.worker.id})")
+
+    def is_completed(self):
+        return self.state == State.DONE
+
+    def is_FAULTED(self):
+        return self.state == State.FAULTED
+
+    def is_stale(self, ttl):
+        if self.state in [State.FAULTED, State.CANCELLED, State.DONE]:
+            return False
+        return datetime.utcnow() > self.expiry
+
+    def delete(self):
+        db.session.delete(self)
         db.session.commit()
 
 
@@ -68,7 +146,6 @@ class Interrogation(db.Model):
     def set_source_image(self, source_image):
         self.source_image = source_image
         db.session.commit()
-
 
     def refresh(self):
         self.expiry = get_expiry_date()
@@ -121,7 +198,7 @@ class Interrogation(db.Model):
         return any(form.result == None for form in self.form)
 
     def is_completed(self):
-        if self.faulted:
+        if self.FAULTED:
             return True
         if self.needs_interrogation():
             return False
@@ -132,25 +209,35 @@ class Interrogation(db.Model):
             self, 
         ):
         ret_dict = {
-            "state": State.Waiting,
-            "forms": {},
+            "state": State.WAITING,
+            "forms": [],
         }
         all_faulted = True
         all_done = True
         processing = False
         for form in self.forms:
-            ret_dict["forms"][form.name] = form.result
-            if form.state != State.Faulted:
+            form_dict = {
+                "name": form.name,
+                "state": form.state.name,
+                "result": form.result,
+            }
+            ret_dict["forms"].append(form_dict)
+            if form.state != State.FAULTED:
                 all_faulted = False
-            if form.state != State.Done:
+            if form.state != State.DONE:
                 all_done = False
-            if form.state == State.Processing:
+            if form.state == State.PROCESSING:
                 processing = True
-            ret_dict["forms"][form.state] = ret_dict.get(form.state,0) + 1
         if all_faulted:
-            ret_dict["state"] = State.Faulted
+            ret_dict["state"] = State.FAULTED.name
         elif all_done:
-            ret_dict["state"] = State.Done
+            ret_dict["state"] = State.DONE.name
         elif processing:
-            ret_dict["state"] = State.Processing
+            ret_dict["state"] = State.PROCESSING.name
         return(ret_dict)
+
+    def record_usage(self, kudos):
+        '''Record that we received a requested interrogation and how much kudos it costs us
+        '''
+        self.user.record_usage(0, kudos)
+        self.refresh()

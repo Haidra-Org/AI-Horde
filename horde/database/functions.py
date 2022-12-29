@@ -12,7 +12,7 @@ from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
-from horde.classes.stable import Interrogation
+from horde.classes.stable.interrogation import Interrogation
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
