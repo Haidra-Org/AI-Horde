@@ -1,5 +1,4 @@
 import uuid
-import enum
 
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -9,18 +8,11 @@ from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date
+from horde.enums import State
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 json_column_type = JSONB if not SQLITE_MODE else JSON
-
-class State(enum.Enum):
-    WAITING = 0
-    PROCESSING = 1
-    DONE = 2
-    CANCELLED = 3
-    FAULTED = 4
-
 
 
 class InterrogationsForms(db.Model):

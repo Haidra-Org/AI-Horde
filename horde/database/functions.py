@@ -16,6 +16,7 @@ from horde.classes.stable.interrogation import Interrogation
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
+from horde.enums import State
 
 ALLOW_ANONYMOUS = True
 
@@ -254,6 +255,7 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 def count_waiting_requests(user, models = None):
+    # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
     if not models: models = []
     if len(models):
         return db.session.query(
@@ -274,6 +276,17 @@ def count_waiting_requests(user, models = None):
             WaitingPrompt.faulted == False,
             WaitingPrompt.n >= 1, 
         ).count()
+
+def count_waiting_interrogations(user):
+    return db.session.query(
+        Interrogation
+    ).filter(
+        Interrogation.user_id == user.id,
+        or_(
+            Interrogation.state == State.WAITING,
+            Interrogation.state == State.PROCESSING,
+        ),
+    ).count()
 
 
     # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved

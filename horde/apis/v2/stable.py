@@ -245,9 +245,7 @@ class Interrogate(Resource):
         Asynchronous requests live for 20 minutes before being considered stale and being deleted.
         '''
         #logger.warning(datetime.utcnow())
-        self.args = post_parser.parse_args()
-        # I have to extract and store them this way, because if I use the defaults
-        # It causes them to be a shared object from the parsers class
+        self.args = self.post_parser.parse_args()
         self.forms = []
         if self.args.forms:
             self.forms = self.args.forms
@@ -285,9 +283,9 @@ class Interrogate(Resource):
             if not self.user:
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
-            wp_count = database.count_waiting_requests(self.user)
+            i_count = database.count_waiting_interrogations(self.user)
             user_limit = self.user.get_concurrency()
-            if wp_count + n > user_limit:
+            if wp_count + len(self.forms) > user_limit:
                 raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
             ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
             if ip_timeout:
