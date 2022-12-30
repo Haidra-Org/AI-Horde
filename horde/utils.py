@@ -9,6 +9,8 @@ import dateutil.relativedelta
 from profanity_check  import predict
 from better_profanity import profanity
 from horde.logger import logger
+from horde.flask import SQLITE_MODE
+
 profanity.load_censor_words()
 
 random.seed(random.SystemRandom())
@@ -54,7 +56,10 @@ class ConvertAmount:
             self.char = 'T'
 
 def get_db_uuid():
-    return str(uuid.uuid4())
+    if SQLITE_MODE:
+        return str(uuid.uuid4())
+    else: 
+        return uuid.uuid4()
 
 def generate_client_id():
     return secrets.token_urlsafe(16)

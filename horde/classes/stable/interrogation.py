@@ -7,7 +7,7 @@ from sqlalchemy import Enum, JSON, func, or_
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
-from horde.utils import get_expiry_date, get_interrogation_form_expiry_date
+from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
 
 
@@ -18,11 +18,11 @@ json_column_type = JSONB if not SQLITE_MODE else JSON
 class InterrogationsForms(db.Model):
     """For storing the details of each image interrogation form"""
     __tablename__ = "interrogation_forms"
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid) 
     i_id = db.Column(uuid_column_type(), db.ForeignKey("interrogations.id", ondelete="CASCADE"), nullable=False)
     interrogation = db.relationship(f"Interrogation", back_populates="forms")
     name = db.Column(db.String(30), nullable=False)
-    state = db.Column(Enum(State), default=0, nullable=False) 
+    state = db.Column(Enum(State), default=State.WAITING, nullable=False) 
     payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
@@ -84,7 +84,7 @@ class InterrogationsForms(db.Model):
     def abort(self):
         '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
         if self.state != State.PROCESSING:
-            return        
+            return
         self.state = State.FAULTED
         self.worker.log_aborted_job()
         self.log_aborted_interrogation()
@@ -114,9 +114,9 @@ class InterrogationsForms(db.Model):
 class Interrogation(db.Model):
     """For storing the request for interrogating an image"""
     __tablename__ = "interrogations"
-    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4) 
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid) 
     source_image = db.Column(db.Text, nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="interrogations")
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)

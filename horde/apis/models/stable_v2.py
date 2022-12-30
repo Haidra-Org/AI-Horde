@@ -125,7 +125,7 @@ class Models(v2.Models):
         self.input_model_interrogation_form_payload = api.model('ModelInterrogationFormPayloadStable', {
         })
         self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
-            'name': fields.String(required=True, enum=["caption", "clip", "nsfw"], description="The type of interrogation this is"), 
+            'name': fields.String(required=True, enum=["caption", "clip", "nsfw"], description="The type of interrogation this is", unique=True), 
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
         })
         self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {

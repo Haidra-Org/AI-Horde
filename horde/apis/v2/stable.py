@@ -286,11 +286,8 @@ class Interrogate(Resource):
             self.username = self.user.get_unique_alias()
             i_count = database.count_waiting_interrogations(self.user)
             user_limit = self.user.get_concurrency()
-            if wp_count + len(self.forms) > user_limit:
-                raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
-            ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
-            if ip_timeout:
-                raise e.TimeoutIP(self.user_ip, ip_timeout)
+            if i_count + len(self.forms) > user_limit:
+                raise e.TooManyPrompts(self.username, i_count + len(self.forms), user_limit)
         if not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
             # We allow unsafe IPs when being rate limited as they're only temporary

@@ -12,7 +12,7 @@ from horde.flask import db
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
-from horde.classes.stable.interrogation import Interrogation
+from horde.classes.stable.interrogation import Interrogation, InterrogationsForms
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
@@ -256,6 +256,7 @@ def convert_things_to_kudos(things, **kwargs):
 
 def count_waiting_requests(user, models = None):
     # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
+    # Currently this is just counting how many requests, but each requests can have more than 1 image waiting
     if not models: models = []
     if len(models):
         return db.session.query(
@@ -278,15 +279,21 @@ def count_waiting_requests(user, models = None):
         ).count()
 
 def count_waiting_interrogations(user):
-    return db.session.query(
+    logger.debug(user.id)
+    found_i_forms = db.session.query(
+        InterrogationsForms.state,
+        Interrogation.user_id
+    ).join(
         Interrogation
     ).filter(
         Interrogation.user_id == user.id,
         or_(
-            Interrogation.state == State.WAITING,
-            Interrogation.state == State.PROCESSING,
+            InterrogationsForms.state == State.WAITING,
+            InterrogationsForms.state == State.PROCESSING,
         ),
-    ).count()
+    )
+    return found_i_forms.count()
+
 
 
     # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
