@@ -98,13 +98,18 @@ class WorkerExtended(Worker):
             return [False, 'post-processing']
         # When the worker requires upfront kudos, the user has to have the required kudos upfront
         # But we allowe prioritized and trusted users to bypass this
-        if (
-            self.requires_upfront_kudos
-            and not self.user.trusted
-            and self.user.get_unique_alias() not in self.prioritized_users
-            and self.user.kudos < waiting_prompt.kudos
-        ):
-            return [False, 'kudos']
+
+        if self.requires_upfront_kudos:
+            user_actual_kudos = self.user.kudos
+            # We don't want to take into account minimum kudos
+            if user_actual_kudos > 0:
+                user_actual_kudos -= user.get_min_kudos()
+            if (
+                not self.user.trusted
+                and self.user.get_unique_alias() not in self.prioritized_users
+                and user_actual_kudos < waiting_prompt.kudos
+            ):
+                return [False, 'kudos']
         return [True, None]
 
     def get_details(self, is_privileged=False):
