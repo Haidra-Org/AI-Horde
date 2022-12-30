@@ -46,7 +46,7 @@ class Models(v2.Models):
             'typical': fields.Float(description="Typical sampling value."), 
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadKobold', self.root_model_generation_payload_kobold, {
-            'prompt': fields.String(description="The prompt which will be sent to Kobold Diffusion to generate an image"),
+            'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate the text"),
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputKobold', self.root_model_generation_payload_kobold, {
         })

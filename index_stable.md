@@ -67,6 +67,8 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 [Full Documentation](/api)
 
+If you are developing a paid or ad-based integration with the Stable Horde, we request that you use part of your profits to support the horde. If your app is solely reliant on the volunteer resources of the horde, we expect at least 50% of those should go to supporting the horde itself, preferrably by onboarding your own workers. If the horde is merely an option among many, we suggest you assign some workers to the horde depending on how much it's being utilized by your client base.
+
 ## Services
 
 * [Register New Account](/register)
