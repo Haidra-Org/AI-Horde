@@ -75,16 +75,12 @@ class WorkerExtended(Worker):
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
-        is_matching = can_generate[0]
-        skipped_reason = can_generate[1]
-        if not is_matching:
-            return([is_matching,skipped_reason])
+        if not can_generate[0]:
+            return [can_generate[0],can_generate[1]]
         if self.max_content_length < waiting_prompt.max_content_length:
-            is_matching = False
-            skipped_reason = 'max_content_length'
+            return [False, 'max_content_length']
         if self.max_length < waiting_prompt.max_length:
-            is_matching = False
-            skipped_reason = 'max_length'
+            return [False, 'max_length']
         matching_softprompt = False
         for sp in waiting_prompt.softprompts:
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
@@ -96,9 +92,8 @@ class WorkerExtended(Worker):
                     matching_softprompt = True
                     break
         if not matching_softprompt:
-            is_matching = False
-            skipped_reason = 'matching_softprompt'
-        return([is_matching,skipped_reason])
+            return [False, 'matching_softprompt']
+        return [True, None]
 
     def get_details(self, is_privileged = False):
         ret_dict = super().get_details(is_privileged)
