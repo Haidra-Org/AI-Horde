@@ -21,4 +21,5 @@ oauthlib~=3.2.2
 SQLAlchemy~=1.4.44
 psycopg2-binary
 boto3
+regex
 git+https://github.com/Patreon/patreon-python.git
