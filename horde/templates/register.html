@@ -35,17 +35,16 @@
         {% if oauth_id is not none and pseudonymous is not true %}
         <h1>{{ welcome }}</h1>
         <h2>Set Display Name</h2>
-        <p>This is used in statistics</p>
         <p>Note: Changing your username will generate a new API key!</p>
         {% else %}
         <h1>Welcome</h1>
         <h2>Set Display Name</h2>
-        <p>This is used in statistics</p>
         <p style="background-color:Tomato;">WARNING: You are not logged in!</p>
         <p>If you submit a username, it will create a new user with a random API key <b>which cannot be maintained by us!</b></p>
         <p>If you forget/lose this API Key, there's nothing we can do to recover it. You'll have to create a new account.</p>
         <p>To ensure you avoid this fate, please login using one of the buttons above first!</p>
         {% endif %}
+        <p><strong>IMPORTANT:</strong> If you have been redirected here from a paid or ad-based client, please be aware that <strong>this is a fully volunteer-run service</strong>. You can always generate images for free here, without paying!</p>
         <form method="POST" class="main-form">
             <div class="form-group">
                 <label for="username">Display Name *</label>
