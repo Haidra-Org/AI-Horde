@@ -263,39 +263,30 @@ class Worker(db.Model):
 
     def can_generate(self, waiting_prompt):
         '''Takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it'''
-        is_matching = True
-        skipped_reason = None
         # Workers in maintenance are still allowed to generate for their owner
         if self.maintenance and waiting_prompt.user != self.user:
-            is_matching = False
-            return([is_matching,skipped_reason])
+            return [False, None]
         #logger.warning(datetime.utcnow())
         if self.is_stale():
             # We don't consider stale workers in the request, so we don't need to report a reason
-            is_matching = False
-            return([is_matching,skipped_reason])
+            return [False, None]
         #logger.warning(datetime.utcnow())
         if waiting_prompt.nsfw and not self.nsfw:
-            is_matching = False
-            skipped_reason = 'nsfw'
+            return [False, 'nsfw']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.trusted_workers and not self.user.trusted:
-            is_matching = False
-            skipped_reason = 'untrusted'
+            return [False, 'untrusted']
         # If the worker has been tricked once by this prompt, we don't want to resend it it
         # as it may give up the jig
         #logger.warning(datetime.utcnow())
         if waiting_prompt.tricked_worker(self):
-            is_matching = False
-            skipped_reason = 'secret'
+            return [False, 'secret']
         #logger.warning(datetime.utcnow())
         if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
-            is_matching = False
-            skipped_reason = 'blacklist'
+            return [False, 'blacklist']
         # Skips working prompts which require a specific worker from a list, and our ID is not in that list
         if len(waiting_prompt.workers) and self.id not in [wref.worker_id for wref in waiting_prompt.workers]:
-            is_matching = False
-            skipped_reason = 'worker_id'
+            return [False, 'worker_id']
         #logger.warning(datetime.utcnow())
 
         my_model_names = self.get_model_names()
@@ -307,15 +298,13 @@ class Worker(db.Model):
                     found_matching_model = True
                     break
             if not found_matching_model:
-                is_matching = False
-                skipped_reason = 'model'
+                return [False, 'model']
 
         # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
         # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
         # if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
-        #     is_matching = False
-        #     skipped_reason = 'performance'
-        return([is_matching,skipped_reason])
+        #   return [False, 'performance']
+        return [True,None]
 
     # We split it to its own function to make it extendable
     def convert_contribution(self,raw_things):

@@ -58,6 +58,7 @@ class Models(v2.Models):
             'img2img': fields.Integer(description="How many waiting requests were skipped because they requested img2img"),
             'painting': fields.Integer(description="How many waiting requests were skipped because they requested inpainting/outpainting"),
             'post-processing': fields.Integer(description="How many waiting requests were skipped because they requested post-processing"),
+            'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
         })
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
@@ -75,6 +76,7 @@ class Models(v2.Models):
             'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
             'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
+            'require_upfront_kudos': fields.Boolean(description="If True, then will only pick up requests where the users has the required kudos for them already."),
         })
 
         self.input_model_request_generation = api.model('GenerationInput', {
