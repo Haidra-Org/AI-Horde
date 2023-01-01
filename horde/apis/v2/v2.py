@@ -375,10 +375,7 @@ class JobPopTemplate(Resource):
             self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-        for model in self.models:
-            if is_profane(model) and not "Hentai" in model:
-                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
-
+            
 
 class JobPop(JobPopTemplate):
 
@@ -491,6 +488,12 @@ class JobPop(JobPopTemplate):
             safe_ip = self.safe_ip, 
             ipaddr = self.worker_ip)
 
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self, worker_class = Worker):
+        super().validate(worker_class = worker_class)
+        for model in self.models:
+            if is_profane(model) and not "Hentai" in model:
+                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
 
 class JobSubmit(Resource):
     decorators = [limiter.limit("60/second")]

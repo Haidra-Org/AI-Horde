@@ -6,13 +6,13 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
-from horde.utils import is_profane, get_db_uuid, sanitize_string
+from horde.utils import is_profane, get_db_uuid, sanitize_string, get_db_uuid
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 class Team(db.Model):
     __tablename__ = "teams"
-    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     info = db.Column(db.String(1000), default='')
     name = db.Column(db.String(100), default='', unique=True, nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

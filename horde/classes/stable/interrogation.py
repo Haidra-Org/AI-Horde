@@ -27,7 +27,7 @@ class InterrogationForms(db.Model):
     result = db.Column(json_column_type, default=None)
     kudos = db.Column(db.Float, default=1, nullable=False)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
-    worker = db.relationship("WorkerExtended", back_populates="interrogation_forms")
+    worker = db.relationship("InterrogationWorker", back_populates="processing_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     initiated =  db.Column(db.DateTime, default=None, index=True)
     expiry = db.Column(db.DateTime, default=None, index=True)

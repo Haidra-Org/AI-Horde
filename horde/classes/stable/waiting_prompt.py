@@ -7,7 +7,6 @@ from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url
 
-
 class WaitingPromptExtended(WaitingPrompt):
     source_image = db.Column(db.Text, default=None)
     source_processing = db.Column(db.String(10), default='img2img', nullable=False)

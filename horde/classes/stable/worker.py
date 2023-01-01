@@ -5,10 +5,12 @@ from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 
 class WorkerExtended(Worker):
+    __mapper_args__ = {
+        "polymorphic_identity": "stable_worker",
+    }    
     max_pixels = db.Column(db.Integer, default=512 * 512, nullable=False)
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
-    allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = True
 
     def check_in(self, max_pixels, **kwargs):
@@ -19,7 +21,6 @@ class WorkerExtended(Worker):
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
-        self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
         self.allow_post_processing = kwargs.get('allow_post_processing', True)
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])

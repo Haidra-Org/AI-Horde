@@ -163,7 +163,7 @@ class Models(v2.Models):
             'bridge_version': fields.Integer(example=0,description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).", min=0),
         })
         self.response_model_interrogation_pop = api.model('InterrogationPayload', {
-            'payload': fields.Nested(self.response_model_generation_payload, skip_none=True),
+            'payload': fields.Nested(self.response_model_interrogation_pop_payload, skip_none=True),
             'id': fields.String(description="The UUID for this interrgoation form"),
             'form': fields.String(description="The name of this interrogation form"),
             'skipped': fields.Nested(self.response_model_interrogation_forms_skipped, skip_none=True)

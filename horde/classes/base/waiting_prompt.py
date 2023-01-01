@@ -8,7 +8,7 @@ from sqlalchemy import JSON, func, or_
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
-from horde.utils import is_profane, get_db_uuid, get_expiry_date
+from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
 
 from horde.classes import ProcessingGeneration
 
@@ -45,7 +45,7 @@ class WPModels(db.Model):
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
-    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))

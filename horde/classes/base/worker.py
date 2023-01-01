@@ -53,13 +53,18 @@ class WorkerModel(db.Model):
     model = db.Column(db.String(30))  # TODO model should be a foreign key to a model table
 
 class WorkerTemplate(db.Model):
+    __tablename__ = "workers"
+    __mapper_args__ = {
+        "polymorphic_identity": "worker_template",
+        "polymorphic_on": "worker_type",
+    }    
     suspicion_threshold = 3
     # Every how many seconds does this worker get a kudos reward
     uptime_reward_threshold = 600
     default_maintenance_msg = "This worker has been put into maintenance mode by its owner"
 
-    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)
-    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    worker_type = db.Column(db.String(30), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user = db.relationship("User", back_populates="workers")
     name = db.Column(db.String(100), unique=True, nullable=False, index=True)
@@ -86,9 +91,12 @@ class WorkerTemplate(db.Model):
     team_id = db.Column(uuid_column_type(), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", back_populates="workers")
 
+    allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
+
     stats = db.relationship("WorkerStats", back_populates="worker", cascade="all, delete-orphan")
     performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete-orphan")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
+
     requires_upfront_kudos = False
     prioritized_users = []
 
@@ -189,6 +197,7 @@ class WorkerTemplate(db.Model):
         self.bridge_version = kwargs.get("bridge_version", 1)
         self.threads = kwargs.get("threads", 1)
         self.requires_upfront_kudos = kwargs.get('requires_upfront_kudos', False)
+        self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
         self.prioritized_users = kwargs.get('prioritized_users', [])
@@ -378,8 +387,9 @@ class WorkerTemplate(db.Model):
 
 class Worker(WorkerTemplate):
     '''A worker is meant to receive a text prompt and pass it though a generative model'''
-    __tablename__ = "workers"
-
+    __mapper_args__ = {
+        "polymorphic_identity": "worker",
+    }    
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     
     blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete-orphan")

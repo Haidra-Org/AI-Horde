@@ -479,7 +479,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
         Interrogation.extra_priority.desc(), 
         Interrogation.created.asc()
     )
-    if priority_users != None:
+    if priority_user_ids != None:
         final_interrogation_query.filter(Interrogation.user_id.in_(priority_user_ids))
     # We use this to not retrieve already retrieved with priority_users 
     retrieve_limit = 100

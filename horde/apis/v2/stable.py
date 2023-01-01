@@ -381,18 +381,18 @@ class InterrogatePop(JobPopTemplate):
             forms_list = self.forms, 
             priority_user_ids = self.priority_user_ids,
         )
-        for form in self.priority_list:
+        for form in priority_list:
             # We append to the list so that we have the prioritized forms first
             self.prioritized_forms.append(form)
         
         # If we already have 100 requests from prioritized users, we don't want to do another DB call
         if len(self.prioritized_forms) < 100:
-            for wp in database.get_sorted_forms_filtered_to_worker(
+            for form in database.get_sorted_forms_filtered_to_worker(
                 worker = self.worker, 
                 forms_list = self.forms,
                 excluded_forms = self.prioritized_forms,
             ):
-                self.prioritized_forms.append(wp)
+                self.prioritized_forms.append(form)
         # logger.warning(datetime.utcnow())
         for form in self.prioritized_forms:
             can_interrogate, skipped_reason = self.worker.can_interrogate(form)
@@ -424,10 +424,7 @@ class InterrogatePop(JobPopTemplate):
 
     def check_in(self):
         self.worker.check_in(
-            self.args.max_pixels, 
-            nsfw = self.args.nsfw, 
-            blacklist = self.blacklist, 
-            models = self.models, 
+            forms = self.forms, 
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
             threads = self.args.threads,
