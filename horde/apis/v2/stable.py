@@ -3,7 +3,8 @@ from io import BytesIO
 from PIL import Image
 
 from .v2 import *
-from horde.classes import Interrogation
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
 from horde.r2 import upload_image, generate_img_download_url
 from horde.logger import logger
@@ -330,7 +331,7 @@ class InterrogationStatus(Resource):
         return(i_status, 200)
 
 
-class InterrogatePop(Resource):
+class InterrogatePop(JobPopTemplate):
 
     # The parser for RequestPop
     post_parser = reqparse.RequestParser()
@@ -353,7 +354,7 @@ class InterrogatePop(Resource):
         This endpoint is used by registered workers only
         '''
         # logger.warning(datetime.utcnow())
-        self.args = parsers.post_parser.parse_args()
+        self.args = self.post_parser.parse_args()
         self.priority_usernames = []
         if self.args.priority_usernames:
             self.priority_usernames = self.args.priority_usernames
@@ -361,10 +362,10 @@ class InterrogatePop(Resource):
         if self.args.forms:
             self.forms = self.args.forms
         self.worker_ip = request.remote_addr
-        self.validate()
+        self.validate(worker_class = InterrogationWorker)
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
-        self.prioritized_wp = []
+        self.prioritized_forms = []
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
 
@@ -375,29 +376,27 @@ class InterrogatePop(Resource):
         if p_users_id_from_db:
             self.priority_user_ids.extend([x.id for x in p_users_id_from_db])
 
-        # for priority_username in self.priority_usernames:
-        #     priority_user = database.find_user_by_username(priority_username)
-        #     if priority_user:
-        #        self.priority_users.append(priority_user)
-
-        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
-        for wp in wp_list:
-            self.prioritized_wp.append(wp)
-        # for priority_user in self.priority_users:
-        #     wp_list = database.get_all_wps()
-        #     for wp in wp_list:
-        #         if wp.user == priority_user and wp.needs_gen():
-        #             self.prioritized_wp.append(wp)
+        priority_list = database.get_sorted_forms_filtered_to_worker(
+            worker = self.worker, 
+            forms_list = self.forms, 
+            priority_user_ids = self.priority_user_ids,
+        )
+        for form in self.priority_list:
+            # We append to the list so that we have the prioritized forms first
+            self.prioritized_forms.append(form)
+        
+        # If we already have 100 requests from prioritized users, we don't want to do another DB call
+        if len(self.prioritized_forms) < 100:
+            for wp in database.get_sorted_forms_filtered_to_worker(
+                worker = self.worker, 
+                forms_list = self.forms,
+                excluded_forms = self.prioritized_forms,
+            ):
+                self.prioritized_forms.append(wp)
         # logger.warning(datetime.utcnow())
-        ## End prioritize by bridge request ##
-        for wp in self.get_sorted_wp():
-            if wp not in self.prioritized_wp:
-                self.prioritized_wp.append(wp)
-        # logger.warning(datetime.utcnow())
-        for wp in self.prioritized_wp:
-            check_gen = self.worker.can_generate(wp)
-            if not check_gen[0]:
-                skipped_reason = check_gen[1]
+        for form in self.prioritized_forms:
+            can_interrogate, skipped_reason = self.worker.can_interrogate(form)
+            if not can_interrogate:
                 # We don't report on secret skipped reasons
                 # as they're typically countermeasures to raids
                 if skipped_reason != "secret":
@@ -407,14 +406,14 @@ class InterrogatePop(Resource):
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
             # time.sleep(random.uniform(0, 1))
-            wp.refresh()
-            if not wp.needs_gen():  # this says if < 1
+            form.refresh()
+            if not form.is_waiting(): 
                 continue
-            worker_ret = self.start_worker(wp)
+            worker_ret = form.pop(self.worker)
             # logger.debug(worker_ret)
             if worker_ret is None:
                 continue
-            # logger.debug(worker_ret)
+            logger.debug(worker_ret)
             return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
@@ -422,62 +421,7 @@ class InterrogatePop(Resource):
         # logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
 
-    def get_sorted_wp(self):
-        '''Extendable class to retrieve the sorted WP list for this worker'''
-        return database.get_sorted_wp_filtered_to_worker(self.worker)
 
-    # Making it into its own function to allow extension
-    def start_worker(self, wp):
-        # Paused worker gives a fake prompt
-        # Unless the owner of the worker is the owner of the prompt
-        # Then we allow them to fulfil their own request
-        if self.worker.paused and wp.user != self.worker.user:
-            ret = wp.fake_generation(self.worker)
-        else:
-            ret = wp.start_generation(self.worker)
-        return(ret)
-
-    # We split this into its own function, so that it may be overriden and extended
-    def validate(self):
-        self.skipped = {}
-        self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('prompt pop')
-        self.worker_name = sanitize_string(self.args['name'])
-        self.worker = database.find_worker_by_name(self.worker_name)
-        self.safe_ip = True
-        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-            if self.safe_ip is None:
-                raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
-                #     self.safe_ip = True
-                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
-                    raise e.UnsafeIP(self.worker_ip)
-        if not self.worker:
-            if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
-            worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
-                raise e.WorkerInviteOnly(worker_count)
-            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
-                pass
-            self.worker = Worker(
-                user_id=self.user.id,
-                name=self.worker_name,
-            )
-            self.worker.create()
-        if self.user != self.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-        for model in self.models:
-            if is_profane(model) and not "Hentai" in model:
-                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
-    
     def check_in(self):
         self.worker.check_in(
             self.args.max_pixels, 
@@ -488,10 +432,6 @@ class InterrogatePop(Resource):
             ipaddr = self.worker_ip,
             threads = self.args.threads,
             bridge_version = self.args.bridge_version,
-            allow_img2img = self.args.allow_img2img,
-            allow_painting = self.args.allow_painting,
-            allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
-            allow_post_processing = self.args.allow_post_processing,
             priority_usernames = self.priority_usernames,
         )
 
@@ -573,3 +513,4 @@ api.add_resource(TeamSingle, "/teams/<string:team_id>")
 api.add_resource(OperationsIP, "/operations/ipaddr")
 api.add_resource(Interrogate, "/interrogate/async")
 api.add_resource(InterrogationStatus, "/interrogate/status/<string:id>")
+api.add_resource(InterrogatePop, "/interrogate/pop")

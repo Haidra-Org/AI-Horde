@@ -151,7 +151,7 @@ class Models(v2.Models):
         self.input_model_interrogation_pop = api.model('InterrogationPopInput', {
             'name': fields.String(description="The Name of the Worker"),
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
-            'forms': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
+            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "clip", "nsfw"], unique=True)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=4),
         })

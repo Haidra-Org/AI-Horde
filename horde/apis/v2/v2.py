@@ -336,7 +336,51 @@ class AsyncCheck(Resource):
         return(lite_status, 200)
 
 
-class JobPop(Resource):
+class JobPopTemplate(Resource):
+
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self, worker_class = Worker):
+        self.skipped = {}
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('prompt pop')
+        self.worker_name = sanitize_string(self.args['name'])
+        self.worker = database.find_worker_by_name(self.worker_name, worker_class=worker_class)
+        self.safe_ip = True
+        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip is False:
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                if not self.safe_ip and not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
+        if not self.worker:
+            if is_profane(self.worker_name):
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
+            worker_count = self.user.count_workers()
+            if invite_only.active and worker_count >= self.user.worker_invited:
+                raise e.WorkerInviteOnly(worker_count)
+            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
+            self.worker = worker_class(
+                user_id=self.user.id,
+                name=self.worker_name,
+            )
+            self.worker.create()
+        if self.user != self.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+        for model in self.models:
+            if is_profane(model) and not "Hentai" in model:
+                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
+
+
+class JobPop(JobPopTemplate):
 
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
@@ -438,47 +482,6 @@ class JobPop(Resource):
             ret = wp.start_generation(self.worker)
         return(ret)
 
-    # We split this into its own function, so that it may be overriden and extended
-    def validate(self):
-        self.skipped = {}
-        self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('prompt pop')
-        self.worker_name = sanitize_string(self.args['name'])
-        self.worker = database.find_worker_by_name(self.worker_name)
-        self.safe_ip = True
-        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-            if self.safe_ip is None:
-                raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
-                #     self.safe_ip = True
-                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
-                    raise e.UnsafeIP(self.worker_ip)
-        if not self.worker:
-            if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
-            worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
-                raise e.WorkerInviteOnly(worker_count)
-            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
-                pass
-            self.worker = Worker(
-                user_id=self.user.id,
-                name=self.worker_name,
-            )
-            self.worker.create()
-        if self.user != self.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-        for model in self.models:
-            if is_profane(model) and not "Hentai" in model:
-                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
-    
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):

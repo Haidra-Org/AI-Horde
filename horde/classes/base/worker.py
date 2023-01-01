@@ -52,8 +52,7 @@ class WorkerModel(db.Model):
     worker = db.relationship(f"WorkerExtended", back_populates="models")
     model = db.Column(db.String(30))  # TODO model should be a foreign key to a model table
 
-class Worker(db.Model):
-    __tablename__ = "workers"
+class WorkerTemplate(db.Model):
     suspicion_threshold = 3
     # Every how many seconds does this worker get a kudos reward
     uptime_reward_threshold = 600
@@ -84,17 +83,14 @@ class Worker(db.Model):
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
     maintenance_msg = db.Column(db.String(300), unique=False, default=default_maintenance_msg, nullable=False)
-    nsfw = db.Column(db.Boolean, default=False, nullable=False)
     team_id = db.Column(uuid_column_type(), db.ForeignKey("teams.id"), default=None)
     team = db.relationship("Team", back_populates="workers")
 
     stats = db.relationship("WorkerStats", back_populates="worker", cascade="all, delete-orphan")
     performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete-orphan")
-    blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete-orphan")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
-    models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete-orphan")
-    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
-    interrogation_forms = db.relationship("InterrogationsForms", back_populates="worker")
+    requires_upfront_kudos = False
+    prioritized_users = []
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -187,49 +183,15 @@ class Worker(db.Model):
         self.paused = is_paused_active
         db.session.commit()   
 
-    def set_models(self, models):
-        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
-        models = [sanitize_string(model_name[0:100]) for model_name in models]
-        del models[100:]
-        models = set(models)
-        existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
-        existing_model_names = set([m.model for m in existing_models.all()])
-        if existing_model_names == models:
-            return
-        existing_models.delete()
-        for model_name in models:
-            model = WorkerModel(worker_id=self.id,model=model_name)
-            db.session.add(model)
-        db.session.commit()
-
-    def set_blacklist(self, blacklist):
-        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        blacklist = [sanitize_string(word) for word in blacklist]
-        del blacklist[100:]
-        blacklist = set(blacklist)
-        existing_blacklist = db.session.query(WorkerBlackList).filter_by(worker_id=self.id)
-        existing_blacklist_words = set([b.word for b in existing_blacklist.all()])
-        if existing_blacklist_words == blacklist:
-            return
-        existing_blacklist.delete()
-        for word in blacklist:
-            blacklisted_word = WorkerBlackList(worker_id=self.id,word=word[0:15])
-            db.session.add(blacklisted_word)
-        db.session.commit()
-
-    def get_model_names(self):
-        model_names = db.session.query(func.distinct(WorkerModel.model).label('name')).filter(WorkerModel.worker_id == self.id).all()
-        return [m.name for m in model_names]
-
-
-    # This should be extended by each specific horde
+    # This should be extended by each worker type
     def check_in(self, **kwargs):
-        self.set_models(kwargs.get("models"))
-        self.nsfw = kwargs.get("nsfw", True)
-        self.set_blacklist(kwargs.get("blacklist", []))
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
         self.threads = kwargs.get("threads", 1)
+        self.requires_upfront_kudos = kwargs.get('requires_upfront_kudos', False)
+        # If's OK to provide an empty list here as we don't actually modify this var
+        # We only check it in can_generate
+        self.prioritized_users = kwargs.get('prioritized_users', [])
         if not kwargs.get("safe_ip", True):
             if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
@@ -260,51 +222,6 @@ class Worker(db.Model):
             return(f"{round(self.uptime/60/60,2)} hours")
         else:
             return(f"{round(self.uptime/60/60/24,2)} days")
-
-    def can_generate(self, waiting_prompt):
-        '''Takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it'''
-        # Workers in maintenance are still allowed to generate for their owner
-        if self.maintenance and waiting_prompt.user != self.user:
-            return [False, None]
-        #logger.warning(datetime.utcnow())
-        if self.is_stale():
-            # We don't consider stale workers in the request, so we don't need to report a reason
-            return [False, None]
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.nsfw and not self.nsfw:
-            return [False, 'nsfw']
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.trusted_workers and not self.user.trusted:
-            return [False, 'untrusted']
-        # If the worker has been tricked once by this prompt, we don't want to resend it it
-        # as it may give up the jig
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.tricked_worker(self):
-            return [False, 'secret']
-        #logger.warning(datetime.utcnow())
-        if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
-            return [False, 'blacklist']
-        # Skips working prompts which require a specific worker from a list, and our ID is not in that list
-        if len(waiting_prompt.workers) and self.id not in [wref.worker_id for wref in waiting_prompt.workers]:
-            return [False, 'worker_id']
-        #logger.warning(datetime.utcnow())
-
-        my_model_names = self.get_model_names()
-        wp_model_names = waiting_prompt.get_model_names()
-        if len(wp_model_names) > 0:
-            found_matching_model = False
-            for model_name in my_model_names:
-                if model_name in wp_model_names:
-                    found_matching_model = True
-                    break
-            if not found_matching_model:
-                return [False, 'model']
-
-        # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
-        # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
-        # if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
-        #   return [False, 'performance']
-        return [True,None]
 
     # We split it to its own function to make it extendable
     def convert_contribution(self,raw_things):
@@ -396,18 +313,12 @@ class Worker(db.Model):
         return(False)
 
     def delete(self):
-        for procgen in self.processing_gens:
-            procgen.abort()
         for stat in self.stats:
             db.session.delete(stat)    
         for performance in self.performance:
             db.session.delete(performance)
-        for word in self.blacklist:
-            db.session.delete(word)
         for suspicion in self.suspicions:
             db.session.delete(suspicion)
-        for model in self.models:
-            db.session.delete(model)
         db.session.delete(self)
         db.session.commit()
 
@@ -417,37 +328,6 @@ class Worker(db.Model):
         for kd in kudos_details:
             ret_dict[kd.action] = kd.value
         return ret_dict
-
-    # Should be extended by each specific horde
-    @logger.catch(reraise=True)
-    def get_details(self, details_privilege = 0):
-        '''We display these in the workers list json'''
-        ret_dict = {
-            "name": self.name,
-            "id": str(self.id),
-            "requests_fulfilled": self.fulfilments,
-            "uncompleted_jobs": self.uncompleted_jobs,
-            "kudos_rewards": self.kudos,
-            "kudos_details": self.get_kudos_details(),
-            "performance": self.get_performance(),
-            "threads": self.threads,
-            "uptime": self.uptime,
-            "maintenance_mode": self.maintenance,
-            "info": self.info,
-            "nsfw": self.nsfw,
-            "trusted": self.user.trusted,
-            "models": self.get_model_names(),
-            "online": not self.is_stale(),
-            "team": {"id": str(self.team.id),"name": self.team.name} if self.team else 'None',
-        }
-        if details_privilege >= 2:
-            ret_dict['paused'] = self.paused
-            ret_dict['suspicious'] = len(self.suspicions)
-        if details_privilege >= 1 or self.user.public_workers:
-            ret_dict['owner'] = self.user.get_unique_alias()
-            ret_dict['contact'] = self.user.contact
-        return(ret_dict)
-
 
     def import_kudos_details(self, kudos_details):
         for key in kudos_details:
@@ -466,3 +346,148 @@ class Worker(db.Model):
             new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(s))
             db.session.add(new_suspicion)
         db.session.commit()
+
+    # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def get_details(self, details_privilege = 0):
+        '''We display these in the workers list json'''
+        ret_dict = {
+            "name": self.name,
+            "id": str(self.id),
+            "requests_fulfilled": self.fulfilments,
+            "uncompleted_jobs": self.uncompleted_jobs,
+            "kudos_rewards": self.kudos,
+            "kudos_details": self.get_kudos_details(),
+            "performance": self.get_performance(),
+            "threads": self.threads,
+            "uptime": self.uptime,
+            "maintenance_mode": self.maintenance,
+            "info": self.info,
+            "trusted": self.user.trusted,
+            "online": not self.is_stale(),
+            "team": {"id": str(self.team.id),"name": self.team.name} if self.team else 'None',
+        }
+        if details_privilege >= 2:
+            ret_dict['paused'] = self.paused
+            ret_dict['suspicious'] = len(self.suspicions)
+        if details_privilege >= 1 or self.user.public_workers:
+            ret_dict['owner'] = self.user.get_unique_alias()
+            ret_dict['contact'] = self.user.contact
+        return(ret_dict)
+
+
+class Worker(WorkerTemplate):
+    '''A worker is meant to receive a text prompt and pass it though a generative model'''
+    __tablename__ = "workers"
+
+    nsfw = db.Column(db.Boolean, default=False, nullable=False)
+    
+    blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete-orphan")
+    models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete-orphan")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
+
+    # This should be extended by each specific horde
+    def check_in(self, **kwargs):
+        super().check_in(**kwargs)
+        self.set_models(kwargs.get("models"))
+        self.nsfw = kwargs.get("nsfw", True)
+        self.set_blacklist(kwargs.get("blacklist", []))
+        db.session.commit()    
+
+    def set_blacklist(self, blacklist):
+        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
+        blacklist = [sanitize_string(word) for word in blacklist]
+        del blacklist[100:]
+        blacklist = set(blacklist)
+        existing_blacklist = db.session.query(WorkerBlackList).filter_by(worker_id=self.id)
+        existing_blacklist_words = set([b.word for b in existing_blacklist.all()])
+        if existing_blacklist_words == blacklist:
+            return
+        existing_blacklist.delete()
+        for word in blacklist:
+            blacklisted_word = WorkerBlackList(worker_id=self.id,word=word[0:15])
+            db.session.add(blacklisted_word)
+        db.session.commit()
+
+    def get_model_names(self):
+        model_names = db.session.query(func.distinct(WorkerModel.model).label('name')).filter(WorkerModel.worker_id == self.id).all()
+        return [m.name for m in model_names]
+
+    def set_models(self, models):
+        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
+        models = [sanitize_string(model_name[0:100]) for model_name in models]
+        del models[100:]
+        models = set(models)
+        existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
+        existing_model_names = set([m.model for m in existing_models.all()])
+        if existing_model_names == models:
+            return
+        existing_models.delete()
+        for model_name in models:
+            model = WorkerModel(worker_id=self.id,model=model_name)
+            db.session.add(model)
+        db.session.commit()
+
+
+    def can_generate(self, waiting_prompt):
+        '''Takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it'''
+        # Workers in maintenance are still allowed to generate for their owner
+        if self.maintenance and waiting_prompt.user != self.user:
+            return [False, None]
+        #logger.warning(datetime.utcnow())
+        if self.is_stale():
+            # We don't consider stale workers in the request, so we don't need to report a reason
+            return [False, None]
+        #logger.warning(datetime.utcnow())
+        if waiting_prompt.nsfw and not self.nsfw:
+            return [False, 'nsfw']
+        #logger.warning(datetime.utcnow())
+        if waiting_prompt.trusted_workers and not self.user.trusted:
+            return [False, 'untrusted']
+        # If the worker has been tricked once by this prompt, we don't want to resend it it
+        # as it may give up the jig
+        #logger.warning(datetime.utcnow())
+        if waiting_prompt.tricked_worker(self):
+            return [False, 'secret']
+        #logger.warning(datetime.utcnow())
+        if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
+            return [False, 'blacklist']
+        # Skips working prompts which require a specific worker from a list, and our ID is not in that list
+        if len(waiting_prompt.workers) and self.id not in [wref.worker_id for wref in waiting_prompt.workers]:
+            return [False, 'worker_id']
+        #logger.warning(datetime.utcnow())
+
+        my_model_names = self.get_model_names()
+        wp_model_names = waiting_prompt.get_model_names()
+        if len(wp_model_names) > 0:
+            found_matching_model = False
+            for model_name in my_model_names:
+                if model_name in wp_model_names:
+                    found_matching_model = True
+                    break
+            if not found_matching_model:
+                return [False, 'model']
+
+        # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
+        # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
+        # if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
+        #   return [False, 'performance']
+        return [True,None]
+
+    # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def get_details(self, details_privilege = 0):
+        '''We display these in the workers list json'''
+        ret_dict = super.get_details()
+        ret_dict["nsfw"] = self.nsfw,
+        ret_dict["models"] = self.get_model_names(),
+        return(ret_dict)
+
+    def delete(self):
+        for procgen in self.processing_gens:
+            procgen.abort()
+        for word in self.blacklist:
+            db.session.delete(word)
+        for model in self.models:
+            db.session.delete(model)
+        super().delete()

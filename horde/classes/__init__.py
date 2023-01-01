@@ -15,7 +15,7 @@ try:
 except (ModuleNotFoundError,AttributeError):
     WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
 if args.horde == 'stable':
-    from horde.classes.stable.interrogation import Interrogation
+    from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 try:
     WPAllowedWorkers = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WPAllowedWorkers
 except (ModuleNotFoundError,AttributeError):

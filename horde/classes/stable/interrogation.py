@@ -15,7 +15,7 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 
-class InterrogationsForms(db.Model):
+class InterrogationForms(db.Model):
     """For storing the details of each image interrogation form"""
     __tablename__ = "interrogation_forms"
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid) 
@@ -25,6 +25,7 @@ class InterrogationsForms(db.Model):
     state = db.Column(Enum(State), default=State.WAITING, nullable=False) 
     payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
+    kudos = db.Column(db.Float, default=1, nullable=False)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id"))
     worker = db.relationship("WorkerExtended", back_populates="interrogation_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -33,10 +34,10 @@ class InterrogationsForms(db.Model):
 
     def pop(self, worker):
         myself_refresh = db.session.query(
-            InterrogationsForms
+            InterrogationForms
         ).filter(
-            InterrogationsForms.id == self.id, 
-            InterrogationsForms.state == State.WAITING
+            InterrogationForms.id == self.id, 
+            InterrogationForms.state == State.WAITING
         ).with_for_update().first()
         if not myself_refresh:
             return None
@@ -57,28 +58,26 @@ class InterrogationsForms(db.Model):
         self.result = result
         # Each interrogation rewards 1 kudos
         self.state = State.DONE
-        kudos = 1
-        self.record(kudos)
+        self.record(self.kudos)
         db.session.commit()
-        return(kudos)
+        return(self.kudos)
 
     def cancel(self):
         if self.state != State.DONE:
             self.result = None
             self.state = State.CANCELLED
         if self.state == State.PROCESSING:
-            kudos = 1
-            self.record(kudos)
+            self.record(self.kudos)
         db.session.commit()
-        return(kudos)
+        return(self.kudos)
 
     def record(self, kudos):
         cancel_txt = ""
         if self.state == State.CANCELLED:
             cancel_txt = " CANCELLED"
-        self.worker.record_interrogation(kudos = kudos, seconds_taken = (datetime.utcnow() - self.initiated).seconds)
-        self.interrogation.record_usage(kudos = kudos + 1)
-        logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}")
+        self.worker.record_interrogation(kudos = self.kudos, seconds_taken = (datetime.utcnow() - self.initiated).seconds)
+        self.interrogation.record_usage(kudos = self.kudos + 1)
+        logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}")
 
 
     def abort(self):
@@ -100,6 +99,9 @@ class InterrogationsForms(db.Model):
 
     def is_faulted(self):
         return self.state == State.FAULTED
+
+    def is_waiting(self):
+        return self.state == State.WAITING
 
     def is_stale(self, ttl):
         if self.state in [State.FAULTED, State.CANCELLED, State.DONE]:
@@ -125,13 +127,15 @@ class Interrogation(db.Model):
     r2stored = db.Column(db.Boolean, default=False, nullable=False)
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
-    forms = db.relationship("InterrogationsForms", back_populates="interrogation", cascade="all, delete-orphan")
+    extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
+    forms = db.relationship("InterrogationForms", back_populates="interrogation", cascade="all, delete-orphan")
 
 
     def __init__(self, forms, *args, **kwargs):
         super().__init__(*args, **kwargs)
         db.session.add(self)
         db.session.commit()
+        self.extra_priority = self.user.kudos
         self.set_forms(forms)
 
 
@@ -156,12 +160,14 @@ class Interrogation(db.Model):
             # We don't allow the same interrogation type twice
             if form["name"] in seen_names:
                 continue
-            form_entry = InterrogationsForms(
+            form_entry = InterrogationForms(
                 name=form["name"],
                 payload=form.get("payload"),
-                i_id=self.id
+                i_id=self.id,
+                kudos = 1, #TODO: Adjust the kudos cost per interrogation
             )
             db.session.add(form_entry)
+        db.session.commit()
 
     def get_form_names(self):
         return [f.name for f in self.forms]
