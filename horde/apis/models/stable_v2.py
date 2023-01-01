@@ -148,3 +148,23 @@ class Models(v2.Models):
             'results': fields.List(fields.Nested(self.response_model_interrogation_result, skip_none=True)),
             'state': fields.String(title="Interrogation State", description="The overall status of this interrogation"),
         })
+        self.input_model_interrogation_pop = api.model('InterrogationPopInput', {
+            'name': fields.String(description="The Name of the Worker"),
+            'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
+            'forms': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
+            'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
+            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=4),
+        })
+        self.response_model_interrogation_pop_payload = api.model('InterrogationPopPayload', {
+        })
+        self.response_model_interrogation_forms_skipped = api.model('NoValidInterrogationsFound', {
+            'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
+            'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
+            'bridge_version': fields.Integer(example=0,description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).", min=0),
+        })
+        self.response_model_interrogation_pop = api.model('InterrogationPayload', {
+            'payload': fields.Nested(self.response_model_generation_payload, skip_none=True),
+            'id': fields.String(description="The UUID for this interrgoation form"),
+            'form': fields.String(description="The name of this interrogation form"),
+            'skipped': fields.Nested(self.response_model_interrogation_forms_skipped, skip_none=True)
+        })

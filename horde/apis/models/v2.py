@@ -74,7 +74,7 @@ class Models:
         })
         self.response_model_generations_skipped = api.model('NoValidRequestFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
-            'performance': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
+            'performance': fields.Integer(description="How many waiting requests were skipped because they required higher performance", min=0),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide.", min=0),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept.", min=0),
             'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
