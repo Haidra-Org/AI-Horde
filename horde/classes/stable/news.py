@@ -5,6 +5,16 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-01",
+            "newspiece": "Stable Horde can now be used on the automatic1111 Web UI via [an external script](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)",
+            "importance": "Information"
+        },
+        {
+            "date_published": "2022-12-30",
+            "newspiece": "Stable Horde now supports depth2img! To use it you need to send a source image and select the `Stable Difffusion 2 Depth` model",
+            "importance": "Information"
+        },
+        {
             "date_published": "2022-12-28",
             "newspiece": "Stable Horde workers can now opt-in to loading post-processors. Check your bridge_data.py for options. This should help workers who started being more unstable due to the PP requirements.",
             "importance": "Workers"
