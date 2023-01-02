@@ -2,7 +2,7 @@ from sqlalchemy import func
 from datetime import datetime
 from horde.logger import logger
 from horde.flask import db
-from horde.classes.base.worker import WorkerTemplate, uuid_column_type
+from horde.classes.base.worker import WorkerTemplate, WorkerPerformance, uuid_column_type
 from horde.suspicions import Suspicions
 
 

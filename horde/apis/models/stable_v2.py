@@ -123,6 +123,7 @@ class Models(v2.Models):
         })
         # Intentionally left blank to allow to add payloads later
         self.input_model_interrogation_form_payload = api.model('ModelInterrogationFormPayloadStable', {
+            "*": fields.Wildcard(fields.String)
         })
         self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
             'name': fields.String(required=True, enum=["caption", "clip", "nsfw"], description="The type of interrogation this is", unique=True), 
@@ -146,11 +147,12 @@ class Models(v2.Models):
         })
         # Intentionally left blank to allow to add payloads later
         self.response_model_interrogation_form_result = api.model('InterrogationFormResult', {
+            "*": fields.Wildcard(fields.String)
         })
         self.response_model_interrogation_form_status = api.model('InterrogationFormStatus', {
             'form': fields.String(description="The name of this interrogation form"),
             'state': fields.String(title="Interrogation State", description="The overall status of this interrogation"),
-            'results': fields.Nested(self.response_model_interrogation_form_result, skip_none=True)
+            'result': fields.Nested(self.response_model_interrogation_form_result, skip_none=True)
         })
         self.response_model_interrogation_status = api.model('InterrogationStatus', {
             'state': fields.String(title="Interrogation State", description="The overall status of this interrogation"),

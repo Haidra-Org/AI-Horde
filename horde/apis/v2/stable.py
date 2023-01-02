@@ -71,10 +71,10 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
         upload_image(filename)
         os.remove(filename)
         return generate_img_download_url(filename)
-    except ImageValidationFailed as e:
+    except ImageValidationFailed as err:
         raise e.ImageValidationFailed(except_msg)
-    except Exception as e:
-        logger.error(e)
+    except Exception as err:
+        logger.error(err)
         raise e.ImageValidationFailed
 
 

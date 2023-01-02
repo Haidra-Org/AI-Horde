@@ -561,8 +561,8 @@ def get_form_by_id(form_id):
         logger.debug(f"Non-UUID form_id sent: '{form_id}'.")
         return None
     if SQLITE_MODE:
-        form_id = str(form_id)
-    return db.session.query(Interrogation).filter_by(id=form_uuid).first()
+        form_uuid = str(form_uuid)
+    return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()

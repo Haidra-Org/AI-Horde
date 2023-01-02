@@ -52,7 +52,7 @@ class NameAlreadyExists(wze.BadRequest):
         self.log = f"User '{username}' tried to change {object_type} name from {old_name} to {new_name}. Aborting!"
 
 class ImageValidationFailed(wze.BadRequest):
-    def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
+    def __init__(self, message = "Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."):
         self.specific = f"Image validation failed. {message}"
         self.log = "Source image validation failed for img2img"
 
