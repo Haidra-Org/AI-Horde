@@ -30,7 +30,8 @@ First [Register an account](/register) which will generate for you an API key. S
     * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [Diffusion UI](https://diffusionui.com/b/stable_horde)
     * [Art Bot](https://tinybots.net/artbot)
-    * [iOS + Android app](https://ppiqr.app.link/download)
+* There are also mobile apps:
+    * [Stable Horde Flutter](https://ppiqr.app.link/download) (iOS + Android app)
 
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
