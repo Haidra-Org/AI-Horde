@@ -2,7 +2,7 @@
 
 <img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Stable Diffusion workers](https://github.com/sd-webui/nataili). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md)!
 
-For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net)
+For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net). Finally you can also follow the [main developer's blog](https://dbzer0.com)
 
 ## Latest [News](/api/v2/status/news)
 
@@ -30,6 +30,8 @@ First [Register an account](/register) which will generate for you an API key. S
     * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [Diffusion UI](https://diffusionui.com/b/stable_horde)
     * [Art Bot](https://tinybots.net/artbot)
+* There are also mobile apps:
+    * [Stable Horde Flutter](https://ppiqr.app.link/download) (iOS + Android app)
 
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
@@ -49,7 +51,10 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 * We have created some official tools with which to integrate into the Stable Horde
     * [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
     * [Discord Bot](https://github.com/JamDon2/ai-horde-bot) which you [can add to your own server](https://discord.com/api/oauth2/authorize?client_id=1019572037360025650&permissions=8192&scope=bot) to be able to generate via the Stable Horde for free, and allow your users to transfer kudos between them.
-    * [Mastodon Bot](https://github.com/db0/mastodon-stable-horde-generate) which you can [use directly via mastodon to generate images](https://sigmoid.social/@stablehorde_generator).
+    * [Mastodon Bots](https://github.com/db0/mastodon-stable-horde-generate) which you can use directly via Activity Pub to generate images.
+       * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
+       * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
+
 * The community has made the following
     * Bots
         * [Telegram Bot](https://t.me/CraiyonArtBot)
@@ -59,6 +64,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
         * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
         * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)
         * [Unreal Engine Plugin](https://github.com/Mystfit/Unreal-StableDiffusionTools)
+        * [Automatic 1111 Web UI](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)
     * Other
         * [npm SDK 1](https://www.npmjs.com/package/@zeldafan0225/stable_horde)
         * [npm SDK 2](https://www.npmjs.com/package/stable-horde-api)
@@ -79,6 +85,7 @@ If you are developing a paid or ad-based integration with the Stable Horde, we r
 * Join us on [Discord](https://discord.gg/3DxrhksKzn)
 * Support the development of the Stable Horde on [Patreon](https://www.patreon.com/db0) or [Github](https://github.com/db0)
 * Follow us on <a rel="me" href="https://sigmoid.social/@stablehorde">Mastodon</a>
+* Subscribe to the [Division by Zer0 blog](https://dbzer0.com/)
 
 ## Credits
 
