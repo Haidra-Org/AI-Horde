@@ -339,6 +339,7 @@ class InterrogatePop(JobPopTemplate):
     post_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
     post_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker", location="json")
     post_parser.add_argument("forms", type=list, required=False, help="The forms currently supported on this worker", location="json")
+    post_parser.add_argument("amount", type=int, required=False, default=1, help="How many forms to pop at the same time", location="json")
     post_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
     post_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
 
@@ -350,7 +351,7 @@ class InterrogatePop(JobPopTemplate):
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
-        '''Check if there are generation requests queued for fulfillment.
+        '''Check if there are interrogation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
         # logger.warning(datetime.utcnow())
@@ -394,6 +395,8 @@ class InterrogatePop(JobPopTemplate):
             ):
                 self.prioritized_forms.append(form)
         # logger.warning(datetime.utcnow())
+        logger.debug(self.prioritized_forms)
+        worker_ret = {"forms": []}
         for form in self.prioritized_forms:
             can_interrogate, skipped_reason = self.worker.can_interrogate(form)
             if not can_interrogate:
@@ -406,20 +409,21 @@ class InterrogatePop(JobPopTemplate):
             # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
             # time.sleep(random.uniform(0, 1))
-            form.refresh()
             if not form.is_waiting(): 
                 continue
-            worker_ret = form.pop(self.worker)
+            form_ret = form.pop(self.worker)
             # logger.debug(worker_ret)
-            if worker_ret is None:
+            if form_ret is None:
                 continue
-            logger.debug(worker_ret)
-            return(worker_ret, 200)
+            worker_ret["forms"].append(form_ret)
+            if len(worker_ret["forms"]) >= self.args.amount:
+                logger.debug(worker_ret)
+                return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
         # logger.warning(datetime.utcnow())
-        return({"id": None, "skipped": self.skipped}, 200)
+        return({"skipped": self.skipped}, 200)
 
 
     def check_in(self):
@@ -435,37 +439,41 @@ class InterrogatePop(JobPopTemplate):
 
 class InterrogateSubmit(Resource):
     decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_submit_parser)
-    @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
+
+
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
+    post_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
+    post_parser.add_argument("result", type=dict, required=True, help="The completed interrogation form results", location="json")
+
+    @api.expect(post_parser)
+    @api.marshal_with(models.response_model_job_submit, code=200, description='Interrogation Submitted')
     @api.response(400, 'Generation Already Submitted', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
     @api.response(404, 'Request Not Found', models.response_model_error)
     def post(self):
-        '''Submit a generated image.
+        '''Submit the results of an interrogated image.
         This endpoint is used by registered workers only
         '''
-        self.args = parsers.job_submit_parser.parse_args()
+        self.args = self.post_parser.parse_args()
         self.validate()
         return({"reward": self.kudos}, 200)
 
     def validate(self):
-        self.procgen = database.get_progen_by_id(self.args['id'])
-        if not self.procgen:
-            raise e.InvalidProcGen(self.args['id'])
+        self.form = database.get_form_by_id(self.args['id'])
+        if not self.form:
+            raise e.InvalidJobID(self.args['id'])
         self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
-        if self.user != self.procgen.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        things_per_sec = stats.record_fulfilment(self.procgen)
-        self.kudos = self.procgen.set_generation(
-            generation=self.args['generation'], 
-            things_per_sec=things_per_sec, 
-            seed=self.args['seed']
+        if self.user != self.form.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.form.worker.name)
+        self.kudos = self.form.deliver(
+            result=self.args.result, 
         )
-        if self.kudos == 0 and not self.procgen.worker.maintenance:
-            raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
+        if self.kudos == 0 and not self.form.worker.maintenance:
+            raise e.DuplicateGen(self.form.worker.name, self.args['id'])
 
 
 
@@ -511,3 +519,5 @@ api.add_resource(OperationsIP, "/operations/ipaddr")
 api.add_resource(Interrogate, "/interrogate/async")
 api.add_resource(InterrogationStatus, "/interrogate/status/<string:id>")
 api.add_resource(InterrogatePop, "/interrogate/pop")
+#TODO APIv2 Merge with status as a POST this part of /interrogate/<string:id>
+api.add_resource(InterrogateSubmit, "/interrogate/submit")

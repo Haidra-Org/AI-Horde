@@ -8,7 +8,7 @@ from sqlalchemy.exc import DataError
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
-from horde.flask import db
+from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
@@ -18,6 +18,7 @@ from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.enums import State
+
 
 ALLOW_ANONYMOUS = True
 
@@ -121,6 +122,8 @@ def find_worker_by_id(worker_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID worker_id sent: '{worker_id}'.")
         return None
+    if SQLITE_MODE:
+        worker_uuid = str(worker_uuid)
     worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
     if not worker:
         worker = db.session.query(InterrogationWorker).filter_by(id=uuid.UUID(worker_id)).first()
@@ -460,7 +463,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
     ).filter(
         InterrogationForms.state == State.WAITING,
         InterrogationForms.name.in_(forms_list),
-        InterrogationForms.expiry > datetime.utcnow(),
+        InterrogationForms.expiry == None,
         or_(
             Interrogation.safe_ip == True,
             and_(
@@ -492,6 +495,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
             retrieve_limit = 1
         final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
     final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
+    # logger.debug(final_interrogation_query)
     return final_interrogation_list
 
 # Returns the queue position of the provided WP based on kudos
@@ -526,6 +530,8 @@ def get_wp_by_id(wp_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID wp_id sent: '{wp_id}'.")
         return None
+    if SQLITE_MODE:
+        wp_uuid = str(wp_uuid)
     return db.session.query(WaitingPrompt).filter_by(id=wp_uuid).first()
 
 def get_progen_by_id(procgen_id):
@@ -534,8 +540,9 @@ def get_progen_by_id(procgen_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID procgen_id sent: '{procgen_id}'.")
         return None
+    if SQLITE_MODE:
+        procgen_uuid = str(procgen_uuid)
     return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
-
 
 def get_interrogation_by_id(i_id):
     try:
@@ -543,7 +550,19 @@ def get_interrogation_by_id(i_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID i_id sent: '{i_id}'.")
         return None
+    if SQLITE_MODE:
+        i_uuid = str(i_uuid)
     return db.session.query(Interrogation).filter_by(id=i_uuid).first()
+
+def get_form_by_id(form_id):
+    try:
+        form_uuid = uuid.UUID(form_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID form_id sent: '{form_id}'.")
+        return None
+    if SQLITE_MODE:
+        form_id = str(form_id)
+    return db.session.query(Interrogation).filter_by(id=form_uuid).first()
 
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()

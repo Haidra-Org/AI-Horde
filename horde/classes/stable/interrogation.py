@@ -46,9 +46,11 @@ class InterrogationForms(db.Model):
         self.expiry = get_interrogation_form_expiry_date()
         self.initiated = datetime.utcnow()
         self.worker_id = worker.id
-        db.session.commit()
+        # This also commits
+        self.interrogation.refresh()
         return {
-            "name": self.name,
+            "id": self.id,
+            "form": self.name,
             "payload": self.payload,
         }
     
@@ -88,6 +90,7 @@ class InterrogationForms(db.Model):
         self.worker.log_aborted_job()
         self.log_aborted_interrogation()
         # We return it to WAITING to let another worker pick it up
+        self.expiry = None
         self.state = State.WAITING
         db.session.commit()
         
@@ -208,7 +211,7 @@ class Interrogation(db.Model):
             self, 
         ):
         ret_dict = {
-            "state": State.WAITING,
+            "state": State.WAITING.name.lower(),
             "forms": [],
         }
         all_faulted = True
@@ -217,7 +220,7 @@ class Interrogation(db.Model):
         for form in self.forms:
             form_dict = {
                 "form": form.name,
-                "state": form.state.name,
+                "state": form.state.name.lower(),
                 "result": form.result,
             }
             ret_dict["forms"].append(form_dict)
@@ -228,11 +231,11 @@ class Interrogation(db.Model):
             if form.state == State.PROCESSING:
                 processing = True
         if all_faulted:
-            ret_dict["state"] = State.FAULTED.name
+            ret_dict["state"] = State.FAULTED.name.lower()
         elif all_done:
-            ret_dict["state"] = State.DONE.name
+            ret_dict["state"] = State.DONE.name.lower()
         elif processing:
-            ret_dict["state"] = State.PROCESSING.name
+            ret_dict["state"] = State.PROCESSING.name.lower()
         return(ret_dict)
 
     def record_usage(self, kudos):
