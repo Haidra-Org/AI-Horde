@@ -126,7 +126,7 @@ class Models(v2.Models):
             "*": fields.Wildcard(fields.String)
         })
         self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
-            'name': fields.String(required=True, enum=["caption", "clip", "nsfw"], description="The type of interrogation this is", unique=True), 
+            'name': fields.String(required=True, enum=["caption", "interrogation", "nsfw"], description="The type of interrogation this is", unique=True), 
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
         })
         self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {
@@ -147,7 +147,7 @@ class Models(v2.Models):
         })
         # Intentionally left blank to allow to add payloads later
         self.response_model_interrogation_form_result = api.model('InterrogationFormResult', {
-            "*": fields.Wildcard(fields.String)
+            "*": fields.Wildcard(fields.Raw)
         })
         self.response_model_interrogation_form_status = api.model('InterrogationFormStatus', {
             'form': fields.String(description="The name of this interrogation form"),
@@ -161,15 +161,16 @@ class Models(v2.Models):
         self.input_model_interrogation_pop = api.model('InterrogationPopInput', {
             'name': fields.String(description="The Name of the Worker"),
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
-            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "clip", "nsfw"], unique=True)),
+            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"], unique=True)),
             'amount': fields.Integer(default=1, description="The amount of forms to pop at the same time"),
             'bridge_version': fields.Integer(default=1, description="The version of the bridge used by this worker"),
             'threads': fields.Integer(default=1, description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=4),
         })
         self.response_model_interrogation_pop_payload = api.model('InterrogationPopFormPayload', {
             'id': fields.String(description="The UUID of the interrogation form. Use this to post the results in the future"),
-            'form': fields.String(description="The name of this interrogation form", enum=["caption", "clip", "nsfw"]),
+            'form': fields.String(description="The name of this interrogation form", enum=["caption", "interrogation", "nsfw"]),
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
+            'source_image': fields.String(description="The URL From which the source image can be downloaded"),
         })
         self.response_model_interrogation_forms_skipped = api.model('NoValidInterrogationsFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),

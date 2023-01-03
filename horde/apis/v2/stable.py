@@ -1,6 +1,7 @@
 import base64
+import requests
 from io import BytesIO
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from .v2 import *
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
@@ -21,7 +22,7 @@ def convert_source_image_to_pil(source_image):
     if resolution > resolution_threshold:
         except_msg = "Image size cannot exceed 3072*3072 pixels"
         # Not sure e exists here?
-        raise e.ImageValidationFailed()
+        raise e.ImageValidationFailed(except_msg)
     quality = 100
     # We adjust the amount of compression based on the starting image to avoid running out of bandwidth
     if resolution > resolution_threshold * 0.9:
@@ -43,7 +44,6 @@ def convert_source_image_to_pil(source_image):
 
 def convert_source_image_to_webp(source_image_b64):
     '''Convert img2img sources to 90% compressed webp, to avoid wasting bandwidth, while still supporting all types'''
-    except_msg = None
     try:
         if source_image_b64 is None:
             return(source_image_b64)
@@ -53,15 +53,14 @@ def convert_source_image_to_webp(source_image_b64):
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
         logger.debug(f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars")
         return final_image_b64
-    except ImageValidationFailed as e:
-        raise e.ImageValidationFailed(except_msg)
+    except ImageValidationFailed as err:
+        raise err
     except Exception as e:
         logger.error(e)
         raise e.ImageValidationFailed
 
 def upload_source_image_to_r2(source_image_b64, uuid_string):
     '''Convert source images to webp and uploads it to r2, to avoid wasting bandwidth, while still supporting all types'''
-    except_msg = None
     try:
         if source_image_b64 is None:
             return(source_image_b64)
@@ -72,7 +71,7 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
         os.remove(filename)
         return generate_img_download_url(filename)
     except ImageValidationFailed as err:
-        raise e.ImageValidationFailed(except_msg)
+        raise err
     except Exception as err:
         logger.error(err)
         raise e.ImageValidationFailed
@@ -80,6 +79,13 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 
 def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
+        try:
+            img_data = requests.get(source_image_string, timeout=3).content
+            Image.open(BytesIO(img_data))
+        except UnidentifiedImageError as err:
+            raise e.ImageValidationFailed("Url does not contain a valid image.")
+        except Exception as err:
+            raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
         return source_image_string, False
     else:
         return upload_source_image_to_r2(source_image_string, uuid_string), True
@@ -395,7 +401,6 @@ class InterrogatePop(JobPopTemplate):
             ):
                 self.prioritized_forms.append(form)
         # logger.warning(datetime.utcnow())
-        logger.debug(self.prioritized_forms)
         worker_ret = {"forms": []}
         for form in self.prioritized_forms:
             can_interrogate, skipped_reason = self.worker.can_interrogate(form)
@@ -419,6 +424,9 @@ class InterrogatePop(JobPopTemplate):
             if len(worker_ret["forms"]) >= self.args.amount:
                 logger.debug(worker_ret)
                 return(worker_ret, 200)
+        if len(worker_ret["forms"]) >= 1:
+            logger.debug(worker_ret)
+            return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)

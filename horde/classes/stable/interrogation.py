@@ -52,6 +52,7 @@ class InterrogationForms(db.Model):
             "id": self.id,
             "form": self.name,
             "payload": self.payload,
+            "source_image": self.interrogation.source_image,
         }
     
     def deliver(self, result):
