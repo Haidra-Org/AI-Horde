@@ -47,6 +47,7 @@ class Models(v2.Models):
             'ddim_steps': fields.Integer(default=30), 
             'n_iter': fields.Integer(default=1, description="The amount of images to generate"), 
             'use_nsfw_censor': fields.Boolean(description="When true will apply NSFW censoring model on the generation"),
+            'use_embeds': fields.Boolean(default=False, description="When true will use embeddings from the concepts library when doing the generation"),
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
