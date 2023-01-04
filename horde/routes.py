@@ -23,7 +23,7 @@ dance_return_to = '/'
 
 @logger.catch(reraise=True)
 @HORDE.route('/')
-@cache.cached(timeout=300)
+# @cache.cached(timeout=300)
 def index():
     with open(f'index_{args.horde}.md') as index_file:
         index = index_file.read()
