@@ -489,10 +489,8 @@ class Worker(WorkerTemplate):
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
         ret_dict = super().get_details(details_privilege)
-        logger.debug([ret_dict,self.nsfw])
-        logger.debug(self.get_model_names())
-        ret_dict["nsfw"] = self.nsfw,
-        ret_dict["models"] = self.get_model_names(),
+        ret_dict["nsfw"] = self.nsfw
+        ret_dict["models"] = self.get_model_names()
         return(ret_dict)
 
     def delete(self):
