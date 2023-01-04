@@ -5,8 +5,7 @@ from horde.vars import thing_divisor
 from horde.flask import db
 from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
-from horde.r2 import generate_upload_url
-
+from horde.r2 import generate_procgen_upload_url
 
 class WaitingPromptExtended(WaitingPrompt):
     source_image = db.Column(db.Text, default=None)
@@ -42,8 +41,8 @@ class WaitingPromptExtended(WaitingPrompt):
         self.width = self.params["width"]
         self.height = self.params["height"]
         # Silent change
-        if any(model_name.startswith("stable_diffusion_2") for model_name in self.get_model_names()):
-            self.params['sampler_name'] = "dpmsolver"
+        # if any(model_name.startswith("stable_diffusion_2") for model_name in self.get_model_names()):
+        #     self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
         if self.params.get('seed') == '':
             self.seed = None
@@ -122,7 +121,7 @@ class WaitingPromptExtended(WaitingPrompt):
                 if self.source_mask:
                     prompt_payload["source_mask"] = self.source_mask
             if procgen.worker.bridge_version >= 8 and self.r2:
-                prompt_payload["r2_upload"] = generate_upload_url(str(procgen.id))
+                prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id))
         else:
             prompt_payload = {}
             self.faulted = True

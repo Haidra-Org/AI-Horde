@@ -8,7 +8,7 @@ from sqlalchemy import JSON, func, or_
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
-from horde.utils import is_profane, get_db_uuid, get_expiry_date
+from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
 
 from horde.classes import ProcessingGeneration
 
@@ -45,7 +45,7 @@ class WPModels(db.Model):
 class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
     __tablename__ = "waiting_prompts"
-    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
@@ -220,6 +220,7 @@ class WaitingPrompt(db.Model):
             wp_queue_stats, 
             lite = False
         ):
+        active_worker_thread_count = active_worker_count[1]
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = max(self.n, 0)
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
@@ -243,9 +244,9 @@ class WaitingPrompt(db.Model):
         ret_dict["queue_position"] = queue_pos + 1
         # If there's fewer requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
-        if queued_n < active_worker_count:
-            active_worker_count = queued_n
-        avg_things_per_sec = (request_avg / thing_divisor) * active_worker_count
+        if queued_n < active_worker_thread_count:
+            active_worker_thread_count = queued_n
+        avg_things_per_sec = (request_avg / thing_divisor) * active_worker_thread_count
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1

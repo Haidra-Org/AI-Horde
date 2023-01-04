@@ -93,10 +93,8 @@ class Models(v2.Models):
             "contributions": fields.Nested(self.response_model_contrib_details),
         })
         self.response_model_horde_performance = api.inherit('HordePerformanceKobold', self.response_model_horde_performance, {
-            "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
             "queued_tokens": fields.Float(description="The amount of tokens in waiting and processing requests currently in this Horde"),
             "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute"),
-            "worker_count": fields.Integer(description="How many workers are actively processing text generations in this Horde in the past 5 minutes"),
         })
         self.response_model_team_details = api.inherit('TeamDetailsKobold', self.response_model_team_details, {
             "contributions": fields.Float(description="How many tokens the workers in this team have been rewarded while part of this team."),

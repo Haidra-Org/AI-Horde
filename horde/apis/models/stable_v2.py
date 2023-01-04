@@ -63,7 +63,7 @@ class Models(v2.Models):
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
-            'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
+            'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True),
             'model': fields.String(description="Which of the available models to use for this request"),
             'source_image': fields.String(description="The Base64-encoded webp to use for img2img"),
             'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
@@ -95,9 +95,9 @@ class Models(v2.Models):
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
             "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
-            'img2img': fields.Boolean(default=True,description="If True, this worker supports and allows img2img requests."),
-            'painting': fields.Boolean(default=True,description="If True, this worker supports and allows inpainting requests."),
-            'post-processing': fields.Boolean(default=True,description="If True, this worker supports and allows post-processing requests."),
+            'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
+            'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
+            'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
@@ -111,13 +111,74 @@ class Models(v2.Models):
             "contributions": fields.Nested(self.response_model_contrib_details),
         })
         self.response_model_horde_performance = api.inherit('HordePerformanceStable', self.response_model_horde_performance, {
-            "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
             "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
             "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
-            "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
+            "queued_forms": fields.Float(description="The amount of image interrogations waiting and processing currently in this Horde"),
+            "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes"),
+            "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes"),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
             "performance": fields.Float(description="The average performance of the workers in this team, in megapixelsteps per second."),
             "speed": fields.Float(description="The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second."),
+        })
+        # Intentionally left blank to allow to add payloads later
+        self.input_model_interrogation_form_payload = api.model('ModelInterrogationFormPayloadStable', {
+            "*": fields.Wildcard(fields.String)
+        })
+        self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
+            'name': fields.String(required=True, enum=["caption", "interrogation", "nsfw"], description="The type of interrogation this is", unique=True), 
+            'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
+        })
+        self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {
+            'forms': fields.List(fields.Nested(self.input_model_interrogation_form)),
+            'source_image': fields.String(required=False, description="The public URL of the image to interrogate"),
+        })
+        self.response_model_interrogation = api.model('RequestInterrogationResponse', {
+            'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
+            'message': fields.String(default=None,description="Any extra information from the horde about this request"),
+        })
+        self.response_model_interrogation_result = api.model('InterrogationResult', {
+            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which interrogated this image"),
+            'worker_name': fields.String(title="Worker Name", description="The name of the worker which interrogated this image"),
+            'form': fields.String(title="Interrogation Form", description="The form which interrogated this image"),
+            'state': fields.String(title="Interrogation Form State", description="The status of this interrogation form"),
+            'nsfw': fields.Boolean(title="NSFW", description="If true, this image has been detected to have NSFW context"),
+            'caption': fields.String(title="Caption", description="The caption generated for this image")
+        })
+        # Intentionally left blank to allow to add payloads later
+        self.response_model_interrogation_form_result = api.model('InterrogationFormResult', {
+            "*": fields.Wildcard(fields.Raw)
+        })
+        self.response_model_interrogation_form_status = api.model('InterrogationFormStatus', {
+            'form': fields.String(description="The name of this interrogation form"),
+            'state': fields.String(title="Interrogation State", description="The overall status of this interrogation"),
+            'result': fields.Nested(self.response_model_interrogation_form_result, skip_none=True)
+        })
+        self.response_model_interrogation_status = api.model('InterrogationStatus', {
+            'state': fields.String(title="Interrogation State", description="The overall status of this interrogation"),
+            'forms': fields.List(fields.Nested(self.response_model_interrogation_form_status, skip_none=True)),
+        })
+        self.input_model_interrogation_pop = api.model('InterrogationPopInput', {
+            'name': fields.String(description="The Name of the Worker"),
+            'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
+            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"], unique=True)),
+            'amount': fields.Integer(default=1, description="The amount of forms to pop at the same time"),
+            'bridge_version': fields.Integer(default=1, description="The version of the bridge used by this worker"),
+            'threads': fields.Integer(default=1, description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=10),
+        })
+        self.response_model_interrogation_pop_payload = api.model('InterrogationPopFormPayload', {
+            'id': fields.String(description="The UUID of the interrogation form. Use this to post the results in the future"),
+            'form': fields.String(description="The name of this interrogation form", enum=["caption", "interrogation", "nsfw"]),
+            'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
+            'source_image': fields.String(description="The URL From which the source image can be downloaded"),
+        })
+        self.response_model_interrogation_forms_skipped = api.model('NoValidInterrogationsFound', {
+            'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
+            'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
+            'bridge_version': fields.Integer(example=0,description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).", min=0),
+        })
+        self.response_model_interrogation_pop = api.model('InterrogationPopPayload', {
+            'forms': fields.List(fields.Nested(self.response_model_interrogation_pop_payload, skip_none=True)),
+            'skipped': fields.Nested(self.response_model_interrogation_forms_skipped, skip_none=True)
         })

@@ -65,6 +65,7 @@ class User(db.Model):
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user", cascade="all, delete-orphan")
+    interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
 
     def create(self):
         self.check_for_bad_actor()

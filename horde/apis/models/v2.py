@@ -74,7 +74,7 @@ class Models:
         })
         self.response_model_generations_skipped = api.model('NoValidRequestFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
-            'performance': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
+            'performance': fields.Integer(description="How many waiting requests were skipped because they required higher performance", min=0),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide.", min=0),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept.", min=0),
             'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
@@ -111,7 +111,7 @@ class Models:
             'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
             'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
-            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=4),
+            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=10),
         })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
             "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),
@@ -221,7 +221,8 @@ class Models:
 
         self.response_model_horde_performance = api.model('HordePerformance', {
             "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
-            "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
+            "worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes"),
+            "thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes"),
         })
 
         self.response_model_newspiece = api.model('Newspiece', {

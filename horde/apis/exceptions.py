@@ -52,7 +52,7 @@ class NameAlreadyExists(wze.BadRequest):
         self.log = f"User '{username}' tried to change {object_type} name from {old_name} to {new_name}. Aborting!"
 
 class ImageValidationFailed(wze.BadRequest):
-    def __init__(self, message = "Please ensure the source image payload for img2img is a valid base64 encoded image."):
+    def __init__(self, message = "Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."):
         self.specific = f"Image validation failed. {message}"
         self.log = "Source image validation failed for img2img"
 
@@ -144,10 +144,10 @@ class KudosUpfront(wze.Forbidden):
         self.specific = f"Due to heavy demand, for requests over {res}x{res} or over 50 steps (25 for k_heun and k_dpm_2*), the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
         self.log = f"{username} attempted request for {kudos_required} kudos without having enough."
 
-class InvalidProcGen(wze.NotFound):
-    def __init__(self, gen_id):
-        self.specific = f"Processing Generation with ID {gen_id} does not exist."
-        self.log = f"Worker attempted to provide generation for {gen_id} but it did not exist"
+class InvalidJobID(wze.NotFound):
+    def __init__(self, job_id):
+        self.specific = f"Processing Job with ID {job_id} does not exist."
+        self.log = f"Worker attempted to provide job for {job_id} but it did not exist"
 
 class RequestNotFound(wze.NotFound):
     def __init__(self, wp_id):

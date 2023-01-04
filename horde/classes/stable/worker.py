@@ -4,15 +4,14 @@ from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 
-
 class WorkerExtended(Worker):
+    __mapper_args__ = {
+        "polymorphic_identity": "stable_worker",
+    }    
     max_pixels = db.Column(db.Integer, default=512 * 512, nullable=False)
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
-    allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = True
-    requires_upfront_kudos = False
-    prioritized_users = []
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
@@ -22,12 +21,7 @@ class WorkerExtended(Worker):
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
-        self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
         self.allow_post_processing = kwargs.get('allow_post_processing', True)
-        self.requires_upfront_kudos = kwargs.get('requires_upfront_kudos', False)
-        # If's OK to provide an empty list here as we don't actually modify this var
-        # We only check it in can_generate
-        self.prioritized_users = kwargs.get('prioritized_users', [])
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])
         paused_string = ''
@@ -98,22 +92,21 @@ class WorkerExtended(Worker):
             return [False, 'post-processing']
         # When the worker requires upfront kudos, the user has to have the required kudos upfront
         # But we allowe prioritized and trusted users to bypass this
-
         if self.requires_upfront_kudos:
-            user_actual_kudos = self.user.kudos
+            user_actual_kudos = waiting_prompt.user.kudos
             # We don't want to take into account minimum kudos
             if user_actual_kudos > 0:
-                user_actual_kudos -= user.get_min_kudos()
+                user_actual_kudos -= waiting_prompt.user.get_min_kudos()
             if (
-                not self.user.trusted
-                and self.user.get_unique_alias() not in self.prioritized_users
+                not waiting_prompt.user.trusted
+                and waiting_prompt.user.get_unique_alias() not in self.prioritized_users
                 and user_actual_kudos < waiting_prompt.kudos
             ):
                 return [False, 'kudos']
         return [True, None]
 
-    def get_details(self, is_privileged=False):
-        ret_dict = super().get_details(is_privileged)
+    def get_details(self, details_privilege = 0):
+        ret_dict = super().get_details(details_privilege)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
         allow_img2img = self.allow_img2img

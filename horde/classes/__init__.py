@@ -14,6 +14,9 @@ try:
     WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
 except (ModuleNotFoundError,AttributeError):
     WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
+if args.horde == 'stable':
+    from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+    from horde.classes.stable.interrogation_worker import InterrogationWorker
 try:
     WPAllowedWorkers = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WPAllowedWorkers
 except (ModuleNotFoundError,AttributeError):

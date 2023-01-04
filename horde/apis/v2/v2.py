@@ -61,7 +61,7 @@ handle_unsafe_ip = api.errorhandler(e.UnsafeIP)(e.handle_bad_requests)
 handle_timeout_ip = api.errorhandler(e.TimeoutIP)(e.handle_bad_requests)
 handle_too_many_new_ips = api.errorhandler(e.TooManyNewIPs)(e.handle_bad_requests)
 handle_kudos_upfront = api.errorhandler(e.KudosUpfront)(e.handle_bad_requests)
-handle_invalid_procgen = api.errorhandler(e.InvalidProcGen)(e.handle_bad_requests)
+handle_invalid_procgen = api.errorhandler(e.InvalidJobID)(e.handle_bad_requests)
 handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requests)
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
 handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
@@ -99,7 +99,7 @@ class GenerateTemplate(Resource):
             self.params = self.args.params
         self.models = []
         if self.args.models:
-            self.models = self.args.models
+            self.models = self.args.models.copy()
         self.workers = []
         if self.args.workers:
             self.workers = self.args.workers
@@ -270,9 +270,9 @@ class AsyncStatus(Resource):
     @api.response(404, 'Request Not found', models.response_model_error)
     def get(self, id = ''):
         '''Retrieve the full status of an Asynchronous generation request.
-        This request will include all already generated images in base64 encoded .webp files.
+        This request will include all already generated images in download URL or base64 encoded .webp files.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
-        This endpoint is limited to 1 request per minute
+        This endpoint is limited to 10 request per minute
         '''
         wp = database.get_wp_by_id(id)
         if not wp:
@@ -336,7 +336,48 @@ class AsyncCheck(Resource):
         return(lite_status, 200)
 
 
-class JobPop(Resource):
+class JobPopTemplate(Resource):
+
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self, worker_class = Worker):
+        self.skipped = {}
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('prompt pop')
+        self.worker_name = sanitize_string(self.args['name'])
+        self.worker = database.find_worker_by_name(self.worker_name, worker_class=worker_class)
+        self.safe_ip = True
+        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip is False:
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                if not self.safe_ip and not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
+        if not self.worker:
+            if is_profane(self.worker_name):
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
+            worker_count = self.user.count_workers()
+            if invite_only.active and worker_count >= self.user.worker_invited:
+                raise e.WorkerInviteOnly(worker_count)
+            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
+            self.worker = worker_class(
+                user_id=self.user.id,
+                name=self.worker_name,
+            )
+            self.worker.create()
+        if self.user != self.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+            
+
+class JobPop(JobPopTemplate):
 
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
@@ -438,47 +479,6 @@ class JobPop(Resource):
             ret = wp.start_generation(self.worker)
         return(ret)
 
-    # We split this into its own function, so that it may be overriden and extended
-    def validate(self):
-        self.skipped = {}
-        self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('prompt pop')
-        self.worker_name = sanitize_string(self.args['name'])
-        self.worker = database.find_worker_by_name(self.worker_name)
-        self.safe_ip = True
-        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-            if self.safe_ip is None:
-                raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
-                #     self.safe_ip = True
-                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
-                    raise e.UnsafeIP(self.worker_ip)
-        if not self.worker:
-            if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
-            worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
-                raise e.WorkerInviteOnly(worker_count)
-            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
-                pass
-            self.worker = Worker(
-                user_id=self.user.id,
-                name=self.worker_name,
-            )
-            self.worker.create()
-        if self.user != self.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-        for model in self.models:
-            if is_profane(model) and not "Hentai" in model:
-                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
-    
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it
     def check_in(self):
@@ -488,6 +488,12 @@ class JobPop(Resource):
             safe_ip = self.safe_ip, 
             ipaddr = self.worker_ip)
 
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self, worker_class = Worker):
+        super().validate(worker_class = worker_class)
+        for model in self.models:
+            if is_profane(model) and not "Hentai" in model:
+                raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
 
 class JobSubmit(Resource):
     decorators = [limiter.limit("60/second")]
@@ -508,7 +514,41 @@ class JobSubmit(Resource):
     def validate(self):
         self.procgen = database.get_progen_by_id(self.args['id'])
         if not self.procgen:
-            raise e.InvalidProcGen(self.args['id'])
+            raise e.InvalidJobID(self.args['id'])
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('worker submit:' + self.args['name'])
+        if self.user != self.procgen.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
+        things_per_sec = stats.record_fulfilment(self.procgen)
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args['seed']
+        )
+        if self.kudos == 0 and not self.procgen.worker.maintenance:
+            raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
+
+class JobSubmit(Resource):
+    decorators = [limiter.limit("60/second")]
+    @api.expect(parsers.job_submit_parser)
+    @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
+    @api.response(400, 'Generation Already Submitted', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Request Not Found', models.response_model_error)
+    def post(self):
+        '''Submit a generated image.
+        This endpoint is used by registered workers only
+        '''
+        self.args = parsers.job_submit_parser.parse_args()
+        self.validate()
+        return({"reward": self.kudos}, 200)
+
+    def validate(self):
+        self.procgen = database.get_progen_by_id(self.args['id'])
+        if not self.procgen:
+            raise e.InvalidJobID(self.args['id'])
         self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
@@ -595,7 +635,9 @@ class WorkerSingle(Resource):
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
             details_privilege = 2
-        return(worker.get_details(details_privilege),200)
+        worker_details = worker.get_details(details_privilege)
+        # logger.debug(worker_details)
+        return worker_details,200
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')
@@ -910,7 +952,7 @@ class HordeLoad(Resource):
         '''Details about the current performance of this Horde
         '''
         load_dict = database.retrieve_totals()
-        load_dict["worker_count"] = database.count_active_workers()
+        load_dict["worker_count"], load_dict["thread_count"] = database.count_active_workers()
         return(load_dict,200)
 
 class HordeNews(Resource):

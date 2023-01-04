@@ -12,8 +12,7 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
     __tablename__ = "processing_gens"
-    # id = db.Column(db.String(36), primary_key=True, default=get_db_uuid)  # Whilst using sqlite use this, as it has no uuid type
-    id = db.Column(uuid_column_type(), primary_key=True, default=uuid.uuid4)  # Then move to this
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     generation = db.Column(db.Text)
 
     model = db.Column(db.String(40), default='', nullable=False)

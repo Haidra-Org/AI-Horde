@@ -9,6 +9,8 @@ import dateutil.relativedelta
 from profanity_check  import predict
 from better_profanity import profanity
 from horde.logger import logger
+from horde.flask import SQLITE_MODE
+
 profanity.load_censor_words()
 
 random.seed(random.SystemRandom())
@@ -54,7 +56,10 @@ class ConvertAmount:
             self.char = 'T'
 
 def get_db_uuid():
-    return str(uuid.uuid4())
+    if SQLITE_MODE:
+        return str(uuid.uuid4())
+    else: 
+        return uuid.uuid4()
 
 def generate_client_id():
     return secrets.token_urlsafe(16)
@@ -71,6 +76,9 @@ def hash_api_key(unhashed_api_key):
 
 def get_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)
+
+def get_interrogation_form_expiry_date():
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+3)
 
 def get_random_seed():
     '''Generated a random seed, using a random number unique per node'''

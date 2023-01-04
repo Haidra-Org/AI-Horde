@@ -8,13 +8,17 @@ from sqlalchemy.exc import DataError
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
-from horde.flask import db
+from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
+from horde.enums import State
+
 
 ALLOW_ANONYMOUS = True
 
@@ -53,13 +57,24 @@ def get_active_workers():
     ).all()
     return active_workers
 
-def count_active_workers():
-    active_workers = db.session.query(func.sum(Worker.threads).label('threads')).filter(
-        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+def count_active_workers(worker_class = "Worker"):
+    WorkerClass = Worker
+    if worker_class == "InterrogationWorker":
+        WorkerClass = InterrogationWorker
+    active_workers = db.session.query(
+        WorkerClass
+    ).filter(
+        WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    ).count()
+    active_workers_threads = db.session.query(
+        func.sum(WorkerClass.threads).label('threads')
+    ).filter(
+        WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).first()
-    if active_workers and active_workers.threads:
-        return active_workers.threads
-    return 0
+    # logger.debug([worker_class,active_workers,active_workers_threads.threads])
+    if active_workers and active_workers_threads.threads:
+        return active_workers,active_workers_threads.threads
+    return 0,0
 
 
 def count_workers_on_ip(ip_addr):
@@ -79,6 +94,9 @@ def get_total_usage():
     if result:
         totals[thing_name] = result.contributions if result.contributions else 0
         totals["fulfilments"] = result.fulfilments if result.fulfilments else 0
+    form_result = result = db.session.query(func.sum(InterrogationWorker.fulfilments).label('forms')).first()
+    if form_result:
+        totals["forms"] = result.forms if result.forms else 0
     return totals
 
 
@@ -108,8 +126,8 @@ def find_user_by_api_key(api_key):
     user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
     return(user)
 
-def find_worker_by_name(worker_name):
-    worker = db.session.query(Worker).filter_by(name=worker_name).first()
+def find_worker_by_name(worker_name, worker_class=Worker):
+    worker = db.session.query(worker_class).filter_by(name=worker_name).first()
     return(worker)
 
 def find_worker_by_id(worker_id):
@@ -118,7 +136,12 @@ def find_worker_by_id(worker_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID worker_id sent: '{worker_id}'.")
         return None
+    if SQLITE_MODE:
+        worker_uuid = str(worker_uuid)
     worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
+    if not worker:
+        worker = db.session.query(InterrogationWorker).filter_by(id=uuid.UUID(worker_id)).first()
+    # logger.debug(worker)
     return(worker)
 
 def get_all_teams():
@@ -253,6 +276,8 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 def count_waiting_requests(user, models = None):
+    # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
+    # Currently this is just counting how many requests, but each requests can have more than 1 image waiting
     if not models: models = []
     if len(models):
         return db.session.query(
@@ -273,6 +298,22 @@ def count_waiting_requests(user, models = None):
             WaitingPrompt.faulted == False,
             WaitingPrompt.n >= 1, 
         ).count()
+
+def count_waiting_interrogations(user):
+    found_i_forms = db.session.query(
+        InterrogationForms.state,
+        Interrogation.user_id
+    ).join(
+        Interrogation
+    ).filter(
+        Interrogation.user_id == user.id,
+        or_(
+            InterrogationForms.state == State.WAITING,
+            InterrogationForms.state == State.PROCESSING,
+        ),
+    )
+    return found_i_forms.count()
+
 
 
     # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
@@ -323,6 +364,15 @@ def count_totals():
             ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
     # We round the end result to avoid to many decimals
     ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
+    ret_dict["queued_forms"] = db.session.query(
+        InterrogationForms.state,
+    ).filter(
+        or_(
+            InterrogationForms.state == State.WAITING,
+            InterrogationForms.state == State.PROCESSING,
+        ),
+    ).count()
+    logger.debug(ret_dict)
     return(ret_dict)
 
 def retrieve_totals():
@@ -367,13 +417,12 @@ def count_things_per_model():
 
 
 def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None): 
-    # This is just the top 50 - Adjusted method to send Worker object. Filters to add.
+    # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
     # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
-    worker_models = worker.get_model_names()
     final_wp_list = db.session.query(
         WaitingPrompt
     ).join(
@@ -427,6 +476,53 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     ).limit(100).all()
     return final_wp_list
 
+def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
+    # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
+    if forms_list == None:
+        forms_list = []
+    final_interrogation_query = db.session.query(
+        InterrogationForms
+    ).join(
+        Interrogation
+    ).filter(
+        InterrogationForms.state == State.WAITING,
+        InterrogationForms.name.in_(forms_list),
+        InterrogationForms.expiry == None,
+        Interrogation.source_image != None,
+        or_(
+            Interrogation.safe_ip == True,
+            and_(
+                Interrogation.safe_ip == False,
+                worker.allow_unsafe_ipaddr == True,
+            ),
+        ),
+        or_(
+            worker.maintenance == False,
+            and_(
+                worker.maintenance == True,
+                Interrogation.user_id == worker.user_id,
+            ),
+        ),
+    ).order_by(
+        Interrogation.extra_priority.desc(), 
+        Interrogation.created.asc()
+    )
+    if priority_user_ids != None:
+        final_interrogation_query.filter(Interrogation.user_id.in_(priority_user_ids))
+    # We use this to not retrieve already retrieved with priority_users 
+    retrieve_limit = 100
+    if excluded_forms != None:
+        excluded_form_ids = [f.id for f in excluded_forms]
+        # We only want to retrieve 100 requests, so we reduce the amount to retrieve from non-prioritized
+        # requests by the prioritized requests.
+        retrieve_limit -= len(excluded_form_ids)
+        if retrieve_limit <= 0:
+            retrieve_limit = 1
+        final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
+    final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
+    # logger.debug(final_interrogation_query)
+    return final_interrogation_list
+
 # Returns the queue position of the provided WP based on kudos
 # Also returns the amount of things until the wp is generated
 # Also returns the amount of different gens queued
@@ -459,6 +555,8 @@ def get_wp_by_id(wp_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID wp_id sent: '{wp_id}'.")
         return None
+    if SQLITE_MODE:
+        wp_uuid = str(wp_uuid)
     return db.session.query(WaitingPrompt).filter_by(id=wp_uuid).first()
 
 def get_progen_by_id(procgen_id):
@@ -467,7 +565,29 @@ def get_progen_by_id(procgen_id):
     except ValueError as e: 
         logger.debug(f"Non-UUID procgen_id sent: '{procgen_id}'.")
         return None
+    if SQLITE_MODE:
+        procgen_uuid = str(procgen_uuid)
     return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
+
+def get_interrogation_by_id(i_id):
+    try:
+        i_uuid = uuid.UUID(i_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID i_id sent: '{i_id}'.")
+        return None
+    if SQLITE_MODE:
+        i_uuid = str(i_uuid)
+    return db.session.query(Interrogation).filter_by(id=i_uuid).first()
+
+def get_form_by_id(form_id):
+    try:
+        form_uuid = uuid.UUID(form_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID form_id sent: '{form_id}'.")
+        return None
+    if SQLITE_MODE:
+        form_uuid = str(form_uuid)
+    return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()

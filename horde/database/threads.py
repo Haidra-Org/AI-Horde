@@ -9,18 +9,23 @@ from sqlalchemy import func, or_
 
 from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
-from horde.flask import HORDE, db
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger
 from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
 from horde import horde_instance_id
 from horde.argparser import args
-from horde.r2 import delete_procgen_image
+from horde.r2 import delete_procgen_image, delete_source_image
 from horde.argparser import args
 from horde.patreon import patrons
+from horde.enums import State
 
 @logger.catch(reraise=True)
 def get_quorum():
     '''Attempts to grab the primary quorum, if it's not set by a different node'''
+    # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
+    if SQLITE_MODE: 
+        return None
     quorum = horde_r.get('horde_quorum')
     if not quorum:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
@@ -29,12 +34,10 @@ def get_quorum():
         return None
     if quorum == horde_instance_id:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
-        logger.debug(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
-        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
+        logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
-        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
     return(quorum)
 
 @logger.catch(reraise=True)
@@ -141,7 +144,8 @@ def check_waiting_prompts():
             if proc_gen.is_stale(proc_gen.wp.job_ttl):
                 proc_gen.abort()
                 proc_gen.wp.n += 1
-                db.session.commit()
+        if len(all_proc_gen) >= 1:
+            db.session.commit()
 
         # Faults WP with 3 or more faulted Procgens
         wp_ids = db.session.query(
@@ -159,6 +163,29 @@ def check_waiting_prompts():
         for wp in waiting_prompts.all():
             wp.log_faulted_prompt()
 
+@logger.catch(reraise=True)
+def check_interrogations():
+    with HORDE.app_context():
+        # Cleans expired WPs
+        expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < datetime.utcnow())
+        expired_r_entries = expired_entries.filter(Interrogation.r2stored == True)
+        all_source_image_ids = [i.id for i in expired_r_entries.all()]
+        for source_image_id in all_source_image_ids:
+            delete_source_image(str(source_image_id))
+        logger.info(f"Pruned {expired_entries.count()} expired Interrogations")
+        expired_entries.delete()
+        db.session.commit()
+        # Restarts stale forms
+        all_stale_forms = db.session.query(
+            InterrogationForms,
+        ).filter(
+            InterrogationForms.state == State.PROCESSING,
+            datetime.utcnow() > InterrogationForms.expiry,
+        ).all()
+        for form in all_stale_forms:
+            form.abort()
+        if len(all_stale_forms) >= 1:
+            db.session.commit()
 
 @logger.catch(reraise=True)
 def store_available_models():

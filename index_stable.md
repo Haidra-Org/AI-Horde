@@ -10,11 +10,13 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 
 ## Stats 
 
-* Average Recent Performance: {avg_performance} {avg_thing_name} per second
-* Total generated: {total_things} {total_things_name}
-* Total requests fulfilled: {total_fulfillments}{total_fulfillments_char}
-* Active [Workers](/api/v2/workers): {active_workers}
-* Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}
+* Average Recent Performance: {avg_performance} {avg_thing_name} per second. 
+* Total generated: {total_things} {total_things_name}. 
+* Total images generated: {total_fulfillments}{total_fulfillments_char}.
+* Total images interrogated: {total_forms}{total_forms_char}.
+* Active Image Generating [Workers](/api/v2/workers)/Threads: {image_workers}/{image_worker_threads}
+* Active Interrogation Processing Workers/Threads: {interrogation_workers}/{interrogation_worker_threads}
+* Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}. {total_forms_queue} interrogation forms.
 
 ## Usage
 
@@ -52,8 +54,8 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
     * [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
     * [Discord Bot](https://github.com/JamDon2/ai-horde-bot) which you [can add to your own server](https://discord.com/api/oauth2/authorize?client_id=1019572037360025650&permissions=8192&scope=bot) to be able to generate via the Stable Horde for free, and allow your users to transfer kudos between them.
     * [Mastodon Bots](https://github.com/db0/mastodon-stable-horde-generate) which you can use directly via Activity Pub to generate images.
-       * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
-       * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
+        * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
+        * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
 
 * The community has made the following
     * Bots
