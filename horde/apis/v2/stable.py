@@ -422,7 +422,7 @@ class InterrogatePop(JobPopTemplate):
                 continue
             worker_ret["forms"].append(form_ret)
             if len(worker_ret["forms"]) >= self.args.amount:
-                logger.debug(worker_ret)
+                # logger.debug(worker_ret)
                 return(worker_ret, 200)
         if len(worker_ret["forms"]) >= 1:
             # logger.debug(worker_ret)
