@@ -26,7 +26,7 @@ class InterrogationForms(db.Model):
     payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
     kudos = db.Column(db.Float, default=1, nullable=False)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), default=None, nullable=True)
     worker = db.relationship("InterrogationWorker", back_populates="processing_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     initiated =  db.Column(db.DateTime, default=None, index=True)
