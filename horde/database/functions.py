@@ -465,6 +465,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
         InterrogationForms.state == State.WAITING,
         InterrogationForms.name.in_(forms_list),
         InterrogationForms.expiry == None,
+        Interrogation.source_image != None,
         or_(
             Interrogation.safe_ip == True,
             and_(
