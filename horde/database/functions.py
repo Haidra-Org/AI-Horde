@@ -73,7 +73,7 @@ def count_active_workers(worker_class = "Worker"):
     ).first()
     if active_workers and active_workers_threads.threads:
         return active_workers,active_workers_threads.threads
-    return 0
+    return 0,0
 
 
 def count_workers_on_ip(ip_addr):
