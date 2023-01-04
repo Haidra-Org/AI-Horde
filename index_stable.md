@@ -15,6 +15,7 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 * Total images generated: {total_fulfillments}{total_fulfillments_char}.
 * Total images interrogated: {total_forms}{total_forms_char}.
 * Active Image Generating [Workers](/api/v2/workers): {active_workers}
+* Active Interrogation Processing Workers: {active_interrogation_workers}
 * Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}. {total_forms_queue} interrogation forms.
 
 ## Usage

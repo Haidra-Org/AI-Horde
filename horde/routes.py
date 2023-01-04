@@ -70,10 +70,11 @@ This is the worker which has generated the most pixels for the horde.
         if iter > 1: break
     totals = database.get_total_usage()
     wp_totals = database.retrieve_totals()
-    active_worker_count = database.count_active_workers()
+    active_interrogation_worker_count = database.count_active_workers("InterrogationWorker")
+    active_image_worker_count = database.count_active_workers()
     avg_performance = ConvertAmount(
         stats.get_request_avg(database.get_worker_performances())
-        * active_worker_count
+        * active_image_worker_count
     )
     # We multiple with the divisor again, to get the raw amount, which we can convert to prefix accurately
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
@@ -92,7 +93,8 @@ This is the worker which has generated the most pixels for the horde.
         total_fulfillments_char = total_fulfillments.char,
         total_forms = total_forms.amount,
         total_forms_char = total_forms.char,
-        active_workers = active_worker_count,
+        active_workers = active_image_worker_count,
+        active_interrogation_workers = active_interrogation_worker_count,
         total_queue = wp_totals["queued_requests"],
         total_forms_queue = wp_totals["queued_forms"],
         queued_things = queued_things.amount,

@@ -57,9 +57,14 @@ def get_active_workers():
     ).all()
     return active_workers
 
-def count_active_workers():
-    active_workers = db.session.query(func.sum(Worker.threads).label('threads')).filter(
-        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+def count_active_workers(worker_class = "Worker"):
+    WorkerClass = Worker
+    if worker_class == "InterrogationWorker":
+        WorkerClass = InterrogationWorker
+    active_workers = db.session.query(
+        func.sum(WorkerClass.threads).label('threads')
+    ).filter(
+        WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).first()
     if active_workers and active_workers.threads:
         return active_workers.threads
