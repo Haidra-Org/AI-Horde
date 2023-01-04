@@ -10,11 +10,12 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 
 ## Stats 
 
-* Average Recent Performance: {avg_performance} {avg_thing_name} per second
-* Total generated: {total_things} {total_things_name}
-* Total requests fulfilled: {total_fulfillments}{total_fulfillments_char}
-* Active [Workers](/api/v2/workers): {active_workers}
-* Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}
+* Average Recent Performance: {avg_performance} {avg_thing_name} per second. 
+* Total generated: {total_things} {total_things_name}. 
+* Total images generated: {total_fulfillments}{total_fulfillments_char}.
+* Total images interrogated: {total_forms}{total_forms_char}.
+* Active Image Generating [Workers](/api/v2/workers): {active_workers}
+* Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}. {total_forms_queue} interrogation forms.
 
 ## Usage
 

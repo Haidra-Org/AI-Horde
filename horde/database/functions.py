@@ -83,6 +83,9 @@ def get_total_usage():
     if result:
         totals[thing_name] = result.contributions if result.contributions else 0
         totals["fulfilments"] = result.fulfilments if result.fulfilments else 0
+    form_result = result = db.session.query(func.sum(InterrogationWorker.fulfilments).label('forms')).first()
+    if form_result:
+        totals["forms"] = result.forms if result.forms else 0
     return totals
 
 
@@ -350,6 +353,15 @@ def count_totals():
             ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
     # We round the end result to avoid to many decimals
     ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
+    ret_dict["queued_forms"] = db.session.query(
+        InterrogationForms.state,
+    ).filter(
+        or_(
+            InterrogationForms.state == State.WAITING,
+            InterrogationForms.state == State.PROCESSING,
+        ),
+    ).count()
+    logger.debug(ret_dict)
     return(ret_dict)
 
 def retrieve_totals():

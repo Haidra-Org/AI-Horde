@@ -70,6 +70,7 @@ This is the worker which has generated the most pixels for the horde.
         if iter > 1: break
     totals = database.get_total_usage()
     wp_totals = database.retrieve_totals()
+    form_totals = database.retrieve_form_totals()
     active_worker_count = database.count_active_workers()
     avg_performance = ConvertAmount(
         stats.get_request_avg(database.get_worker_performances())
@@ -79,6 +80,7 @@ This is the worker which has generated the most pixels for the horde.
     total_things = ConvertAmount(totals[thing_name] * thing_divisor)
     queued_things = ConvertAmount(wp_totals[f"queued_{thing_name}"] * thing_divisor)
     total_fulfillments = ConvertAmount(totals["fulfilments"])
+    total_forms = ConvertAmount(totals["forms"])
     findex = index.format(
         page_title = horde_title,
         horde_img_url = img_url,
@@ -89,8 +91,11 @@ This is the worker which has generated the most pixels for the horde.
         total_things_name = total_things.prefix + raw_thing_name,
         total_fulfillments = total_fulfillments.amount,
         total_fulfillments_char = total_fulfillments.char,
+        total_forms = total_forms.amount,
+        total_forms_char = total_forms.char,
         active_workers = active_worker_count,
         total_queue = wp_totals["queued_requests"],
+        total_forms_queue = wp_totals["queued_forms"],
         queued_things = queued_things.amount,
         queued_things_name = queued_things.prefix + raw_thing_name,
         maintenance_mode = maintenance.active,

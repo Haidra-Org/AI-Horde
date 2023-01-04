@@ -278,7 +278,6 @@ class Interrogate(Resource):
             db.session.commit()
             raise e
         self.interrogation.set_source_image(self.source_image, self.r2stored)
-        logger.debug([self.source_image, self.interrogation.source_image])
         ret_dict = {"id":self.interrogation.id}
         return(ret_dict, 202)
 
@@ -426,7 +425,7 @@ class InterrogatePop(JobPopTemplate):
                 logger.debug(worker_ret)
                 return(worker_ret, 200)
         if len(worker_ret["forms"]) >= 1:
-            logger.debug(worker_ret)
+            # logger.debug(worker_ret)
             return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
