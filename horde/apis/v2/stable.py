@@ -12,7 +12,7 @@ from horde.logger import logger
 from ..exceptions import ImageValidationFailed
 
 
-def convert_source_image_to_pil(source_image):
+def convert_source_image_to_pil(source_image_b64):
     base64_bytes = source_image_b64.encode('utf-8')
     img_bytes = base64.b64decode(base64_bytes)
     image = Image.open(BytesIO(img_bytes))
