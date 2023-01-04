@@ -98,7 +98,7 @@ This is the worker which has generated the most pixels for the horde.
         interrogation_workers = interrogation_worker_count,
         interrogation_worker_threads = interrogation_worker_thread_count,
         total_queue = wp_totals["queued_requests"],
-        total_forms_queue = wp_totals["queued_forms"],
+        total_forms_queue = wp_totals.get("queued_forms",0),
         queued_things = queued_things.amount,
         queued_things_name = queued_things.prefix + raw_thing_name,
         maintenance_mode = maintenance.active,
