@@ -37,6 +37,10 @@ class Team(db.Model):
         for worker in self.workers:
             if worker.is_stale():
                 continue
+            # I'll need to add extra code to allow teams to handle multiple worker types.
+            # So for now I'm ignoring it
+            if worker.worker_type == "interrogation_worker":
+                continue
             all_performances.append(worker.get_performance_average())
         if len(all_performances):
             perf_avg = round(sum(all_performances) / len(all_performances) / thing_divisor,1)
