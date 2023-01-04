@@ -7,7 +7,7 @@ from .v2 import *
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
-from horde.r2 import upload_image, generate_img_download_url
+from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
 from ..exceptions import ImageValidationFailed
 
@@ -67,7 +67,7 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
         image, quality = convert_source_image_to_pil(source_image_b64)
         filename = f"{uuid_string}.webp"
         image.save(filename, format="WebP", quality=quality)
-        upload_image(filename)
+        upload_source_image(filename)
         os.remove(filename)
         return generate_img_download_url(filename)
     except ImageValidationFailed as err:

@@ -6,4 +6,5 @@ class State(enum.Enum):
     DONE = 2
     CANCELLED = 3
     FAULTED = 4
+    PARTIAL = 5
 

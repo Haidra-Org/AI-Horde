@@ -9,14 +9,16 @@ from sqlalchemy import func, or_
 
 from horde.horde_redis import horde_r
 from horde.classes import WaitingPrompt, User, ProcessingGeneration
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger
 from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
 from horde import horde_instance_id
 from horde.argparser import args
-from horde.r2 import delete_procgen_image
+from horde.r2 import delete_procgen_image, delete_source_image
 from horde.argparser import args
 from horde.patreon import patrons
+from horde.enums import State
 
 @logger.catch(reraise=True)
 def get_quorum():
@@ -142,7 +144,8 @@ def check_waiting_prompts():
             if proc_gen.is_stale(proc_gen.wp.job_ttl):
                 proc_gen.abort()
                 proc_gen.wp.n += 1
-                db.session.commit()
+        if len(all_proc_gen) >= 1:
+            db.session.commit()
 
         # Faults WP with 3 or more faulted Procgens
         wp_ids = db.session.query(
@@ -160,6 +163,29 @@ def check_waiting_prompts():
         for wp in waiting_prompts.all():
             wp.log_faulted_prompt()
 
+@logger.catch(reraise=True)
+def check_interrogations():
+    with HORDE.app_context():
+        # Cleans expired WPs
+        expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < datetime.utcnow())
+        expired_r_entries = expired_entries.filter(Interrogation.r2stored == True)
+        all_source_image_ids = [i.id for i in expired_r_entries.all()]
+        for source_image_id in all_source_image_ids:
+            delete_source_image(str(source_image_id))
+        logger.info(f"Pruned {expired_entries.count()} expired Interrogations")
+        expired_entries.delete()
+        db.session.commit()
+        # Restarts stale forms
+        all_stale_forms = db.session.query(
+            InterrogationForms,
+        ).filter(
+            InterrogationForms.state == State.PROCESSING,
+            datetime.utcnow() > InterrogationForms.expiry,
+        ).all()
+        for form in all_stale_forms:
+            form.abort()
+        if len(all_stale_forms) >= 1:
+            db.session.commit()
 
 @logger.catch(reraise=True)
 def store_available_models():

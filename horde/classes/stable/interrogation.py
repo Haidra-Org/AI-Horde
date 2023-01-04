@@ -22,15 +22,16 @@ class InterrogationForms(db.Model):
     i_id = db.Column(uuid_column_type(), db.ForeignKey("interrogations.id", ondelete="CASCADE"), nullable=False)
     interrogation = db.relationship(f"Interrogation", back_populates="forms")
     name = db.Column(db.String(30), nullable=False)
-    state = db.Column(Enum(State), default=State.WAITING, nullable=False) 
+    state = db.Column(Enum(State), default=State.WAITING, nullable=False, index=True) 
     payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
     kudos = db.Column(db.Float, default=1, nullable=False)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), default=None, nullable=True)
     worker = db.relationship("InterrogationWorker", back_populates="processing_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    initiated =  db.Column(db.DateTime, default=None, index=True)
+    initiated =  db.Column(db.DateTime, default=None)
     expiry = db.Column(db.DateTime, default=None, index=True)
+    abort_count = db.Column(db.Integer, default=0, nullable=False)
 
     def pop(self, worker):
         myself_refresh = db.session.query(
@@ -87,12 +88,16 @@ class InterrogationForms(db.Model):
         '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
         if self.state != State.PROCESSING:
             return
-        self.state = State.FAULTED
         self.worker.log_aborted_job()
         self.log_aborted_interrogation()
-        # We return it to WAITING to let another worker pick it up
-        self.expiry = None
-        self.state = State.WAITING
+        # If it aborted 3 or more times, we consider there's something wrong with its payload and permanently fault it
+        if self.abort_count > 2:
+            self.state = State.FAULTED
+        else:
+            # We return it to WAITING to let another worker pick it up
+            self.expiry = None
+            self.state = State.WAITING
+            self.abort_count += 1
         db.session.commit()
         
     def log_aborted_interrogation(self):
@@ -198,7 +203,7 @@ class Interrogation(db.Model):
         return(interrogation_payload)
 
     def needs_interrogation(self):
-        return any(form.result == None for form in self.form)
+        return any(not form.is_completed() for form in self.forms)
 
     def is_completed(self):
         if self.FAULTED:
@@ -212,12 +217,13 @@ class Interrogation(db.Model):
             self, 
         ):
         ret_dict = {
-            "state": State.WAITING.name.lower(),
+            "state": State.PARTIAL.name.lower(),
             "forms": [],
         }
         all_faulted = True
         all_done = True
         processing = False
+        found_waiting = False
         for form in self.forms:
             form_dict = {
                 "form": form.name,
@@ -231,12 +237,16 @@ class Interrogation(db.Model):
                 all_done = False
             if form.state == State.PROCESSING:
                 processing = True
+            if form.state == State.WAITING:
+                found_waiting = True
         if all_faulted:
             ret_dict["state"] = State.FAULTED.name.lower()
         elif all_done:
             ret_dict["state"] = State.DONE.name.lower()
         elif processing:
             ret_dict["state"] = State.PROCESSING.name.lower()
+        elif found_waiting:
+            ret_dict["state"] = State.WAITING.name.lower()
         return(ret_dict)
 
     def record_usage(self, kudos):
@@ -249,3 +259,8 @@ class Interrogation(db.Model):
         for form in self.forms:
             form.cancel()
         
+    def delete(self):
+        if not self.is_completed():
+            self.cancel()
+        db.session.delete(self)
+        db.session.commit()
