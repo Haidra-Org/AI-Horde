@@ -37,7 +37,7 @@ class InterrogationWorker(WorkerTemplate):
         logger.trace(f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names}")
 
     def calculate_uptime_reward(self):
-        return 25
+        return 15
 
     def can_interrogate(self, interrogation_form):
         if interrogation_form.interrogation.trusted_workers and not self.user.trusted:

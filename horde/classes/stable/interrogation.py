@@ -169,11 +169,15 @@ class Interrogation(db.Model):
             # We don't allow the same interrogation type twice
             if form["name"] in seen_names:
                 continue
+            kudos = 1
+            # Interrogations are more intensive so they reward better
+            if form["name"] == "interrogation":
+                kudos = 3
             form_entry = InterrogationForms(
                 name=form["name"],
                 payload=form.get("payload"),
                 i_id=self.id,
-                kudos = 1, #TODO: Adjust the kudos cost per interrogation
+                kudos = kudos, #TODO: Adjust the kudos cost per interrogation
             )
             db.session.add(form_entry)
         db.session.commit()
