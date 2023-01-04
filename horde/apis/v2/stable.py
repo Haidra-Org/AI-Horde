@@ -306,7 +306,6 @@ class Interrogate(Resource):
 
 
 class InterrogationStatus(Resource):
-    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
@@ -314,7 +313,6 @@ class InterrogationStatus(Resource):
         '''Retrieve the full status of an interrogation request.
         This request will include all already generated images.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
-        This endpoint is limited to 10 requests per minute
         '''
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
