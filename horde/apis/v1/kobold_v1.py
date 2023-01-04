@@ -524,7 +524,7 @@ class HordeLoad(Resource):
     def get(self):
         load_dict = database.retrieve_totals()
         load_dict["kilotokens_per_min"] = stats.get_things_per_min()
-        load_dict["server_count"] = database.count_active_workers()
+        load_dict["server_count"] = database.count_active_workers()[0]
         load_dict["maintenance_mode"] = maintenance.active
         return(load_dict,200)
 

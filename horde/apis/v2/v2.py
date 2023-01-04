@@ -952,7 +952,7 @@ class HordeLoad(Resource):
         '''Details about the current performance of this Horde
         '''
         load_dict = database.retrieve_totals()
-        load_dict["worker_count"] = database.count_active_workers()
+        load_dict["worker_count"], load_dict["thread_count"] = database.count_active_workers()
         return(load_dict,200)
 
 class HordeNews(Resource):
