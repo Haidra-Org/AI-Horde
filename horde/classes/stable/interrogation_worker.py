@@ -92,3 +92,12 @@ class InterrogationWorker(WorkerTemplate):
             form = WorkerInterrogationForm(worker_id=self.id,form=form_name)
             db.session.add(form)
         db.session.commit()
+
+
+    def get_performance(self):
+        performances = [p.performance for p in self.performance]
+        if len(performances):
+            ret_str = f'{round(sum(performances) / len(performances),1)} seconds per form'
+        else:
+            ret_str = f'No requests fulfilled yet'
+        return(ret_str)
