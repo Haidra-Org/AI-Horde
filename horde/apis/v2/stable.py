@@ -56,7 +56,7 @@ def convert_source_image_to_webp(source_image_b64):
     except ImageValidationFailed as err:
         raise err
     except Exception as err:
-        logger.error(e)
+        logger.error(err)
         raise e.ImageValidationFailed
 
 def upload_source_image_to_r2(source_image_b64, uuid_string):
