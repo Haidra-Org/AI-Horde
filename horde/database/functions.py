@@ -71,6 +71,7 @@ def count_active_workers(worker_class = "Worker"):
     ).filter(
         WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).first()
+    logger.debug([worker_class,active_workers,active_workers_threads.threads])
     if active_workers and active_workers_threads.threads:
         return active_workers,active_workers_threads.threads
     return 0,0
