@@ -278,6 +278,7 @@ class Interrogate(Resource):
             db.session.commit()
             raise e
         self.interrogation.set_source_image(self.source_image, self.r2stored)
+        logger.debug([self.source_image, self.interrogation.source_image])
         ret_dict = {"id":self.interrogation.id}
         return(ret_dict, 202)
 
