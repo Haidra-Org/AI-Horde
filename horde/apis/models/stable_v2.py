@@ -111,11 +111,8 @@ class Models(v2.Models):
             "contributions": fields.Nested(self.response_model_contrib_details),
         })
         self.response_model_horde_performance = api.inherit('HordePerformanceStable', self.response_model_horde_performance, {
-            "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
             "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
             "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
-            "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
-            "thread_count": fields.Integer(description="How many worker threads are actively processing image generations in this Horde in the past 5 minutes"),
             "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes"),
             "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes"),
         })

@@ -221,7 +221,8 @@ class Models:
 
         self.response_model_horde_performance = api.model('HordePerformance', {
             "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
-            "worker_count": fields.Integer(description="How many workers are actively processing image generations in this Horde in the past 5 minutes"),
+            "worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes"),
+            "thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes"),
         })
 
         self.response_model_newspiece = api.model('Newspiece', {

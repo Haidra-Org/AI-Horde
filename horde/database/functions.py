@@ -141,7 +141,7 @@ def find_worker_by_id(worker_id):
     worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
     if not worker:
         worker = db.session.query(InterrogationWorker).filter_by(id=uuid.UUID(worker_id)).first()
-    logger.debug(worker)
+    # logger.debug(worker)
     return(worker)
 
 def get_all_teams():

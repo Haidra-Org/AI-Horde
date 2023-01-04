@@ -636,7 +636,7 @@ class WorkerSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
             details_privilege = 2
         worker_details = worker.get_details(details_privilege)
-        logger.debug(worker_details)
+        # logger.debug(worker_details)
         return worker_details,200
 
     put_parser = reqparse.RequestParser()
