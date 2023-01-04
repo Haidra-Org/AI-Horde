@@ -215,11 +215,12 @@ class WaitingPrompt(db.Model):
     def get_status(
             self, 
             request_avg, 
-            active_worker_count, 
+            active_worker_counts, 
             has_valid_workers, 
             wp_queue_stats, 
             lite = False
         ):
+        active_worker_thread_count = active_worker_counts[1]
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = max(self.n, 0)
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
@@ -243,9 +244,9 @@ class WaitingPrompt(db.Model):
         ret_dict["queue_position"] = queue_pos + 1
         # If there's fewer requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
-        if queued_n < active_worker_count:
-            active_worker_count = queued_n
-        avg_things_per_sec = (request_avg / thing_divisor) * active_worker_count
+        if queued_n < active_worker_thread_count:
+            active_worker_thread_count = queued_n
+        avg_things_per_sec = (request_avg / thing_divisor) * active_worker_thread_count
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
