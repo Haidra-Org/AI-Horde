@@ -70,7 +70,6 @@ This is the worker which has generated the most pixels for the horde.
         if iter > 1: break
     totals = database.get_total_usage()
     wp_totals = database.retrieve_totals()
-    form_totals = database.retrieve_form_totals()
     active_worker_count = database.count_active_workers()
     avg_performance = ConvertAmount(
         stats.get_request_avg(database.get_worker_performances())
