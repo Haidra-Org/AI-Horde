@@ -488,7 +488,7 @@ class Worker(WorkerTemplate):
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
-        ret_dict = super().get_details()
+        ret_dict = super().get_details(details_privilege)
         ret_dict["nsfw"] = self.nsfw,
         ret_dict["models"] = self.get_model_names(),
         return(ret_dict)

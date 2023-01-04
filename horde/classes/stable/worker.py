@@ -105,8 +105,8 @@ class WorkerExtended(Worker):
                 return [False, 'kudos']
         return [True, None]
 
-    def get_details(self, is_privileged=False):
-        ret_dict = super().get_details(is_privileged)
+    def get_details(self, details_privilege = 0):
+        ret_dict = super().get_details(details_privilege)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
         allow_img2img = self.allow_img2img
