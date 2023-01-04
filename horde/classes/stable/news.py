@@ -5,6 +5,11 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-04",
+            "newspiece": "You can now interrogate images (AKA img2txt) to retrieve information about them such as captions and whether they are NSFW. Check the api/v2/interrogate endpoint documentation.",
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-01",
             "newspiece": "Stable Horde can now be used on the automatic1111 Web UI via [an external script](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)",
             "importance": "Information"

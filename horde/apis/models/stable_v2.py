@@ -95,9 +95,9 @@ class Models(v2.Models):
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
             "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
-            'img2img': fields.Boolean(default=True,description="If True, this worker supports and allows img2img requests."),
-            'painting': fields.Boolean(default=True,description="If True, this worker supports and allows inpainting requests."),
-            'post-processing': fields.Boolean(default=True,description="If True, this worker supports and allows post-processing requests."),
+            'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
+            'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
+            'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),

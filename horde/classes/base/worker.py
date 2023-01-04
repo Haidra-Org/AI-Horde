@@ -363,6 +363,7 @@ class WorkerTemplate(db.Model):
         ret_dict = {
             "name": self.name,
             "id": str(self.id),
+            "type": self.worker_type,
             "requests_fulfilled": self.fulfilments,
             "uncompleted_jobs": self.uncompleted_jobs,
             "kudos_rewards": self.kudos,
