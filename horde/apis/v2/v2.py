@@ -635,7 +635,9 @@ class WorkerSingle(Resource):
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
             details_privilege = 2
-        return(worker.get_details(details_privilege),200)
+        worker_details = worker.get_details(details_privilege)
+        logger.debug(worker_details)
+        return worker_details,200
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')

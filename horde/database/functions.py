@@ -125,9 +125,6 @@ def find_worker_by_id(worker_id):
     if SQLITE_MODE:
         worker_uuid = str(worker_uuid)
     worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
-    logger.debug(worker)
-    logger.debug(worker_uuid)
-    logger.debug(type(worker_uuid))
     if not worker:
         worker = db.session.query(InterrogationWorker).filter_by(id=uuid.UUID(worker_id)).first()
     logger.debug(worker)
