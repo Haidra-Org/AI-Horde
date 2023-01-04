@@ -138,10 +138,9 @@ def find_worker_by_id(worker_id):
         return None
     if SQLITE_MODE:
         worker_uuid = str(worker_uuid)
-    worker = db.session.query(Worker).filter_by(id=uuid.UUID(worker_id)).first()
+    worker = db.session.query(Worker).filter_by(id=worker_uuid).first()
     if not worker:
-        worker = db.session.query(InterrogationWorker).filter_by(id=uuid.UUID(worker_id)).first()
-    # logger.debug(worker)
+        worker = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).first()
     return(worker)
 
 def get_all_teams():
