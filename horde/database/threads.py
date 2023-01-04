@@ -32,7 +32,7 @@ def get_quorum():
         return None
     if quorum == horde_instance_id:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
-        logger.debug(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
+        logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
         horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
