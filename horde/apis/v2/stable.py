@@ -55,7 +55,7 @@ def convert_source_image_to_webp(source_image_b64):
         return final_image_b64
     except ImageValidationFailed as err:
         raise err
-    except Exception as e:
+    except Exception as err:
         logger.error(e)
         raise e.ImageValidationFailed
 
