@@ -40,14 +40,14 @@ def convert_source_image_to_pil(source_image_b64):
         quality = 90
     elif resolution > resolution_threshold * 0.15:
         quality = 95
-    return image,quality
+    return image,quality,width,height
 
 def convert_source_image_to_webp(source_image_b64):
     '''Convert img2img sources to 90% compressed webp, to avoid wasting bandwidth, while still supporting all types'''
     try:
         if source_image_b64 is None:
             return(source_image_b64)
-        image, quality = convert_source_image_to_pil(source_image_b64)
+        image, quality,width,height = convert_source_image_to_pil(source_image_b64)
         buffer = BytesIO()
         image.save(buffer, format="WebP", quality=quality)
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
@@ -64,7 +64,7 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
     try:
         if source_image_b64 is None:
             return(source_image_b64)
-        image, quality = convert_source_image_to_pil(source_image_b64)
+        image, quality,width,height = convert_source_image_to_pil(source_image_b64)
         filename = f"{uuid_string}.webp"
         image.save(filename, format="WebP", quality=quality)
         upload_source_image(filename)
