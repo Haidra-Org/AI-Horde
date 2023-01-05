@@ -80,11 +80,21 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
         try:
+            size = requests.head(source_image_string).headers.get('Content-Length')
+        except Exception as err:
+            logger.error(err)
+            raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
+        if not size:
+            raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
+        if int(size) > 5000000:
+            raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+        try:
             img_data = requests.get(source_image_string, timeout=3).content
-            Image.open(BytesIO(img_data))
+            Image.open(BytesIO(img_data))            
         except UnidentifiedImageError as err:
             raise e.ImageValidationFailed("Url does not contain a valid image.")
         except Exception as err:
+            logger.error(err)
             raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
         return source_image_string, False
     else:
