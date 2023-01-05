@@ -67,9 +67,9 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
         image, quality,width,height = convert_source_image_to_pil(source_image_b64)
         filename = f"{uuid_string}.webp"
         image.save(filename, format="WebP", quality=quality)
-        upload_source_image(filename)
+        download_url = upload_source_image(filename)
         os.remove(filename)
-        return generate_img_download_url(filename)
+        return download_url
     except ImageValidationFailed as err:
         raise err
     except Exception as err:
