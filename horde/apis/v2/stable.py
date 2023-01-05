@@ -316,6 +316,7 @@ class Interrogate(Resource):
 
 
 class InterrogationStatus(Resource):
+    decorators = [limiter.limit("90/minute")]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
