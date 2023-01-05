@@ -7,7 +7,7 @@ from horde.horde_redis import horde_r
 quorum = Quorum(1, get_quorum)
 wp_list_cacher = PrimaryTimedFunction(1, store_prioritized_wp_queue, quorum=quorum)
 worker_cacher = PrimaryTimedFunction(25, store_worker_list, quorum=quorum)
-model_cacher = PrimaryTimedFunction(5, store_available_models, quorum=quorum)
+model_cacher = PrimaryTimedFunction(10, store_available_models, quorum=quorum)
 wp_cleaner = PrimaryTimedFunction(60, check_waiting_prompts, quorum=quorum)
 interrogations_cleaner = PrimaryTimedFunction(60, check_interrogations, quorum=quorum)
 monthly_kudos = PrimaryTimedFunction(86400, assign_monthly_kudos, quorum=quorum)
