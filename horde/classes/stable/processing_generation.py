@@ -41,6 +41,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         if not self.wp.shared:
             return(kudos)
         # We don't share img2img
+        logger.debug(self.wp.source_image)
         if self.wp.source_image:
             return(kudos)
         if self.fake:
