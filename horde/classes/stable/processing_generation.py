@@ -1,6 +1,7 @@
 import threading
 import requests
 import os
+import json
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
