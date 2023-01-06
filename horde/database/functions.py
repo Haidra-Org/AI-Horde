@@ -112,23 +112,30 @@ def find_user_by_username(username):
         return(None)
     # This approach handles someone cheekily putting # in their username
     user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
-    return(user)
+    return user
 
 def find_user_by_id(user_id):
     if int(user_id) == 0 and not ALLOW_ANONYMOUS:
         return(None)
     user = db.session.query(User).filter_by(id=user_id).first()
-    return(user)
+    return user
 
 def find_user_by_api_key(api_key):
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return(None)
     user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
-    return(user)
+    return user
 
 def find_worker_by_name(worker_name, worker_class=Worker):
     worker = db.session.query(worker_class).filter_by(name=worker_name).first()
-    return(worker)
+    return worker
+
+def worker_name_exists(worker_name):
+    for worker_class in [Worker, InterrogationWorker]:
+        worker = db.session.query(worker_class).filter_by(name=worker_name).count()
+        if worker:
+            return True
+    return False
 
 def find_worker_by_id(worker_id):
     try:
@@ -141,7 +148,7 @@ def find_worker_by_id(worker_id):
     worker = db.session.query(Worker).filter_by(id=worker_uuid).first()
     if not worker:
         worker = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).first()
-    return(worker)
+    return worker
 
 def get_all_teams():
     return db.session.query(Team).all()

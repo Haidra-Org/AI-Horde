@@ -51,6 +51,11 @@ class NameAlreadyExists(wze.BadRequest):
         self.specific = f"The specified {object_type} name '{new_name}' is already taken!"
         self.log = f"User '{username}' tried to change {object_type} name from {old_name} to {new_name}. Aborting!"
 
+class PolymorphicNameConflict(wze.BadRequest):
+    def __init__(self, name, object_type = 'worker'):
+        self.specific = f"The specified name '{name}' is already taken by a different type of {object_type}. Please choose a different name!"
+        self.log = None
+
 class ImageValidationFailed(wze.BadRequest):
     def __init__(self, message = "Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."):
         self.specific = f"Image validation failed. {message}"
