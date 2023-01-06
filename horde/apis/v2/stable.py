@@ -87,23 +87,19 @@ def ensure_source_image_uploaded(source_image_string, uuid_string):
                 #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
                 # if int(size) / 1024 > 5000:
                 #     raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
-                try:
-                    mbs = 0
-                    for chunk in r.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            if mbs == 0:
-                                img_data = chunk
-                            else:
-                                img_data += chunk
-                            mbs += 1
-                            if mbs > 5:
-                                raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
-                    Image.open(BytesIO(img_data))            
-                except UnidentifiedImageError as err:
-                    raise e.ImageValidationFailed("Url does not contain a valid image.")
-                except Exception as err:
-                    logger.error(err)
-                    raise e.ImageValidationFailed("Something went wrong when opening image.")
+                mbs = 0
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        if mbs == 0:
+                            img_data = chunk
+                        else:
+                            img_data += chunk
+                        mbs += 1
+                        if mbs > 5:
+                            raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                Image.open(BytesIO(img_data))            
+        except UnidentifiedImageError as err:
+            raise e.ImageValidationFailed("Url does not contain a valid image.")
         except Exception as err:
             logger.error(err)
             raise err
