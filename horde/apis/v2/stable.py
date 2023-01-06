@@ -84,8 +84,8 @@ def ensure_source_image_uploaded(source_image_string, uuid_string):
                 size = r.headers.get('Content-Length')
                 # if not size:
                 #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
-                if int(size) / 1024 > 5000:
-                    raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                # if int(size) / 1024 > 5000:
+                #     raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
                 try:
                     img_data = r.content
                     if sys.getsizeof(img_data) / 1024 > 5000:
