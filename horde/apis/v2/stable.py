@@ -80,22 +80,25 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
         try:
-            size = requests.head(source_image_string).headers.get('Content-Length')
+            with requests.get(source_image_string, stream = True, timeout = 3) as r:
+                size = r.headers.get('Content-Length')
+                # if not size:
+                #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
+                if int(size / 1024) > 5000:
+                    raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                try:
+                    img_data = r.content
+                    if sys.getsizeof(img_data) / 1024 > 5000:
+                        raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                    Image.open(BytesIO(img_data))            
+                except UnidentifiedImageError as err:
+                    raise e.ImageValidationFailed("Url does not contain a valid image.")
+                except Exception as err:
+                    logger.error(err)
+                    raise e.ImageValidationFailed("Something went wrong when opening image.")
         except Exception as err:
             logger.error(err)
-            raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
-        if not size:
-            raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
-        if int(size) > 5000000:
-            raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
-        try:
-            img_data = requests.get(source_image_string, timeout=3).content
-            Image.open(BytesIO(img_data))            
-        except UnidentifiedImageError as err:
-            raise e.ImageValidationFailed("Url does not contain a valid image.")
-        except Exception as err:
-            logger.error(err)
-            raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
+            raise e.ImageValidationFailed("Something went wrong when retrieving image url.")
         return source_image_string, False
     else:
         return upload_source_image_to_r2(source_image_string, uuid_string), True
@@ -319,7 +322,7 @@ class Interrogate(Resource):
 
 
 class InterrogationStatus(Resource):
-    decorators = [limiter.limit("90/minute")]
+    decorators = [limiter.limit("10/second", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
