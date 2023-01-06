@@ -8,6 +8,8 @@ from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url
 
 class WaitingPromptExtended(WaitingPrompt):
+    width = db.Column(db.Integer, default=512, nullable=False)
+    height = db.Column(db.Integer, default=512, nullable=False)
     source_image = db.Column(db.Text, default=None)
     source_processing = db.Column(db.String(10), default='img2img', nullable=False)
     source_mask = db.Column(db.Text, default=None)
@@ -16,6 +18,7 @@ class WaitingPromptExtended(WaitingPrompt):
     seed_variation = db.Column(db.Integer, default=None)
     kudos = db.Column(db.Float, default=0, nullable=False)
     r2 = db.Column(db.Boolean, default=False, nullable=False)
+    shared = db.Column(db.Boolean, default=False, nullable=False)
 
     @logger.catch(reraise=True)
     def extract_params(self):
@@ -105,6 +108,20 @@ class WaitingPromptExtended(WaitingPrompt):
         db.session.commit()
         return(self.gen_payload)
 
+    def get_share_metadata(self):
+        '''This is uploaded along with the image to the shared R2, when this WP shared'''
+        ret_dict = {
+            "prompt": self.prompt,
+            "width": self.params["width"],
+            "height": self.params["height"],
+            "steps": self.params["steps"],
+            "sampler": self.params["sampler_name"],
+            "cfg": self.params["cfg_scale"],
+        }
+        if "denoising_strength" in self.gen_payload:
+            ret_dict["denoising_strength"] = self.params["denoising_strength"]
+        return ret_dict
+
     def get_pop_payload(self, procgen):
         # This prevents from sending a payload with an ID when there has been an exception inside get_job_payload()
         payload = self.get_job_payload(procgen)
@@ -121,13 +138,20 @@ class WaitingPromptExtended(WaitingPrompt):
                 if self.source_mask:
                     prompt_payload["source_mask"] = self.source_mask
             if procgen.worker.bridge_version >= 8 and self.r2:
-                prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id))
+                prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.uses_shared_r2())
         else:
             prompt_payload = {}
             self.faulted = True
             db.session.commit()
         # logger.debug([payload,prompt_payload])
         return(prompt_payload)
+
+    def uses_shared_r2(self):
+        if not self.shared:
+            return False
+        if self.source_image:
+            return False
+        return True
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -164,6 +188,13 @@ class WaitingPromptExtended(WaitingPrompt):
         # Codeformers are expensive to calculate, so we increase the kudos burn
         if 'CodeFormers' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
+        # This represents the cost of using the resources of the horde
+        horde_tax = 3
+        # Sharing images reduces the rax
+        if self.uses_shared_r2():
+            horde_tax = 1
+        kudos += horde_tax
+
         super().record_usage(raw_things, kudos)
 
     # We can calculate the kudos in advance as they model doesn't affect them

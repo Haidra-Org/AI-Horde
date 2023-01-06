@@ -62,8 +62,6 @@ class WaitingPrompt(db.Model):
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False, index=True)
-    width = db.Column(db.Integer, default=512, nullable=False)
-    height = db.Column(db.Integer, default=512, nullable=False)
     # This stores the original amount of jobs requested
     jobs = db.Column(db.Integer, default=0, nullable=False)
     things = db.Column(db.BigInteger, default=0, nullable=False)

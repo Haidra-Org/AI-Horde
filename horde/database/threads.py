@@ -117,7 +117,11 @@ def check_waiting_prompts():
     with HORDE.app_context():
         # Cleans expired WPs
         expired_wps = db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry < datetime.utcnow())
-        expired_r_wps = expired_wps.filter(WaitingPrompt.r2 == True)
+        expired_r_wps = expired_wps.filter(
+            WaitingPrompt.r2 == True,
+            # We do not delete shared images
+            WaitingPrompt.shared == False,
+        )
         all_wp_r_id = [wp.id for wp in expired_r_wps.all()]
         expired_r2_procgens = db.session.query(
             ProcessingGeneration.id,

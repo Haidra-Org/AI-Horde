@@ -59,7 +59,7 @@ class PolymorphicNameConflict(wze.BadRequest):
 class ImageValidationFailed(wze.BadRequest):
     def __init__(self, message = "Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."):
         self.specific = f"Image validation failed. {message}"
-        self.log = "Source image validation failed for img2img"
+        self.log = "Source image validation failed"
 
 class SourceMaskUnnecessary(wze.BadRequest):
     def __init__(self):

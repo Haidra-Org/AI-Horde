@@ -378,7 +378,7 @@ def count_totals():
             InterrogationForms.state == State.PROCESSING,
         ),
     ).count()
-    logger.debug(ret_dict)
+    # logger.debug(ret_dict)
     return(ret_dict)
 
 def retrieve_totals():

@@ -1,5 +1,6 @@
 import base64
 import requests
+import sys
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 
@@ -80,22 +81,34 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
         try:
-            size = requests.head(source_image_string).headers.get('Content-Length')
+            with requests.get(source_image_string, stream = True, timeout = 2) as r:
+                size = r.headers.get('Content-Length')
+                # if not size:
+                #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
+                if int(size) / 1024 > 5000:
+                    raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                mbs = 0
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        if mbs == 0:
+                            img_data = chunk
+                        else:
+                            img_data += chunk
+                        mbs += 1
+                        if mbs > 5:
+                            raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                try:
+                    Image.open(BytesIO(img_data))            
+                except UnidentifiedImageError as err:
+                    raise e.ImageValidationFailed("Url does not contain a valid image.")
+                except Exception as err:
+                    logger.error(err)
+                    raise e.ImageValidationFailed("Something went wrong when opening image.")
         except Exception as err:
+            if type(err) == ImageValidationFailed:
+                raise err
             logger.error(err)
-            raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
-        if not size:
-            raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
-        if int(size) > 5000000:
-            raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
-        try:
-            img_data = requests.get(source_image_string, timeout=3).content
-            Image.open(BytesIO(img_data))            
-        except UnidentifiedImageError as err:
-            raise e.ImageValidationFailed("Url does not contain a valid image.")
-        except Exception as err:
-            logger.error(err)
-            raise e.ImageValidationFailed("Something went wrong when retreiving image url.")
+            raise e.ImageValidationFailed("Something went wrong when retrieving image url.")
         return source_image_string, False
     else:
         return upload_source_image_to_r2(source_image_string, uuid_string), True
@@ -138,9 +151,11 @@ class AsyncGenerate(AsyncGenerate):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
-        from datetime import datetime
-        #logger.warning(datetime.utcnow())
         # logger.debug(self.params)
+        shared=self.args.shared
+        # Anon users are always shared
+        if self.user.is_anon():
+            shared=True
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
@@ -156,6 +171,7 @@ class AsyncGenerate(AsyncGenerate):
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
             r2=self.args.r2,
+            shared=shared,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
@@ -302,7 +318,8 @@ class Interrogate(Resource):
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
             i_count = database.count_waiting_interrogations(self.user)
-            user_limit = self.user.get_concurrency()
+            # More concurrency for interrogations
+            user_limit = self.user.get_concurrency() * 10
             if i_count + len(self.forms) > user_limit:
                 raise e.TooManyPrompts(self.username, i_count + len(self.forms), user_limit)
         if not self.user.trusted and not patrons.is_patron(self.user.id):
@@ -316,7 +333,7 @@ class Interrogate(Resource):
 
 
 class InterrogationStatus(Resource):
-    decorators = [limiter.limit("90/minute")]
+    decorators = [limiter.limit("10/second", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
