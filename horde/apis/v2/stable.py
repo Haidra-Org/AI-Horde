@@ -1,5 +1,6 @@
 import base64
 import requests
+import sys
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 
@@ -80,16 +81,23 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
         try:
-            with requests.get(source_image_string, stream = True, timeout = 3) as r:
+            with requests.get(source_image_string, stream = True, timeout = 2) as r:
                 size = r.headers.get('Content-Length')
                 # if not size:
                 #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
                 # if int(size) / 1024 > 5000:
                 #     raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
                 try:
-                    img_data = r.content
-                    if sys.getsizeof(img_data) / 1024 > 5000:
-                        raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                    mbs = 0
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            if mbs == 0:
+                                img_data = chunk
+                            else:
+                                img_data += chunk
+                            mbs += 1
+                            if mbs > 5:
+                                raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
                     Image.open(BytesIO(img_data))            
                 except UnidentifiedImageError as err:
                     raise e.ImageValidationFailed("Url does not contain a valid image.")
