@@ -1,6 +1,7 @@
 import uuid
+import json
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy import Enum, JSON, func, or_
 
@@ -9,6 +10,7 @@ from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
+from horde.horde_redis import horde_r
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -60,6 +62,9 @@ class InterrogationForms(db.Model):
         if self.state != State.PROCESSING:
             return(0)
         self.result = result
+        # If the image was not sent as b64, we cache its origin url and result so we save on generations
+        if "stable-horde-source-images" not in interrogation.source_image:
+            horde_r.setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=1), json.dumps(self.result))
         # Each interrogation rewards 1 kudos
         self.state = State.DONE
         self.record(self.kudos)
