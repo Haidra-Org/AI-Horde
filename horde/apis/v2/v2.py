@@ -43,6 +43,7 @@ handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
 handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
 handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
 handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_requests)
+handle_polymorphic_name_conflict = api.errorhandler(e.PolymorphicNameConflict)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
 handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.handle_bad_requests)
 handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(e.handle_bad_requests)
@@ -346,6 +347,8 @@ class JobPopTemplate(Resource):
             raise e.InvalidAPIKey('prompt pop')
         self.worker_name = sanitize_string(self.args['name'])
         self.worker = database.find_worker_by_name(self.worker_name, worker_class=worker_class)
+        if not self.worker and database.worker_name_exists(self.worker_name):
+            raise e.PolymorphicNameConflict(self.worker_name)
         self.safe_ip = True
         if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
             self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
