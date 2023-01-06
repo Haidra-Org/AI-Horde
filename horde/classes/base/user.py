@@ -31,7 +31,7 @@ class UserSuspicions(db.Model):
 
 class User(db.Model):
     __tablename__ = "users"
-    SUSPICION_THRESHOLD = 3
+    SUSPICION_THRESHOLD = 5
     SAME_IP_WORKER_THRESHOLD = 3
 
     id = db.Column(db.Integer, primary_key=True) 

@@ -46,7 +46,6 @@ class ProcessingGeneration(db.Model):
                 self.model = model
         db.session.commit()
 
-    # We allow the seed to not be sent
     def set_generation(self, generation, things_per_sec, **kwargs):
         if self.is_completed() or self.is_faulted():
             return(0)

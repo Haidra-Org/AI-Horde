@@ -138,9 +138,11 @@ class AsyncGenerate(AsyncGenerate):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
-        from datetime import datetime
-        #logger.warning(datetime.utcnow())
         # logger.debug(self.params)
+        shared=self.args.shared
+        # Anon users are always shared
+        if self.user.is_anon():
+            shared=True
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
@@ -156,6 +158,7 @@ class AsyncGenerate(AsyncGenerate):
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
             r2=self.args.r2,
+            shared=shared,
         )
         needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
         if needs_kudos:

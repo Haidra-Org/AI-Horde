@@ -1,6 +1,10 @@
+import threading
+import requests
+import os
+
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.r2 import generate_procgen_download_url
+from horde.r2 import generate_procgen_download_url, upload_shared_metadata
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
@@ -9,7 +13,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         '''Returns a dictionary with details about this processing generation'''
         generation = self.generation
         if generation == "R2":
-            generation = generate_procgen_download_url(str(self.id))
+            generation = generate_procgen_download_url(str(self.id), self.wp.shared)
         ret_dict = {
             "img": generation,
             "seed": self.seed,
@@ -30,3 +34,32 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             f" from by worker: {self.worker.name} ({self.worker.id})"
         )
 
+
+    def set_generation(self, generation, things_per_sec, **kwargs):
+        kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        if not self.wp.shared:
+            return(kudos)
+        # We don't share img2img
+        if self.wp.source_image:
+            return(kudos)
+        if self.fake:
+            return(kudos)
+        # if not self.wp.r2: 
+            # Should I put code here to convert b64 to PIL and upload or nevermind?
+        self.upload_generation_metadata()
+        return(kudos)
+        
+    def upload_generation_metadata(self):
+        metadict = self.wp.get_share_metadata()
+        metadict['seed'] = self.seed
+        metadict['model'] = self.model
+        filename = f"{self.id}.json"
+        json_object = json.dumps(metadict, indent=4)
+        # Writing to sample.json
+        with open(filename, "w") as f:
+            f.write(json_object)
+        upload_shared_metadata(filename)
+        os.remove(filename)
+
+
+        
