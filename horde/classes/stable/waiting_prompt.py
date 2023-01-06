@@ -192,6 +192,7 @@ class WaitingPromptExtended(WaitingPrompt):
         horde_tax = 3
         # Sharing images reduces the rax
         if self.uses_shared_r2():
+            logger.debug(self.shared)
             horde_tax = 1
         kudos += horde_tax
 
