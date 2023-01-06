@@ -120,6 +120,7 @@ class WaitingPromptExtended(WaitingPrompt):
         }
         if "denoising_strength" in self.gen_payload:
             ret_dict["denoising_strength"] = self.params["denoising_strength"]
+        return ret_dict
 
     def get_pop_payload(self, procgen):
         # This prevents from sending a payload with an ID when there has been an exception inside get_job_payload()
