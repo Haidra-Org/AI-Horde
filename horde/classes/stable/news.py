@@ -6,12 +6,12 @@ class NewsExtended(News):
     STABLE_HORDE_NEWS = [
         {
             "date_published": "2023-01-05",
-            "newspiece": "Worker now have a WebUI which they can use to configure themselves. Use it by running `worker-webui.sh/cmd`",
+            "newspiece": "[Worker now have a WebUI](https://dbzer0.com/blog/the-ai-horde-worker-has-a-control-ui/) which they can use to configure themselves. Use it by running `worker-webui.sh/cmd`",
             "importance": "Workers"
         },
         {
             "date_published": "2023-01-04",
-            "newspiece": "You can now interrogate images (AKA img2txt) to retrieve information about them such as captions and whether they are NSFW. Check the api/v2/interrogate endpoint documentation.",
+            "newspiece": "[You can now interrogate images](https://dbzer0.com/blog/image-interrogations-are-now-available-on-the-stable-horde/) (AKA img2txt) to retrieve information about them such as captions and whether they are NSFW. Check the api/v2/interrogate endpoint documentation.",
             "importance": "Information"
         },
         {
