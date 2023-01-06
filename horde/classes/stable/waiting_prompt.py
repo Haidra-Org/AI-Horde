@@ -188,6 +188,13 @@ class WaitingPromptExtended(WaitingPrompt):
         # Codeformers are expensive to calculate, so we increase the kudos burn
         if 'CodeFormers' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
+        # This represents the cost of using the resources of the horde
+        horde_tax = 3
+        # Sharing images reduces the rax
+        if self.uses_shared_r2():
+            horde_tax = 1
+        kudos += horde_tax
+
         super().record_usage(raw_things, kudos)
 
     # We can calculate the kudos in advance as they model doesn't affect them
@@ -200,12 +207,6 @@ class WaitingPromptExtended(WaitingPrompt):
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
             self.kudos = round(self.kudos * 1.2,2)
-        # This represents the cost of using the resources of the horde
-        horde_tax = 3
-        # Sharing images reduces the rax
-        if self.shared:
-            horde_tax = 1
-        self.kudos += horde_tax
         db.session.commit()
 
 
