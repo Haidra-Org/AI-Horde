@@ -1,6 +1,7 @@
 import uuid
+import json
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy import Enum, JSON, func, or_
 
@@ -9,6 +10,7 @@ from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
+from horde.horde_redis import horde_r
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -59,8 +61,10 @@ class InterrogationForms(db.Model):
     def deliver(self, result):
         if self.state != State.PROCESSING:
             return(0)
+        # If the image was not sent as b64, we cache its origin url and result so we save on compute
+        if not self.interrogation.r2stored:
+            horde_r.setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
         self.result = result
-        # Each interrogation rewards 1 kudos
         self.state = State.DONE
         self.record(self.kudos)
         db.session.commit()
@@ -151,7 +155,20 @@ class Interrogation(db.Model):
     def set_source_image(self, source_image, r2stored):
         self.source_image = source_image
         self.r2stored = r2stored
+        if not r2stored:
+            for form in self.forms:
+                self.check_cache(form, source_image)
         db.session.commit()
+
+    def check_cache(self, form, source_image):
+        '''Checks if the image is already in the redis cache. 
+        If it is, it sets the cached forms to DONE and sets the cached value as its result
+        '''
+        cached_result = horde_r.get(f'{form.name}_{source_image}')
+        # The entry might be False, so we need to check explicitly against None
+        if cached_result != None:
+            form.result = json.loads(cached_result)
+            form.state = State.DONE
 
     def refresh(self):
         self.expiry = get_expiry_date()
