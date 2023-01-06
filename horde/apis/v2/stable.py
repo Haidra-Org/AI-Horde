@@ -98,6 +98,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string):
                     raise e.ImageValidationFailed("Something went wrong when opening image.")
         except Exception as err:
             logger.error(err)
+            raise err
             raise e.ImageValidationFailed("Something went wrong when retrieving image url.")
         return source_image_string, False
     else:
