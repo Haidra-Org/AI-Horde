@@ -5,6 +5,15 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-06",
+            "newspiece": (
+                "The amount of kudos consumed when generating images has been slightly adjusted. "
+                "To simulate the resource costs of the horde, each image generation request will now burn +3 kudos. Those will not go to the generating worker. "
+                "However we also have a new opt-in feature: You can choose to share your text2img generations with [LAION](https://laion.ai/). If you do, this added cost will be just +1 kudos!"
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-05",
             "newspiece": "[Worker now have a WebUI](https://dbzer0.com/blog/the-ai-horde-worker-has-a-control-ui/) which they can use to configure themselves. Use it by running `worker-webui.sh/cmd`",
             "importance": "Workers"
