@@ -308,7 +308,8 @@ class Interrogate(Resource):
                 raise e.InvalidAPIKey('generation')
             self.username = self.user.get_unique_alias()
             i_count = database.count_waiting_interrogations(self.user)
-            user_limit = self.user.get_concurrency()
+            # More concurrency for interrogations
+            user_limit = self.user.get_concurrency() * 10
             if i_count + len(self.forms) > user_limit:
                 raise e.TooManyPrompts(self.username, i_count + len(self.forms), user_limit)
         if not self.user.trusted and not patrons.is_patron(self.user.id):
