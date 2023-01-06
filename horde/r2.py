@@ -12,18 +12,8 @@ s3_client_shared = boto3.client('s3',
     aws_secret_access_key=os.getenv('SHARED_AWS_ACCESS_KEY'),
 )
 
-s3_paginator  = boto3.client('s3', 
-    endpoint_url="https://edf800e28a742a836054658825faa135.r2.cloudflarestorage.com",
-    aws_access_key_id=os.getenv('SHARED_AWS_ACCESS_ID'),
-    aws_secret_access_key=os.getenv('SHARED_AWS_ACCESS_KEY'),
-).get_paginator('list_objects_v2')
-
-def keys(bucket_name, prefix='/', delimiter='/', start_after=''):
-    prefix = prefix.lstrip(delimiter)
-    start_after = (start_after or prefix) if prefix.endswith(delimiter) else start_after
-    for page in s3_paginator.paginate(Bucket=bucket_name, Prefix=prefix, StartAfter=start_after):
-        for content in page.get('Contents', ()):
-            yield content['Key']
+for key in s3_client_shared.list_objects(Bucket='stable-horde')['Contents']:
+    logger.debug(key['Key'])
 
 @logger.catch(reraise=True)
 def generate_presigned_url(client, client_method, method_parameters, expires_in):
@@ -114,5 +104,3 @@ def generate_uuid_img_upload_url(img_uuid, imgtype):
 
 def generate_uuid_img_download_url(img_uuid, imgtype):
     return generate_img_download_url(f"{img_uuid}.{imgtype}")
-
-logger.debug(keys("stable-horde"))
