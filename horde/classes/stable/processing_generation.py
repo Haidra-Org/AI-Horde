@@ -14,7 +14,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         '''Returns a dictionary with details about this processing generation'''
         generation = self.generation
         if generation == "R2":
-            generation = generate_procgen_download_url(str(self.id), self.wp.shared)
+            generation = generate_procgen_download_url(str(self.id), self.wp.uses_shared_r2())
         ret_dict = {
             "img": generation,
             "seed": self.seed,
@@ -41,7 +41,6 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         if not self.wp.shared:
             return(kudos)
         # We don't share img2img
-        logger.debug(self.wp.source_image)
         if self.wp.source_image:
             return(kudos)
         if self.fake:

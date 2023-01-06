@@ -138,13 +138,20 @@ class WaitingPromptExtended(WaitingPrompt):
                 if self.source_mask:
                     prompt_payload["source_mask"] = self.source_mask
             if procgen.worker.bridge_version >= 8 and self.r2:
-                prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
+                prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.uses_shared_r2())
         else:
             prompt_payload = {}
             self.faulted = True
             db.session.commit()
         # logger.debug([payload,prompt_payload])
         return(prompt_payload)
+
+    def uses_shared_r2(self):
+        if not self.shared:
+            return False
+        if self.source_image:
+            return False
+        return True
 
     def activate(self):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
