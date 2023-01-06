@@ -12,8 +12,9 @@ s3_client_shared = boto3.client('s3',
     aws_secret_access_key=os.getenv('SHARED_AWS_ACCESS_KEY'),
 )
 
-for key in s3_client_shared.list_objects(Bucket='stable-horde')['Contents']:
-    logger.debug(key['Key'])
+# Lists shared bucket contents
+# for key in s3_client_shared.list_objects(Bucket='stable-horde')['Contents']:
+#     logger.debug(key['Key'])
 
 @logger.catch(reraise=True)
 def generate_presigned_url(client, client_method, method_parameters, expires_in):
