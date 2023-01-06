@@ -115,4 +115,4 @@ def generate_uuid_img_upload_url(img_uuid, imgtype):
 def generate_uuid_img_download_url(img_uuid, imgtype):
     return generate_img_download_url(f"{img_uuid}.{imgtype}")
 
-keys("stable-horde")
+logger.debug(keys("stable-horde"))
