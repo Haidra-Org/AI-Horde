@@ -618,7 +618,7 @@ class AwardKudos(Resource):
         dest_user = database.find_user_by_username(self.args['username'])
         if not dest_user:
             raise e.KudosValidationError(user.get_unique_alias(), 'Invalid target username.', 'award')
-        if dest_user == get_anon():
+        if dest_user.is_anon():
             raise e.KudosValidationError(user.get_unique_alias(), 'Cannot award anon. No go.', 'award')
         if dest_user.is_suspicious():
             return([0,'Target user is suspicious.'])
