@@ -282,13 +282,29 @@ class Aesthetics(Resource):
             for rating in self.args.ratings:
                 if rating["id"] not in procgen_ids:
                     raise e.ProcGenNotFound(rating["id"])
+        if self.args.best:
+            if self.args.best not in procgen_ids:
+                raise e.ProcGenNotFound(rating["id"])
         if not self.args.ratings and not self.args.best:
             raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
             raise e.InvalidAestheticAttempt("Well done! You have pointed to a single image generation as being the best one of the set. Unfortunately that doesn't help anyone. no kudos for you!")
-        aesthetic_payload = {"set": id}
+        aesthetic_payload = {
+            "set": id,
+            "all_set_ids": procgen_ids,
+        }
+        self.kudos = 0
         if self.args.ratings:
+            self.kudos = 5 * len(self.args.ratings)
             aesthetic_payload["ratings"] = self.args.ratings
+            # If they only rated one, and rated it > 7, we assume it's the best of the set by default
+            # Unless another bestof was selected (for some reason)
+            if len(self.args.ratings) == 1 and len(procgen_ids) > 1:
+                if self.args.ratings[0]["rating"] >= 7 and not self.args.best:
+                    aesthetic_payload["best"] = self.args.ratings[0]["id"]
+                elif self.args.best:
+                    self.kudos += 4
+                    aesthetic_payload["best"] = self.args.best
             if len(self.args.ratings) > 1:
                 bestofs = None
                 bestof_rating = -1
@@ -307,6 +323,9 @@ class Aesthetics(Resource):
                         aesthetic_payload["best"] = self.args.best
                 if len(bestofs) == 1:
                     aesthetic_payload["best"] = bestofs[0]
+        else:
+            self.kudos = 4
+            aesthetic_payload["best"] = self.args.best
         logger.debug(aesthetic_payload)
         return({"reward": self.kudos}, 200)
 

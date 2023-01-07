@@ -187,10 +187,10 @@ class Models(v2.Models):
             'skipped': fields.Nested(self.response_model_interrogation_forms_skipped, skip_none=True)
         })
         self.response_model_aesthetic_rating = api.model('AestheticRating', {
-            "id": fields.String(description="The UUID of image being rated",min_length=36,max_length=36),
-            "rating": fields.Integer(description="The aesthetic rating 1-10 for this image", min=1, max=10),
+            "id": fields.String(required=True,description="The UUID of image being rated",min_length=36,max_length=36),
+            "rating": fields.Integer(required=True,description="The aesthetic rating 1-10 for this image", min=1, max=10),
         })
         self.input_model_aesthetics_payload = api.model('AestheticsPayload', {
-            "best": fields.String(description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
-            "ratings": fields.List(fields.Nested(self.response_model_aesthetic_ratings, skip_none=True)),
+            "best": fields.String(required=False,description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
+            "ratings": fields.List(fields.Nested(self.response_model_aesthetic_ratings, skip_none=True),required=False),
         })
