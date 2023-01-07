@@ -347,7 +347,7 @@ class Aesthetics(Resource):
             if not submit_req.ok:
                 raise e.InvalidAestheticAttempt("This generation appears already rated")
         except Exception as err:
-            if type(err) == InvalidAestheticAttempt:
+            if type(err) == e.InvalidAestheticAttempt:
                 raise err
             logger.error(f"Error when submitting Aesthetic: {err}")
             raise e.InvalidAestheticAttempt("Oops, Something went wrong when submitting the request. Please contact us.")
