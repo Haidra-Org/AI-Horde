@@ -262,29 +262,40 @@ class Aesthetics(Resource):
     post_parser.add_argument("best", type=str, required=False, location="json")
     post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
 
-    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Aesthetics Submitted')
     @api.response(400, 'Aesthetics Already Submitted', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(404, 'Generation Request Not Found', models.response_model_error)
     def post(self, id):
-        '''Submit aesthetic ratings for generated images.
+        '''Submit aesthetic ratings for generated images to be used by LAION
+        The request has to have been sent as shared: true.
+        You can select the best image in the set, and/or provide a rating for each or some images in the set.
+        If you select best-of image, you will gain 4 kudos. Each rating is 5 kudos. Best-of will be ignored when ratings conflict with it.
+        You can never gain more kudos than you spent for this generation. Your reward at max will be your kudos consumption - 1.
         '''
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
+        if not wp.is_completed():
+            raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!")
         if not wp.shared:
             raise e.InvalidAestheticAttempt("You can only aesthetically rate requests you have opted to share publicly")
         self.args = self.post_parser.parse_args()
-        procgen_ids = [procgen.id for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
+        procgen_ids = [str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
+        logger.debug(procgen_ids)
         if self.args.ratings:
+            seen_ids = []
             for rating in self.args.ratings:
                 if rating["id"] not in procgen_ids:
                     raise e.ProcGenNotFound(rating["id"])
+                if rating["id"] in seen_ids:
+                    raise e.InvalidAestheticAttempt("Duplicate image ID found in your ratings. You should be ashamed!")
+                seen_ids.append(rating["id"])
         if self.args.best:
             if self.args.best not in procgen_ids:
-                raise e.ProcGenNotFound(rating["id"])
+                raise e.ProcGenNotFound(self.args.best)
         if not self.args.ratings and not self.args.best:
             raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
@@ -300,8 +311,9 @@ class Aesthetics(Resource):
             # If they only rated one, and rated it > 7, we assume it's the best of the set by default
             # Unless another bestof was selected (for some reason)
             if len(self.args.ratings) == 1 and len(procgen_ids) > 1:
-                if self.args.ratings[0]["rating"] >= 7 and not self.args.best:
-                    aesthetic_payload["best"] = self.args.ratings[0]["id"]
+                if self.args.ratings[0]["rating"] >= 7:
+                    if not self.args.best or self.args.best == self.args.ratings[0]["id"]:
+                        aesthetic_payload["best"] = self.args.ratings[0]["id"]
                 elif self.args.best:
                     self.kudos += 4
                     aesthetic_payload["best"] = self.args.best
@@ -319,13 +331,16 @@ class Aesthetics(Resource):
                 if len(bestofs) > 1:
                     if self.args.best:
                         if self.args.best not in bestofs:
-                            raise e.InvalidAestheticAttempt("What are you even doing? How could the best image you selected not one of those with the highest aesthetic rating?")
+                            raise e.InvalidAestheticAttempt("What are you even doing? How could the best image you selected not be one of those with the highest aesthetic rating?")
                         aesthetic_payload["best"] = self.args.best
                 if len(bestofs) == 1:
                     aesthetic_payload["best"] = bestofs[0]
         else:
             self.kudos = 4
             aesthetic_payload["best"] = self.args.best
+        # You can never get more kudos from rating that what you consumed
+        if self.kudos >= wp.consumed_kudos:
+            self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         return({"reward": self.kudos}, 200)
 
@@ -611,6 +626,7 @@ api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
 api.add_resource(AsyncStatus, "/generate/status/<string:id>")
 api.add_resource(AsyncCheck, "/generate/check/<string:id>")
+api.add_resource(Aesthetics, "/generate/rate/<string:id>")
 api.add_resource(JobPop, "/generate/pop")
 api.add_resource(JobSubmit, "/generate/submit")
 api.add_resource(Users, "/users")
