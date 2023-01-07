@@ -218,7 +218,6 @@ class User(db.Model):
             kudos_details = UserStats(user_id=self.id, action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
             db.session.commit()
-            logger.debug(kudos_details)
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
             db.session.commit()

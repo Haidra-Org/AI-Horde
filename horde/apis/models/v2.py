@@ -95,6 +95,9 @@ class Models:
         self.response_model_kudos_transfer = api.model('KudosTransferred', {
             'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred"),
         })
+        self.response_model_kudos_award = api.model('KudosAwarded', {
+            'awarded': fields.Integer(example=100,description="The amount of Kudos awarded"),
+        })
 
         self.response_model_admin_maintenance = api.model('MaintenanceModeSet', {
             'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode"),
