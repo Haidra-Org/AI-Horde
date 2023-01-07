@@ -156,6 +156,8 @@ class AsyncGenerate(AsyncGenerate):
         # Anon users are always shared
         if self.user.is_anon():
             shared=True
+        if self.args.source_image:
+            shared=True
         self.wp = WaitingPrompt(
             self.workers,
             self.models,

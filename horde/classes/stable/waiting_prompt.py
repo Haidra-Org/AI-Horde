@@ -149,8 +149,6 @@ class WaitingPromptExtended(WaitingPrompt):
     def uses_shared_r2(self):
         if not self.shared:
             return False
-        if self.source_image:
-            return False
         return True
 
     def activate(self):
