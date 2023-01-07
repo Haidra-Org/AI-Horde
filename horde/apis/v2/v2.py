@@ -622,7 +622,7 @@ class AwardKudos(Resource):
             raise e.KudosValidationError(user.get_unique_alias(), 'Cannot award anon. No go.', 'award')
         if dest_user.is_suspicious():
             return([0,'Target user is suspicious.'])
-        dest_user.modify_kudos(self.args.amount, "ratings")
+        dest_user.modify_kudos(self.args.amount, "awarded")
         return({"awarded": self.args.amount}, 200)
 
 class Workers(Resource):

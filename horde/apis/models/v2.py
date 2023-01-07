@@ -159,6 +159,7 @@ class Models:
             "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins."),
             "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users."),
             "recurring": fields.Float(default=0,description="The amount of Kudos this user has received from recurring rewards."),
+            "awarded": fields.Float(default=0,description="The amount of Kudos this user has been awarded from things like rating images."),
         })
 
         self.response_model_contrib_details = api.model('ContributionsDetails', {
