@@ -189,11 +189,11 @@ class WaitingPromptExtended(WaitingPrompt):
         if 'CodeFormers' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
         # This represents the cost of using the resources of the horde
-        horde_tax = 3
+        horde_tax = 1.3
         # Sharing images reduces the rax
         if self.uses_shared_r2():
-            horde_tax = 1
-        kudos += horde_tax
+            horde_tax = 1.1
+        kudos = kudos * horde_tax
 
         super().record_usage(raw_things, kudos)
 
