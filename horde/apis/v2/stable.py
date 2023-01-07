@@ -346,7 +346,7 @@ class Aesthetics(Resource):
             submit_req = requests.post("https://droom.cloud/api/rating/set", aesthetic_payload)
             if not submit_req.ok:
                 raise e.InvalidAestheticAttempt("This generation appears already rated")
-        except exception as err:
+        except Exception as err:
             logger.error(f"Error when submitting Aesthetic: {err}")
             raise e.InvalidAestheticAttempt("Oops, Something went wrong when submitting the request. Please contact us.")
         wp.user.modify_kudos(self.kudos, "ratings")
