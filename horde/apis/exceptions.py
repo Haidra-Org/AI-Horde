@@ -12,9 +12,9 @@ class CorruptPrompt(wze.BadRequest):
         self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
 
 class KudosValidationError(wze.BadRequest):
-    def __init__(self, username, error_message):
+    def __init__(self, username, error_message, action = "transfer"):
         self.specific = error_message
-        self.log = f"User '{username}' Failed to transfer Kudos."
+        self.log = f"User '{username}' Failed to {action} Kudos."
 
 class NoValidActions(wze.BadRequest):
     def __init__(self, error_message):
@@ -76,6 +76,16 @@ class UnsupportedModel(wze.BadRequest):
         self.specific = "This model is not supported in this mode the moment"
         self.log = None
 
+class ProcGenNotFound(wze.BadRequest):
+    def __init__(self, procgen_id):
+        self.specific = f"Image with ID '{procgen_id}' not found in this request."
+        self.log = f"Attempted to log aesthetic rating with non-existent image ID '{procgen_id}'"
+
+class InvalidAestheticAttempt(wze.BadRequest):
+    def __init__(self, message):
+        self.specific = message
+        self.log = None
+
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
@@ -100,6 +110,11 @@ class NotOwner(wze.Forbidden):
     def __init__(self, username, worker_name):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"User '{username}'' tried to modify worker they do not own '{worker_name}'. Aborting!"
+
+class NotPrivileged(wze.Forbidden):
+    def __init__(self, username, message, action):
+        self.specific = message
+        self.log = f"Non-Privileged user '{username}' tried to take privileged action '{action}'. Aborting!"
 
 class AnonForbidden(wze.Forbidden):
     def __init__(self):

@@ -49,10 +49,13 @@ handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.han
 handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(e.handle_bad_requests)
 handle_unsupported_sampler = api.errorhandler(e.UnsupportedSampler)(e.handle_bad_requests)
 handle_unsupported_model = api.errorhandler(e.UnsupportedModel)(e.handle_bad_requests)
+handle_invalid_aesthetic_attempt = api.errorhandler(e.InvalidAestheticAttempt)(e.handle_bad_requests)
+handle_procgen_not_found = api.errorhandler(e.ProcGenNotFound)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
+handle_not_privileged = api.errorhandler(e.NotPrivileged)(e.handle_bad_requests)
 handle_anon_forbidden = api.errorhandler(e.AnonForbidden)(e.handle_bad_requests)
 handle_not_trusted = api.errorhandler(e.NotTrusted)(e.handle_bad_requests)
 handle_worker_maintenance = api.errorhandler(e.WorkerMaintenance)(e.handle_bad_requests)
@@ -574,7 +577,7 @@ class TransferKudos(Resource):
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
     @api.expect(parser)
-    @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Generation Submitted')
+    @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     def post(self):
@@ -590,6 +593,37 @@ class TransferKudos(Resource):
         if error != 'OK':
             raise e.KudosValidationError(user.get_unique_alias(), error)
         return({"transferred": kudos}, 200)
+
+
+class AwardKudos(Resource):
+    parser = reqparse.RequestParser()
+    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key", location='headers')
+    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
+    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to award", location="json")
+
+    @api.expect(parser)
+    @api.marshal_with(models.response_model_kudos_award, code=200, description='Kudos Awarded')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def post(self):
+        '''Award Kudos to registed user
+        '''
+        self.args = self.parser.parse_args()
+        user = database.find_user_by_api_key(self.args['apikey'])
+        if not user:
+            raise e.InvalidAPIKey('kudos transfer to: ' + self.args['username'])
+        if user.id not in [1, 2047]:
+            raise e.NotPrivileged(user.get_unique_alias(), "Only special people can award kudos. Now you're very special as well, just not the right kind.", "AwardKudos")
+        dest_user = database.find_user_by_username(self.args['username'])
+        if not dest_user:
+            raise e.KudosValidationError(user.get_unique_alias(), 'Invalid target username.', 'award')
+        if dest_user.is_anon():
+            raise e.KudosValidationError(user.get_unique_alias(), 'Cannot award anon. No go.', 'award')
+        if dest_user.is_suspicious():
+            return([0,'Target user is suspicious.'])
+        dest_user.modify_kudos(self.args.amount, "awarded")
+        return({"awarded": self.args.amount}, 200)
 
 class Workers(Resource):
     @logger.catch(reraise=True)

@@ -172,7 +172,7 @@ def generate():
             if len(results) > 1:
                 final_filename = f"{iter}_{request_data.filename}"
             if request_data.get_submit_dict()["r2"]:
-                logger.debug(f"Downloading from {results[iter]['img']}")
+                logger.debug(f"Downloading '{results[iter]['id']}' from {results[iter]['img']}")
                 try:
                     img_data = requests.get(results[iter]["img"]).content
                 except:

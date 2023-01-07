@@ -21,6 +21,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
             "model": self.model,
+            "id": self.id,
         }
         return ret_dict
 

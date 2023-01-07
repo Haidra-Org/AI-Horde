@@ -95,6 +95,9 @@ class Models:
         self.response_model_kudos_transfer = api.model('KudosTransferred', {
             'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred"),
         })
+        self.response_model_kudos_award = api.model('KudosAwarded', {
+            'awarded': fields.Integer(example=100,description="The amount of Kudos awarded"),
+        })
 
         self.response_model_admin_maintenance = api.model('MaintenanceModeSet', {
             'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode"),
@@ -156,6 +159,7 @@ class Models:
             "admin": fields.Float(default=0,description="The amount of Kudos this user has been given by the Horde admins."),
             "received": fields.Float(default=0,description="The amount of Kudos this user has been given by other users."),
             "recurring": fields.Float(default=0,description="The amount of Kudos this user has received from recurring rewards."),
+            "awarded": fields.Float(default=0,description="The amount of Kudos this user has been awarded from things like rating images."),
         })
 
         self.response_model_contrib_details = api.model('ContributionsDetails', {
