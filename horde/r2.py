@@ -17,7 +17,7 @@ s3_client_shared = boto3.client('s3',
 #     logger.debug(key['Key'])
 
 @logger.catch(reraise=True)
-def generate_presigned_url(client, client_method, method_parameters, expires_in):
+def generate_presigned_url(client, client_method, method_parameters, expires_in = 1800):
     """
     Generate a presigned Amazon S3 URL that can be used to perform an action.
 
