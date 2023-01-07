@@ -78,7 +78,7 @@ def delete_source_image(source_image_uuid):
 def upload_source_image(filename):
     try:
         response = s3_client.upload_file(
-            filename, "stable-horde", filename
+            filename, "stable-horde-source-images", filename
         )
     except ClientError as e:
         logger.error(f"Error encountered while uploading {filename}: {e}")
