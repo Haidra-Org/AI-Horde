@@ -7,9 +7,11 @@ class NewsExtended(News):
         {
             "date_published": "2023-01-06",
             "newspiece": (
-                "The amount of kudos consumed when generating images has been slightly adjusted. "
-                "To simulate the resource costs of the horde, each image generation request will now burn +3 kudos. Those will not go to the generating worker. "
-                "However we also have a new opt-in feature: You can choose to share your text2img generations with [LAION](https://laion.ai/). If you do, this added cost will be just +1 kudos!"
+                "The amount of kudos consumed when generating images [has been slightly adjusted](https://dbzer0.com/blog/sharing-is-caring/). "
+                "To simulate the resource costs of the horde, each image generation request will now burn +3 kudos. Those will not go to the generating worker! "
+                "However we also have a new opt-in feature: You can choose to share your text2img generations with [LAION](https://laion.ai/). "
+                "If you do, this added cost will be just +1 kudos. "
+                "We have also updated our Terms of Service to make this more obvious."
             ),
             "importance": "Information"
         },

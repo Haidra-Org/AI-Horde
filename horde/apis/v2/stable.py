@@ -82,7 +82,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
         try:
             with requests.get(source_image_string, stream = True, timeout = 2) as r:
-                size = r.headers.get('Content-Length')
+                size = r.headers.get('Content-Length', 0)
                 # if not size:
                 #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
                 if int(size) / 1024 > 5000:
@@ -156,6 +156,8 @@ class AsyncGenerate(AsyncGenerate):
         # Anon users are always shared
         if self.user.is_anon():
             shared=True
+        if self.args.source_image:
+            shared=False
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
@@ -337,26 +339,26 @@ class InterrogationStatus(Resource):
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
-    def get(self, id = ''):
+    def get(self, id):
         '''Retrieve the full status of an interrogation request.
         This request will include all already generated images.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
         '''
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id, 'Interrogation')
         i_status = interrogation.get_status()
         return(i_status, 200)
 
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
-    def delete(self, id = ''):
+    def delete(self, id):
         '''Cancel an unfinished interrogation request.
         This request will return all already interrogated image results.
         '''
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id, 'Interrogation')
         interrogation.cancel()
         i_status = interrogation.get_status()
         logger.info(f"Interrogation with ID {interrogation.id} has been cancelled.")

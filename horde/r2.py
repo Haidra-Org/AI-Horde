@@ -17,7 +17,7 @@ s3_client_shared = boto3.client('s3',
 #     logger.debug(key['Key'])
 
 @logger.catch(reraise=True)
-def generate_presigned_url(client, client_method, method_parameters, expires_in):
+def generate_presigned_url(client, client_method, method_parameters, expires_in = 1800):
     """
     Generate a presigned Amazon S3 URL that can be used to perform an action.
 
@@ -78,7 +78,7 @@ def delete_source_image(source_image_uuid):
 def upload_source_image(filename):
     try:
         response = s3_client.upload_file(
-            filename, "stable-horde", filename
+            filename, "stable-horde-source-images", filename
         )
     except ClientError as e:
         logger.error(f"Error encountered while uploading {filename}: {e}")
@@ -95,10 +95,10 @@ def upload_shared_metadata(filename):
         return False
 
 def generate_img_download_url(filename, bucket="stable-horde"):
-    return generate_presigned_url("get_object", {'Bucket': bucket, 'Key': filename}, 1800)
+    return generate_presigned_url(s3_client, "get_object", {'Bucket': bucket, 'Key': filename}, 1800)
 
 def generate_img_upload_url(filename, bucket="stable-horde"):
-    return generate_presigned_url("put_object", {'Bucket': bucket, 'Key': filename}, 1800)
+    return generate_presigned_url(s3_client, "put_object", {'Bucket': bucket, 'Key': filename}, 1800)
 
 def generate_uuid_img_upload_url(img_uuid, imgtype):
     return generate_img_upload_url(f"{img_uuid}.{imgtype}")

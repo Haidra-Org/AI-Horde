@@ -155,9 +155,9 @@ class InvalidJobID(wze.NotFound):
         self.log = f"Worker attempted to provide job for {job_id} but it did not exist"
 
 class RequestNotFound(wze.NotFound):
-    def __init__(self, wp_id):
-        self.specific = f"Request with ID '{wp_id}' not found."
-        self.log = f"Status of WP with ID '{wp_id}' does not exist"
+    def __init__(self, req_id, request_type = 'Waiting Prompt'):
+        self.specific = f"{request_type} with ID '{req_id}' not found."
+        self.log = f"Status of {request_type} with ID '{req_id}' does not exist"
 
 class WorkerNotFound(wze.NotFound):
     def __init__(self, worker_id):

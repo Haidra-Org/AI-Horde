@@ -14,7 +14,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         '''Returns a dictionary with details about this processing generation'''
         generation = self.generation
         if generation == "R2":
-            generation = generate_procgen_download_url(str(self.id), self.wp.uses_shared_r2())
+            generation = generate_procgen_download_url(str(self.id), self.wp.shared)
         ret_dict = {
             "img": generation,
             "seed": self.seed,
@@ -38,16 +38,10 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
     def set_generation(self, generation, things_per_sec, **kwargs):
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
-        if not self.wp.shared:
-            return(kudos)
-        # We don't share img2img
-        if self.wp.source_image:
-            return(kudos)
-        if self.fake:
-            return(kudos)
+        if self.wp.shared and not self.fake:
+            self.upload_generation_metadata()
         # if not self.wp.r2: 
             # Should I put code here to convert b64 to PIL and upload or nevermind?
-        self.upload_generation_metadata()
         return(kudos)
         
     def upload_generation_metadata(self):
