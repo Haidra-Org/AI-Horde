@@ -343,7 +343,7 @@ class Aesthetics(Resource):
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         try:
-            submit_req = requests.post("https://droom.cloud/api/rating/set", aesthetic_payload)
+            submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload)
             if not submit_req.ok:
                 logger.warning(submit_req.text)
                 raise e.InvalidAestheticAttempt("This generation appears already rated")
@@ -646,6 +646,7 @@ api.add_resource(FindUser, "/find_user")
 api.add_resource(Workers, "/workers")
 api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
+api.add_resource(AwardKudos, "/kudos/award")
 api.add_resource(HordeModes, "/status/modes")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(Models, "/status/models")

@@ -576,11 +576,36 @@ class TransferKudos(Resource):
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
     @api.expect(parser)
-    @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Generation Submitted')
+    @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     def post(self):
         '''Transfer Kudos to another registed user
+        '''
+        self.args = self.parser.parse_args()
+        user = database.find_user_by_api_key(self.args['apikey'])
+        if not user:
+            raise e.InvalidAPIKey('kudos transfer to: ' + self.args['username'])
+        ret = database.transfer_kudos_from_apikey_to_username(self.args['apikey'],self.args['username'],self.args['amount'])
+        kudos = ret[0]
+        error = ret[1]
+        if error != 'OK':
+            raise e.KudosValidationError(user.get_unique_alias(), error)
+        return({"transferred": kudos}, 200)
+
+
+class AwardKudos(Resource):
+    parser = reqparse.RequestParser()
+    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key", location='headers')
+    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
+    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to award", location="json")
+
+    @api.expect(parser)
+    @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Awarded')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    def post(self):
+        '''Award Rating Kudos to registed user
         '''
         self.args = self.parser.parse_args()
         user = database.find_user_by_api_key(self.args['apikey'])
