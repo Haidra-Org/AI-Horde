@@ -337,7 +337,7 @@ class InterrogationStatus(Resource):
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
-    def get(self, id = ''):
+    def get(self, id):
         '''Retrieve the full status of an interrogation request.
         This request will include all already generated images.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
@@ -350,7 +350,7 @@ class InterrogationStatus(Resource):
 
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
-    def delete(self, id = ''):
+    def delete(self, id):
         '''Cancel an unfinished interrogation request.
         This request will return all already interrogated image results.
         '''
