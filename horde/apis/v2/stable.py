@@ -344,7 +344,7 @@ class InterrogationStatus(Resource):
         '''
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id, 'Interrogation')
         i_status = interrogation.get_status()
         return(i_status, 200)
 
@@ -356,7 +356,7 @@ class InterrogationStatus(Resource):
         '''
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id, 'Interrogation')
         interrogation.cancel()
         i_status = interrogation.get_status()
         logger.info(f"Interrogation with ID {interrogation.id} has been cancelled.")
