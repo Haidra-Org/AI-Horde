@@ -76,6 +76,16 @@ class UnsupportedModel(wze.BadRequest):
         self.specific = "This model is not supported in this mode the moment"
         self.log = None
 
+class ProcGenNotFound(wze.BadRequest):
+    def __init__(self, procgen_id):
+        self.specific = f"Image with ID '{procgen_id}' not found in this request."
+        self.log = f"Attempted to log aesthetic rating with non-existent image ID '{procgen_id}'"
+
+class InvalidAestheticAttempt(wze.BadRequest):
+    def __init__(self, message):
+        self.specific = message
+        self.log = None
+
 class InvalidAPIKey(wze.Unauthorized):
     def __init__(self, subject):
         self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"

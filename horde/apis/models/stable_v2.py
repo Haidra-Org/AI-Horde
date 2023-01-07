@@ -27,6 +27,7 @@ class Models(v2.Models):
         self.response_model_generation_result = api.inherit('GenerationStable', self.response_model_generation_result, {
             'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file"),
             'seed': fields.String(title="Generation Seed", description="The seed which generated this image"),
+            'id': fields.String(title="Generation ID", description="The ID for this image"),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusStable', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
@@ -184,4 +185,12 @@ class Models(v2.Models):
         self.response_model_interrogation_pop = api.model('InterrogationPopPayload', {
             'forms': fields.List(fields.Nested(self.response_model_interrogation_pop_payload, skip_none=True)),
             'skipped': fields.Nested(self.response_model_interrogation_forms_skipped, skip_none=True)
+        })
+        self.response_model_aesthetic_rating = api.model('AestheticRating', {
+            "id": fields.String(description="The UUID of image being rated",min_length=36,max_length=36),
+            "rating": fields.Integer(description="The aesthetic rating 1-10 for this image", min=1, max=10),
+        })
+        self.input_model_aesthetics_payload = api.model('AestheticsPayload', {
+            "best": fields.String(description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
+            "ratings": fields.List(fields.Nested(self.response_model_aesthetic_ratings, skip_none=True)),
         })

@@ -256,6 +256,61 @@ class JobPop(JobPop):
         )
 
 
+class Aesthetics(Resource):
+
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("best", type=str, required=False, location="json")
+    post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
+
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
+    @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
+    @api.marshal_with(models.response_model_job_submit, code=200, description='Aesthetics Submitted')
+    @api.response(400, 'Aesthetics Already Submitted', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(404, 'Generation Request Not Found', models.response_model_error)
+    def post(self, id):
+        '''Submit aesthetic ratings for generated images.
+        '''
+        wp = database.get_wp_by_id(id)
+        if not wp:
+            raise e.RequestNotFound(id)
+        if not wp.shared:
+            raise e.InvalidAestheticAttempt("You can only aesthetically rate requests you have opted to share publicly")
+        self.args = self.post_parser.parse_args()
+        procgen_ids = [procgen.id for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
+        if self.args.ratings:
+            for rating in self.args.ratings:
+                if rating["id"] not in procgen_ids:
+                    raise e.ProcGenNotFound(rating["id"])
+        if not self.args.ratings and not self.args.best:
+            raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
+        if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
+            raise e.InvalidAestheticAttempt("Well done! You have pointed to a single image generation as being the best one of the set. Unfortunately that doesn't help anyone. no kudos for you!")
+        aesthetic_payload = {"set": id}
+        if self.args.ratings:
+            aesthetic_payload["ratings"] = self.args.ratings
+            if len(self.args.ratings) > 1:
+                bestofs = None
+                bestof_rating = -1
+                for rating in self.args.ratings:
+                    if rating["rating"] > bestof_rating:
+                        bestofs = [rating["id"]]
+                        bestof_rating = rating["rating"]
+                        continue
+                    if rating["rating"] > bestof_rating:
+                        bestofs.append(rating["id"])
+                        continue
+                if len(bestofs) > 1:
+                    if self.args.best:
+                        if self.args.best not in bestofs:
+                            raise e.InvalidAestheticAttempt("What are you even doing? How could the best image you selected not one of those with the highest aesthetic rating?")
+                        aesthetic_payload["best"] = self.args.best
+                if len(bestofs) == 1:
+                    aesthetic_payload["best"] = bestofs[0]
+        logger.debug(aesthetic_payload)
+        return({"reward": self.kudos}, 200)
+
+
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class Interrogate(Resource):
