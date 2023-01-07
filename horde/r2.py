@@ -95,10 +95,10 @@ def upload_shared_metadata(filename):
         return False
 
 def generate_img_download_url(filename, bucket="stable-horde"):
-    return generate_presigned_url("get_object", {'Bucket': bucket, 'Key': filename}, 1800)
+    return generate_presigned_url(s3_client, "get_object", {'Bucket': bucket, 'Key': filename}, 1800)
 
 def generate_img_upload_url(filename, bucket="stable-horde"):
-    return generate_presigned_url("put_object", {'Bucket': bucket, 'Key': filename}, 1800)
+    return generate_presigned_url(s3_client, "put_object", {'Bucket': bucket, 'Key': filename}, 1800)
 
 def generate_uuid_img_upload_url(img_uuid, imgtype):
     return generate_img_upload_url(f"{img_uuid}.{imgtype}")
