@@ -82,7 +82,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string):
     if "http" in source_image_string:
         try:
             with requests.get(source_image_string, stream = True, timeout = 2) as r:
-                size = r.headers.get('Content-Length')
+                size = r.headers.get('Content-Length', 0)
                 # if not size:
                 #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
                 if int(size) / 1024 > 5000:
