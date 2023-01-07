@@ -345,6 +345,7 @@ class Aesthetics(Resource):
         try:
             submit_req = requests.post("https://droom.cloud/api/rating/set", aesthetic_payload)
             if not submit_req.ok:
+                logger.warning(submit_req.text)
                 raise e.InvalidAestheticAttempt("This generation appears already rated")
         except Exception as err:
             if type(err) == e.InvalidAestheticAttempt:
