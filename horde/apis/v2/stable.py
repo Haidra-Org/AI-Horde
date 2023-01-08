@@ -309,8 +309,9 @@ class Aesthetics(Resource):
                 "trusted": wp.user.trusted,
                 "account_age": (datetime.utcnow() - wp.user.created).seconds,
             },
-            "team": self.args.team,
         }
+        if self.args.team: 
+            aesthetic_payload["team"] = self.args.team
         self.kudos = 0
         if self.args.ratings:
             self.kudos = 5 * len(self.args.ratings)
