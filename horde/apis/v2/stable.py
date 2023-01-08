@@ -351,10 +351,16 @@ class Aesthetics(Resource):
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         try:
-            submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload)
+            submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload, timeout=3)
             if not submit_req.ok:
+                if submit_req.status_code == 403:
+                    raise e.InvalidAestheticAttempt("This generation appears already rated")
+                raise e.InvalidAestheticAttempt(submit_req.text)
                 logger.warning(submit_req.text)
-                raise e.InvalidAestheticAttempt("This generation appears already rated")
+        except requests.exceptions.ConnectionError:
+            raise e.InvalidAestheticAttempt("The rating server appears to be down")
+        except requests.exceptions.ReadTimeout:
+            raise e.InvalidAestheticAttempt("The rating server took to long to respond")
         except Exception as err:
             if type(err) == e.InvalidAestheticAttempt:
                 raise err
