@@ -349,6 +349,11 @@ class Aesthetics(Resource):
         # You can never get more kudos from rating that what you consumed
         if self.kudos >= wp.consumed_kudos:
             self.kudos = wp.consumed_kudos - 1
+        # FIXME: Remove once hlky fixes validity checking
+        if "best" not in aesthetic_payload:
+            aesthetic_payload["best"] = "00000000-0000-0000-0000-000000000000"
+        if "ratings" not in aesthetic_payload:
+            aesthetic_payload["ratings"] = [{"id": "00000000-0000-0000-0000-000000000000", "rating": 1}]
         logger.debug(aesthetic_payload)
         try:
             submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload, timeout=3)
