@@ -349,16 +349,16 @@ class Aesthetics(Resource):
         if self.kudos >= wp.consumed_kudos:
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
-        # try:
-        #     submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload)
-        #     if not submit_req.ok:
-        #         logger.warning(submit_req.text)
-        #         raise e.InvalidAestheticAttempt("This generation appears already rated")
-        # except Exception as err:
-        #     if type(err) == e.InvalidAestheticAttempt:
-        #         raise err
-        #     logger.error(f"Error when submitting Aesthetic: {err}")
-        #     raise e.InvalidAestheticAttempt("Oops, Something went wrong when submitting the request. Please contact us.")
+        try:
+            submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload)
+            if not submit_req.ok:
+                logger.warning(submit_req.text)
+                raise e.InvalidAestheticAttempt("This generation appears already rated")
+        except Exception as err:
+            if type(err) == e.InvalidAestheticAttempt:
+                raise err
+            logger.error(f"Error when submitting Aesthetic: {err}")
+            raise e.InvalidAestheticAttempt("Oops, Something went wrong when submitting the request. Please contact us.")
         wp.user.modify_kudos(self.kudos, "awarded")
         return({"reward": self.kudos}, 200)
 
