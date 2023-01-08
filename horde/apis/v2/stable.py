@@ -355,8 +355,11 @@ class Aesthetics(Resource):
             if not submit_req.ok:
                 if submit_req.status_code == 403:
                     raise e.InvalidAestheticAttempt("This generation appears already rated")
-                raise e.InvalidAestheticAttempt(submit_req.text)
-                logger.warning(submit_req.text)
+                try:
+                    error_msg = submit_req.json()
+                except Exception:
+                    raise e.InvalidAestheticAttempt(f"Received unexpected response from rating server: {submit_req.text}")
+                raise e.InvalidAestheticAttempt(error_msg["message"])
         except requests.exceptions.ConnectionError:
             raise e.InvalidAestheticAttempt("The rating server appears to be down")
         except requests.exceptions.ReadTimeout:
