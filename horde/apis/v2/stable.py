@@ -359,7 +359,7 @@ class Aesthetics(Resource):
                     error_msg = submit_req.json()
                 except Exception:
                     raise e.InvalidAestheticAttempt(f"Received unexpected response from rating server: {submit_req.text}")
-                raise e.InvalidAestheticAttempt(error_msg["message"])
+                raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}")
         except requests.exceptions.ConnectionError:
             raise e.InvalidAestheticAttempt("The rating server appears to be down")
         except requests.exceptions.ReadTimeout:
