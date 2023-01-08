@@ -521,7 +521,7 @@ class InterrogatePop(JobPopTemplate):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
 
-        pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
+        pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames if x != '']
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
         p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
