@@ -191,6 +191,7 @@ class Models(v2.Models):
             "rating": fields.Integer(required=True,description="The aesthetic rating 1-10 for this image", min=1, max=10),
         })
         self.input_model_aesthetics_payload = api.model('AestheticsPayload', {
-            "best": fields.String(required=False,example="6038971e-f0b0-4fdd-a3bb-148f561f815e",description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
+            "best": fields.String(required=False, example="6038971e-f0b0-4fdd-a3bb-148f561f815e", description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
+            "team": fields.String(required=False, example="0bed257b-e57c-4327-ac64-40cdfb1ac5e6", description="The team towards which this ratings contributes. It not is passed, it will leave the ratings without a team.", min_length=36, max_length=36),
             "ratings": fields.List(fields.Nested(self.response_model_aesthetic_rating, skip_none=True),required=False),
         })
