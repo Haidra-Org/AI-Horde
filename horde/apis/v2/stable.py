@@ -3,6 +3,7 @@ import requests
 import sys
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
+from datetime import datetime
 
 from .v2 import *
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
@@ -117,7 +118,6 @@ def ensure_source_image_uploaded(source_image_string, uuid_string):
 class AsyncGenerate(AsyncGenerate):
     
     def validate(self):
-        from datetime import datetime
         #logger.warning(datetime.utcnow())
         super().validate()
         #logger.warning(datetime.utcnow())
@@ -261,6 +261,7 @@ class Aesthetics(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("best", type=str, required=False, location="json")
     post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
+    post_parser.add_argument("team", type=str, required=False, location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
@@ -303,6 +304,12 @@ class Aesthetics(Resource):
         aesthetic_payload = {
             "set": id,
             "all_set_ids": procgen_ids,
+            "user": {
+                "username": wp.user.get_unique_alias(),
+                "trusted": wp.user.trusted,
+                "account_age": (datetime.utcnow() - wp.user.created).seconds,
+            },
+            "team": self.args.team,
         }
         self.kudos = 0
         if self.args.ratings:

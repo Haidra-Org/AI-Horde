@@ -19,6 +19,7 @@ class UserStats(db.Model):
     user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, nullable=False)
+    # updated = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class UserSuspicions(db.Model):
@@ -225,6 +226,9 @@ class User(db.Model):
     def ensure_kudos_positive(self):
         if self.kudos < self.get_min_kudos():
             self.kudos = self.get_min_kudos()
+
+    # def get_last_kudos_stat_time(action = "award"):
+    #     return db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
 
     def is_anon(self):
         if self.oauth_id == 'anon':
