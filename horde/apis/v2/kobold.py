@@ -6,6 +6,7 @@ class AsyncGenerate(AsyncGenerate):
         self.softprompts = ['']
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
+        logger.debug([self.models, self.args.model, self.args.models])
         self.wp = WaitingPrompt(
             db,
             waiting_prompts,
