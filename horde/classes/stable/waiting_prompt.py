@@ -117,7 +117,7 @@ class WaitingPromptExtended(WaitingPrompt):
             "steps": self.params["steps"],
             "sampler": self.params["sampler_name"],
             "cfg": self.params["cfg_scale"],
-            "set": self.id,
+            "set": str(self.id),
         }
         return ret_dict
 

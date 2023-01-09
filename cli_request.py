@@ -185,7 +185,10 @@ def generate():
                 img_bytes = base64.b64decode(base64_bytes)
                 img = Image.open(BytesIO(img_bytes))
                 img.save(final_filename)
-            logger.info(f"Saved {final_filename}")
+            censored = ''
+            if results[iter]["censored"]:
+                censored = " (censored)"
+            logger.info(f"Saved{censored} {final_filename}")
     else:
         logger.error(submit_req.text)
 
