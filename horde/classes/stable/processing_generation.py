@@ -42,8 +42,10 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
     def set_generation(self, generation, things_per_sec, **kwargs):
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
-        self.censored = kwargs.get("censored", False)
-        db.session.commit()
+        logger.debug(kwargs)
+        if kwargs.get("censored", False):
+            self.censored = True
+            db.session.commit()
         if self.wp.shared and not self.fake:
             self.upload_generation_metadata()
         # if not self.wp.r2: 
