@@ -117,9 +117,8 @@ class WaitingPromptExtended(WaitingPrompt):
             "steps": self.params["steps"],
             "sampler": self.params["sampler_name"],
             "cfg": self.params["cfg_scale"],
+            "set": self.id,
         }
-        if "denoising_strength" in self.gen_payload:
-            ret_dict["denoising_strength"] = self.params["denoising_strength"]
         return ret_dict
 
     def get_pop_payload(self, procgen):
