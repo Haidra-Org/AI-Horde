@@ -174,6 +174,8 @@ class RequestNotFound(wze.NotFound):
         self.specific = f"{request_type} with ID '{req_id}' not found."
         if request_type != "Interrogation": #FIXME: Figure out why there's so many
             self.log = f"Status of {request_type} with ID '{req_id}' does not exist"
+        else:
+            self.log = None
 
 class WorkerNotFound(wze.NotFound):
     def __init__(self, worker_id):
