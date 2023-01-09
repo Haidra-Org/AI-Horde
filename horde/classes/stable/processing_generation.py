@@ -9,6 +9,7 @@ from horde.r2 import generate_procgen_download_url, upload_shared_metadata
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
+    censored = db.Column(db.Boolean, default=False, nullable=False)
 
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''
@@ -22,6 +23,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             "worker_name": self.worker.name,
             "model": self.model,
             "id": self.id,
+            "censored": self.censored,
         }
         return ret_dict
 
@@ -39,6 +41,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
     def set_generation(self, generation, things_per_sec, **kwargs):
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        self.censored = kwargs.get("censored", False)
         if self.wp.shared and not self.fake:
             self.upload_generation_metadata()
         # if not self.wp.r2: 
@@ -49,6 +52,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         metadict = self.wp.get_share_metadata()
         metadict['seed'] = self.seed
         metadict['model'] = self.model
+        metadict['censored'] = self.censored
         filename = f"{self.id}.json"
         json_object = json.dumps(metadict, indent=4)
         # Writing to sample.json
