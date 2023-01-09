@@ -6,6 +6,7 @@ import json
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.r2 import generate_procgen_download_url, upload_shared_metadata
+from horde.flask import db
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
