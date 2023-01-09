@@ -172,7 +172,8 @@ class InvalidJobID(wze.NotFound):
 class RequestNotFound(wze.NotFound):
     def __init__(self, req_id, request_type = 'Waiting Prompt'):
         self.specific = f"{request_type} with ID '{req_id}' not found."
-        self.log = f"Status of {request_type} with ID '{req_id}' does not exist"
+        if request_type != "Interrogation": #FIXME: Figure out why there's so many
+            self.log = f"Status of {request_type} with ID '{req_id}' does not exist"
 
 class WorkerNotFound(wze.NotFound):
     def __init__(self, worker_id):
