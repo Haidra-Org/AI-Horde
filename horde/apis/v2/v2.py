@@ -501,6 +501,7 @@ class JobPop(JobPopTemplate):
             if is_profane(model) and not "Hentai" in model:
                 raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
 
+
 class JobSubmit(Resource):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser)
@@ -530,7 +531,8 @@ class JobSubmit(Resource):
         self.kudos = self.procgen.set_generation(
             generation=self.args['generation'], 
             things_per_sec=things_per_sec, 
-            seed=self.args['seed']
+            seed=self.args.seed,
+            censored=self.args.censored,
         )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
