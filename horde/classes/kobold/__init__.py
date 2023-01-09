@@ -19,6 +19,8 @@ class WaitingPrompt(WaitingPrompt):
         self.models = kwargs.get("models", ['ReadOnly'])
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
+        logger.debug(self.models)
+
 
     def prepare_job_payload(self, initial_dict = {}):
         # This is what we send to KoboldAI to the /generate/ API
