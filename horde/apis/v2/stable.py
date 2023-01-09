@@ -561,7 +561,10 @@ class InterrogatePop(JobPopTemplate):
             # time.sleep(random.uniform(0, 1))
             if not form.is_waiting(): 
                 continue
-            form_ret = form.pop(self.worker)
+            try:
+                form_ret = form.pop(self.worker)
+            except Exception as e:
+                logger.error(f"Error when popping interrogation. Skipping: {e}.")
             # logger.debug(worker_ret)
             if form_ret is None:
                 continue
