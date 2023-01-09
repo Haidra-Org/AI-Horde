@@ -501,39 +501,6 @@ class JobPop(JobPopTemplate):
             if is_profane(model) and not "Hentai" in model:
                 raise e.Profanity(self.user.get_unique_alias(), model, 'model name')
 
-class JobSubmit(Resource):
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_submit_parser)
-    @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
-    @api.response(400, 'Generation Already Submitted', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
-    @api.response(404, 'Request Not Found', models.response_model_error)
-    def post(self):
-        '''Submit a generated image.
-        This endpoint is used by registered workers only
-        '''
-        self.args = parsers.job_submit_parser.parse_args()
-        self.validate()
-        return({"reward": self.kudos}, 200)
-
-    def validate(self):
-        self.procgen = database.get_progen_by_id(self.args['id'])
-        if not self.procgen:
-            raise e.InvalidJobID(self.args['id'])
-        self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('worker submit:' + self.args['name'])
-        if self.user != self.procgen.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        things_per_sec = stats.record_fulfilment(self.procgen)
-        self.kudos = self.procgen.set_generation(
-            generation=self.args['generation'], 
-            things_per_sec=things_per_sec, 
-            seed=self.args['seed']
-        )
-        if self.kudos == 0 and not self.procgen.worker.maintenance:
-            raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
 
 class JobSubmit(Resource):
     decorators = [limiter.limit("60/second")]
@@ -564,7 +531,8 @@ class JobSubmit(Resource):
         self.kudos = self.procgen.set_generation(
             generation=self.args['generation'], 
             things_per_sec=things_per_sec, 
-            seed=self.args['seed']
+            seed=self.args.seed,
+            censored=self.args.censored,
         )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])

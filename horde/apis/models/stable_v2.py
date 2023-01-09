@@ -18,6 +18,7 @@ class Parsers(v2.Parsers):
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_pop_parser.add_argument("allow_post_processing", type=bool, required=False, default=True, help="If True, this worker will pick up requests requesting post-processing.", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
+        self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
 class Models(v2.Models):
     def __init__(self,api):
@@ -28,6 +29,7 @@ class Models(v2.Models):
             'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file"),
             'seed': fields.String(title="Generation Seed", description="The seed which generated this image"),
             'id': fields.String(title="Generation ID", description="The ID for this image"),
+            'censored': fields.Boolean(description="When true this image has been censored by the worker's safety filter."),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusStable', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
