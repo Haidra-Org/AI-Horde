@@ -67,7 +67,7 @@ class JobPop(JobPop):
 
 
     # Making it into its own function to allow extension
-    def start_worker(self, wp):
+    def start_worker(self, wp_to_start):
         for wp in self.prioritized_wp:
             matching_softprompt = False
             for sp in wp.softprompts:
@@ -81,7 +81,7 @@ class JobPop(JobPop):
                         break
                 if matching_softprompt:
                     break
-        ret = wp.start_generation(self.worker, matching_softprompt)
+        ret = wp_to_start.start_generation(self.worker, matching_softprompt)
         return(ret)
 
 
