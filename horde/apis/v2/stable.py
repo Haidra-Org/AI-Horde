@@ -550,9 +550,9 @@ class InterrogatePop(JobPopTemplate):
         for form in self.prioritized_forms:
             try:
                 can_interrogate, skipped_reason = self.worker.can_interrogate(form)
-                continue
             except Exception as e:
                 logger.error(f"Error when checking interrogation for worker. Skipping: {e}.")
+                continue
             if not can_interrogate:
                 # We don't report on secret skipped reasons
                 # as they're typically countermeasures to raids
