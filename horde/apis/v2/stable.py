@@ -354,7 +354,7 @@ class Aesthetics(Resource):
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         try:
-            submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload, timeout=3)
+            submit_req = requests.post("https://ratings.droom.cloud/api/v1/rating/set", json = aesthetic_payload, timeout=3)
             if not submit_req.ok:
                 if submit_req.status_code == 403:
                     raise e.InvalidAestheticAttempt("This generation appears already rated")
