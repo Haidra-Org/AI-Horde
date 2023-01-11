@@ -261,7 +261,6 @@ class Aesthetics(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("best", type=str, required=False, location="json")
     post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
-    post_parser.add_argument("team", type=str, required=False, location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
@@ -310,11 +309,10 @@ class Aesthetics(Resource):
                 "account_age": (datetime.utcnow() - wp.user.created).seconds,
                 "usage_requests": wp.user.usage_requests,
                 "kudos": wp.user.kudos,
-                "kudos_accumulared": wp.user.compile_kudos_details().get("accumulated",0),
+                "kudos_accumulated": wp.user.compile_kudos_details().get("accumulated",0),
+                "ipaddr": request.remote_addr,
             },
         }
-        if self.args.team: 
-            aesthetic_payload["team"] = self.args.team
         self.kudos = 0
         if self.args.ratings:
             self.kudos = 5 * len(self.args.ratings)
@@ -354,7 +352,7 @@ class Aesthetics(Resource):
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         try:
-            submit_req = requests.post("https://droom.cloud/api/rating/set", json = aesthetic_payload, timeout=3)
+            submit_req = requests.post("https://ratings.droom.cloud/api/v1/rating/set", json = aesthetic_payload, timeout=3)
             if not submit_req.ok:
                 if submit_req.status_code == 403:
                     raise e.InvalidAestheticAttempt("This generation appears already rated")
