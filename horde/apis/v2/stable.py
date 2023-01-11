@@ -310,7 +310,7 @@ class Aesthetics(Resource):
                 "account_age": (datetime.utcnow() - wp.user.created).seconds,
                 "usage_requests": wp.user.usage_requests,
                 "kudos": wp.user.kudos,
-                "kudos_accumulared": wp.user.compile_kudos_details().get("accumulated",0),
+                "kudos_accumulated": wp.user.compile_kudos_details().get("accumulated",0),
             },
         }
         if self.args.team: 
