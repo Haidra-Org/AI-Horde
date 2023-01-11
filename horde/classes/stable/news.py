@@ -4,6 +4,15 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-11",
+            "newspiece": (
+                "The Stable Horde has its first browser extension! "
+                "[GenAlt](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn) is an accessibility plugin to help people with bad eyesight always find alt text for images."
+                "The extension relies on the Stable Horde's newly added image interrogation capabilities to generate captions which are then serves as the image's alt text."
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-04",
             "newspiece": "We are proud to announce that we have [initiated a collaboration with LAION](https://dbzer0.com/blog/a-collaboration-begins-between-stable-horde-and-laion/) to help them improve their dataset!",
             "importance": "Information"
