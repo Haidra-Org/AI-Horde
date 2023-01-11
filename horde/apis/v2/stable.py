@@ -308,6 +308,9 @@ class Aesthetics(Resource):
                 "username": wp.user.get_unique_alias(),
                 "trusted": wp.user.trusted,
                 "account_age": (datetime.utcnow() - wp.user.created).seconds,
+                "usage_requests": wp.user.usage_requests,
+                "kudos": wp.user.kudos,
+                "kudos_accumulared": wp.user.compile_kudos_details().get("accumulated",0),
             },
         }
         if self.args.team: 
@@ -548,7 +551,11 @@ class InterrogatePop(JobPopTemplate):
         # logger.warning(datetime.utcnow())
         worker_ret = {"forms": []}
         for form in self.prioritized_forms:
-            can_interrogate, skipped_reason = self.worker.can_interrogate(form)
+            try:
+                can_interrogate, skipped_reason = self.worker.can_interrogate(form)
+            except Exception as e:
+                logger.error(f"Error when checking interrogation for worker. Skipping: {e}.")
+                continue
             if not can_interrogate:
                 # We don't report on secret skipped reasons
                 # as they're typically countermeasures to raids
@@ -561,7 +568,11 @@ class InterrogatePop(JobPopTemplate):
             # time.sleep(random.uniform(0, 1))
             if not form.is_waiting(): 
                 continue
-            form_ret = form.pop(self.worker)
+            try:
+                form_ret = form.pop(self.worker)
+            except Exception as e:
+                logger.error(f"Error when popping interrogation. Skipping: {e}.")
+                continue
             # logger.debug(worker_ret)
             if form_ret is None:
                 continue

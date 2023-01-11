@@ -190,6 +190,7 @@ class Models:
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),
+            "account_age": fields.Integer(example=60, description="How many seconds since this account was created"),
             # I need to pass these two via inheritabce, or they take over
             # "usage": fields.Nested(self.response_model_use_details),
             # "contributions": fields.Nested(self.response_model_contrib_details),

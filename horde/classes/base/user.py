@@ -364,6 +364,7 @@ class User(db.Model):
             "trusted": self.trusted,
             "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
+            "account_age": (datetime.utcnow() - self.created).seconds,
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }

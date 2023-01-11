@@ -2,8 +2,12 @@ from horde.classes.base.news import News
 
 class NewsExtended(News):
 
-
     STABLE_HORDE_NEWS = [
+        {
+            "date_published": "2023-01-04",
+            "newspiece": "We are proud to announce that we have [initiated a collaboration with LAION](https://dbzer0.com/blog/a-collaboration-begins-between-stable-horde-and-laion/) to help them improve their dataset!",
+            "importance": "Information"
+        },
         {
             "date_published": "2023-01-06",
             "newspiece": (
