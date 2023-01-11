@@ -261,7 +261,6 @@ class Aesthetics(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("best", type=str, required=False, location="json")
     post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
-    post_parser.add_argument("team", type=str, required=False, location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
@@ -311,10 +310,9 @@ class Aesthetics(Resource):
                 "usage_requests": wp.user.usage_requests,
                 "kudos": wp.user.kudos,
                 "kudos_accumulated": wp.user.compile_kudos_details().get("accumulated",0),
+                "ipaddr": request.remote_addr,
             },
         }
-        if self.args.team: 
-            aesthetic_payload["team"] = self.args.team
         self.kudos = 0
         if self.args.ratings:
             self.kudos = 5 * len(self.args.ratings)
