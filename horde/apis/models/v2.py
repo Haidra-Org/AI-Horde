@@ -5,7 +5,7 @@ class Parsers:
 
     generate_parser = reqparse.RequestParser()
     generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
-    generate_parser.add_argument("Client-Agent", type=str, required=False, help="The Client-Agent name and version", location="headers")
+    generate_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
     generate_parser.add_argument("params", type=dict, required=False, help="Extra generate params to send to the worker", location="json")
     generate_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
