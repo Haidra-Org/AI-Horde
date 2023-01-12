@@ -268,8 +268,12 @@ class SyncGenerate(GenerateTemplate):
         super().activate_waiting_prompt()
 
 class AsyncStatus(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     decorators = [limiter.limit("10/minute", key_func = get_request_path)]
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', models.response_model_error)
     def get(self, id = ''):
@@ -294,6 +298,10 @@ class AsyncStatus(Resource):
             # wp.delete()
         return(wp_status, 200)
 
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @api.expect(delete_parser)
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', models.response_model_error)
     def delete(self, id = ''):
@@ -318,9 +326,13 @@ class AsyncStatus(Resource):
 
 
 class AsyncCheck(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     # Increasing this until I can figure out how to pass original IP from reverse proxy
     decorators = [limiter.limit("10/second", key_func = get_request_path)]
     @cache.cached(timeout=1)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
     # @cache.cached(timeout=0.5)
     @api.response(404, 'Request Not found', models.response_model_error)
@@ -541,6 +553,7 @@ class JobSubmit(Resource):
 class TransferKudos(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The sending user's API key", location='headers')
+    parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
@@ -616,6 +629,7 @@ class WorkerSingle(Resource):
 
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     @api.expect(get_parser)
     @cache.cached(timeout=10)
@@ -646,6 +660,7 @@ class WorkerSingle(Resource):
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')
+    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
     put_parser.add_argument("maintenance_msg", type=str, required=False, help="if maintenance is True, You can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
@@ -734,6 +749,7 @@ class WorkerSingle(Resource):
 
     delete_parser = reqparse.RequestParser()
     delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
 
     @api.expect(delete_parser)
@@ -767,8 +783,12 @@ class WorkerSingle(Resource):
         return(ret_dict, 200)
 
 class Users(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     decorators = [limiter.limit("30/minute")]
     @cache.cached(timeout=10)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
     def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
@@ -782,6 +802,7 @@ class Users(Resource):
 class UserSingle(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="The Admin, Mod or Owner API key", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
@@ -811,6 +832,7 @@ class UserSingle(Resource):
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
+    parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)", location="json")
     parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
     parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
@@ -920,6 +942,7 @@ class FindUser(Resource):
 
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="User API key we're looking for", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Worker Details', skip_none=True)
@@ -939,8 +962,12 @@ class FindUser(Resource):
 
 
 class Models(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     @logger.catch(reraise=True)
     @cache.cached(timeout=2)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_active_model, code=200, description='List All Active Models', as_list=True)
     def get(self):
         '''Returns a list of models active currently in this horde
@@ -949,9 +976,12 @@ class Models(Resource):
 
 
 class HordeLoad(Resource):
-    # decorators = [limiter.limit("20/minute")]
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     @logger.catch(reraise=True)
     @cache.cached(timeout=2)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
         '''Details about the current performance of this Horde
@@ -961,8 +991,12 @@ class HordeLoad(Resource):
         return(load_dict,200)
 
 class HordeNews(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     @logger.catch(reraise=True)
     @cache.cached(timeout=300)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_newspiece, code=200, description='Horde News', as_list = True)
     def get(self):
         '''Read the latest happenings on the horde
@@ -978,6 +1012,7 @@ class HordeModes(Resource):
 
     @api.expect(get_parser)
     @cache.cached(timeout=50)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_horde_modes, code=200, description='Horde Maintenance', skip_none=True)
     def get(self):
         '''Horde Maintenance Mode Status
@@ -1052,8 +1087,13 @@ class HordeModes(Resource):
         return(ret_dict, 200)
 
 class Teams(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    # decorators = [limiter.limit("20/minute")]
     @logger.catch(reraise=True)
     @cache.cached(timeout=10)
+    @api.expect(get_parser)
     @api.marshal_with(models.response_model_team_details, code=200, description='Teams List', as_list=True, skip_none=True)
     def get(self):
         '''A List with the details of all teams
@@ -1066,6 +1106,7 @@ class Teams(Resource):
 
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
+    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     post_parser.add_argument("name", type=str, required=True, location="json")
     post_parser.add_argument("info", type=str, required=False, location="json")
 
@@ -1118,6 +1159,7 @@ class TeamSingle(Resource):
 
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     @api.expect(get_parser)
     @cache.cached(timeout=3)
@@ -1143,6 +1185,7 @@ class TeamSingle(Resource):
 
     patch_parser = reqparse.RequestParser()
     patch_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Creator API key", location='headers')
+    patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     patch_parser.add_argument("name", type=str, required=False, location="json")
     patch_parser.add_argument("info", type=str, required=False, location="json")
 
@@ -1187,6 +1230,7 @@ class TeamSingle(Resource):
         return(ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
 
 
@@ -1221,6 +1265,7 @@ class TeamSingle(Resource):
 class OperationsIP(Resource):
     delete_parser = reqparse.RequestParser()
     delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     delete_parser.add_argument("ipaddr", type=str, required=True, location="json")
 
     @api.expect(delete_parser, models.input_model_delete_ip_timeout, validate=True)
@@ -1243,7 +1288,11 @@ class OperationsIP(Resource):
 
 
 class Heartbeat(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     decorators = [limiter.exempt]
+    @api.expect(get_parser)
     def get(self):
         '''If this loads, this node is available
         '''
