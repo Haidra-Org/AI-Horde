@@ -121,4 +121,4 @@ def check_file(client, filename):
         return int(e.response['Error']['Code']) != 404
 
 def check_shared_image(filename):
-    return type(check_file()) == dict
+    return type(check_file(s3_client_shared,filename)) == dict
