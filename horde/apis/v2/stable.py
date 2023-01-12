@@ -261,6 +261,7 @@ class Aesthetics(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("best", type=str, required=False, location="json")
     post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
+    post_parser.add_argument("user_agent", type=str, required=False, help="The client name and version", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
@@ -303,6 +304,7 @@ class Aesthetics(Resource):
         aesthetic_payload = {
             "set": id,
             "all_set_ids": procgen_ids,
+            "user_agent": self.args.user_agent,
             "user": {
                 "username": wp.user.get_unique_alias(),
                 "trusted": wp.user.trusted,
@@ -383,6 +385,7 @@ class Interrogate(Resource):
     post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
     post_parser.add_argument("forms", type=list, required=False, default=None, help="The acceptable forms with which to interrogate", location="json")
     post_parser.add_argument("source_image", type=str, required=True, location="json")
+    post_parser.add_argument("user_agent", type=str, required=False, help="The client version", location="json")
     post_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
 
     @api.expect(post_parser, models.input_interrogate_request_generation, validate=True)
