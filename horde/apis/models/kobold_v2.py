@@ -49,7 +49,6 @@ class Models(v2.Models):
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate the text"),
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputKobold', self.root_model_generation_payload_kobold, {
-            "client": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625)", default="unknown:0:unknown", description="The client agent identifying this the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as 'unknown:0:unknown', but please do provide it.", min_length=1, max_length=100),
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundKobold', self.response_model_generations_skipped, {
             'max_content_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher max_content_length than what this worker provides."),
