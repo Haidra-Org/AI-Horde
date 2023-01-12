@@ -97,7 +97,7 @@ class Models(v2.Models):
             'source_mask': fields.String(description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel"),
             'r2': fields.Boolean(default=False, description="If True, the image will be sent via cloudflare r2 download link"),
             'shared': fields.Boolean(default=False, description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True."),
-            "user_agent": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625", default="Unknown:0:anonymous", description="The user agent identifying the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as N/A, but please do provide it.", min_length=1, max_length=100),
+            "user_agent": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625", default="unknown:0:anonymous", description="The user agent identifying the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as N/A, but please do provide it.", min_length=1, max_length=100),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
@@ -136,7 +136,7 @@ class Models(v2.Models):
         self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
             'name': fields.String(required=True, enum=["caption", "interrogation", "nsfw"], description="The type of interrogation this is", unique=True), 
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
-            "user_agent": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625", default="Unknown:0:anonymous", description="The user agent identifying the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as N/A, but please do provide it.", min_length=1, max_length=100),
+            "user_agent": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625", default="unknown:0:anonymous", description="The user agent identifying the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as N/A, but please do provide it.", min_length=1, max_length=100),
         })
         self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {
             'forms': fields.List(fields.Nested(self.input_model_interrogation_form)),
@@ -197,5 +197,5 @@ class Models(v2.Models):
         self.input_model_aesthetics_payload = api.model('AestheticsPayload', {
             "best": fields.String(required=False, example="6038971e-f0b0-4fdd-a3bb-148f561f815e", description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
             "ratings": fields.List(fields.Nested(self.response_model_aesthetic_rating, skip_none=True),required=False),
-            "user_agent": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625", default="Unknown:0:anonymous", description="The user agent identifying the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as N/A, but please do provide it.", min_length=1, max_length=100),
+            "user_agent": fields.String(required=False, example="Lucid Creations:1.14.1:db0#1625", default="unknown:0:anonymous", description="The user agent identifying the client submitting this request. It is in the form of name|version|contact (can be an email, or discord username, somewhere we can reach you). If not provided, will be set as N/A, but please do provide it.", min_length=1, max_length=100),
         })
