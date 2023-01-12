@@ -48,6 +48,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             self.censored = True
             db.session.commit()
         if self.wp.r2 and generation != "R2":
+            logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} uploaded an R2 request as b64. Converting...")
             if self.wp.shared:
                 upload_method = upload_shared_generated_image
             else:
