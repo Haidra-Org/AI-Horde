@@ -6,7 +6,7 @@ class NewsExtended(News):
         {
             "date_published": "2023-01-12",
             "newspiece": (
-                "We plan to be replacing our official discord bot with [new a new codebase](https://github.com/ZeldaFan0225/Stable_Horde_Discord) based on the work of Zelda_Fan#0225"
+                "We plan to be replacing our official discord bot with [new a new codebase](https://github.com/ZeldaFan0225/Stable_Horde_Discord) based on the work of Zelda_Fan#0225. "
                 "Once we do, be aware that the controls will be slightly different and you will have to log-in again with your API key."
             ),
             "importance": "Upcoming"
