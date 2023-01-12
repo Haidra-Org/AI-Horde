@@ -68,13 +68,14 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         return(kudos)
         
     def upload_generation_metadata(self):
+        if not check_shared_image(f"{self.id}.webp"):
+            logger.warning(f"Avoiding json upload because {self.id}.webp doesn't seem to exist.")
+            return
         metadict = self.wp.get_share_metadata()
         metadict['seed'] = self.seed
         metadict['model'] = self.model
         metadict['censored'] = self.censored
         filename = f"{self.id}.json"
-        if not check_shared_image(filename):
-            return
         json_object = json.dumps(metadict, indent=4)
         # Writing to sample.json
         with open(filename, "w") as f:
