@@ -63,7 +63,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         if kwargs.get("censored", False):
             self.censored = True
             db.session.commit()
-        if self.wp.shared and not self.fake:
+        if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
         return(kudos)
         
