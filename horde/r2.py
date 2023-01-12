@@ -77,7 +77,7 @@ def delete_source_image(source_image_uuid):
 def upload_image(client, bucket, filename):
     try:
         response = client.upload_file(
-            filename, "stable-horde-source-images", filename
+            filename, bucket, filename
         )
     except ClientError as e:
         logger.error(f"Error encountered while uploading {filename}: {e}")
