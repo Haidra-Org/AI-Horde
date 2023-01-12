@@ -69,7 +69,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         
     def upload_generation_metadata(self):
         if not check_shared_image(f"{self.id}.webp"):
-            logger.warning(f"Avoiding json upload because {self.id}.webp doesn't seem to exist.")
+            logger.warning(f"Avoiding json metadata upload because {self.id}.webp doesn't seem to exist.")
             return
         metadict = self.wp.get_share_metadata()
         metadict['seed'] = self.seed
