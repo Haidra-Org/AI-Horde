@@ -42,11 +42,6 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
 
     def set_generation(self, generation, things_per_sec, **kwargs):
-        kudos = super().set_generation(generation, things_per_sec, **kwargs)
-        logger.debug(kwargs)
-        if kwargs.get("censored", False):
-            self.censored = True
-            db.session.commit()
         if self.wp.r2 and generation != "R2":
             logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} uploaded an R2 request as b64. Converting...")
             if self.wp.shared:
@@ -57,11 +52,17 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             image = convert_b64_to_pil(generation)
             if not image:
                 logger.error("Could not convert b64 image from the worker to PIL to upload!")
-                return(kudos)
-            # FIXME: I would really like to avoid the unnecessary I/O here by uploading directly from RAM...
-            image.save(filename)
-            upload_method(filename)
-            os.remove(filename)
+            else:
+                # FIXME: I would really like to avoid the unnecessary I/O here by uploading directly from RAM...
+                image.save(filename)
+                upload_method(filename)
+                # This signifies to send the download URL
+                generation = "R2"
+                os.remove(filename)
+        kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        if kwargs.get("censored", False):
+            self.censored = True
+            db.session.commit()
         if self.wp.shared and not self.fake:
             self.upload_generation_metadata()
         return(kudos)

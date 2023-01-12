@@ -1,3 +1,4 @@
+import base64
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 from horde.logger import logger
