@@ -5,8 +5,9 @@ import json
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.r2 import generate_procgen_download_url, upload_shared_metadata
+from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image
 from horde.flask import db
+from horde.image import convert_b64_to_pil
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
@@ -41,18 +42,35 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
 
     def set_generation(self, generation, things_per_sec, **kwargs):
+        if self.wp.r2 and generation != "R2":
+            logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} uploaded an R2 request as b64. Converting...")
+            if self.wp.shared:
+                upload_method = upload_shared_generated_image
+            else:
+                upload_method = upload_generated_image
+            filename = f"{self.id}.webp"
+            image = convert_b64_to_pil(generation)
+            if not image:
+                logger.error("Could not convert b64 image from the worker to PIL to upload!")
+            else:
+                # FIXME: I would really like to avoid the unnecessary I/O here by uploading directly from RAM...
+                image.save(filename)
+                upload_method(filename)
+                # This signifies to send the download URL
+                generation = "R2"
+                os.remove(filename)
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
-        logger.debug(kwargs)
         if kwargs.get("censored", False):
             self.censored = True
             db.session.commit()
-        if self.wp.shared and not self.fake:
+        if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
-        # if not self.wp.r2: 
-            # Should I put code here to convert b64 to PIL and upload or nevermind?
         return(kudos)
         
     def upload_generation_metadata(self):
+        if not check_shared_image(f"{self.id}.webp"):
+            logger.warning(f"Avoiding json metadata upload because {self.id}.webp doesn't seem to exist.")
+            return
         metadict = self.wp.get_share_metadata()
         metadict['seed'] = self.seed
         metadict['model'] = self.model

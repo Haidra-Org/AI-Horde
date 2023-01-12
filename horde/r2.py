@@ -74,16 +74,24 @@ def delete_source_image(source_image_uuid):
         Key=f"{source_image_uuid}.webp"
     )
 
-
-def upload_source_image(filename):
+def upload_image(client, bucket, filename):
     try:
-        response = s3_client.upload_file(
-            filename, "stable-horde-source-images", filename
+        response = client.upload_file(
+            filename, bucket, filename
         )
     except ClientError as e:
         logger.error(f"Error encountered while uploading {filename}: {e}")
         return False
     return generate_img_download_url(filename, "stable-horde-source-images")
+
+def upload_source_image(filename):
+    return upload_image(s3_client, "stable-horde-source-images", filename)
+
+def upload_generated_image(filename):
+    return upload_image(s3_client, "stable-horde", filename)
+
+def upload_shared_generated_image(filename):
+    return upload_image(s3_client_shared, "stable-horde", filename)
 
 def upload_shared_metadata(filename):
     try:
@@ -105,3 +113,12 @@ def generate_uuid_img_upload_url(img_uuid, imgtype):
 
 def generate_uuid_img_download_url(img_uuid, imgtype):
     return generate_img_download_url(f"{img_uuid}.{imgtype}")
+
+def check_file(client, filename):
+    try:
+        return client.head_object(Bucket="stable-horde", Key=filename)
+    except ClientError as e:
+        return int(e.response['Error']['Code']) != 404
+
+def check_shared_image(filename):
+    return type(check_file(s3_client_shared,filename)) == dict
