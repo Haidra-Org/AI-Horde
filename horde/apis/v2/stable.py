@@ -259,7 +259,7 @@ class JobPop(JobPop):
 class Aesthetics(Resource):
 
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="header")
+    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     post_parser.add_argument("best", type=str, required=False, location="json")
     post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
 
