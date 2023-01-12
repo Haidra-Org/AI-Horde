@@ -5,8 +5,9 @@ import json
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.r2 import generate_procgen_download_url, upload_shared_metadata
+from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image
 from horde.flask import db
+from horde.image import convert_b64_to_pil
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
@@ -46,10 +47,22 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         if kwargs.get("censored", False):
             self.censored = True
             db.session.commit()
+        if self.wp.r2 and generation != "R2":
+            if self.wp.shared:
+                upload_method = upload_shared_generated_image
+            else:
+                upload_method = upload_generated_image
+            filename = f"{self.id}.webp"
+            image = convert_b64_to_pil(generation)
+            if not image:
+                logger.error("Could not convert b64 image from the worker to PIL to upload!")
+                return(kudos)
+            # FIXME: I would really like to avoid the unnecessary I/O here by uploading directly from RAM...
+            image.save(filename)
+            upload_method(filename)
+            os.remove(filename)
         if self.wp.shared and not self.fake:
             self.upload_generation_metadata()
-        # if not self.wp.r2: 
-            # Should I put code here to convert b64 to PIL and upload or nevermind?
         return(kudos)
         
     def upload_generation_metadata(self):
@@ -58,6 +71,8 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         metadict['model'] = self.model
         metadict['censored'] = self.censored
         filename = f"{self.id}.json"
+        if not check_shared_image(filename):
+            return
         json_object = json.dumps(metadict, indent=4)
         # Writing to sample.json
         with open(filename, "w") as f:
