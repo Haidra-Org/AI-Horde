@@ -691,11 +691,10 @@ class WorkerSingle(Resource):
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'PUT WorkerSingle')
         ret_dict = {}
-        # Both admins and owners can set the worker to maintenance
+        # Both mods and owners can set the worker to maintenance
         if self.args.maintenance is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-                if admin != worker.user:
-                    raise e.NotOwner(admin.get_unique_alias(), worker.name)
+            if not admin.moderator and admin != worker.user:
+                raise e.NotOwner(admin.get_unique_alias(), worker.name)
             worker.toggle_maintenance(self.args.maintenance, self.args.maintenance_msg)
             ret_dict["maintenance"] = worker.maintenance
         # Only owners can set info notes
