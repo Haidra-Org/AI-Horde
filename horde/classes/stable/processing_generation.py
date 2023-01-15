@@ -30,6 +30,8 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         return ret_dict
 
     def get_gen_kudos(self):
+        if self.censored:
+            return 0
         # We have pre-calculated them as they don't change per worker
         return self.wp.kudos
 
@@ -62,7 +64,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         if kwargs.get("censored", False):
             self.censored = True
             db.session.commit()
-        kudos = super().set_generation(generation, things_per_sec, is_free = self.censored, **kwargs)
+        kudos = super().set_generation(generation, things_per_sec, **kwargs)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
         return(kudos)
