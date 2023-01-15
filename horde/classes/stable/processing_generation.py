@@ -59,10 +59,10 @@ class ProcessingGenerationExtended(ProcessingGeneration):
                 # This signifies to send the download URL
                 generation = "R2"
                 os.remove(filename)
-        kudos = super().set_generation(generation, things_per_sec, **kwargs)
         if kwargs.get("censored", False):
             self.censored = True
             db.session.commit()
+        kudos = super().set_generation(generation, things_per_sec, is_free = self.censored, **kwargs)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
         return(kudos)

@@ -46,13 +46,16 @@ class ProcessingGeneration(db.Model):
                 self.model = model
         db.session.commit()
 
-    def set_generation(self, generation, things_per_sec, **kwargs):
+    def set_generation(self, generation, things_per_sec, is_free=False, **kwargs):
         if self.is_completed() or self.is_faulted():
             return(0)
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        kudos = self.get_gen_kudos()
+        if is_free:
+            kudos = 0
+        else:
+            kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
         db.session.commit()
