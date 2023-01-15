@@ -11,7 +11,7 @@ class WaitingPrompt(WaitingPrompt):
             logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
             self.n = 20
         self.max_length = params.get("max_length", 80)
-        self.max_content_length = params.get("max_content_length", 1024)
+        self.max_content_length = params.get("max_context_length", 1024)
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.max_length
         # The total amount of to pixelsteps requested.
@@ -19,7 +19,7 @@ class WaitingPrompt(WaitingPrompt):
         self.models = kwargs.get("models", ['ReadOnly'])
         self.softprompts = kwargs.get("softprompts", [''])
         self.prepare_job_payload(params)
-        logger.debug(self.models)
+        logger.debug([self.models, params])
 
 
     def prepare_job_payload(self, initial_dict = {}):

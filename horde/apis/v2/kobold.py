@@ -74,7 +74,10 @@ class JobPop(JobPop):
                 # If a None softprompts has been provided, we always match, since we can always remove the softprompt
                 if sp == '':
                     matching_softprompt = sp
-                for sp_name in self.args['softprompts']:
+                arg_softprompts = self.args['softprompts']
+                if not arg_softprompts:
+                    arg_softprompts = []
+                for sp_name in arg_softprompts:
                     # logger.info([sp_name,sp,sp in sp_name])
                     if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
                         matching_softprompt = sp_name
