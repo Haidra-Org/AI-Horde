@@ -191,6 +191,7 @@ class Models(v2.Models):
         self.response_model_aesthetic_rating = api.model('AestheticRating', {
             "id": fields.String(required=True,example="6038971e-f0b0-4fdd-a3bb-148f561f815e",description="The UUID of image being rated",min_length=36,max_length=36),
             "rating": fields.Integer(required=True,description="The aesthetic rating 1-10 for this image", min=1, max=10),
+            "artifacts": fields.Integer(required=False,description="The artifacts rating for this image.\n0 for flawless generation that perfectly fits to the prompt.\n1 for small, hardly recognizable flaws.\n2 small flaws that can easily be spotted, but don not harm the aesthetic experience.\n3 for flaws that look obviously wrong, but only mildly harm the aesthetic experience.\n4 for flaws that look obviously wrong & significantly harm the aesthetic experience.\n5 for flaws that make the image look like total garbage", example=1, min=0, max=5),
         })
         self.input_model_aesthetics_payload = api.model('AestheticsPayload', {
             "best": fields.String(required=False, example="6038971e-f0b0-4fdd-a3bb-148f561f815e", description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),

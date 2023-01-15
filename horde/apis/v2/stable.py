@@ -318,6 +318,9 @@ class Aesthetics(Resource):
         self.kudos = 0
         if self.args.ratings:
             self.kudos = 5 * len(self.args.ratings)
+            for r in self.args.ratings:
+                if r.get("artifacts") is not None:
+                    self.kudos += 3
             aesthetic_payload["ratings"] = self.args.ratings
             # If they only rated one, and rated it > 7, we assume it's the best of the set by default
             # Unless another bestof was selected (for some reason)
