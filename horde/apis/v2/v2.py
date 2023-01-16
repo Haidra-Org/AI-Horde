@@ -4,6 +4,7 @@ import regex as re
 import time
 import random
 from datetime import datetime
+from sqlalchemy.exc import IntegrityError
 
 from horde.database import functions as database
 from flask import request
@@ -76,6 +77,7 @@ handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_reques
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
+locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
 regex_blacklists1 = []
 regex_blacklists2 = []
@@ -778,7 +780,10 @@ class WorkerSingle(Resource):
             'deleted_id': worker.id,
             'deleted_name': worker.name,
         }
-        worker.delete()
+        try:
+            worker.delete()
+        except IntegrityError:
+            raise e.Locked("Could not delete the worker at this point as it's referenced by a job it completed. Please try again after 20 mins.")
         return(ret_dict, 200)
 
 class Users(Resource):

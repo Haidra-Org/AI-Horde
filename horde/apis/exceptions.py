@@ -219,6 +219,11 @@ class MaintenanceMode(wze.BadRequest):
         self.specific = f"Horde has entered maintenance mode. Please try again later."
         self.log = f"Rejecting endpoint '{endpoint}' because horde in maintenance mode."
 
+class Locked(wze.Locked):
+    def __init__(self, message):
+        self.specific = message
+        self.log = None
+
 def handle_bad_requests(error):
     '''Namespace error handler'''
     if error.log:
