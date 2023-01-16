@@ -145,6 +145,8 @@ class AsyncGenerate(AsyncGenerate):
         #     raise e.UnsupportedSampler
         if len(self.args['prompt'].split()) > 500:
             raise e.InvalidPromptSize(self.username)
+        if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"] for model_name in self.args.models):
+            raise e.UnsupportedModel
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
