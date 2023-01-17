@@ -65,11 +65,11 @@ Connect a worker to the horde, that is all! You will generate kudos for each req
 
 We use Kudos to support good behaviour in the community. As such we have ways to receive Kudos outside of generating images for others (although that's the best way)
 
+* Rate some images. Almost all clients should have a way to rate images while waiting which will provide kudos per rating, and you can also rate the images you just generated for a kudos refund! [Artbot has a very easy rating page](https://tinybots.net/artbot/rate)
 * Fulfill a bounty from our discord bounties forum
 * Subscribe to [the patreon supporting the development of the AI Horde](https://www.patreon.com/db0).
-* Request some people to transfer some to you.
-
-And more are planned!
+* Generate and share some cool art in our discord.
+* Politely request some people to transfer some to you in our discord server. People tend to give plenty to new users and helpful or funny comments.
 
 ### Can I transfer my Kudos?
 
