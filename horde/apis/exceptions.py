@@ -7,9 +7,9 @@ class MissingPrompt(wze.BadRequest):
         self.log = f"User '{username}' sent an empty prompt. Aborting!"
 
 class CorruptPrompt(wze.BadRequest):
-    def __init__(self, username, ip, prompt):
-        self.specific = "This prompt appears to violate our terms of service and will be reported. Please contact us if you think this is an error."
-        self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
+    def __init__(self, username, ip, prompt, words):
+        self.specific = f"This prompt appears to violate our terms of service (blacklisted words: {words}) and will be reported. Please contact us if you think this is an error."
+        self.log = f"User '{username}' with IP '{ip}' sent a corrupt prompt '{prompt}' with blacklisted words: {words}. Aborting!"
 
 class KudosValidationError(wze.BadRequest):
     def __init__(self, username, error_message, action = "transfer"):

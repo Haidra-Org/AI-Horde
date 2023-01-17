@@ -159,14 +159,17 @@ class GenerateTemplate(Resource):
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
             #logger.warning(datetime.utcnow())
             prompt_suspicion = 0
+            prompt_suspicion_words = []
             if "###" in self.args.prompt:
                 prompt, negprompt = self.args.prompt.split("###", 1)
             else:
                 prompt = self.args.prompt
             for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
                 for blacklist in blacklist_regex:
-                    if blacklist.search(prompt):
+                    blacklist_match = blacklist.search(prompt)
+                    if blacklist_match:
                         prompt_suspicion += 1
+                        prompt_suspicion_words += blacklist_match[0]
                         break
             #logger.warning(datetime.utcnow())
             if prompt_suspicion >= 2:
@@ -174,7 +177,7 @@ class GenerateTemplate(Resource):
                 if not self.user.moderator:
                     self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                     CounterMeasures.report_suspicion(self.user_ip)
-                raise e.CorruptPrompt(self.username, self.user_ip, prompt)
+                raise e.CorruptPrompt(self.username, self.user_ip, prompt, prompt_suspicion_words)
 
     
     # We split this into its own function, so that it may be overriden
@@ -190,7 +193,7 @@ class GenerateTemplate(Resource):
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
         )
-    
+
     # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
         self.wp.activate()
@@ -206,7 +209,7 @@ class AsyncGenerate(GenerateTemplate):
     def post(self):
         '''Initiate an Asynchronous request to generate images.
         This endpoint will immediately return with the UUID of the request for generation.
-        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
+        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request.
         Perhaps some will appear in the next 10 minutes.
         Asynchronous requests live for 10 minutes before being considered stale and being deleted.
         '''
@@ -395,7 +398,7 @@ class JobPopTemplate(Resource):
             self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-            
+
 
 class JobPop(JobPopTemplate):
 
@@ -466,7 +469,7 @@ class JobPop(JobPopTemplate):
                     self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
                 #logger.warning(datetime.utcnow())
                 continue
-            # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
+            # There is a chance that by the time we finished all the checks, another worker picked up the WP.
             # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
             # time.sleep(random.uniform(0, 1))
             wp.refresh()
@@ -503,9 +506,9 @@ class JobPop(JobPopTemplate):
     # You typically never want to use this template's function without extending it
     def check_in(self):
         self.worker.check_in(
-            nsfw = self.args['nsfw'], 
-            blacklist = self.args['blacklist'], 
-            safe_ip = self.safe_ip, 
+            nsfw = self.args['nsfw'],
+            blacklist = self.args['blacklist'],
+            safe_ip = self.safe_ip,
             ipaddr = self.worker_ip)
 
     # We split this into its own function, so that it may be overriden and extended
@@ -543,8 +546,8 @@ class JobSubmit(Resource):
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
         things_per_sec = stats.record_fulfilment(self.procgen)
         self.kudos = self.procgen.set_generation(
-            generation=self.args['generation'], 
-            things_per_sec=things_per_sec, 
+            generation=self.args['generation'],
+            things_per_sec=things_per_sec,
             seed=self.args.seed,
             censored=self.args.censored,
         )
@@ -680,7 +683,7 @@ class WorkerSingle(Resource):
     @api.response(404, 'Worker Not Found', models.response_model_error)
     def put(self, worker_id = ''):
         '''Put the worker into maintenance or pause mode
-        Maintenance can be set by the owner of the serve or an admin. 
+        Maintenance can be set by the owner of the serve or an admin.
         When in maintenance, the worker will receive a 503 request when trying to retrieve new requests. Use this to avoid disconnecting your worker in the middle of a generation
         Paused can be set only by the admins of this Horde.
         When in paused mode, the worker will not be given any requests to generate.
@@ -1008,7 +1011,7 @@ class HordeNews(Resource):
         news = News()
         # logger.debug(news.sorted_news())
         return(news.sorted_news(),200)
-    
+
 
 class HordeModes(Resource):
     get_parser = reqparse.RequestParser()
@@ -1025,7 +1028,7 @@ class HordeModes(Resource):
         ret_dict = {
             "maintenance_mode": maintenance.active,
             "invite_only_mode": invite_only.active,
-            
+
         }
         is_privileged = False
         self.args = self.get_parser.parse_args()
@@ -1148,7 +1151,7 @@ class Teams(Resource):
         if self.team_info and is_profane(self.team_info):
             raise e.Profanity(self.user.get_unique_alias(), self.team_info, 'team info')
         team = Team(
-            owner_id=self.user.id, 
+            owner_id=self.user.id,
             name=self.team_name,
             info=self.team_info,
         )
@@ -1301,4 +1304,3 @@ class Heartbeat(Resource):
         '''If this loads, this node is available
         '''
         return({'message': 'OK'},200)
-        
