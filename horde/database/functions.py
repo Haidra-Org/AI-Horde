@@ -13,6 +13,7 @@ from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
@@ -664,3 +665,10 @@ def prune_expired_stats():
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned Expired Stats")
+
+
+def compile_regex_filter(filter_type=None):
+    all_regex = db.session.query(Filter.regex)
+    if filter_type is None:
+        all_regex = all_regex.filter_by(filter_type=filter_type)
+    return '|'.join(all_regex.all())
