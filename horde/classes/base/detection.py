@@ -11,3 +11,12 @@ class Filter(db.Model):
     description = db.Column(db.Text, nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user = db.relationship("User", back_populates="filters")
+
+    def get_details(self):
+        return {
+            "id": self.id,
+            "regex": self.regex,
+            "filter_type": self.filter_type,
+            "description": self.descriotion,
+            "user": self.user.get_unique_alias(),
+        }

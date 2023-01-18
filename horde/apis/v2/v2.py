@@ -1311,7 +1311,7 @@ class Filters(Resource):
         '''
         self.args = self.get_parser.parse_args()
         check_for_mod(self.args.apikey, 'GET Filter')
-        return(Filter.query.all(),200)
+        return([f.get_details() for f in Filter.query.all()],200)
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
@@ -1339,7 +1339,7 @@ class Filters(Resource):
             db.session.add(new_filter)
             db.session.commit()
             logger.info(f"Mod {mod.get_unique_alias()} added new filter {new_filter.id}")
-        return(new_filter,200)
+        return(new_filter.get_details(),200)
 
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
@@ -1375,7 +1375,7 @@ class FilterSingle(Resource):
         filter = Filter.query.filter_by(id=filter_id).first()
         if not filter:
             raise e.ThingNotFound('Filter', filter_id)
-        return(filter,200)
+        return(filter.get_details(),200)
 
     patch_parser = reqparse.RequestParser()
     patch_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
@@ -1406,7 +1406,7 @@ class FilterSingle(Resource):
             filter.regex = self.args.description
         db.session.commit()
         logger.info(f"Mod {mod.get_unique_alias()} modified filter {filter.id}")
-        return(filter,200)
+        return(filter.get_details(),200)
 
     delete_parser = reqparse.RequestParser()
     delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
