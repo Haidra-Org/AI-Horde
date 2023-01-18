@@ -4,6 +4,14 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-18",
+            "newspiece": (
+                "The prompts now support weights! Use them like so `(sub prompt:1.1)` where 1.1 corresponds to +10% weight "
+                "You can tweak upwards more like `1.25` or downwards like `0.7`, but don't go above +=30%"
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-12",
             "newspiece": (
                 "We plan to be replacing our official discord bot with [new a new codebase](https://github.com/ZeldaFan0225/Stable_Horde_Discord) based on the work of Zelda_Fan#0225. "
