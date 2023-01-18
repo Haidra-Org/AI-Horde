@@ -90,7 +90,7 @@ class Models:
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True)
         })
         self.input_model_job_submit = api.model('SubmitInput', {
-            'id': fields.String(required=True, description="The UUID of this generation"), 
+            'id': fields.String(required=True, description="The UUID of this generation", example="00000000-0000-0000-0000-000000000000"), 
             'generation': fields.String(example="R2", required=False, description="R2 if the image has been uploaded to R2, or the b64 string of the encoded image."),
         })
         self.response_model_job_submit = api.model('GenerationSubmitted', {
