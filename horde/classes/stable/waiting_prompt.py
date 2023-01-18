@@ -122,9 +122,9 @@ class WaitingPromptExtended(WaitingPrompt):
             "set": str(self.id),
             "user_type": "oauth",
         }
-        if user.is_anon():
+        if self.user.is_anon():
             ret_dict["user_type"] = "anon"
-        elif user.is_pseudonymous():
+        elif self.user.is_pseudonymous():
             ret_dict["user_type"] = "pseudonymous"
         return ret_dict
 
