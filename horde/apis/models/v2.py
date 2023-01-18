@@ -89,7 +89,7 @@ class Models:
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True)
         })
-        self.input_model_job_submit = api.model('SubmitInputStable', {
+        self.input_model_job_submit = api.model('SubmitInput', {
             'id': fields.String(required=True, description="The UUID of this generation"), 
             'generation': fields.String(example="R2", required=False, description="R2 if the image has been uploaded to R2, or the b64 string of the encoded image."),
         })
