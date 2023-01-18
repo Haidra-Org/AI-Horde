@@ -1353,7 +1353,7 @@ class Filters(Resource):
         '''
         self.args = self.post_parser.parse_args()
         mod = check_for_mod(self.args.apikey, 'POST Filter')
-        suspicion, matches = prompt_checker.match_groups(self.args.prompt)
+        suspicion, matches = prompt_checker(self.args.prompt)
         logger.info(f"Mod {mod.get_unique_alias()} checked prompt {self.args.prompt}")
         return({"suspicion": suspicion, "matches": matches},200)
 

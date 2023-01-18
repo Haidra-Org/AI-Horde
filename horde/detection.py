@@ -51,35 +51,17 @@ class PromptChecker:
         prompt_suspicion = 0
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
-        for filters in [self.filters1, self.filters2]:
-            for filter_id in filters:
-                logger.debug(self.compiled[filter_id])
-                # We only need 1 of the filters in the group to match to increase suspicion
-                # Suspicion does not increase further for more filters in the same group
-                if self.compiled[filter_id] and self.compiled[filter_id].search(prompt):
-                    prompt_suspicion += 1
-                    break
-        return prompt_suspicion
-    
-    def match_groups(self, prompt):
-        self.refresh_regex()
-        prompt_suspicion = 0
-        if "###" in prompt:
-            prompt, negprompt = prompt.split("###", 1)
         matching_groups = []
         for filters in [self.filters1, self.filters2]:
             for filter_id in filters:
-                group_compiled = re.compile((self.regex[filter_id]), re.IGNORECASE)
                 # We only need 1 of the filters in the group to match to increase suspicion
                 # Suspicion does not increase further for more filters in the same group
-                if group_compiled:
-                    match_result = group_compiled.search(prompt)
+                if self.compiled[filter_id]:
+                    match_result = self.compiled[filter_id].search(prompt)
                     if match_result:
                         prompt_suspicion += 1
                         matching_groups.append(match_result.group())
                         break
-        logger.debug(matching_groups)
-        return prompt_suspicion, matching_groups
-
+        return prompt_suspicion,matching_groups
 
 prompt_checker = PromptChecker()
