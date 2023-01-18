@@ -287,4 +287,3 @@ def store_compiled_filter_regex():
             filter = compile_regex_filter(filter_id)
             # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
             horde_r.set(f'filter_{filter_id}', filter)
-            logger.debug(f"Filter: {filter_id}: {filter}")
