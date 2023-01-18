@@ -16,4 +16,3 @@ prune_stats = PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
 patreon_cacher = PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
 priority_increaser = PrimaryTimedFunction(10, threads.increment_extra_priority, quorum=quorum)
 compiled_filter_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)
-

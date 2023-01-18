@@ -1403,7 +1403,7 @@ class FilterSingle(Resource):
         if self.args.regex:
             filter.regex = self.args.regex
         if self.args.description:
-            filter.regex = self.args.description
+            filter.description = self.args.description
         db.session.commit()
         logger.info(f"Mod {mod.get_unique_alias()} modified filter {filter.id}")
         return(filter.get_details(),200)
