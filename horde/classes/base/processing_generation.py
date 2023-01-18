@@ -83,8 +83,13 @@ class ProcessingGeneration(db.Model):
             logger.info(f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}")
         else:
             self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
-            self.wp.record_usage(raw_things = self.wp.things, kudos = kudos)
+            
+            self.wp.record_usage(raw_things = self.wp.things, kudos = self.adjust_user_kudos(kudos))
             logger.info(f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}")
+
+    # To extend
+    def adjust_user_kudos(self, kudos):
+        return kudos
 
     def abort(self):
         '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''

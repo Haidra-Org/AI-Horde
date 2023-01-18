@@ -30,9 +30,6 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         return ret_dict
 
     def get_gen_kudos(self):
-        if self.censored:
-            # Censored is 1 kudos to avoid making the system think it failed
-            return 1
         # We have pre-calculated them as they don't change per worker        
         return self.wp.kudos
 
@@ -86,5 +83,9 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         upload_shared_metadata(filename)
         os.remove(filename)
 
+    def adjust_user_kudos(self, kudos):
+        if self.censored:
+            return 0
+        return kudos
 
         
