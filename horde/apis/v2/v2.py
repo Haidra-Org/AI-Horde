@@ -497,6 +497,7 @@ class JobPop(JobPopTemplate):
     def check_in(self):
         self.worker.check_in(
             nsfw = self.args['nsfw'], 
+            require_upfront_kudos = self.args['require_upfront_kudos'], 
             blacklist = self.args['blacklist'], 
             safe_ip = self.safe_ip, 
             ipaddr = self.worker_ip)

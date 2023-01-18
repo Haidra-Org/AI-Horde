@@ -46,7 +46,7 @@ class InterrogationWorker(WorkerTemplate):
         if not self.user.trusted:
             if not interrogation_form.interrogation.safe_ip and not interrogation_form.interrogation.user.trusted:
                 return False, 'untrusted'
-        if self.requires_upfront_kudos:
+        if self.require_upfront_kudos:
             user_actual_kudos = interrogation_form.interrogation.user.kudos
             # We don't want to take into account minimum kudos
             if user_actual_kudos > 0:

@@ -177,7 +177,7 @@ class AsyncGenerate(AsyncGenerate):
             r2=self.args.r2,
             shared=shared,
         )
-        needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
+        needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
@@ -222,7 +222,7 @@ class SyncGenerate(SyncGenerate):
             safe_ip=self.safe_ip,
             r2=self.args.r2,
         )
-        needs_kudos,resolution = self.wp.requires_upfront_kudos(database.retrieve_totals())
+        needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
@@ -236,6 +236,7 @@ class JobPop(JobPop):
         self.worker.check_in(
             self.args.max_pixels, 
             nsfw = self.args.nsfw, 
+            require_upfront_kudos = self.args.require_upfront_kudos, 
             blacklist = self.blacklist, 
             models = self.models, 
             safe_ip = self.safe_ip,

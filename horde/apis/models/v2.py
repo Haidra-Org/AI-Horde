@@ -22,6 +22,7 @@ class Parsers:
     job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
     job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
     job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
+    job_pop_parser.add_argument("require_upfront_kudos", type=bool, required=False, default=False, help="If True, this worker will only pick up requests where the owner has the required kudos to consume already available.", location="json")
 
     job_submit_parser = reqparse.RequestParser()
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
@@ -116,6 +117,7 @@ class Models:
             'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=10),
+            'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
         })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
             "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),

@@ -81,7 +81,6 @@ class Models(v2.Models):
             'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
             'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
-            'require_upfront_kudos': fields.Boolean(description="If True, then will only pick up requests where the users has the required kudos for them already."),
         })
 
         self.input_model_request_generation = api.model('GenerationInput', {

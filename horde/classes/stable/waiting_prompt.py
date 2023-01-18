@@ -211,7 +211,7 @@ class WaitingPromptExtended(WaitingPrompt):
         db.session.commit()
 
 
-    def requires_upfront_kudos(self, counted_totals):
+    def require_upfront_kudos(self, counted_totals):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
         '''

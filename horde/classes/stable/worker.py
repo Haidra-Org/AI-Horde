@@ -92,7 +92,7 @@ class WorkerExtended(Worker):
             return [False, 'post-processing']
         # When the worker requires upfront kudos, the user has to have the required kudos upfront
         # But we allowe prioritized and trusted users to bypass this
-        if self.requires_upfront_kudos:
+        if self.require_upfront_kudos:
             user_actual_kudos = waiting_prompt.user.kudos
             # We don't want to take into account minimum kudos
             if user_actual_kudos > 0:

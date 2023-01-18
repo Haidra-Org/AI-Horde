@@ -97,7 +97,7 @@ class WorkerTemplate(db.Model):
     performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete-orphan")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
 
-    requires_upfront_kudos = False
+    require_upfront_kudos = False
     prioritized_users = []
 
     def create(self, **kwargs):
@@ -196,7 +196,7 @@ class WorkerTemplate(db.Model):
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
         self.threads = kwargs.get("threads", 1)
-        self.requires_upfront_kudos = kwargs.get('requires_upfront_kudos', False)
+        self.require_upfront_kudos = kwargs.get('require_upfront_kudos', False)
         self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
