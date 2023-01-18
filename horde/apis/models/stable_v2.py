@@ -82,6 +82,11 @@ class Models(v2.Models):
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
             'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
         })
+        self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
+            'seed': fields.Integer(required=True, description="The seed for this generation"), 
+            'censored': fields.Boolean(required=False, default=False,description="If True, this resulting image has been censored"),
+        })
+
 
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),

@@ -512,7 +512,7 @@ class JobPop(JobPopTemplate):
 
 class JobSubmit(Resource):
     decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_submit_parser)
+    @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
     @api.response(400, 'Generation Already Submitted', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
