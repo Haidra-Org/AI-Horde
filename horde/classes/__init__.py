@@ -45,6 +45,7 @@ try:
     stats = import_module(name=f'horde.classes.{args.horde}.stats')
 except (ModuleNotFoundError,AttributeError):
     stats = import_module(name='horde.classes.base.stats')
+from horde.classes.base.detection import Filter
 
 with HORDE.app_context():
     db.create_all()

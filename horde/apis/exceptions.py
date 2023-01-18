@@ -187,6 +187,14 @@ class TeamNotFound(wze.NotFound):
         self.specific = f"Team with ID '{team_id}' not found."
         self.log = f"Attempted to retrieve team with non-existent ID '{team_id}'"
 
+class ThingNotFound(wze.NotFound):
+    def __init__(self, thing_type, thing_id, message = None):
+        if message is not None:
+            self.specific = message
+        else:
+            self.specific = f"{thing_type.capitalize()} with ID '{thing_id}' not found."
+        self.log = f"Attempted to retrieve {thing_type} with non-existent ID '{thing_id}'"
+
 class UserNotFound(wze.NotFound):
     def __init__(self, user_id, lookup_type = 'ID'):
         self.specific = f"User with {lookup_type} '{user_id}' not found."
