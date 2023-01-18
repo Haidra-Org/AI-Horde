@@ -53,6 +53,7 @@ class ProcessingGeneration(db.Model):
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
         kudos = self.get_gen_kudos()
+        logger.debug(kudos)
         self.cancelled = False
         self.record(things_per_sec, kudos)
         db.session.commit()

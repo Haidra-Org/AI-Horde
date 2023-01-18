@@ -33,7 +33,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         if self.censored:
             # Censored is 1 kudos to avoid making the system think it failed
             return 1
-        # We have pre-calculated them as they don't change per worker
+        # We have pre-calculated them as they don't change per worker        
         return self.wp.kudos
 
     def log_aborted_generation(self):
