@@ -200,7 +200,7 @@ class UserNotFound(wze.NotFound):
         self.specific = f"User with {lookup_type} '{user_id}' not found."
         self.log = f"Attempted to retrieve user with non-existent {lookup_type} '{user_id}'"
 
-class DuplicateGen(wze.NotFound):
+class DuplicateGen(wze.BadRequest):
     def __init__(self, worker, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} already submitted."
         self.log = f"Worker '{worker}' attempted to provide duplicate generation for {gen_id}"
