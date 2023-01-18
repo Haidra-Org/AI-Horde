@@ -81,15 +81,6 @@ handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_reques
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
-regex_blacklists1 = []
-regex_blacklists2 = []
-if os.getenv("BLACKLIST1A"):
-    for blacklist in ["BLACKLIST1A","BLACKLIST1B"]:
-        regex_blacklists1.append(re.compile(os.getenv(blacklist), re.IGNORECASE))
-if os.getenv("BLACKLIST2A"):
-    for blacklist in ["BLACKLIST2A"]:
-        regex_blacklists2.append(re.compile(os.getenv(blacklist), re.IGNORECASE))
-
 # Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
     # logger.info(dir(request))
@@ -169,16 +160,7 @@ class GenerateTemplate(Resource):
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
             #logger.warning(datetime.utcnow())
-            prompt_suspicion = 0
-            if "###" in self.args.prompt:
-                prompt, negprompt = self.args.prompt.split("###", 1)
-            else:
-                prompt = self.args.prompt
-            for blacklist_regex in [regex_blacklists1, regex_blacklists2]:
-                for blacklist in blacklist_regex:
-                    if blacklist.search(prompt):
-                        prompt_suspicion += 1
-                        break
+            prompt_suspicion, _ = prompt_checker(self.args.prompt)
             #logger.warning(datetime.utcnow())
             if prompt_suspicion >= 2:
                 # Moderators do not get ip blocked to allow for experiments
