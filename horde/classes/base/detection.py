@@ -17,6 +17,6 @@ class Filter(db.Model):
             "id": self.id,
             "regex": self.regex,
             "filter_type": self.filter_type,
-            "description": self.descriotion,
+            "description": self.description,
             "user": self.user.get_unique_alias(),
         }
