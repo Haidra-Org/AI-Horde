@@ -12,7 +12,7 @@ from horde.classes import WaitingPrompt, User, ProcessingGeneration
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats
+from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats, compile_regex_filter
 from horde import horde_instance_id
 from horde.argparser import args
 from horde.r2 import delete_procgen_image, delete_source_image
@@ -277,3 +277,14 @@ def increment_extra_priority():
             }, synchronize_session=False
         )
         db.session.commit()
+
+
+@logger.catch(reraise=True)
+def store_compiled_filter_regex():
+    '''Compiles each filter as a final regex and stores it in redit'''
+    with HORDE.app_context():
+        for filter_id in [10, 11, 20]:
+            filter = compile_regex_filter(filter_id)
+            # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
+            horde_r.set(f'filter_{filter_id}', filter)
+            logger.debug(f"Filter: {filter_id}: {filter}")

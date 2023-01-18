@@ -667,8 +667,7 @@ def prune_expired_stats():
     logger.debug("Pruned Expired Stats")
 
 
-def compile_regex_filter(filter_type=None):
-    all_regex = db.session.query(Filter.regex)
-    if filter_type is None:
-        all_regex = all_regex.filter_by(filter_type=filter_type)
-    return '|'.join(all_regex.all())
+def compile_regex_filter(filter_type):
+    all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
+    all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
+    return '|'.join(all_filter_regex)

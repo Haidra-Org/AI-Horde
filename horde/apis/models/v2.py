@@ -289,17 +289,24 @@ class Models:
             "message": fields.String(default='OK',required=True, description="The result of this operation"),
         })
 
-        self.input_model_filter_post = api.model('PostNewFilter', {
+        self.input_model_filter_put = api.model('PutNewFilter', {
             "regex": fields.String(required=True, description="The regex for this filter.", example="ac.*"),
-            "filter_type": fields.Integer(required=True, description="The integer defining this filter type", min=10, max=29, example=1),
+            "filter_type": fields.Integer(required=True, description="The integer defining this filter type", min=10, max=29, example=10),
+            "description": fields.String(required=False, description="Description about this regex"),
         })
         self.input_model_filter_patch = api.model('PatchExistingFilter', {
             "regex": fields.String(required=False, description="The regex for this filter.", example="ac.*"),
-            "filter_type": fields.Integer(required=False, description="The integer defining this filter type", min=10, max=29, example=1),
+            "filter_type": fields.Integer(required=False, description="The integer defining this filter type", min=10, max=29, example=10),
+            "description": fields.String(required=False, description="Description about this regex"),
         })
 
         self.response_model_filter_details = api.model('FilterDetails', {
             "id": fields.String(required=True,description="The UUID of this filter."),
             "regex": fields.String(required=True,description="The regex for this filter.", example="ac.*"),
-            "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=1),
+            "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=10),
+            "description": fields.String(required=False, description="Description about this regex"),
+        })
+        self.response_model_prompt_suspicion = api.model('FilterPromptSuspicion', {
+            "suspicion": fields.String(default=0, required=True, description="Rates how suspicious the provided prompt is. A suspicion over 2 means it would be blocked."),
+            "matches": fields.List(fields.String(required=True, description="Which words in the prompt matched the filters")),
         })

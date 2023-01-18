@@ -6,12 +6,6 @@ class Filter(db.Model):
     """For storing detection regex"""
     __tablename__ = "filters"
     id = db.Column(db.Integer, primary_key=True)
-    regex = db.Column(db.String(255))
+    regex = db.Column(db.Text)
     filter_type = db.Column(db.Integer, nullable=False, index=True)
-
-    # def get_details(self):
-    #     return {
-    #         "id": self.id,
-    #         "regex": self.regex
-    #         "filter_type": self.filter_type
-    #     }
+    description = db.Column(db.Text, nullable=True)
