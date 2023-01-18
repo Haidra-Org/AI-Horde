@@ -305,6 +305,7 @@ class Models:
             "regex": fields.String(required=True,description="The regex for this filter.", example="ac.*"),
             "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=10),
             "description": fields.String(required=False, description="Description about this regex"),
+            "user": fields.String(required=True, description="The moderator which added or last updated this regex"),
         })
         self.response_model_prompt_suspicion = api.model('FilterPromptSuspicion', {
             "suspicion": fields.String(default=0, required=True, description="Rates how suspicious the provided prompt is. A suspicion over 2 means it would be blocked."),

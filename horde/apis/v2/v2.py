@@ -1334,6 +1334,7 @@ class Filters(Resource):
                 regex = self.args.regex,
                 filter_type = self.args.filter_type,
                 description = self.args.description,
+                user_id = mod.id,
             )
             db.session.add(new_filter)
             db.session.commit()
@@ -1396,6 +1397,7 @@ class FilterSingle(Resource):
             raise e.ThingNotFound('Filter', filter_id)
         if not self.args.filter_type and not self.args.regex and not self.args.description:
             raise e.NoValidActions("No filter patching selected!")
+        filter.user_id = mod.id,
         if self.args.filter_type:
             filter.filter_type = self.args.filter_type
         if self.args.regex:

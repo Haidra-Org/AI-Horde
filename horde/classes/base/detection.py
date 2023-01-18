@@ -9,3 +9,5 @@ class Filter(db.Model):
     regex = db.Column(db.Text)
     filter_type = db.Column(db.Integer, nullable=False, index=True)
     description = db.Column(db.Text, nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
+    user = db.relationship("User", back_populates="filters")
