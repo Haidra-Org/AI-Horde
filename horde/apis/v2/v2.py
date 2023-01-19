@@ -1347,7 +1347,7 @@ class Filters(Resource):
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(post_parser)
-    @api.marshal_with(models.response_model_prompt_suspicion, code=200, description='Returns the suspicion of the provided prompt. A suspicion over 2 means it would be blocked.')
+    @api.marshal_with(models.response_model_prompt_suspicion, code=200, description='Returns the suspicion of the provided prompt. A suspicion of 2 or more means it would be blocked.')
     def post(self):
         '''Moderator Only: Check The suspicion of the provided prompt
         '''
