@@ -22,6 +22,7 @@ from horde.countermeasures import CounterMeasures
 from horde.horde_redis import horde_r
 from horde.patreon import patrons
 from horde.detection import prompt_checker
+from horde.r2 import upload_prompt
 
 # Not used yet
 authorizations = {
@@ -167,9 +168,14 @@ class GenerateTemplate(Resource):
             if prompt_suspicion >= 2:
                 # Moderators do not get ip blocked to allow for experiments
                 if not self.user.moderator:
+                    prompt_dict = {
+                        "prompt": self.args.prompt,
+                        "user": self.username,
+                    }
+                    upload_prompt(prompt_dict)
                     self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                     CounterMeasures.report_suspicion(self.user_ip)
-                raise e.CorruptPrompt(self.username, self.user_ip, prompt)
+                raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
 
     
     # We split this into its own function, so that it may be overriden

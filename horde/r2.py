@@ -1,5 +1,7 @@
 import uuid
 import os
+import json
+from uuid import uuid4
 from datetime import datetime
 from horde.logger import logger
 import boto3
@@ -99,8 +101,25 @@ def upload_shared_metadata(filename):
             filename, "stable-horde", filename
         )
     except ClientError as e:
-        logger.error(f"Error encountered while uploading {filename}: {e}")
+        logger.error(f"Error encountered while uploading metadata {filename}: {e}")
         return False
+
+def upload_prompt(prompt_dict):
+    filename = f"{uuid4()}.json"
+    json_object = json.dumps(prompt_dict, indent=4)
+    # Writing to sample.json
+    with open(filename, "w") as f:
+        f.write(json_object)
+    try:
+        response = s3_client_shared.upload_file(
+            filename, "temp-storage", filename
+        )
+        os.remove(filename)
+        logger.debug(response)
+    except ClientError as e:
+        logger.error(f"Error encountered while uploading prompt {filename}: {e}")
+        return False
+        os.remove(filename)
 
 def generate_img_download_url(filename, bucket="stable-horde"):
     return generate_presigned_url(s3_client, "get_object", {'Bucket': bucket, 'Key': filename}, 1800)
