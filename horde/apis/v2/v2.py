@@ -86,11 +86,13 @@ def get_request_path():
     # logger.info(dir(request))
     return(f"{request.remote_addr}@{request.method}@{request.path}")
 
-def check_for_mod(api_key, operation):
+def check_for_mod(api_key, operation, whitelisted_users = None):
     mod = database.find_user_by_api_key(api_key)
     if not mod:
         raise e.InvalidAPIKey('User action: ' + operation)
     if not mod.moderator and not args.insecure:
+        if whitelisted_users and mod.get_unique_alias() in whitelisted_users:
+            return mod
         raise e.NotModerator(mod.get_unique_alias(), operation)
     return mod
 
@@ -1337,7 +1339,15 @@ class Filters(Resource):
         '''Moderator Only: Check The suspicion of the provided prompt
         '''
         self.args = self.post_parser.parse_args()
-        mod = check_for_mod(self.args.apikey, 'POST Filter')
+        mod = check_for_mod(
+            api_key = self.args.apikey, 
+            operation = 'POST Filter',
+            whitelisted_users = [
+                "hlky#2047",
+                "Zelda_Fan#2230",
+                "Webhead#1193",
+            ],
+        )
         suspicion, matches = prompt_checker(self.args.prompt, self.args.filter_type)
         logger.info(f"Mod {mod.get_unique_alias()} checked prompt {self.args.prompt}")
         return({"suspicion": suspicion, "matches": matches},200)
