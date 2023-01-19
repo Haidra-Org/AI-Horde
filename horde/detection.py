@@ -46,7 +46,7 @@ class PromptChecker:
                 logger.debug(self.compiled[filter_id])
             self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+1)
 
-    def __call__(self, prompt):
+    def __call__(self, prompt, id = None):
         self.refresh_regex()
         prompt_suspicion = 0
         if "###" in prompt:
@@ -54,6 +54,9 @@ class PromptChecker:
         matching_groups = []
         for filters in [self.filters1, self.filters2]:
             for filter_id in filters:
+                # This allows to check only a specific filter ID
+                if id and filter_id != f"filter_{id}":
+                    continue
                 # We only need 1 of the filters in the group to match to increase suspicion
                 # Suspicion does not increase further for more filters in the same group
                 if self.compiled[filter_id]:
