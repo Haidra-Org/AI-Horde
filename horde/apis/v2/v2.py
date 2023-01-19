@@ -5,6 +5,7 @@ import time
 import random
 from datetime import datetime
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import literal
 
 from horde.database import functions as database
 from flask import request
@@ -1293,6 +1294,7 @@ class Filters(Resource):
     get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     get_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="args")
+    get_parser.add_argument("contains", type=str, default=None, required=False, help="Only return filter containing this word", location="args")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(get_parser)
@@ -1302,7 +1304,12 @@ class Filters(Resource):
         '''
         self.args = self.get_parser.parse_args()
         check_for_mod(self.args.apikey, 'GET Filter')
-        return([f.get_details() for f in Filter.query.all()],200)
+        filters = Filter.query
+        if self.args.contains:
+            filters = filters.filter(Filter.regex.contains(self.args.contains))
+        if self.args.filter_type:
+            filters = filters.filter(Filter.filter_type == self.args.filter_type)
+        return([f.get_details() for f in filters.all()],200)
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
