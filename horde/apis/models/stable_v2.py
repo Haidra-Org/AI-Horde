@@ -10,14 +10,14 @@ class Parsers(v2.Parsers):
         self.generate_parser.add_argument("source_processing", type=str, default="img2img", required=False, help="If source_image is provided, specifies how to process it.", location="json")
         self.generate_parser.add_argument("source_mask", type=str, required=False, help="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel", location="json")
         self.generate_parser.add_argument("models", type=list, required=False, default=['stable_diffusion'], help="The acceptable models with which to generate", location="json")
-        self.generate_parser.add_argument("r2", type=bool, default=False, required=False, help="If True, the image will be sent via cloudflare r2 download link", location="json")
+        self.generate_parser.add_argument("r2", type=bool, default=True, required=False, help="If True, the image will be sent via cloudflare r2 download link", location="json")
         self.generate_parser.add_argument("shared", type=bool, default=False, required=False, help="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True.", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
         self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
         self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_pop_parser.add_argument("allow_post_processing", type=bool, required=False, default=True, help="If True, this worker will pick up requests requesting post-processing.", location="json")
-        self.job_submit_parser.add_argument("seed", type=str, required=True, default='', help="The seed of the generation", location="json")
+        self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the generation", location="json")
         self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
 class Models(v2.Models):
@@ -82,6 +82,11 @@ class Models(v2.Models):
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
             'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
         })
+        self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
+            'seed': fields.Integer(required=True, description="The seed for this generation"), 
+            'censored': fields.Boolean(required=False, default=False,description="If True, this resulting image has been censored"),
+        })
+
 
         self.input_model_request_generation = api.model('GenerationInput', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),
@@ -94,7 +99,7 @@ class Models(v2.Models):
             'source_image': fields.String(required=False, description="The Base64-encoded webp to use for img2img"),
             'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
             'source_mask': fields.String(description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel"),
-            'r2': fields.Boolean(default=False, description="If True, the image will be sent via cloudflare r2 download link"),
+            'r2': fields.Boolean(default=True, description="If True, the image will be sent via cloudflare r2 download link"),
             'shared': fields.Boolean(default=False, description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True."),
         })
         self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {

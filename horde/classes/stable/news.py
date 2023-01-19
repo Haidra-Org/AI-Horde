@@ -6,6 +6,14 @@ class NewsExtended(News):
         {
             "date_published": "2023-01-18",
             "newspiece": (
+                "We now have a [New Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord), courtesy of Zelda_Fan#0225. Check out [their other bot](https://slashbot.de/) as well! "
+                "Only downside is that if you were already logged in to the old bot, you will need to /login again."
+            ),
+            "importance": "Information"
+        },
+        {
+            "date_published": "2023-01-18",
+            "newspiece": (
                 "The prompts now support weights! Use them like so `(sub prompt:1.1)` where 1.1 corresponds to +10% weight "
                 "You can tweak upwards more like `1.25` or downwards like `0.7`, but don't go above +=30%"
             ),

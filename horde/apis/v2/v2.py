@@ -512,7 +512,7 @@ class JobPop(JobPopTemplate):
 
 class JobSubmit(Resource):
     decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_submit_parser)
+    @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
     @api.response(400, 'Generation Already Submitted', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -1328,6 +1328,7 @@ class Filters(Resource):
     post_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
     post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     post_parser.add_argument("prompt", type=str, required=True, help="The prompt to check", location="json")
+    post_parser.add_argument("filter_type", type=int, default=None, required=False, help="Only check if it matches a specific type", location="json")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(post_parser)
@@ -1337,7 +1338,7 @@ class Filters(Resource):
         '''
         self.args = self.post_parser.parse_args()
         mod = check_for_mod(self.args.apikey, 'POST Filter')
-        suspicion, matches = prompt_checker(self.args.prompt)
+        suspicion, matches = prompt_checker(self.args.prompt, self.args.filter_type)
         logger.info(f"Mod {mod.get_unique_alias()} checked prompt {self.args.prompt}")
         return({"suspicion": suspicion, "matches": matches},200)
 

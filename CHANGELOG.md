@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3
+
+* R2 uploads now defaults to True
+* Fixed uploading images as censored=True causing a 404
+* Fixed not being able to serve models with >30 chars
+
+## 3.2 
+
+* Added Filtering API
+
 ## v2.7
 
 ### Features 
