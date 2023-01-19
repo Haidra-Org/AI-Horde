@@ -52,7 +52,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 * We have created some official tools with which to integrate into the Stable Horde
     * [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
-    * [Discord Bot](https://github.com/JamDon2/ai-horde-bot) which you [can add to your own server](https://discord.com/api/oauth2/authorize?client_id=1019572037360025650&permissions=8192&scope=bot) to be able to generate via the Stable Horde for free, and allow your users to transfer kudos between them.
+    * [Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord) which you [can add to your own server](https://discord.com/api/oauth2/authorize?client_id=1019572037360025650&permissions=8192&scope=bot) to be able to generate via the Stable Horde for free, and allow your users to transfer kudos between them.
     * [Mastodon Bots](https://github.com/db0/mastodon-stable-horde-generate) which you can use directly via Activity Pub to generate images.
         * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
         * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
@@ -60,8 +60,8 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 * The community has made the following
     * Bots
         * [Telegram Bot](https://t.me/CraiyonArtBot)
-        * [Discord Bot 1](https://harrisonvanderbyl.github.io/WriterBot/)
-        * [Discord Bot 2](https://github.com/ZeldaFan0225/Stable_Horde_Discord)
+        * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
+        * [Obsolete Discord Bot](https://github.com/JamDon2/ai-horde-bot)
     * Plugins
         * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
         * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)
