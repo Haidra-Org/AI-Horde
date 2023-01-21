@@ -205,6 +205,11 @@ class DuplicateGen(wze.BadRequest):
         self.specific = f"Processing Generation with ID {gen_id} already submitted."
         self.log = f"Worker '{worker}' attempted to provide duplicate generation for {gen_id}"
 
+class AbortedGen(wze.BadRequest):
+    def __init__(self, worker, gen_id):
+        self.specific = f"Processing Generation with ID {gen_id} took too long to process and has been aborted! Please check your worker speed and do not onboard worker which generate slower than 1 it/s!"
+        self.log = f"Worker '{worker}' attempted to provide aborted generation for {gen_id}."
+
 class RequestExpired(wze.Gone):
     def __init__(self, username):
         self.specific = f"Prompt Request Expired"

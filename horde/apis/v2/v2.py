@@ -76,6 +76,7 @@ handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
 handle_thing_not_found = api.errorhandler(e.ThingNotFound)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
+handle_aborted_gen = api.errorhandler(e.AbortedGen)(e.handle_bad_requests)
 handle_request_expired = api.errorhandler(e.RequestExpired)(e.handle_bad_requests)
 handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
@@ -553,6 +554,8 @@ class JobSubmit(Resource):
         )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
+        if self.kudos == -1:
+            raise e.AbortedGen(self.procgen.worker.name, self.args['id'])
 
 
 class TransferKudos(Resource):

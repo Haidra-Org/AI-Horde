@@ -47,8 +47,11 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):
-        if self.is_completed() or self.is_faulted():
+        if self.is_completed():
             return(0)
+        # We return -1 to know to send a different error
+        if self.is_faulted():
+            return(-1)
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
