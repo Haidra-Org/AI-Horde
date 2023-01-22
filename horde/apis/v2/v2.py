@@ -1444,7 +1444,13 @@ class FilterSingle(Resource):
         if not filter_id.isdigit():
             raise e.ThingNotFound("Filter", filter_id)
         self.args = self.get_parser.parse_args()
-        check_for_mod(self.args.apikey, 'GET FilterSingle')
+        mod = check_for_mod(
+            api_key = self.args.apikey, 
+            operation = 'GET FilterSingle',
+            whitelisted_users = [
+                "hlky#2047",
+            ],
+        )
         filter = Filter.query.filter_by(id=filter_id).first()
         if not filter:
             raise e.ThingNotFound('Filter', filter_id)
