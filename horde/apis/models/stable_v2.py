@@ -45,13 +45,13 @@ class Models(v2.Models):
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
             'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"]),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
+            'tiling': fields.Boolean(default=False,description="Set to True to create images that stitch together seamlessly"),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
             'ddim_steps': fields.Integer(default=30), 
             'n_iter': fields.Integer(default=1, description="The amount of images to generate"), 
             'use_nsfw_censor': fields.Boolean(description="When true will apply NSFW censoring model on the generation"),
-            'use_embeds': fields.Boolean(default=False, description="When true will use embeddings from the concepts library when doing the generation"),
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
