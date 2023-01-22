@@ -179,6 +179,12 @@ class GenerateTemplate(Resource):
                     self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                     CounterMeasures.report_suspicion(self.user_ip)
                 raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
+            for model_name in ["Hentai Diffusion", "PPP", "Hassanblend", "Zeipher Female Model", "Zack3D"]:
+                if model_name in self.models:
+                    prompt_10_suspicion, _ = prompt_checker(self.args.prompt, 10)
+                    if prompt_10_suspicion:
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
+
 
     
     # We split this into its own function, so that it may be overriden

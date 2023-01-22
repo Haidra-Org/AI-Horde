@@ -6,6 +6,11 @@
 * Fixed uploading images as censored=True causing a 404
 * Fixed not being able to serve models with >30 chars
 
+## 3.3
+
+* Added regex endpoint for filters
+* When trying to submit on an aborted gen, will get a different error than a duplicate one
+
 ## 3.2 
 
 * Added Filtering API
