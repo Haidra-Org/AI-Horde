@@ -316,3 +316,7 @@ class Models:
             "suspicion": fields.String(default=0, required=True, description="Rates how suspicious the provided prompt is. A suspicion over 2 means it would be blocked."),
             "matches": fields.List(fields.String(required=True, description="Which words in the prompt matched the filters")),
         })
+        self.response_model_filter_regex = api.model('FilterRegex', {
+            "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=10),
+            "regex": fields.String(required=True,description="The full regex for this filter type."),
+        })

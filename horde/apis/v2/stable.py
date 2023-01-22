@@ -696,4 +696,5 @@ api.add_resource(InterrogatePop, "/interrogate/pop")
 #TODO APIv2 Merge with status as a POST this part of /interrogate/<string:id>
 api.add_resource(InterrogateSubmit, "/interrogate/submit")
 api.add_resource(Filters, "/filters")
+api.add_resource(FilterRegex, "/filters/regex")
 api.add_resource(FilterSingle, "/filters/<string:filter_id>")

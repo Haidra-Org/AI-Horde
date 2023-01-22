@@ -38,6 +38,7 @@ api = Namespace('v2', 'API Version 2' )
 models = ModelsV2(api)
 parsers = ParsersV2()
 
+handle_bad_request = api.errorhandler(e.BadRequest)(e.handle_bad_requests)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
@@ -76,6 +77,7 @@ handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
 handle_thing_not_found = api.errorhandler(e.ThingNotFound)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
+handle_aborted_gen = api.errorhandler(e.AbortedGen)(e.handle_bad_requests)
 handle_request_expired = api.errorhandler(e.RequestExpired)(e.handle_bad_requests)
 handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_requests)
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
@@ -553,6 +555,8 @@ class JobSubmit(Resource):
         )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
+        if self.kudos == -1:
+            raise e.AbortedGen(self.procgen.worker.name, self.args['id'])
 
 
 class TransferKudos(Resource):
@@ -1299,6 +1303,9 @@ class Filters(Resource):
     # decorators = [limiter.limit("20/minute")]
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_filter_details, code=200, description='Filters List', as_list=True, skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def get(self):
         '''Moderator Only: A List all filters, or filtered by the query
         '''
@@ -1321,6 +1328,9 @@ class Filters(Resource):
     # decorators = [limiter.limit("20/minute")]
     @api.expect(put_parser,models.input_model_filter_put, validate=True)
     @api.marshal_with(models.response_model_filter_details, code=201, description='New Filter details')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def put(self):
         '''Moderator Only: Add a new regex filter
         '''
@@ -1348,6 +1358,9 @@ class Filters(Resource):
     # decorators = [limiter.limit("20/minute")]
     @api.expect(post_parser)
     @api.marshal_with(models.response_model_prompt_suspicion, code=200, description='Returns the suspicion of the provided prompt. A suspicion of 2 or more means it would be blocked.')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
         '''Moderator Only: Check The suspicion of the provided prompt
         '''
@@ -1365,6 +1378,42 @@ class Filters(Resource):
         logger.info(f"Mod {mod.get_unique_alias()} checked prompt {self.args.prompt}")
         return({"suspicion": suspicion, "matches": matches},200)
 
+class FilterRegex(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="args")
+
+    # decorators = [limiter.limit("20/minute")]
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_filter_regex, code=200, description='Filters Regex', as_list=True, skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def get(self):
+        '''Moderator Only: A List all filters, or filtered by the query
+        '''
+        self.args = self.get_parser.parse_args()
+        mod = check_for_mod(
+            api_key = self.args.apikey, 
+            operation = 'GET FilterRegex',
+            whitelisted_users = [
+                "hlky#2047",
+            ],
+        )
+        return_list = []
+        for id in prompt_checker.known_ids:
+            filter_id = f"filter_{id}"
+            if self.args.filter_type and id != self.args.filter_type:
+                continue
+            return_list.append(
+                {
+                    "filter_type": id,
+                    "regex": prompt_checker.regex[filter_id],
+                }
+            )
+        return (return_list, 200)
+
 class FilterSingle(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
@@ -1374,9 +1423,14 @@ class FilterSingle(Resource):
     @cache.cached(timeout=10)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_filter_details, code=200, description='Filters List', as_list=True, skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def get(self, filter_id):
         '''Moderator Only: Display a single filter
         '''
+        if type(filter_id) != int:
+            raise e.ThingNotFound("Filter", filter_id)
         self.args = self.get_parser.parse_args()
         check_for_mod(self.args.apikey, 'GET FilterSingle')
         filter = Filter.query.filter_by(id=filter_id).first()
@@ -1394,6 +1448,9 @@ class FilterSingle(Resource):
     # decorators = [limiter.limit("20/minute")]
     @api.expect(patch_parser,models.input_model_filter_patch, validate=True)
     @api.marshal_with(models.response_model_filter_details, code=200, description='Patched Filter details')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def patch(self, filter_id):
         '''Moderator Only: Modify an existing regex filter
         '''
@@ -1422,6 +1479,9 @@ class FilterSingle(Resource):
     # decorators = [limiter.limit("20/minute")]
     @api.expect(delete_parser)
     @api.marshal_with(models.response_model_simple_response, code=200, description='Filter Deleted')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def delete(self, filter_id):
         '''Moderator Only: Delete a regex filter
         '''
