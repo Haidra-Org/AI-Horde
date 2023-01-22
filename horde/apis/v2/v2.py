@@ -1368,6 +1368,39 @@ class Filters(Resource):
         logger.info(f"Mod {mod.get_unique_alias()} checked prompt {self.args.prompt}")
         return({"suspicion": suspicion, "matches": matches},200)
 
+class FilterRegex(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="args")
+
+    # decorators = [limiter.limit("20/minute")]
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_filter_regex, code=200, description='Filters Regex', as_list=True, skip_none=True)
+    def get(self):
+        '''Moderator Only: A List all filters, or filtered by the query
+        '''
+        self.args = self.get_parser.parse_args()
+        mod = check_for_mod(
+            api_key = self.args.apikey, 
+            operation = 'GET FilterRegex',
+            whitelisted_users = [
+                "hlky#2047",
+            ],
+        )
+        return_list = []
+        for id in prompt_checker.known_ids:
+            filter_id = f"filter_{id}"
+            if self.args.filter_type and id != self.args.filter_type:
+                continue
+            return_list.append(
+                {
+                    "filter_type": id,
+                    "regex": prompt_checker.regex[filter_id],
+                }
+            )
+        return (return_list, 200)
+
 class FilterSingle(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')

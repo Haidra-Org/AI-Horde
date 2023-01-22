@@ -10,6 +10,8 @@ from horde.database.functions import compile_regex_filter # Local Testing
 class PromptChecker:
     
     def __init__(self):
+        # I am using a string instead of just the integer ID of the filter
+        # Because I am using the same ID as they key in redis to keep thigs well organized
         self.regex = {
             "filter_10": None,
             "filter_11": None,
@@ -20,6 +22,8 @@ class PromptChecker:
             "filter_11": None,
             "filter_20": None,
         }
+        # Used for scripting outside of this class
+        self.known_ids = [10,11,20]
         self.filters1 = ["filter_10","filter_11"]
         self.filters2 = ["filter_20"]
         self.next_refresh = datetime.utcnow()
