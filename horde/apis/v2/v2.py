@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import literal
+from sqlalchemy import func, or_, and_
 
 from horde.database import functions as database
 from flask import request
@@ -1319,7 +1320,12 @@ class Filters(Resource):
         check_for_mod(self.args.apikey, 'GET Filter')
         filters = Filter.query
         if self.args.contains:
-            filters = filters.filter(Filter.regex.contains(self.args.contains))
+            filters = filters.filter(
+                or_(
+                    Filter.regex.contains(self.args.contains),
+                    Filter.description.contains(self.args.contains),
+                )
+            )
         if self.args.filter_type:
             filters = filters.filter(Filter.filter_type == self.args.filter_type)
         return([f.get_details() for f in filters.all()],200)
