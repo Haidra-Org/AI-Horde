@@ -1441,7 +1441,7 @@ class FilterSingle(Resource):
     def get(self, filter_id):
         '''Moderator Only: Display a single filter
         '''
-        if type(filter_id) != int:
+        if not filter_id.isdigit():
             raise e.ThingNotFound("Filter", filter_id)
         self.args = self.get_parser.parse_args()
         check_for_mod(self.args.apikey, 'GET FilterSingle')
