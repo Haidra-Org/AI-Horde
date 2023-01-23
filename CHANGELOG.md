@@ -6,6 +6,11 @@
 * Fixed uploading images as censored=True causing a 404
 * Fixed not being able to serve models with >30 chars
 
+## 3.4
+
+* Restricted generic terms like `girl` and `boy` from NSFW models
+* added `shared` boolean on `api/v2/generate/status` to know if a generation was shared to create the LAION dataset.
+
 ## 3.3
 
 * Added regex endpoint for filters
