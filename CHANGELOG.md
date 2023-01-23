@@ -9,6 +9,8 @@
 
 * Exposed bridge_agent in the worker info
 
+* api/v2/generate/async now supports `tiling` boolean in `params`. Check API/doc
+
 ## 3.4
 
 * Restricted generic terms like `girl` and `boy` from NSFW models
