@@ -13,6 +13,8 @@
 
    This will allow people to better know the capabilities of each worker 
 
+* Exposed worker_agent in the worker info
+
 ## 3.4
 
 * Restricted generic terms like `girl` and `boy` from NSFW models
