@@ -33,6 +33,7 @@ class Models(v2.Models):
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusStable', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
+            'shared': fields.Boolean(description="If True, These images have been shared with LAION."),
         })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver"]), 

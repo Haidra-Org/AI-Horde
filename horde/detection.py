@@ -28,6 +28,9 @@ class PromptChecker:
         self.filters2 = ["filter_20"]
         self.next_refresh = datetime.utcnow()
         self.refresh_regex()
+        # These are checked on top of the normal
+        self.nsfw_model_regex = re.compile(r"girl|boy|student|young", re.IGNORECASE)
+        self.nsfw_models = {"Hentai Diffusion", "PPP", "Hassanblend", "Zeipher Female Model", "Zack3D"}
 
     def refresh_regex(self):
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
@@ -70,5 +73,19 @@ class PromptChecker:
                         matching_groups.append(match_result.group())
                         break
         return prompt_suspicion,matching_groups
+
+    def check_nsfw_model_block(self, prompt, models):
+        logger.debug([prompt, models])
+        if not any(m in self.nsfw_models for m in models):
+            return False
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+        nsfw_match = self.nsfw_model_regex.search(prompt)
+        if nsfw_match:
+            return True
+        prompt_10_suspicion, _ = self(prompt, 10)
+        if prompt_10_suspicion:
+            return True
+        return False
 
 prompt_checker = PromptChecker()

@@ -269,3 +269,7 @@ class WaitingPromptExtended(WaitingPrompt):
             source_processing = self.source_processing
         logger.warning(f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
 
+    def get_status(self, **kwargs):
+        ret_dict = super().get_status(**kwargs)
+        ret_dict["shared"] = self.shared
+        return ret_dict
