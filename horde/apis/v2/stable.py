@@ -160,6 +160,10 @@ class AsyncGenerate(AsyncGenerate):
             shared=True
         if self.args.source_image:
             shared=False
+        # We never share explicit NSFW models.
+        nsfw_models = {"Hentai Diffusion", "PPP", "Hassanblend", "Zeipher Female Model", "Zack3D"}
+        if any(m in nsfw_models for m in self.models):
+            shared=False
         self.wp = WaitingPrompt(
             self.workers,
             self.models,
