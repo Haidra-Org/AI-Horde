@@ -243,6 +243,7 @@ class JobPop(JobPop):
             ipaddr = self.worker_ip,
             threads = self.args.threads,
             bridge_version = self.args.bridge_version,
+            bridge_agent = self.args.bridge_agent,
             allow_img2img = self.args.allow_img2img,
             allow_painting = self.args.allow_painting,
             allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
@@ -502,6 +503,7 @@ class InterrogatePop(JobPopTemplate):
     post_parser.add_argument("forms", type=list, required=False, help="The forms currently supported on this worker", location="json")
     post_parser.add_argument("amount", type=int, required=False, default=1, help="How many forms to pop at the same time", location="json")
     post_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
+    post_parser.add_argument("bridge_agent", type=str, required=False, default="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", location="json")
     post_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
 
 
@@ -604,6 +606,7 @@ class InterrogatePop(JobPopTemplate):
             ipaddr = self.worker_ip,
             threads = self.args.threads,
             bridge_version = self.args.bridge_version,
+            bridge_agent = self.args.bridge_agent,
             priority_usernames = self.priority_usernames,
         )
 
