@@ -382,6 +382,7 @@ class WorkerTemplate(db.Model):
             "trusted": self.user.trusted,
             "online": not self.is_stale(),
             "team": {"id": str(self.team.id),"name": self.team.name} if self.team else 'None',
+            "bridge_agent": self.bridge_agent,
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
