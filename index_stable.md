@@ -67,6 +67,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
         * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)
         * [Unreal Engine Plugin](https://github.com/Mystfit/Unreal-StableDiffusionTools)
         * [Automatic 1111 Web UI](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)
+        * [Blender Plugin](https://github.com/benrugg/AI-Render)
     * Other
         * [npm SDK 1](https://www.npmjs.com/package/@zeldafan0225/stable_horde)
         * [npm SDK 2](https://www.npmjs.com/package/stable-horde-api)
