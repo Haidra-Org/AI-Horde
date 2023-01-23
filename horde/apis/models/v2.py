@@ -21,6 +21,7 @@ class Parsers:
     job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
     job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
     job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
+    job_pop_parser.add_argument("bridge_agent", type=str, required=False, default="unknown", location="json")
     job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
     job_pop_parser.add_argument("require_upfront_kudos", type=bool, required=False, default=False, help="If True, this worker will only pick up requests where the owner has the required kudos to consume already available.", location="json")
 
@@ -119,6 +120,7 @@ class Models:
             'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
             'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
+            'bridge_agent': fields.String(required=False, default="unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=10),
             'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
         })
@@ -140,6 +142,7 @@ class Models:
             'models': fields.List(fields.String(description="Which models this worker if offerring")),
             'team': fields.Nested(self.response_model_team_details_lite, "The Team to which this worker is dedicated."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",min_length=5,max_length=500),
+            'bridge_agent': fields.String(required=True, default="unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The bridge agent name, version and website", max_length=1000),
         })
 
         self.input_model_worker_modify = api.model('ModifyWorkerInput', {

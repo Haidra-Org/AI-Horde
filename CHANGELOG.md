@@ -1,10 +1,13 @@
 # Changelog
 
-## 3.3
+## 3.5
 
-* R2 uploads now defaults to True
-* Fixed uploading images as censored=True causing a 404
-* Fixed not being able to serve models with >30 chars
+* Worker Bridges now have to send a new field in the pop payload called bridge_agent. 
+    It should be in the form of `name:version:url`. For example `AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker`
+
+   This will allow people to better know the capabilities of each worker 
+
+* Exposed bridge_agent in the worker info
 
 ## 3.4
 
@@ -13,6 +16,9 @@
 
 ## 3.3
 
+* R2 uploads now defaults to True
+* Fixed uploading images as censored=True causing a 404
+* Fixed not being able to serve models with >30 chars
 * Added regex endpoint for filters
 * When trying to submit on an aborted gen, will get a different error than a duplicate one
 

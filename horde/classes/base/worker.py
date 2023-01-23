@@ -83,6 +83,7 @@ class WorkerTemplate(db.Model):
     uptime = db.Column(db.BigInteger, default=0, nullable=False)
     threads = db.Column(db.Integer, default=1, nullable=False)
     bridge_version = db.Column(db.Integer, default=1, nullable=False)
+    bridge_agent = db.Column(db.Text, default="unknown", nullable=False)
     last_reward_uptime = db.Column(db.BigInteger, default=0, nullable=False)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
@@ -195,6 +196,7 @@ class WorkerTemplate(db.Model):
     def check_in(self, **kwargs):
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
+        self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown"))
         self.threads = kwargs.get("threads", 1)
         self.require_upfront_kudos = kwargs.get('require_upfront_kudos', False)
         self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
@@ -380,6 +382,7 @@ class WorkerTemplate(db.Model):
             "trusted": self.user.trusted,
             "online": not self.is_stale(),
             "team": {"id": str(self.team.id),"name": self.team.name} if self.team else 'None',
+            "bridge_agent": self.bridge_agent,
         }
         if details_privilege >= 2:
             ret_dict['paused'] = self.paused
