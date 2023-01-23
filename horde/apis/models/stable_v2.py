@@ -176,7 +176,7 @@ class Models(v2.Models):
             'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"], unique=True)),
             'amount': fields.Integer(default=1, description="The amount of forms to pop at the same time"),
             'bridge_version': fields.Integer(default=1, description="The version of the bridge used by this worker"),
-            'bridge_agent': fields.String(required=False, default="Unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
+            'bridge_agent': fields.String(required=False, default="unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
             'threads': fields.Integer(default=1, description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=100),
         })
         self.response_model_interrogation_pop_payload = api.model('InterrogationPopFormPayload', {
