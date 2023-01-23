@@ -4,6 +4,22 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-23",
+            "newspiece": (
+                "I have tightened the rules around NSFW models. As they seem to be straying into 'unethical' territory even when not explicitly prompted, "
+                "I am forced to tighten the safety controls around them. From now on, otherwise generic terms for young people like `girl` ,`boy` etc "
+                "Cannot be used on those models. Please either use terms like `woman` or `man` or switch to a non-NSFW model instead."
+            ),
+            "importance": "Information"
+        },
+        {
+            "date_published": "2023-01-23",
+            "newspiece": (
+                "The horde now has a [Blender Plugin](https://github.com/benrugg/AI-Render)!"
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-18",
             "newspiece": (
                 "We now have a [New Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord), courtesy of Zelda_Fan#0225. Check out [their other bot](https://slashbot.de/) as well! "
