@@ -390,6 +390,8 @@ class JobPopTemplate(Resource):
         if not self.worker:
             if is_profane(self.worker_name):
                 raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
+            if is_profane(self.bridge_agent):
+                raise e.Profanity(self.user.get_unique_alias(), self.bridge_agent, 'bridge agent')
             worker_count = self.user.count_workers()
             if invite_only.active and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)

@@ -142,6 +142,7 @@ class Models:
             'models': fields.List(fields.String(description="Which models this worker if offerring")),
             'team': fields.Nested(self.response_model_team_details_lite, "The Team to which this worker is dedicated."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",min_length=5,max_length=500),
+            'bridge_agent': fields.String(required=True, default="unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The bridge agent name, version and website", max_length=1000),
         })
 
         self.input_model_worker_modify = api.model('ModifyWorkerInput', {

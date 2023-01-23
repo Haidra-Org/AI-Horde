@@ -196,7 +196,7 @@ class WorkerTemplate(db.Model):
     def check_in(self, **kwargs):
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
-        self.bridge_agent = kwargs.get("bridge_agent", "unknown")
+        self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown"))
         self.threads = kwargs.get("threads", 1)
         self.require_upfront_kudos = kwargs.get('require_upfront_kudos', False)
         self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
