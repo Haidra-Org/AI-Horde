@@ -29,7 +29,7 @@ class PromptChecker:
         self.next_refresh = datetime.utcnow()
         self.refresh_regex()
         # These are checked on top of the normal
-        self.nsfw_model_regex = re.compile(r"girl|boy|student|young", re.IGNORECASE)
+        self.nsfw_model_regex = re.compile(r"girl|boy|student|young|little|lil|small|tiny", re.IGNORECASE)
         self.nsfw_models = {"Hentai Diffusion", "PPP", "Hassanblend", "Zeipher Female Model", "Zack3D"}
 
     def refresh_regex(self):
