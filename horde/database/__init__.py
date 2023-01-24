@@ -10,7 +10,7 @@ worker_cacher = PrimaryTimedFunction(25, threads.store_worker_list, quorum=quoru
 model_cacher = PrimaryTimedFunction(10, threads.store_available_models, quorum=quorum)
 wp_cleaner = PrimaryTimedFunction(60, threads.check_waiting_prompts, quorum=quorum)
 interrogations_cleaner = PrimaryTimedFunction(60, threads.check_interrogations, quorum=quorum)
-monthly_kudos = PrimaryTimedFunction(86400, threads.assign_monthly_kudos, quorum=quorum)
+monthly_kudos = PrimaryTimedFunction(40000, threads.assign_monthly_kudos, quorum=quorum)
 totals_store = PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
 prune_stats = PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
 patreon_cacher = PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
