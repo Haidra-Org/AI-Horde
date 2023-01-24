@@ -503,7 +503,7 @@ class InterrogatePop(JobPopTemplate):
     post_parser.add_argument("forms", type=list, required=False, help="The forms currently supported on this worker", location="json")
     post_parser.add_argument("amount", type=int, required=False, default=1, help="How many forms to pop at the same time", location="json")
     post_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
-    post_parser.add_argument("bridge_agent", type=str, required=False, default="unknown", location="json")
+    post_parser.add_argument("bridge_agent", type=str, required=False, default="unknown:0:unknown", location="json")
     post_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
 
 
