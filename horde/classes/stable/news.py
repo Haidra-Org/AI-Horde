@@ -4,6 +4,13 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-01-24",
+            "newspiece": (
+                'We now support sending tiling requests! Send `"tiling":true` into your payload params to request an image that seamlessly tiles.'
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-23",
             "newspiece": (
                 "I have tightened the rules around NSFW models. As they seem to be straying into 'unethical' territory even when not explicitly prompted, "

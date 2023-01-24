@@ -83,7 +83,7 @@ class WorkerTemplate(db.Model):
     uptime = db.Column(db.BigInteger, default=0, nullable=False)
     threads = db.Column(db.Integer, default=1, nullable=False)
     bridge_version = db.Column(db.Integer, default=1, nullable=False)
-    bridge_agent = db.Column(db.Text, default="unknown", nullable=False)
+    bridge_agent = db.Column(db.Text, default="unknown", nullable=False, index=True)
     last_reward_uptime = db.Column(db.BigInteger, default=0, nullable=False)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)

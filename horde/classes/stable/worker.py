@@ -3,6 +3,7 @@ from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
+from horde.bridge_reference import check_bridge_capability
 
 class WorkerExtended(Worker):
     __mapper_args__ = {
@@ -75,6 +76,8 @@ class WorkerExtended(Worker):
         #logger.warning(datetime.utcnow())
         if not waiting_prompt.source_image and (self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]):
             return [False, 'models']
+        if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
+            return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
             return [False, 'painting']
