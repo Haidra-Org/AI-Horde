@@ -20,6 +20,18 @@ BRIDGE_CAPABILITIES = {
         2: {
             "img2img",
         },
+    },
+    "HordeAutoWebBridge": {        
+        2: {
+            "tiling",
+        },
+        1: {            
+            "painting",
+            "img2img",
+            "karras", 
+            ## note that a1111 does not have karras for samplers dpm_fast, euler_a, euler and heun. 
+            ## all other samplers should work with karras.
+        },
     }
 }
 
