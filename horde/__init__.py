@@ -12,8 +12,8 @@ from horde.apis import apiv1, apiv2
 from horde.argparser import args, invite_only, raid, maintenance
 from horde.flask import HORDE, cache
 from horde.logger import logger
-
 from horde.limiter import limiter
+
 
 HORDE.register_blueprint(apiv2)
 if args.horde == 'kobold':
