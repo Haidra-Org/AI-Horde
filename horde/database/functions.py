@@ -386,6 +386,7 @@ def count_totals():
 
 def retrieve_totals():
     '''Retrieves horde totals from Redis cache'''
+    queued_thing = f"queued_{thing_name}"
     if horde_r is None:
         return {
             "queued_requests": 0,
