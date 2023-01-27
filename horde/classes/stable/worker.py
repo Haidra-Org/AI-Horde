@@ -3,7 +3,7 @@ from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
-from horde.bridge_reference import check_bridge_capability
+from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
 class WorkerExtended(Worker):
     __mapper_args__ = {
@@ -59,10 +59,11 @@ class WorkerExtended(Worker):
             return [False, 'painting']
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
         #logger.warning(datetime.utcnow())
-        if waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a') in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"] and self.bridge_version < 5:
-            return [False, 'bridge_version']
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.gen_payload.get('karras', False) and self.bridge_version < 6:
+        if check_sampler_capability(
+            waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a'), 
+            self.bridge_agent, 
+            waiting_prompt.gen_payload.get('karras', False)
+        ):
             return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and self.bridge_version < 7:
