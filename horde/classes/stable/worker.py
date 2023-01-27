@@ -59,7 +59,7 @@ class WorkerExtended(Worker):
             return [False, 'painting']
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
         #logger.warning(datetime.utcnow())
-        if check_sampler_capability(
+        if not check_sampler_capability(
             waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a'), 
             self.bridge_agent, 
             waiting_prompt.gen_payload.get('karras', False)
