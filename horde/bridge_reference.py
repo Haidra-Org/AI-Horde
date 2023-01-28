@@ -19,6 +19,16 @@ BRIDGE_CAPABILITIES = {
             "CodeFormers",
         },
     },
+    "HordeAutoWebBridge": {    
+        2: {
+            "tiling",
+        },
+        1: {            
+            "painting",
+            "img2img",
+            "karras",            
+        },
+    }
 }
 
 BRIDGE_SAMPLERS = {
@@ -57,10 +67,33 @@ BRIDGE_SAMPLERS = {
                 "k_dpm_adaptive", 
                 "k_dpmpp_2s_a", 
                 "k_dpmpp_2m",
+                "k_dpmpp_sde",
             },
-            "no karras": {},
+            "no karras": {
+                "ddim",
+                "plms",
+            },
         },
     },
+    "HordeAutoWebBridge": {    
+         1: {
+            "karras": {
+                "k_lms",   
+                "k_dpm_2", 
+                "k_dpm_2_a",                
+                "k_dpmpp_2s_a", 
+                "k_dpmpp_2m", 
+                "dpmsolver", 
+            },
+            "no karras": {
+                "k_heun", 
+                "k_euler", 
+                "k_euler_a", 
+                "k_dpm_fast", 
+                "k_dpm_adaptive", 
+            }
+        },
+    }
 }
 
 def parse_bridge_agent(bridge_agent):
