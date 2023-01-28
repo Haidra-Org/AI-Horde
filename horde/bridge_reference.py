@@ -8,7 +8,17 @@ BRIDGE_CAPABILITIES = {
         6: {"karras"},
         4: {"inpainting"},
         2: {"img2img"},
-    }
+    },
+    "SD-WebUI Stable Horde Worker Bridge": {
+        2: {"tiling"},
+        1: {
+            "img2img",
+            "inpainting",
+            "karras",
+            "r2",
+            "CodeFormers",
+        },
+    },
 }
 
 BRIDGE_SAMPLERS = {
@@ -33,7 +43,24 @@ BRIDGE_SAMPLERS = {
             },
             "no karras": {}
         },
-    }
+    },
+    "SD-WebUI Stable Horde Worker Bridge": {
+        1: {
+            "karras": {
+                "k_lms", 
+                "k_heun", 
+                "k_euler", 
+                "k_euler_a", 
+                "k_dpm_2", 
+                "k_dpm_2_a", 
+                "k_dpm_fast", 
+                "k_dpm_adaptive", 
+                "k_dpmpp_2s_a", 
+                "k_dpmpp_2m",
+            },
+            "no karras": {},
+        },
+    },
 }
 
 def parse_bridge_agent(bridge_agent):
