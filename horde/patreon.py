@@ -60,9 +60,9 @@ class PatreonCache(PrimaryTimedFunction):
             logger.warning(f"Found patron '{user_id}' with non-standard entitlement: {eamount}")
             return(0)
 
-
 patrons = PatreonCache(3600, None)
-# We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
-patrons.call_function()
-# pp = pprint.PrettyPrinter(depth=3)
-# pp.pprint(patrons.patrons)
+    # We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
+if horde_r:
+    patrons.call_function()
+    # pp = pprint.PrettyPrinter(depth=3)
+    # pp.pprint(patrons.patrons)

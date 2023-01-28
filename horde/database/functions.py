@@ -233,12 +233,14 @@ def get_available_models():
 
 def retrieve_available_models():
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
+    if horde_r is None:
+        return []
     model_cache = horde_r.get('models_cache')
     try:
         models_ret = json.loads(model_cache)
     except TypeError as e:
         logger.error(f"Model cache could not be loaded: {model_cache}")
-        return([])
+        return []
     if models_ret is None:
         models_ret = get_available_models()
     return(models_ret)
@@ -384,6 +386,12 @@ def count_totals():
 
 def retrieve_totals():
     '''Retrieves horde totals from Redis cache'''
+    queued_thing = f"queued_{thing_name}"
+    if horde_r is None:
+        return {
+            "queued_requests": 0,
+            queued_thing: 0,
+        }
     totals_ret = horde_r.get('totals_cache')
     if totals_ret is None:
         return {
@@ -391,6 +399,7 @@ def retrieve_totals():
             queued_thing: 0,
         }
     return(json.loads(totals_ret))
+
 
 def get_organized_wps_by_model():
     org = {}
@@ -619,6 +628,8 @@ def wp_has_valid_workers(wp, limited_workers_ids = None):
 
 @logger.catch(reraise=True)
 def retrieve_prioritized_wp_queue():
+    if horde_r is None:
+        return None
     cached_queue = horde_r.get('wp_cache')
     if cached_queue is None:
         return None
