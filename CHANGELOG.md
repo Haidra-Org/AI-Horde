@@ -1,5 +1,12 @@
 # Changelog
 
+
+## 3.6
+
+* Workers can now report back if a generation is faulted or censored by using the new "state" key. The "censored" key is now obolete and will be removed.
+* Horde will now ignore unknown models
+* Can now send "1girl", but not "girl" to Hentai Diffusion
+
 ## 3.5
 
 * Worker Bridges now have to send a new field in the pop payload called bridge_agent. 
