@@ -42,6 +42,19 @@ class ProcessingGenerationExtended(ProcessingGeneration):
 
 
     def set_generation(self, generation, things_per_sec, **kwargs):
+        if kwargs.get("censored", False):
+            self.censored = True
+        state = kwargs.get("state", 'ok')
+        if state == 'censored':
+            self.censored = True
+            db.session.commit()
+        elif state == "faulted":
+            self.abort()
+        if self.is_completed():
+            return(0)
+        # We return -1 to know to send a different error
+        if self.is_faulted():
+            return(-1)
         if self.wp.r2 and generation != "R2":
             logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} uploaded an R2 request as b64. Converting...")
             if self.wp.shared:
@@ -59,14 +72,6 @@ class ProcessingGenerationExtended(ProcessingGeneration):
                 # This signifies to send the download URL
                 generation = "R2"
                 os.remove(filename)
-        if kwargs.get("censored", False):
-            self.censored = True
-        state = kwargs.get("state", 'ok')
-        if state == 'censored':
-            self.censored = True
-            db.session.commit()
-        elif state == "faulted":
-            self.abort()
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
