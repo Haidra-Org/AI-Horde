@@ -619,7 +619,7 @@ class InterrogateSubmit(Resource):
     post_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
     post_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
     post_parser.add_argument("result", type=dict, required=True, help="The completed interrogation form results", location="json")
-    post_parser.add_argument("state", type=str, required=True, default='ok', help="The state of this returned generation.", location="json")
+    post_parser.add_argument("state", type=str, required=False, default='ok', help="The state of this returned generation.", location="json")
 
     @api.expect(post_parser)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Interrogation Submitted')
@@ -633,6 +633,15 @@ class InterrogateSubmit(Resource):
         '''
         self.args = self.post_parser.parse_args()
         self.validate()
+        self.kudos = self.form.deliver(
+            result=self.args.result, 
+            state=self.args.state, 
+        )
+        # -1 means faulted
+        if self.kudos == -1
+            return({"reward": 0}, 200)
+        if self.kudos == 0 and not self.form.worker.maintenance:
+            raise e.DuplicateGen(self.form.worker.name, self.args['id'])
         return({"reward": self.kudos}, 200)
 
     def validate(self):
@@ -644,11 +653,6 @@ class InterrogateSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.form.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.form.worker.name)
-        self.kudos = self.form.deliver(
-            result=self.args.result, 
-        )
-        if self.kudos == 0 and not self.form.worker.maintenance:
-            raise e.DuplicateGen(self.form.worker.name, self.args['id'])
 
 
 

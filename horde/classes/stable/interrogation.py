@@ -58,9 +58,12 @@ class InterrogationForms(db.Model):
             "source_image": self.interrogation.source_image,
         }
     
-    def deliver(self, result):
+    def deliver(self, result, state):
         if self.state != State.PROCESSING:
             return(0)
+        if state == "faulted":
+            self.abort()
+            return(-1)
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
         if not self.interrogation.r2stored:
             horde_r.setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
