@@ -558,6 +558,7 @@ class JobSubmit(Resource):
             things_per_sec=things_per_sec, 
             seed=self.args.seed,
             censored=self.args.censored,
+            state=self.args.state,
         )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
