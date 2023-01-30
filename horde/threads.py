@@ -49,6 +49,7 @@ class ModelReference(PrimaryTimedFunction):
     quorum = None
     reference = None
     stable_diffusion_names = set()
+    nsfw_models = set()
 
     def call_function(self):
         '''Retrieves to nataili model reference and stores in it a var'''
@@ -61,6 +62,8 @@ class ModelReference(PrimaryTimedFunction):
             for model in self.reference:
                 if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2"}:
                     self.stable_diffusion_names.add(model)
+                    if self.reference[model].get("nsfw"):
+                        self.nsfw_models.add(model)
 
         except Exception:
             logger.error(f"Error when downloading known models list: {e}")
