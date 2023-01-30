@@ -619,6 +619,7 @@ class InterrogateSubmit(Resource):
     post_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
     post_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
     post_parser.add_argument("result", type=dict, required=True, help="The completed interrogation form results", location="json")
+    post_parser.add_argument("state", type=str, required=True, default='ok', help="The state of this returned generation.", location="json")
 
     @api.expect(post_parser)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Interrogation Submitted')

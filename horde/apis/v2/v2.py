@@ -558,11 +558,16 @@ class JobSubmit(Resource):
             things_per_sec=things_per_sec, 
             seed=self.args.seed,
             censored=self.args.censored,
+            state=self.args.state,
         )
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
         if self.kudos == -1:
-            raise e.AbortedGen(self.procgen.worker.name, self.args['id'])
+            # We don't want to report an error when they sent a faulted request themselves
+            if self.args.state == "faulted":
+                self.kudos = 0
+            else:
+                raise e.AbortedGen(self.procgen.worker.name, self.args['id'])
 
 
 class TransferKudos(Resource):

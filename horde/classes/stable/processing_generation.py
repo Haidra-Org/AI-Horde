@@ -61,7 +61,12 @@ class ProcessingGenerationExtended(ProcessingGeneration):
                 os.remove(filename)
         if kwargs.get("censored", False):
             self.censored = True
+        state = kwargs.get("state", 'ok')
+        if state == 'censored':
+            self.censored = True
             db.session.commit()
+        elif state == "faulted":
+            self.abort()
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
