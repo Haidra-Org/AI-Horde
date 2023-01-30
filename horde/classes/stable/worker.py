@@ -5,6 +5,8 @@ from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 from horde.threads import model_reference
+from horde import exceptions as e
+from horde.utils import sanitize_string
 
 class WorkerExtended(Worker):
     __mapper_args__ = {
@@ -130,4 +132,6 @@ class WorkerExtended(Worker):
         for model in unchecked_models:
             if model in model_reference.stable_diffusion_names:
                 models.add(model)
+        if len(models) == 0:
+            raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models

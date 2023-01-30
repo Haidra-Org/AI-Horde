@@ -60,7 +60,7 @@ class ModelReference(PrimaryTimedFunction):
             self.stable_diffusion_names = set()
             for model in self.reference:
                 if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2"}:
-                    stable_diffusion_names.add(model)
+                    self.stable_diffusion_names.add(model)
 
         except Exception:
             logger.error(f"Error when downloading known models list: {e}")
