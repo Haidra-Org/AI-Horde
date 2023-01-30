@@ -565,7 +565,7 @@ class JobSubmit(Resource):
         if self.kudos == -1:
             # We don't want to report an error when they sent a faulted request themselves
             if self.args.state == "faulted":
-                return({"reward": 0}, 200)
+                self.kudos = 0
             else:
                 raise e.AbortedGen(self.procgen.worker.name, self.args['id'])
 
