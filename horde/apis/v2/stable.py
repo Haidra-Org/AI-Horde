@@ -638,7 +638,7 @@ class InterrogateSubmit(Resource):
             state=self.args.state, 
         )
         # -1 means faulted
-        if self.kudos == -1
+        if self.kudos == -1:
             return({"reward": 0}, 200)
         if self.kudos == 0 and not self.form.worker.maintenance:
             raise e.DuplicateGen(self.form.worker.name, self.args['id'])
