@@ -12,7 +12,6 @@ from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_thres
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
-
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 class WorkerStats(db.Model):
@@ -432,10 +431,7 @@ class Worker(WorkerTemplate):
         return [m.name for m in model_names]
 
     def set_models(self, models):
-        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
-        models = [sanitize_string(model_name[0:100]) for model_name in models]
-        del models[100:]
-        models = set(models)
+        models = self.parse_models(models)
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
         existing_model_names = set([m.model for m in existing_models.all()])
         if existing_model_names == models:
@@ -446,6 +442,14 @@ class Worker(WorkerTemplate):
             db.session.add(model)
         db.session.commit()
 
+    def parse_models(self, models):
+        '''Parses the models provided by the worker into a set
+        Using an extra function to allow override by different types of worker
+        '''
+        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
+        models = [sanitize_string(model_name[0:100]) for model_name in models]
+        del models[100:]
+        return set(models)
 
     def can_generate(self, waiting_prompt):
         '''Takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it'''

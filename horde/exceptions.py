@@ -1,5 +1,5 @@
 from werkzeug import exceptions as wze
-from .. logger import logger
+from horde.logger import logger
 
 class BadRequest(wze.BadRequest):
     def __init__(self, message):

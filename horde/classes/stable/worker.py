@@ -4,6 +4,9 @@ from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
+from horde.threads import model_reference
+from horde import exceptions as e
+from horde.utils import sanitize_string
 
 class WorkerExtended(Worker):
     __mapper_args__ = {
@@ -120,3 +123,15 @@ class WorkerExtended(Worker):
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
         return ret_dict
+
+    def parse_models(self, models):
+        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
+        unchecked_models = [sanitize_string(model_name[0:100]) for model_name in models]
+        del unchecked_models[100:]
+        models = set()
+        for model in unchecked_models:
+            if model in model_reference.stable_diffusion_names:
+                models.add(model)
+        if len(models) == 0:
+            raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
+        return models

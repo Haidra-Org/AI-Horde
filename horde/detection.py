@@ -6,6 +6,7 @@ from horde.logger import logger
 from horde.horde_redis import horde_r
 from horde.flask import HORDE, SQLITE_MODE # Local Testing
 from horde.database.functions import compile_regex_filter # Local Testing
+from horde.threads import model_reference
 
 class PromptChecker:
     
@@ -30,7 +31,7 @@ class PromptChecker:
         self.refresh_regex()
         # These are checked on top of the normal
         self.nsfw_model_regex = re.compile(r"girl|boy|student|young|little|lil|small|tiny", re.IGNORECASE)
-        self.nsfw_models = {"Hentai Diffusion", "PPP", "Hassanblend", "Zeipher Female Model", "Zack3D"}
+        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|(?<!1)boy|student|young|little|lil|small|tiny", re.IGNORECASE)
 
     def refresh_regex(self):
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
@@ -76,11 +77,14 @@ class PromptChecker:
 
     def check_nsfw_model_block(self, prompt, models):
         logger.debug([prompt, models])
-        if not any(m in self.nsfw_models for m in models):
+        if not any(m in model_reference.nsfw_models for m in models):
             return False
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
-        nsfw_match = self.nsfw_model_regex.search(prompt)
+        if "Hentai Diffusion" in models and len(models) == 1:
+            nsfw_match = self.nsfw_model_anime_regex.search(prompt)
+        else:
+            nsfw_match = self.nsfw_model_regex.search(prompt)
         if nsfw_match:
             return True
         prompt_10_suspicion, _ = self(prompt, 10)

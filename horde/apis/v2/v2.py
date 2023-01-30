@@ -16,7 +16,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.argparser import args, maintenance, invite_only, raid
 from horde.apis import ModelsV2, ParsersV2
-from horde.apis import exceptions as e
+from horde import exceptions as e
 from horde.classes import stats, Worker, Team, WaitingPrompt, News, User, Filter
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string

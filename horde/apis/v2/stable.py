@@ -11,7 +11,7 @@ from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
 from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
-from ..exceptions import ImageValidationFailed
+from horde.exceptions import ImageValidationFailed
 
 
 def convert_source_image_to_pil(source_image_b64):
