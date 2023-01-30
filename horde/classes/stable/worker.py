@@ -4,6 +4,7 @@ from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
+from horde.threads import model_reference
 
 class WorkerExtended(Worker):
     __mapper_args__ = {
@@ -120,3 +121,21 @@ class WorkerExtended(Worker):
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
         return ret_dict
+
+    def set_models(self, models):
+        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
+        models = [sanitize_string(model_name[0:100]) for model_name in models]
+        for model in models:
+            if model not in model_reference.keys():
+                
+        del models[100:]
+        models = set(models)
+        existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
+        existing_model_names = set([m.model for m in existing_models.all()])
+        if existing_model_names == models:
+            return
+        existing_models.delete()
+        for model_name in models:
+            model = WorkerModel(worker_id=self.id,model=model_name)
+            db.session.add(model)
+        db.session.commit()

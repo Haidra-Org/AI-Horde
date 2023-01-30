@@ -12,7 +12,6 @@ from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_thres
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
-
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 class WorkerStats(db.Model):
@@ -440,6 +439,7 @@ class Worker(WorkerTemplate):
         existing_model_names = set([m.model for m in existing_models.all()])
         if existing_model_names == models:
             return
+        
         existing_models.delete()
         for model_name in models:
             model = WorkerModel(worker_id=self.id,model=model_name)

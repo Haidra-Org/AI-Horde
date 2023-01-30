@@ -48,6 +48,7 @@ class PrimaryTimedFunction:
 class ModelReference(PrimaryTimedFunction):
     quorum = None
     reference = None
+    stable_diffusion_names = set()
 
     def call_function(self):
         '''Retrieves to nataili model reference and stores in it a var'''
@@ -56,6 +57,11 @@ class ModelReference(PrimaryTimedFunction):
         try:
             self.reference = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
             # logger.debug(self.reference)
+            self.stable_diffusion_names = set()
+            for model in self.reference:
+                if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2"}:
+                    stable_diffusion_names.add(model)
+
         except Exception:
             logger.error(f"Error when downloading known models list: {e}")
 
