@@ -29,7 +29,7 @@ class Parsers:
     job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
     job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
     job_submit_parser.add_argument("generation", type=str, required=True, help="The generated output", location="json")
-    job_submit_parser.add_argument("state", type=str, required=True, default='ok', help="The state of this returned generation.", location="json")
+    job_submit_parser.add_argument("state", type=str, required=False, default='ok', help="The state of this returned generation.", location="json")
 
 
 class Models:
@@ -95,7 +95,7 @@ class Models:
         self.input_model_job_submit = api.model('SubmitInput', {
             'id': fields.String(required=True, description="The UUID of this generation", example="00000000-0000-0000-0000-000000000000"), 
             'generation': fields.String(example="R2", required=False, description="R2 result was uploaded to R2, else the string of the result."),
-            'state': fields.String(title="Generation State", required=True, default='ok', enum=["ok", "censored", "faulted"], description="The state of this generation."), 
+            'state': fields.String(title="Generation State", required=False, default='ok', enum=["ok", "censored", "faulted"], description="The state of this generation."), 
         })
         self.response_model_job_submit = api.model('GenerationSubmitted', {
             'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),
