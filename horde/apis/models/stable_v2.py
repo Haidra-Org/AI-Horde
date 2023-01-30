@@ -86,7 +86,6 @@ class Models(v2.Models):
         self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
             'seed': fields.Integer(required=True, description="The seed for this generation"), 
             'censored': fields.Boolean(required=False, default=False,description="If True, this resulting image has been censored"),
-            'state': fields.Boolean(required=False, default=False,description="If True, this resulting image has been censored"),
         })
 
 
