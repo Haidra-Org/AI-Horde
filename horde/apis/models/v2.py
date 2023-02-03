@@ -220,6 +220,7 @@ class Models:
             "monthly_kudos": fields.Integer(description="When specified, will start assigning the user monthly kudos, starting now!"),
             "username": fields.String(description="When specified, will change the username. No profanity allowed!",min_length=3,max_length=100),
             "trusted": fields.Boolean(example=False,description="When set to true,the user and their servers will not be affected by suspicion"),
+            "flagged": fields.Boolean(example=False,description="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance."),
             "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0"),
             "contact": fields.String(example="email@example.com", description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",min_length=5,max_length=500),
         })
