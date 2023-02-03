@@ -1,6 +1,10 @@
 # Changelog
 
 
+## 3.7
+
+* Added the ability to mark users as flagged. A flagged user cannot transfer or be transferred kudos and all their workers are set into permanent maintenance
+
 ## 3.6
 
 * Workers can now report back if a generation is faulted or censored by using the new "state" key. The "censored" key is now obolete and will be removed.
