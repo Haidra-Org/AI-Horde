@@ -59,6 +59,7 @@ class User(db.Model):
     moderator = db.Column(db.Boolean, default=False, nullable=False)
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
     trusted = db.Column(db.Boolean, default=False, nullable=False)
+    flagged = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
     workers = db.relationship(f"WorkerExtended", back_populates="user", cascade="all, delete-orphan")
@@ -123,6 +124,13 @@ class User(db.Model):
         if self.trusted:
             for worker in self.workers:
                 worker.paused = False
+
+    def set_flagged(self, is_flagged):
+        # Anonymous can never be flagged
+        if self.is_anon():
+            return
+        self.flagged = is_flagged
+        db.session.commit()
 
     def set_moderator(self,is_moderator):
         if self.is_anon():
@@ -363,6 +371,7 @@ class User(db.Model):
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
             "trusted": self.trusted,
+            "flagged": self.flagged,
             "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
             "account_age": (datetime.utcnow() - self.created).seconds,

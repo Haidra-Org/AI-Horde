@@ -140,6 +140,7 @@ class Models:
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
+            "flagged": fields.Boolean(description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
             "uncompleted_jobs": fields.Integer(example=0,description="How many jobs this worker has left uncompleted after it started them."),
             'models': fields.List(fields.String(description="Which models this worker if offerring")),
@@ -199,6 +200,7 @@ class Models:
             "worker_ids": fields.List(fields.String(description="Privileged or public when the user has explicitly allows it to be public.")),
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
+            "flagged": fields.Boolean(example=False,description="This user has been flagged for suspicious activity."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),
@@ -218,6 +220,7 @@ class Models:
             "monthly_kudos": fields.Integer(description="When specified, will start assigning the user monthly kudos, starting now!"),
             "username": fields.String(description="When specified, will change the username. No profanity allowed!",min_length=3,max_length=100),
             "trusted": fields.Boolean(example=False,description="When set to true,the user and their servers will not be affected by suspicion"),
+            "flagged": fields.Boolean(example=False,description="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance."),
             "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0"),
             "contact": fields.String(example="email@example.com", description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",min_length=5,max_length=500),
         })
@@ -232,6 +235,7 @@ class Models:
             "username": fields.String(example='username#1',description="The user's new username."),
             "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
             "trusted": fields.Boolean(description="The user's new trusted status"),
+            "flagged": fields.Boolean(description="The user's new flagged status"),
             "new_suspicion": fields.Integer(description="The user's new suspiciousness rating"),
             "contact": fields.String(example="email@example.com", description="The new contact details"),
         })
