@@ -235,6 +235,7 @@ class Models:
             "username": fields.String(example='username#1',description="The user's new username."),
             "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
             "trusted": fields.Boolean(description="The user's new trusted status"),
+            "flagged": fields.Boolean(description="The user's new flagged status"),
             "new_suspicion": fields.Integer(description="The user's new suspiciousness rating"),
             "contact": fields.String(example="email@example.com", description="The new contact details"),
         })
