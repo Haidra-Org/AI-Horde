@@ -197,7 +197,7 @@ def store_available_models():
     with HORDE.app_context():
         json_models = json.dumps(get_available_models())
         try:
-            horde_r.setex('models_cache', timedelta(seconds=60), json_models)
+            horde_r.setex('models_cache', timedelta(seconds=240), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
