@@ -4,6 +4,13 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-02-03",
+            "newspiece": (
+                'The horde now supports pix2pix. All you have to do is use img2img as normal and select the pix2pix model!'
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-01-24",
             "newspiece": (
                 'We now support sending tiling requests! Send `"tiling":true` into your payload params to request an image that seamlessly tiles.'

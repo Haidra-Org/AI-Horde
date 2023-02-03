@@ -132,7 +132,7 @@ class AsyncGenerate(AsyncGenerate):
                 raise e.NotTrusted
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
-        if not self.args.source_image and any(model_name == "Stable Diffusion 2 Depth" for model_name in self.args.models):
+        if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel
         if self.args.source_image:
             if self.args.source_processing == "img2img" and self.params.get("sampler_name") in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]:
