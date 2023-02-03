@@ -47,6 +47,7 @@ class Models(v2.Models):
             'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"]),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
             'tiling': fields.Boolean(default=False,description="Set to True to create images that stitch together seamlessly"),
+            'hires_fix': fields.Boolean(default=False,description="Set to True to process the image at base resolution before upscaling and re-processing"),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
