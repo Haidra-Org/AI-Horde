@@ -370,6 +370,8 @@ class JobPopTemplate(Resource):
         self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
             raise e.InvalidAPIKey('prompt pop')
+        if self.user.flagged:
+            raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
         self.worker_name = sanitize_string(self.args['name'])
         self.worker = database.find_worker_by_name(self.worker_name, worker_class=worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
@@ -864,6 +866,7 @@ class UserSingle(Resource):
     parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
     parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
     parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
+    parser.add_argument("flagged", type=bool, required=False, help="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
@@ -922,6 +925,11 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_trusted(self.args.trusted)
             ret_dict["trusted"] = user.trusted
+        if self.args.flagged is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_flagged(self.args.flagged)
+            ret_dict["flagged"] = user.flagged
         if self.args.reset_suspicion is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')

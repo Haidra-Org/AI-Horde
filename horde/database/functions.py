@@ -248,8 +248,12 @@ def retrieve_available_models():
 def transfer_kudos(source_user, dest_user, amount):
     if source_user.is_suspicious():
         return([0,'Something went wrong when sending kudos. Please contact the mods.'])
+    if source_user.flagged:
+        return([0,'The target account has been flagged for suspicious activity and tranferring kudos to them is blocked.'])
     if dest_user.is_suspicious():
         return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
+    if dest_user.flagged:
+        return([0,'Your account has been flagged for suspicious activity. Please contact the mods.'])
     if amount < 0:
         return([0,'Nice try...'])
     if amount > source_user.kudos - source_user.get_min_kudos():

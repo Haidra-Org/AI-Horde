@@ -379,6 +379,7 @@ class WorkerTemplate(db.Model):
             "maintenance_mode": self.maintenance,
             "info": self.info,
             "trusted": self.user.trusted,
+            "flagged": self.user.flagged,
             "online": not self.is_stale(),
             "team": {"id": str(self.team.id),"name": self.team.name} if self.team else 'None',
             "bridge_agent": self.bridge_agent,
