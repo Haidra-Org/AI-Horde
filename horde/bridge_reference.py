@@ -2,6 +2,7 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
+        13: {"hires_fix", "clip_skip"},
         11: {"tiling"},
         10: {"CodeFormers"},
         8: {"r2"},

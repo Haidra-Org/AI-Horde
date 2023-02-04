@@ -82,6 +82,10 @@ class WorkerExtended(Worker):
             return [False, 'models']
         if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, 'bridge_version']
+        if waiting_prompt.params.get('hires_fix') and not check_bridge_capability("hires_fix", self.bridge_agent):
+            return [False, 'bridge_version']
+        if waiting_prompt.params.get('clip_skip', 1) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
+            return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
             return [False, 'painting']
