@@ -1164,7 +1164,7 @@ class User:
                     if worker not in found_workers:
                         found_workers.append(worker)
         # We allow 10 concurrency per worker serving the models requested
-        allowed_concurrency = len(found_workers) * 4
+        allowed_concurrency = len(found_workers) * 20
         # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
         return(allowed_concurrency)
             
