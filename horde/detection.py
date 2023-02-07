@@ -59,6 +59,10 @@ class PromptChecker:
         prompt_suspicion = 0
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
+        prompt = re.sub(r'\((.*?):\d+\.\d+\)', r'\1', prompt)
+        prompt = re.sub(r'[^\w ]', ' ', prompt)
+        prompt = re.sub(' +', ' ', prompt)
+        # logger.debug(prompt)
         matching_groups = []
         for filters in [self.filters1, self.filters2]:
             for filter_id in filters:
