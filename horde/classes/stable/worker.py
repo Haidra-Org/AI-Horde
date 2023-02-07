@@ -122,6 +122,7 @@ class WorkerExtended(Worker):
         allow_painting = self.allow_painting
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
+        ret_dict["allow_post_processing"] = self.allow_post_processing
         return ret_dict
 
     def parse_models(self, models):
