@@ -131,7 +131,7 @@ class WorkerExtended(Worker):
     def parse_models(self, models):
         # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
         unchecked_models = [sanitize_string(model_name[0:100]) for model_name in models]
-        del unchecked_models[100:]
+        del unchecked_models[200:]
         models = set()
         for model in unchecked_models:
             if model in model_reference.stable_diffusion_names:

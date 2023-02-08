@@ -449,7 +449,7 @@ class Worker(WorkerTemplate):
         '''
         # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
         models = [sanitize_string(model_name[0:100]) for model_name in models]
-        del models[100:]
+        del models[200:]
         return set(models)
 
     def can_generate(self, waiting_prompt):

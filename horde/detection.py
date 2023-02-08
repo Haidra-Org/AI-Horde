@@ -7,6 +7,7 @@ from horde.horde_redis import horde_r
 from horde.flask import HORDE, SQLITE_MODE # Local Testing
 from horde.database.functions import compile_regex_filter # Local Testing
 from horde.threads import model_reference
+from unidecode import unidecode
 
 class PromptChecker:
     
@@ -30,8 +31,11 @@ class PromptChecker:
         self.next_refresh = datetime.utcnow()
         self.refresh_regex()
         # These are checked on top of the normal
-        self.nsfw_model_regex = re.compile(r"girl|boy|student|young|little|lil|small|tiny", re.IGNORECASE)
-        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|(?<!1)boy|student|young|little|lil|small|tiny", re.IGNORECASE)
+        self.nsfw_model_regex = re.compile(r"girl|boy|student|young|lit[tl]le|lil|small|tiny", re.IGNORECASE)
+        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|(?<!1)boy|student|young|little||lit[tl]le|lil|small|tiny", re.IGNORECASE)
+        self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
+        self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
+        self.whitespace_converter = re.compile(r'[^\w\s]')
 
     def refresh_regex(self):
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
@@ -59,6 +63,16 @@ class PromptChecker:
         prompt_suspicion = 0
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
+        prompt = self.weight_remover.sub(r'\1', prompt)
+        prompt = self.whitespace_converter.sub(' ', prompt)
+        for match in re.finditer(self.whitespace_remover, prompt):
+            trim_match = match.group(0).strip()
+            replacement = re.sub(r'\s+', '', trim_match)
+            prompt = prompt.replace(trim_match, replacement)
+        prompt = re.sub('\s+', ' ', prompt)
+        # Remove all accents
+        prompt = unidecode(prompt)
+        # logger.debug(prompt)
         matching_groups = []
         for filters in [self.filters1, self.filters2]:
             for filter_id in filters:

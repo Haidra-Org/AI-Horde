@@ -629,21 +629,36 @@ class AwardKudos(Resource):
         return({"awarded": self.args.amount}, 200)
 
 class Workers(Resource):
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=False, help="A Moderator API key", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @api.expect(get_parser)
     @logger.catch(reraise=True)
     @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True, skip_none=True)
     def get(self):
         '''A List with the details of all registered and active workers
         '''
+        self.args = self.get_parser.parse_args()
         return (self.retrieve_workers_details(),200)
 
     @logger.catch(reraise=True)
     def retrieve_workers_details(self):
-        cached_workers = horde_r.get('worker_cache')
+        details_privilege = 0
+        if self.args.apikey:
+            admin = database.find_user_by_api_key(self.args['apikey'])
+            if admin and admin.moderator:
+                details_privilege = 2
+        if details_privilege == 2:
+            cached_workers = horde_r.get('worker_cache_privileged')
+        else:
+            cached_workers = horde_r.get('worker_cache')
         if cached_workers is None:
             workers_ret = []
             for worker in database.get_active_workers():
-                workers_ret.append(worker.get_details())
+                workers_ret.append(worker.get_details(details_privilege))
             return workers_ret
         return json.loads(cached_workers)
 
