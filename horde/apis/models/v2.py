@@ -73,7 +73,7 @@ class Models:
             'message': fields.String(default=None,description="Any extra information from the horde about this request"),
         })
         self.response_model_generation_payload = api.model('ModelPayload', {
-            'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
+            'prompt': fields.String(description="The prompt which will be sent to the horde against which to run inference."),
             'n': fields.Integer(example=1, description="The amount of images to generate"), 
             'seed': fields.String(description="The seed to use to generete this request"),
         })
