@@ -22,4 +22,5 @@ SQLAlchemy~=1.4.44
 psycopg2-binary
 boto3
 regex
+unidecode
 git+https://github.com/Patreon/patreon-python.git
