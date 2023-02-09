@@ -418,6 +418,7 @@ class Worker(WorkerTemplate):
         del blacklist[200:]
         blacklist = set(blacklist)
         existing_blacklist = db.session.query(WorkerBlackList).filter_by(worker_id=self.id)
+
         existing_blacklist_words = set([b.word for b in existing_blacklist.all()])
         if existing_blacklist_words == blacklist:
             return
@@ -436,8 +437,11 @@ class Worker(WorkerTemplate):
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
         existing_model_names = set([m.model for m in existing_models.all()])
         if existing_model_names == models:
+            logger.debug("same models")
             return
+        logger.debug([existing_model_names,models, existing_model_names == models])
         existing_models.delete()
+        db.session.commit()
         for model_name in models:
             model = WorkerModel(worker_id=self.id,model=model_name)
             db.session.add(model)
