@@ -128,9 +128,8 @@ class WorkerExtended(Worker):
         ret_dict["painting"] = allow_painting
         return ret_dict
 
-    def parse_models(self, models):
+    def parse_models(self, unchecked_models):
         # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
-        unchecked_models = [sanitize_string(model_name[0:100]) for model_name in models]
         del unchecked_models[200:]
         models = set()
         for model in unchecked_models:
