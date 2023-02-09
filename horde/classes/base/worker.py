@@ -437,7 +437,6 @@ class Worker(WorkerTemplate):
         existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
         existing_model_names = set([m.model for m in existing_models.all()])
         if existing_model_names == models:
-            logger.debug("same models")
             return
         logger.debug([existing_model_names,models, existing_model_names == models])
         existing_models.delete()
