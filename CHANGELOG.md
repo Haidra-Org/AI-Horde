@@ -1,17 +1,25 @@
 # Changelog
 
 
-## 3.7
+## 3.9.0
+
+* Response headers now report node information
+
+## 3.8.0
+
+* Improved Filter Regex
+
+## 3.7.0
 
 * Added the ability to mark users as flagged. A flagged user cannot transfer or be transferred kudos and all their workers are set into permanent maintenance
 
-## 3.6
+## 3.6.0
 
 * Workers can now report back if a generation is faulted or censored by using the new "state" key. The "censored" key is now obolete and will be removed.
 * Horde will now ignore unknown models
 * Can now send "1girl", but not "girl" to Hentai Diffusion
 
-## 3.5
+## 3.5.0
 
 * Worker Bridges now have to send a new field in the pop payload called bridge_agent. 
     It should be in the form of `name:version:url`. For example `AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker`

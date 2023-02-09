@@ -1,7 +1,9 @@
 import os
+import socket
 from uuid import uuid4
 
 horde_instance_id = str(uuid4())
+HORDE_VERSION = "3.9.0"
 
 from flask_dance.contrib.discord import make_discord_blueprint
 from flask_dance.contrib.github import make_github_blueprint
@@ -25,6 +27,7 @@ def after_request(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS, PUT, DELETE"
     response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, apikey, Client-Agent"
+    response.headers["Horde-Node"] = f"{socket.gethostname()}:{args.port}:{HORDE_VERSION}"
     return response
 
 

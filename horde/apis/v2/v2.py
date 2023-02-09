@@ -422,6 +422,7 @@ class JobPop(JobPopTemplate):
         This endpoint is used by registered workers only
         '''
         # logger.warning(datetime.utcnow())
+        tic = time.time()
         self.args = parsers.job_pop_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -489,8 +490,10 @@ class JobPop(JobPopTemplate):
             if worker_ret is None:
                 continue
             # logger.debug(worker_ret)
+            logger.debug(time.time() - tic)
             return(worker_ret, 200)
         # We report maintenance exception only if we couldn't find any jobs
+        logger.debug(time.time() - tic)
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
         # logger.warning(datetime.utcnow())
