@@ -32,7 +32,7 @@ class PromptChecker:
         self.refresh_regex()
         # These are checked on top of the normal
         self.nsfw_model_regex = re.compile(r"girl|boy|student|young|lit[tl]le|lil|small|tiny", re.IGNORECASE)
-        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|(?<!1)boy|student|young|little||lit[tl]le|lil|small|tiny", re.IGNORECASE)
+        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|(?<!1)boy|student|young|little|lit[tl]le|lil|small|tiny", re.IGNORECASE)
         self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
         self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
         self.whitespace_converter = re.compile(r'[^\w\s]')
@@ -100,6 +100,7 @@ class PromptChecker:
         else:
             nsfw_match = self.nsfw_model_regex.search(prompt)
         if nsfw_match:
+            logger.debug(nsfw_match.group())
             return True
         prompt_10_suspicion, _ = self(prompt, 10)
         if prompt_10_suspicion:
