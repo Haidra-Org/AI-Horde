@@ -100,7 +100,6 @@ class PromptChecker:
         else:
             nsfw_match = self.nsfw_model_regex.search(prompt)
         if nsfw_match:
-            logger.debug(nsfw_match.group())
             return True
         prompt_10_suspicion, _ = self(prompt, 10)
         if prompt_10_suspicion:
