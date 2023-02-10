@@ -114,6 +114,9 @@ def load_request_data():
     if args.nsfw: request_data.submit_dict["nsfw"] = args.nsfw 
     if args.censor_nsfw: request_data.submit_dict["censor_nsfw"] = args.censor_nsfw 
     if args.trusted_workers: request_data.submit_dict["trusted_workers"] = args.trusted_workers 
+    if args.source_image: self.source_image = args.source_image
+    if args.source_processing: self.source_processing = args.source_processing
+    if args.source_mask: self.source_mask = args.source_mask
     return(request_data)
 
 
