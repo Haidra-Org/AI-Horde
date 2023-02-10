@@ -63,15 +63,7 @@ class PromptChecker:
         prompt_suspicion = 0
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
-        prompt = self.weight_remover.sub(r'\1', prompt)
-        prompt = self.whitespace_converter.sub(' ', prompt)
-        for match in re.finditer(self.whitespace_remover, prompt):
-            trim_match = match.group(0).strip()
-            replacement = re.sub(r'\s+', '', trim_match)
-            prompt = prompt.replace(trim_match, replacement)
-        prompt = re.sub('\s+', ' ', prompt)
-        # Remove all accents
-        prompt = unidecode(prompt)
+        prompt = self.normalize_prompt(prompt)
         # logger.debug(prompt)
         matching_groups = []
         for filters in [self.filters1, self.filters2]:
@@ -95,6 +87,7 @@ class PromptChecker:
             return False
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
+        prompt = self.normalize_prompt(prompt)
         if "Hentai Diffusion" in models and len(models) == 1:
             nsfw_match = self.nsfw_model_anime_regex.search(prompt)
         else:
@@ -105,5 +98,20 @@ class PromptChecker:
         if prompt_10_suspicion:
             return True
         return False
+
+    def normalize_prompt(self,prompt):
+        """Prepares the prompt to be scanned by the regex, by removing tricks one might use to avoid the filters
+        """
+        prompt = self.weight_remover.sub(r'\1', prompt)
+        prompt = self.whitespace_converter.sub(' ', prompt)
+        for match in re.finditer(self.whitespace_remover, prompt):
+            trim_match = match.group(0).strip()
+            replacement = re.sub(r'\s+', '', trim_match)
+            prompt = prompt.replace(trim_match, replacement)
+        prompt = re.sub('\s+', ' ', prompt)
+        # Remove all accents
+        prompt = unidecode(prompt)
+        return prompt
+
 
 prompt_checker = PromptChecker()
