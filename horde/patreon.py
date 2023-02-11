@@ -15,7 +15,7 @@ class PatreonCache(PrimaryTimedFunction):
             for pid in patrons_json:
                 self.patrons[int(pid)] = patrons_json[pid]
             # logger.debug(self.patrons)
-        except TypeError:
+        except (TypeError,AttributeError):
             logger.warning("Patreon cache could not be retrieved from redis. Leaving existing cache.")
 
     def is_patron(self, user_id):
