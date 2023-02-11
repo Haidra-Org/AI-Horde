@@ -51,7 +51,7 @@ class CounterMeasures:
 		Else return true
 		This function is a bit obscured with env vars to prevent defeat
 		'''
-		if args.allow_all_ips or not os.getenv("IP_CHECKER"):
+		if args.allow_all_ips or os.getenv("IP_CHECKER", "") == "":
 			return True
 		# If we don't have the cache up, it's always OK
 		if not ip_r:
