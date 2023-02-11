@@ -7,15 +7,21 @@ from horde.logger import logger
 import boto3
 from botocore.exceptions import ClientError
 
-s3_client = boto3.client('s3', endpoint_url="https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
+r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
+r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://edf800e28a742a836054658825faa135.r2.cloudflarestorage.com")
+r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
+r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
+r2_source_image_bucket = os.getenv("R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images")
+
+s3_client = boto3.client('s3', endpoint_url=r2_transient_account)
 s3_client_shared = boto3.client('s3', 
-    endpoint_url="https://edf800e28a742a836054658825faa135.r2.cloudflarestorage.com",
+    endpoint_url=r2_permanent_account,
     aws_access_key_id=os.getenv('SHARED_AWS_ACCESS_ID'),
     aws_secret_access_key=os.getenv('SHARED_AWS_ACCESS_KEY'),
 )
 
 # Lists shared bucket contents
-# for key in s3_client_shared.list_objects(Bucket='stable-horde')['Contents']:
+# for key in s3_client_shared.list_objects(Bucket=r2_transient_bucket)['Contents']:
 #     logger.debug(key['Key'])
 
 @logger.catch(reraise=True)
@@ -49,7 +55,7 @@ def generate_procgen_upload_url(procgen_id, shared = False):
     return generate_presigned_url(
         client = client,
         client_method = "put_object",
-        method_parameters = {'Bucket': "stable-horde", 'Key': f"{procgen_id}.webp"},
+        method_parameters = {'Bucket': r2_transient_bucket, 'Key': f"{procgen_id}.webp"},
         expires_in = 1800
     )
 
@@ -60,19 +66,19 @@ def generate_procgen_download_url(procgen_id, shared = False):
     return generate_presigned_url(
         client = client,
         client_method = "get_object",
-        method_parameters = {'Bucket': "stable-horde", 'Key': f"{procgen_id}.webp"},
+        method_parameters = {'Bucket': r2_transient_bucket, 'Key': f"{procgen_id}.webp"},
         expires_in = 1800
     )
 
 def delete_procgen_image(procgen_id):
     response = s3_client.delete_object(
-        Bucket="stable-horde",
+        Bucket=r2_transient_bucket,
         Key=f"{procgen_id}.webp"
     )
 
 def delete_source_image(source_image_uuid):
     response = s3_client.delete_object(
-        Bucket="stable-horde-source-images",
+        Bucket=r2_source_image_bucket,
         Key=f"{source_image_uuid}.webp"
     )
 
@@ -84,21 +90,21 @@ def upload_image(client, bucket, filename):
     except ClientError as e:
         logger.error(f"Error encountered while uploading {filename}: {e}")
         return False
-    return generate_img_download_url(filename, "stable-horde-source-images")
+    return generate_img_download_url(filename, r2_source_image_bucket)
 
 def upload_source_image(filename):
-    return upload_image(s3_client, "stable-horde-source-images", filename)
+    return upload_image(s3_client, r2_source_image_bucket, filename)
 
 def upload_generated_image(filename):
-    return upload_image(s3_client, "stable-horde", filename)
+    return upload_image(s3_client, r2_transient_bucket, filename)
 
 def upload_shared_generated_image(filename):
-    return upload_image(s3_client_shared, "stable-horde", filename)
+    return upload_image(s3_client_shared, r2_permanent_bucket, filename)
 
 def upload_shared_metadata(filename):
     try:
         response = s3_client_shared.upload_file(
-            filename, "stable-horde", filename
+            filename, r2_permanent_bucket, filename
         )
     except ClientError as e:
         logger.error(f"Error encountered while uploading metadata {filename}: {e}")
@@ -121,10 +127,10 @@ def upload_prompt(prompt_dict):
         return False
         os.remove(filename)
 
-def generate_img_download_url(filename, bucket="stable-horde"):
+def generate_img_download_url(filename, bucket=r2_transient_bucket):
     return generate_presigned_url(s3_client, "get_object", {'Bucket': bucket, 'Key': filename}, 1800)
 
-def generate_img_upload_url(filename, bucket="stable-horde"):
+def generate_img_upload_url(filename, bucket=r2_transient_bucket):
     return generate_presigned_url(s3_client, "put_object", {'Bucket': bucket, 'Key': filename}, 1800)
 
 def generate_uuid_img_upload_url(img_uuid, imgtype):
@@ -135,7 +141,7 @@ def generate_uuid_img_download_url(img_uuid, imgtype):
 
 def check_file(client, filename):
     try:
-        return client.head_object(Bucket="stable-horde", Key=filename)
+        return client.head_object(Bucket=r2_transient_bucket, Key=filename)
     except ClientError as e:
         return int(e.response['Error']['Code']) != 404
 
