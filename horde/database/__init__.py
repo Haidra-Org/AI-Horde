@@ -2,6 +2,7 @@ from horde.threads import PrimaryTimedFunction
 from horde.database.classes import Quorum
 import horde.database.threads as threads
 from horde.horde_redis import horde_r
+from horde.argparser import args
 
 # Threads
 quorum = Quorum(1, threads.get_quorum)
@@ -16,3 +17,11 @@ prune_stats = PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
 patreon_cacher = PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
 priority_increaser = PrimaryTimedFunction(10, threads.increment_extra_priority, quorum=quorum)
 compiled_filter_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)
+
+if args.reload_all_caches:
+    threads.store_prioritized_wp_queue()
+    threads.store_worker_list()
+    threads.store_available_models()
+    threads.store_totals()
+    threads.store_patreon_members()
+    threads.store_compiled_filter_regex()
