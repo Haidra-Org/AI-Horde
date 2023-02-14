@@ -4,6 +4,20 @@ class NewsExtended(News):
 
     STABLE_HORDE_NEWS = [
         {
+            "date_published": "2023-02-14",
+            "newspiece": (
+                'You can now use an almost unlimited prompt size thanks to the work of ResidentChief!'
+            ),
+            "importance": "Information"
+        },
+        {
+            "date_published": "2023-02-09",
+            "newspiece": (
+                'You can now select to generate a higher-sized image using hires_fix, which uses the composition of stable diffusion at 512x512 which tends to be more consistent.'
+            ),
+            "importance": "Information"
+        },
+        {
             "date_published": "2023-02-03",
             "newspiece": (
                 'The horde now supports pix2pix. All you have to do is use img2img as normal and select the pix2pix model!'
