@@ -684,7 +684,7 @@ class HordeStatsTotals(Resource):
     @logger.catch(reraise=True)
     @cache.cached(timeout=60)
     @api.expect(get_parser)
-    # @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde generated images statistics')
+    @api.marshal_with(models.response_model_stats_img_totals, code=200, description='Horde generated images statistics')
     def get(self):
         '''Details how many images have been generated in the past minux,hour,day,month and total
         Also shows the amount of pixelsteps for the same timeframe.
@@ -698,7 +698,7 @@ class HordeStatsModels(Resource):
     @logger.catch(reraise=True)
     @cache.cached(timeout=60)
     @api.expect(get_parser)
-    # @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde generated images statistics')
+    @api.marshal_with(models.response_model_stats_models, code=200, description='Horde generated images statistics per model')
     def get(self):
         '''Details how many images were generated per model for the past day, month and total
         '''

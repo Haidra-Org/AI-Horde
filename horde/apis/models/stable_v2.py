@@ -205,3 +205,26 @@ class Models(v2.Models):
             "best": fields.String(required=False, example="6038971e-f0b0-4fdd-a3bb-148f561f815e", description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",min_length=36,max_length=36),
             "ratings": fields.List(fields.Nested(self.response_model_aesthetic_rating, skip_none=True),required=False),
         })
+
+        self.response_model_single_period_total_img_stat = api.model('SinglePeriodImgStat', {
+            "images": fields.Integer(description="The amount of images generated during this period."),
+            "ps": fields.Integer(description="The amount of pixelsteps generated during this period."),
+        })
+
+        self.response_model_stats_img_totals = api.model('StatsImgTotals', {
+            "minute": fields.Nested(self.response_model_single_period_total_img_stat),
+            "hour": fields.Nested(self.response_model_single_period_total_img_stat),
+            "day": fields.Nested(self.response_model_single_period_total_img_stat),
+            "month": fields.Nested(self.response_model_single_period_total_img_stat),
+            "total": fields.Nested(self.response_model_single_period_total_img_stat),
+        })
+
+        self.response_model_model_stats = api.model('SinglePeriodModelStats', {
+            "*": fields.Wildcard(fields.Integer(required=True, description="The amount of requests fulfilled for this model")),
+        })
+
+        self.response_model_stats_models = api.model('ModelStats', {
+            "day": fields.Nested(self.response_model_model_stats),
+            "month": fields.Nested(self.response_model_model_stats),
+            "total": fields.Nested(self.response_model_model_stats),
+        })
