@@ -6,6 +6,14 @@ from horde.flask import db
 from horde.enums import ImageGenState
 from sqlalchemy import Enum
 
+class ImageGenerationStatisticPP(db.Model):
+    __tablename__ = "image_request_post_processors"
+    id = db.Column(db.Integer, primary_key=True)
+    imgstat_id = db.Column(db.Integer, db.ForeignKey("image_request_stats.id", ondelete="CASCADE"), nullable=False)
+    imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="models")
+    pp = db.Column(db.String(40), nullable=False)
+
+
 class ImageGenerationStatistic(db.Model):
     __tablename__ = "image_request_stats"
     id = db.Column(db.Integer, primary_key=True)
@@ -20,13 +28,11 @@ class ImageGenerationStatistic(db.Model):
     prompt_length = db.Column(db.Integer, nullable=False)
     negprompt = db.Column(db.Boolean, nullable=False)
     img2img = db.Column(db.Boolean, nullable=False, index=True)
-    post_processors = db.Column(db.Integer, nullable=False)
-    upscaled = db.Column(db.Boolean, nullable=False)
-    face_fixed = db.Column(db.Boolean, nullable=False)
     hires_fix = db.Column(db.Boolean, nullable=False)
     tiling = db.Column(db.Boolean, nullable=False)
     nsfw = db.Column(db.Boolean, nullable=False)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
+    post_processors = db.relationship("ImageGenerationStatisticPP", back_populates="imgstat", cascade="all, delete-orphan")
 
 
 def record_image_statistic(procgen):
@@ -38,9 +44,6 @@ def record_image_statistic(procgen):
         state = ImageGenState.CANCELLED
     elif procgen.faulted: 
         state = ImageGenState.FAULTED
-    face_fixers = ["GFPGAN", "CodeFormers"]
-    upscalers = ["RealESRGAN_x4plus"]
-    pp = procgen.wp.params.get("post_processing",[])
     statistic = ImageGenerationStatistic(
         created=procgen.start_time,
         model=procgen.model,
@@ -61,3 +64,11 @@ def record_image_statistic(procgen):
     )
     db.session.add(statistic)
     db.session.commit()
+    # face_fixers = ["GFPGAN", "CodeFormers"]
+    # upscalers = ["RealESRGAN_x4plus"]
+    post_processors = procgen.wp.params.get("post_processing",[])
+    if len(post_processors) > 0:
+        for pp in post_processors:
+            new_pp_entry = ImageGenerationStatisticPP(imgstat_id=statistic.id,pp=pp)
+            db.session.add(new_pp_entry)
+        db.session.commit()

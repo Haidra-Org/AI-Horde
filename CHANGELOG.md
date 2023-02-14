@@ -1,6 +1,11 @@
 # Changelog
 
 
+## 3.10.0
+
+* Started recording image stats
+* Added 
+
 ## 3.9.0
 
 * Response headers now report node information
