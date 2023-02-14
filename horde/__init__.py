@@ -3,7 +3,7 @@ import socket
 from uuid import uuid4
 
 horde_instance_id = str(uuid4())
-HORDE_VERSION = "3.10.0"
+HORDE_VERSION = "3.10.1"
 
 from flask_dance.contrib.discord import make_discord_blueprint
 from flask_dance.contrib.github import make_github_blueprint
