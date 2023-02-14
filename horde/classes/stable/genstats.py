@@ -9,7 +9,7 @@ from sqlalchemy import Enum
 class ImageGenerationStatisticPP(db.Model):
     __tablename__ = "image_gen_stats_post_processors"
     id = db.Column(db.Integer, primary_key=True)
-    imgstat_id = db.Column(db.Integer, db.ForeignKey("image_request_stats.id", ondelete="CASCADE"), nullable=False)
+    imgstat_id = db.Column(db.Integer, db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"), nullable=False)
     imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="post_processors")
     pp = db.Column(db.String(40), nullable=False)
 
