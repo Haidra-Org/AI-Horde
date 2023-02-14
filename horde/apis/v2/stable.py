@@ -682,7 +682,7 @@ class HordeStatsTotals(Resource):
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=60)
+    @cache.cached(timeout=50)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_stats_img_totals, code=200, description='Horde generated images statistics')
     def get(self):
@@ -696,7 +696,7 @@ class HordeStatsModels(Resource):
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=60)
+    @cache.cached(timeout=50)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_stats_models, code=200, description='Horde generated images statistics per model')
     def get(self):
