@@ -21,6 +21,8 @@ class ImageGenerationStatistic(db.Model):
     negprompt = db.Column(db.Boolean, nullable=False)
     img2img = db.Column(db.Boolean, nullable=False, index=True)
     post_processors = db.Column(db.Integer, nullable=False)
+    upscaled = db.Column(db.Boolean, nullable=False)
+    face_fixed = db.Column(db.Boolean, nullable=False)
     hires_fix = db.Column(db.Boolean, nullable=False)
     tiling = db.Column(db.Boolean, nullable=False)
     nsfw = db.Column(db.Boolean, nullable=False)
@@ -36,6 +38,7 @@ def record_image_statistic(procgen):
         state = ImageGenState.CANCELLED
     elif procgen.faulted: 
         state = ImageGenState.FAULTED
+    face_fixers = ["GFPGAN", "CodeFormers"]
     statistic = ImageGenerationStatistic(
         created=procgen.start_time,
         model=procgen.model,
@@ -46,6 +49,8 @@ def record_image_statistic(procgen):
         prompt_length=len(procgen.wp.prompt),
         negprompt='###' in procgen.wp.prompt,
         post_processors=len(procgen.wp.params.get("post_processing",[])),
+        upscaled="RealESRGAN_x4plus" in procgen.wp.params.get("post_processing",[]),
+        face_fixed=any(ff in procgen.wp.params.get("post_processing",[]) for ff in face_fixers),
         hires_fix=procgen.wp.params.get("hires_fix", False),
         tiling=procgen.wp.params.get("tiling", False),
         img2img=procgen.wp.source_image != None,
