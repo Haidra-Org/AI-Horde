@@ -5,7 +5,7 @@ import json
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.classes.stable.stats import record_image_statistic
+from horde.classes.stable.genstats import record_image_statistic
 from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image
 from horde.flask import db
 from horde.image import convert_b64_to_pil
