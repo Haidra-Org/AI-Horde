@@ -21,7 +21,7 @@ class ImageGenerationStatistic(db.Model):
     negprompt = db.Column(db.Boolean, nullable=False)
     img2img = db.Column(db.Boolean, nullable=False, index=True)
     post_processed = db.Column(db.Boolean, nullable=False)
-    state = db.Column(Enum(ImageGenState), default=State.OK, nullable=False, index=True) 
+    state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
 
 
 def record_image_statistic(procgen):
