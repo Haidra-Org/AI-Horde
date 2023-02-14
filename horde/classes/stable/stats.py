@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from horde.logger import logger
 from horde.flask import db
 from horde.enums import ImageGenState
+from sqlalchemy import Enum
 
 class ImageGenerationStatistic(db.Model):
     __tablename__ = "image_request_stats"
