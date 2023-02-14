@@ -15,7 +15,7 @@ class WorkerExtended(Worker):
     max_pixels = db.Column(db.Integer, default=512 * 512, nullable=False)
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
-    allow_post_processing = True
+    allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
@@ -126,6 +126,7 @@ class WorkerExtended(Worker):
         allow_painting = self.allow_painting
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
+        ret_dict["post-processing"] = self.allow_post_processing        
         return ret_dict
 
     def parse_models(self, unchecked_models):
