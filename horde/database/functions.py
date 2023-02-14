@@ -260,6 +260,7 @@ def transfer_kudos(source_user, dest_user, amount):
         return([0,'Not enough kudos.'])
     source_user.modify_kudos(-amount, 'gifted')
     dest_user.modify_kudos(amount, 'received')
+    logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
     return([amount,'OK'])
 
 def transfer_kudos_to_username(source_user, dest_username, amount):

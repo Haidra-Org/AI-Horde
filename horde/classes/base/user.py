@@ -230,6 +230,9 @@ class User(db.Model):
             db.session.commit()
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
+            # Avoid overflowing the int
+            if kudos_details.value >= 2147483647:
+                kudos_details.value = 2147483640
             db.session.commit()
 
     def ensure_kudos_positive(self):
