@@ -5,6 +5,7 @@ import json
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes.stable.stats import record_image_statistic
 from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image
 from horde.flask import db
 from horde.image import convert_b64_to_pil
@@ -34,6 +35,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         return self.wp.kudos
 
     def log_aborted_generation(self):
+        record_image_statistic(self)
         logger.info(
             f"Aborted Stale Generation {self.id} "
             f"({self.wp.width}x{self.wp.height}x{self.wp.params['steps']}@{self.wp.params['sampler_name']})"
@@ -73,6 +75,7 @@ class ProcessingGenerationExtended(ProcessingGeneration):
                 generation = "R2"
                 os.remove(filename)
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        record_image_statistic(self)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
         return(kudos)
