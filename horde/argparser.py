@@ -13,6 +13,7 @@ arg_parser.add_argument('--worker_invite', action="store_true", help="If set, Wi
 arg_parser.add_argument('--raid', action="store_true", help="If set, Will start the horde in raid prevention mode")
 arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, will consider all IPs safe")
 arg_parser.add_argument('--quorum', action="store_true", help="If set, will forcefully grab the quorum")
+arg_parser.add_argument('--reload_all_caches', action="store_true", help="If set, will forcefully reload all caches at startup")
 args = arg_parser.parse_args()
 
 maintenance = Switch()

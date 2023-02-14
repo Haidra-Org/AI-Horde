@@ -1,6 +1,13 @@
 # Changelog
 
 
+## 3.10.0
+
+* Started recording image stats
+* Worker info now shows if they're capable of post-processing
+* Removed prompt length limit
+* Added support for hires_fix
+
 ## 3.9.0
 
 * Response headers now report node information
