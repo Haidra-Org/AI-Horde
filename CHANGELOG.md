@@ -4,7 +4,9 @@
 ## 3.10.0
 
 * Started recording image stats
-* Added 
+* Worker info now shows if they're capable of post-processing
+* Removed prompt length limit
+* Added support for hires_fix
 
 ## 3.9.0
 
