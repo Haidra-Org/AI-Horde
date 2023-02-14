@@ -39,6 +39,7 @@ def record_image_statistic(procgen):
     elif procgen.faulted: 
         state = ImageGenState.FAULTED
     face_fixers = ["GFPGAN", "CodeFormers"]
+    upscalers = ["RealESRGAN_x4plus"]
     statistic = ImageGenerationStatistic(
         created=procgen.start_time,
         model=procgen.model,
@@ -49,7 +50,7 @@ def record_image_statistic(procgen):
         prompt_length=len(procgen.wp.prompt),
         negprompt='###' in procgen.wp.prompt,
         post_processors=len(procgen.wp.params.get("post_processing",[])),
-        upscaled="RealESRGAN_x4plus" in procgen.wp.params.get("post_processing",[]),
+        upscaled=any(u in procgen.wp.params.get("post_processing",[]) for u in upscalers),
         face_fixed=any(ff in procgen.wp.params.get("post_processing",[]) for ff in face_fixers),
         hires_fix=procgen.wp.params.get("hires_fix", False),
         tiling=procgen.wp.params.get("tiling", False),
