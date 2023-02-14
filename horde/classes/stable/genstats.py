@@ -7,7 +7,7 @@ from horde.enums import ImageGenState
 from sqlalchemy import Enum
 
 class ImageGenerationStatisticPP(db.Model):
-    __tablename__ = "image_request_stats_post_processors"
+    __tablename__ = "image_gen_stats_post_processors"
     id = db.Column(db.Integer, primary_key=True)
     imgstat_id = db.Column(db.Integer, db.ForeignKey("image_request_stats.id", ondelete="CASCADE"), nullable=False)
     imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="post_processors")
@@ -15,7 +15,7 @@ class ImageGenerationStatisticPP(db.Model):
 
 
 class ImageGenerationStatistic(db.Model):
-    __tablename__ = "image_request_stats"
+    __tablename__ = "image_gen_stats"
     id = db.Column(db.Integer, primary_key=True)
     finished = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
     # Created comes from the procgen
