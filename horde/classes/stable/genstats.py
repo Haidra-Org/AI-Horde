@@ -21,6 +21,8 @@ class ImageGenerationStatistic(db.Model):
     negprompt = db.Column(db.Boolean, nullable=False)
     img2img = db.Column(db.Boolean, nullable=False, index=True)
     post_processed = db.Column(db.Boolean, nullable=False)
+    hires_fix = db.Column(db.Boolean, nullable=False)
+    tiling = db.Column(db.Boolean, nullable=False)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
 
 
@@ -43,7 +45,9 @@ def record_image_statistic(procgen):
         prompt_length=len(procgen.wp.prompt),
         negprompt='###' in procgen.wp.prompt,
         post_processed="post_processing" in procgen.wp.params and len(procgen.wp.params["post_processing"]) != 0,
-        img2img=procgen.wp.height != None,
+        hires_fix=procgen.wp.params.get("hires_fix", False),
+        tiling=procgen.wp.params.get("tiling", False),
+        img2img=procgen.wp.source_image != None,
         state=state,
     )
     db.session.add(statistic)
