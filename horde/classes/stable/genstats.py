@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from horde.logger import logger
 from horde.flask import db
 from horde.enums import ImageGenState
-from sqlalchemy import Enum
+from sqlalchemy import Enum, func
 
 class ImageGenerationStatisticPP(db.Model):
     __tablename__ = "image_gen_stats_post_processors"
@@ -71,3 +71,52 @@ def record_image_statistic(procgen):
             new_pp_entry = ImageGenerationStatisticPP(imgstat_id=statistic.id,pp=pp)
             db.session.add(new_pp_entry)
         db.session.commit()
+
+def compile_imagegen_stats_totals():
+    count_query = db.session.query(ImageGenerationStatistic)
+    count_minute = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).count()
+    count_hour = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).count()
+    count_day = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
+    count_month = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).count()
+    count_total = count_query.count()
+    ps_query = db.session.query(func.sum(ImageGenerationStatistic.width * ImageGenerationStatistic.height * ImageGenerationStatistic.steps))
+    ps_minute = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).scalar()
+    ps_hour = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).scalar()
+    ps_day = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).scalar()
+    ps_month = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).scalar()
+    ps_total = ps_query.scalar()
+    stats_dict = {
+        "minute": {
+            "images": count_minute,
+            "ps": ps_minute,
+        },
+        "hour": {
+            "images": count_hour,
+            "ps": ps_hour,
+        },
+        "day": {
+            "images": count_day,
+            "ps": ps_day,
+        },
+        "month": {
+            "images": count_month,
+            "ps": ps_month,
+        },
+        "total": {
+            "images": count_total,
+            "ps": ps_total,
+        },
+    }
+    return(stats_dict)
+
+def compile_imagegen_stats_models():
+    query = db.session.query(
+        ImageGenerationStatistic.model, func.count()
+    ).group_by(
+        ImageGenerationStatistic.model
+    )
+    return {
+        "total": {model: count for model, count in query.all()},
+        "day": {model: count for model, count in query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).all()},
+        "month": {model: count for model, count in query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).all()},
+    }

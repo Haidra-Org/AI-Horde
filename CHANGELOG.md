@@ -1,6 +1,11 @@
 # Changelog
 
 
+## 3.10.1
+
+* Added stats endpoings `/api/v2/stats/img/totals` and `/api/v2/stats/img/models`
+* Added safety for int overflow on kudos details
+
 ## 3.10.0
 
 * Started recording image stats

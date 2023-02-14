@@ -12,6 +12,7 @@ from horde.countermeasures import CounterMeasures
 from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
 from horde.exceptions import ImageValidationFailed
+from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 
 
 def convert_source_image_to_pil(source_image_b64):
@@ -676,6 +677,33 @@ class HordeNews(HordeNews):
         return(horde_news + stable_horde_news)
 
 
+class HordeStatsTotals(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=50)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_stats_img_totals, code=200, description='Horde generated images statistics')
+    def get(self):
+        '''Details how many images have been generated in the past minux,hour,day,month and total
+        Also shows the amount of pixelsteps for the same timeframe.
+        '''
+        return compile_imagegen_stats_totals(),200
+
+class HordeStatsModels(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=50)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_stats_models, code=200, description='Horde generated images statistics per model')
+    def get(self):
+        '''Details how many images were generated per model for the past day, month and total
+        '''
+        return compile_imagegen_stats_models(),200
+
 api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
 api.add_resource(AsyncStatus, "/generate/status/<string:id>")
@@ -706,3 +734,5 @@ api.add_resource(InterrogateSubmit, "/interrogate/submit")
 api.add_resource(Filters, "/filters")
 api.add_resource(FilterRegex, "/filters/regex")
 api.add_resource(FilterSingle, "/filters/<string:filter_id>")
+api.add_resource(HordeStatsTotals, "/stats/img/totals")
+api.add_resource(HordeStatsModels, "/stats/img/models")
