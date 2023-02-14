@@ -23,6 +23,7 @@ class ImageGenerationStatistic(db.Model):
     post_processed = db.Column(db.Boolean, nullable=False)
     hires_fix = db.Column(db.Boolean, nullable=False)
     tiling = db.Column(db.Boolean, nullable=False)
+    nsfw = db.Column(db.Boolean, nullable=False)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
 
 
@@ -48,6 +49,7 @@ def record_image_statistic(procgen):
         hires_fix=procgen.wp.params.get("hires_fix", False),
         tiling=procgen.wp.params.get("tiling", False),
         img2img=procgen.wp.source_image != None,
+        nsfw=procgen.wp.nsfw,
         state=state,
     )
     db.session.add(statistic)
