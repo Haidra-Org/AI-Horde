@@ -24,6 +24,7 @@ class ImageGenerationStatistic(db.Model):
     width = db.Column(db.Integer, nullable=False)
     height = db.Column(db.Integer, nullable=False)
     steps = db.Column(db.Integer, nullable=False)
+    cfg = db.Column(db.Integer, nullable=False)
     sampler = db.Column(db.String(30), nullable=False, index=True)
     prompt_length = db.Column(db.Integer, nullable=False)
     negprompt = db.Column(db.Boolean, nullable=False)
@@ -50,6 +51,7 @@ def record_image_statistic(procgen):
         width=procgen.wp.width,
         height=procgen.wp.height,
         steps=procgen.wp.params["steps"],
+        cfg=procgen.wp.params["cfg_scale"],
         sampler=procgen.wp.params["sampler_name"],
         prompt_length=len(procgen.wp.prompt),
         negprompt='###' in procgen.wp.prompt,
