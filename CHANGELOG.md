@@ -1,6 +1,12 @@
 # Changelog
 
 
+## 3.11.1
+
+* All generations now uploaded to R2 and simply converted to b64 when requested by the client
+* All source images now uploaded to R2. Older worker versions will still receive b64 sources, by converting them at the point of pull. So update your workers
+* Upped the prompt limit to 7500
+
 ## 3.10.1
 
 * Added stats endpoings `/api/v2/stats/img/totals` and `/api/v2/stats/img/models`
