@@ -6,9 +6,9 @@ import json
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.genstats import record_image_statistic
-from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image
+from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image, download_procgen_image
 from horde.flask import db
-from horde.image import convert_b64_to_pil
+from horde.image import convert_b64_to_pil, convert_pil_to_b64
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
@@ -18,7 +18,11 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         '''Returns a dictionary with details about this processing generation'''
         generation = self.generation
         if generation == "R2":
-            generation = generate_procgen_download_url(str(self.id), self.wp.shared)
+            if not self.wp.r2:
+                img = download_procgen_image(self.id, self.wp.shared)
+                generation = convert_pil_to_b64(img)
+            else:
+                generation = generate_procgen_download_url(str(self.id), self.wp.shared)
         ret_dict = {
             "img": generation,
             "seed": self.seed,
@@ -57,8 +61,8 @@ class ProcessingGenerationExtended(ProcessingGeneration):
         # We return -1 to know to send a different error
         if self.is_faulted():
             return(-1)
-        if self.wp.r2 and generation != "R2":
-            logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} uploaded an R2 request as b64. Converting...")
+        if generation != "R2":
+            logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} returned a b64. Converting...")
             if self.wp.shared:
                 upload_method = upload_shared_generated_image
             else:
@@ -68,12 +72,9 @@ class ProcessingGenerationExtended(ProcessingGeneration):
             if not image:
                 logger.error("Could not convert b64 image from the worker to PIL to upload!")
             else:
-                # FIXME: I would really like to avoid the unnecessary I/O here by uploading directly from RAM...
-                image.save(filename)
-                upload_method(filename)
+                upload_method(image, filename)
                 # This signifies to send the download URL
                 generation = "R2"
-                os.remove(filename)
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         record_image_statistic(self)
         if self.wp.shared and not self.fake and generation == "R2":

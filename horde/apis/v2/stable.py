@@ -11,110 +11,8 @@ from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
 from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
-from horde.exceptions import ImageValidationFailed
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
-
-
-def convert_source_image_to_pil(source_image_b64):
-    base64_bytes = source_image_b64.encode('utf-8')
-    img_bytes = base64.b64decode(base64_bytes)
-    image = Image.open(BytesIO(img_bytes))
-    width, height = image.size
-    resolution = width * height
-    resolution_threshold = 3072*3072
-    if resolution > resolution_threshold:
-        except_msg = "Image size cannot exceed 3072*3072 pixels"
-        # Not sure e exists here?
-        raise e.ImageValidationFailed(except_msg)
-    quality = 100
-    # We adjust the amount of compression based on the starting image to avoid running out of bandwidth
-    if resolution > resolution_threshold * 0.9:
-        quality = 50
-    elif resolution > resolution_threshold * 0.8:
-        quality = 60
-    elif resolution > resolution_threshold * 0.6:
-        logger.debug([resolution,resolution_threshold * 0.6])
-        quality = 70
-    elif resolution > resolution_threshold * 0.4:
-        logger.debug([resolution,resolution_threshold * 0.4])
-        quality = 80
-    elif resolution > resolution_threshold * 0.3:
-        logger.debug([resolution,resolution_threshold * 0.4])
-        quality = 90
-    elif resolution > resolution_threshold * 0.15:
-        quality = 95
-    return image,quality,width,height
-
-def convert_source_image_to_webp(source_image_b64):
-    '''Convert img2img sources to 90% compressed webp, to avoid wasting bandwidth, while still supporting all types'''
-    try:
-        if source_image_b64 is None:
-            return(source_image_b64)
-        image, quality,width,height = convert_source_image_to_pil(source_image_b64)
-        buffer = BytesIO()
-        image.save(buffer, format="WebP", quality=quality)
-        final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
-        logger.debug(f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars")
-        return final_image_b64
-    except ImageValidationFailed as err:
-        raise err
-    except Exception as err:
-        logger.error(err)
-        raise e.ImageValidationFailed
-
-def upload_source_image_to_r2(source_image_b64, uuid_string):
-    '''Convert source images to webp and uploads it to r2, to avoid wasting bandwidth, while still supporting all types'''
-    try:
-        if source_image_b64 is None:
-            return(source_image_b64)
-        image, quality,width,height = convert_source_image_to_pil(source_image_b64)
-        filename = f"{uuid_string}.webp"
-        image.save(filename, format="WebP", quality=quality)
-        download_url = upload_source_image(filename)
-        os.remove(filename)
-        return download_url
-    except ImageValidationFailed as err:
-        raise err
-    except Exception as err:
-        logger.error(err)
-        raise e.ImageValidationFailed
-
-
-def ensure_source_image_uploaded(source_image_string, uuid_string):
-    if "http" in source_image_string:
-        try:
-            with requests.get(source_image_string, stream = True, timeout = 2) as r:
-                size = r.headers.get('Content-Length', 0)
-                # if not size:
-                #     raise e.ImageValidationFailed("Source image URL must provide a Content-Length header")
-                if int(size) / 1024 > 5000:
-                    raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
-                mbs = 0
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        if mbs == 0:
-                            img_data = chunk
-                        else:
-                            img_data += chunk
-                        mbs += 1
-                        if mbs > 5:
-                            raise e.ImageValidationFailed("Provided image cannot be larger than 5Mb")
-                try:
-                    Image.open(BytesIO(img_data))            
-                except UnidentifiedImageError as err:
-                    raise e.ImageValidationFailed("Url does not contain a valid image.")
-                except Exception as err:
-                    logger.error(err)
-                    raise e.ImageValidationFailed("Something went wrong when opening image.")
-        except Exception as err:
-            if type(err) == ImageValidationFailed:
-                raise err
-            logger.error(err)
-            raise e.ImageValidationFailed("Something went wrong when retrieving image url.")
-        return source_image_string, False
-    else:
-        return upload_source_image_to_r2(source_image_string, uuid_string), True
-
+from horde.image import convert_source_image_to_pil, convert_source_image_to_webp, upload_source_image_to_r2, ensure_source_image_uploaded
 
 class AsyncGenerate(AsyncGenerate):
     
@@ -144,7 +42,7 @@ class AsyncGenerate(AsyncGenerate):
             raise e.UnsupportedSampler
         # if self.args.models == ["stable_diffusion_2.0"] and self.params.get("sampler_name") not in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
-        if len(self.args['prompt'].split()) > 5000:
+        if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
         if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"] for model_name in self.args.models):
             raise e.UnsupportedModel
@@ -170,9 +68,7 @@ class AsyncGenerate(AsyncGenerate):
             nsfw = self.args.nsfw,
             censor_nsfw = self.args.censor_nsfw,
             trusted_workers = self.args.trusted_workers,
-            source_image = convert_source_image_to_webp(self.args.source_image),
             source_processing = self.args.source_processing,
-            source_mask = convert_source_image_to_webp(self.args.source_mask),
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
             r2=self.args.r2,
@@ -185,7 +81,19 @@ class AsyncGenerate(AsyncGenerate):
                 raise e.KudosUpfront(required_kudos, self.username, resolution)
             else:
                 logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
-    
+
+
+    # We split this into its own function, so that it may be overriden and extended
+    def activate_waiting_prompt(self):
+        # Not using yet, but might need later
+        self.source_image = None
+        self.source_mask = None
+        if self.args.source_image:
+            self.source_image, self.source_image_r2stored = ensure_source_image_uploaded(self.args.source_image, f"{self.wp.id}_src", force_r2 = True)
+            if self.args.source_mask:
+                self.source_mask, self.source_mask_r2stored = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2 = True)
+        self.wp.activate(self.source_image, self.source_mask)
+
 class SyncGenerate(SyncGenerate):
 
     def validate(self):

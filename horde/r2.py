@@ -6,6 +6,8 @@ from datetime import datetime
 from horde.logger import logger
 import boto3
 from botocore.exceptions import ClientError
+from PIL import Image
+from io import BytesIO
 
 r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
 r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://edf800e28a742a836054658825faa135.r2.cloudflarestorage.com")
@@ -82,24 +84,67 @@ def delete_source_image(source_image_uuid):
         Key=f"{source_image_uuid}.webp"
     )
 
-def upload_image(client, bucket, filename):
+def upload_image(client, bucket, image, filename, quality=100):
+    image_io = BytesIO()
+    image.save(image_io, format="WebP", quality=quality)
+    image_io.seek(0)
     try:
-        response = client.upload_file(
-            filename, bucket, filename
+        response = client.upload_fileobj(
+            image_io, bucket, filename
         )
     except ClientError as e:
         logger.error(f"Error encountered while uploading {filename}: {e}")
         return False
     return generate_img_download_url(filename, r2_source_image_bucket)
 
-def upload_source_image(filename):
-    return upload_image(s3_client, r2_source_image_bucket, filename)
+def download_image(client, bucket, key):
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+        img = response['Body'].read()
+        img = Image.open(BytesIO(img))
+        return img
+    except ClientError as e:
+        logger.error(f"Error encountered while downloading {key}: {e}")
+        return None
 
-def upload_generated_image(filename):
-    return upload_image(s3_client, r2_transient_bucket, filename)
+def download_procgen_image(procgen_id, shared=False):
+    if shared:
+        return download_image(s3_client_shared, r2_permanent_bucket, f"{procgen_id}.webp")
+    else:
+        return download_image(s3_client, r2_transient_bucket, f"{procgen_id}.webp")
 
-def upload_shared_generated_image(filename):
-    return upload_image(s3_client_shared, r2_permanent_bucket, filename)
+def download_source_image(procgen_id, shared=False):
+    return download_image(s3_client, r2_source_image_bucket, f"{procgen_id}_src.webp")
+
+def download_source_mask(procgen_id, shared=False):
+    return download_image(s3_client, r2_source_image_bucket, f"{procgen_id}_msk.webp")
+
+def upload_source_image(image, filename):
+    return upload_image(
+        s3_client, 
+        r2_source_image_bucket, 
+        image, 
+        filename,
+        quality=50
+    )
+
+def upload_generated_image(image, filename):
+    return upload_image(
+        s3_client, 
+        r2_transient_bucket, 
+        image, 
+        filename,
+        quality=95,
+    )
+
+def upload_shared_generated_image(image, filename):
+    return upload_image(
+        s3_client_shared, 
+        r2_permanent_bucket, 
+        image,
+        filename,
+        quality=95,
+    )
 
 def upload_shared_metadata(filename):
     try:

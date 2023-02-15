@@ -5,7 +5,9 @@ from horde.vars import thing_divisor
 from horde.flask import db
 from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
-from horde.r2 import generate_procgen_upload_url
+from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
+from horde.image import convert_pil_to_b64
+from horde.bridge_reference import check_bridge_capability
 
 class WaitingPromptExtended(WaitingPrompt):
     width = db.Column(db.Integer, default=512, nullable=False)
@@ -81,7 +83,7 @@ class WaitingPromptExtended(WaitingPrompt):
         db.session.commit()
 
     @logger.catch(reraise=True)
-    def get_job_payload(self,procgen):
+    def get_job_payload(self, procgen):
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
             self.gen_payload["seed"] = self.seed_to_int(self.seed)
@@ -137,14 +139,24 @@ class WaitingPromptExtended(WaitingPrompt):
                 "id": procgen.id,
                 "model": procgen.model,
             }
-            if self.source_image and procgen.worker.bridge_version > 2:
-                prompt_payload["source_image"] = self.source_image
-            if procgen.worker.bridge_version > 3:
+            if self.source_image and check_bridge_capability("img2img", procgen.worker.bridge_agent):
+                if check_bridge_capability("r2_source", procgen.worker.bridge_agent):
+                    prompt_payload["source_image"] = self.source_image
+                else:    
+                    src_img = download_source_image(self.id)
+                    if src_img:
+                        prompt_payload["source_image"] = convert_pil_to_b64(src_img, 50)
                 prompt_payload["source_processing"] = self.source_processing
                 if self.source_mask:
-                    prompt_payload["source_mask"] = self.source_mask
-            if procgen.worker.bridge_version >= 8 and self.r2:
-                prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
+                    if check_bridge_capability("r2_source", procgen.worker.bridge_agent):
+                        prompt_payload["source_mask"] = self.source_mask
+                    else:
+                        src_msk = download_source_mask(self.id)
+                        if src_msk:
+                            prompt_payload["source_mask"] = convert_pil_to_b64(src_msk, 50)
+            # We always ask the workers to upload the generation to R2 instead of sending it back as b64
+            # If they send it back as b64 anyway, we upload it outselves
+            prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
         else:
             prompt_payload = {}
             self.faulted = True
@@ -152,10 +164,14 @@ class WaitingPromptExtended(WaitingPrompt):
         # logger.debug([payload,prompt_payload])
         return(prompt_payload)
 
-    def activate(self):
+    def activate(self, source_image = None, source_mask = None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
+        if source_image or source_mask:
+            self.source_image = source_image
+            self.source_mask = source_mask
+            db.session.commit()
         prompt_type = "txt2img"
         if self.source_image:
             prompt_type = self.source_processing
@@ -163,6 +179,7 @@ class WaitingPromptExtended(WaitingPrompt):
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): "
             f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
         )
+
 
     def seed_to_int(self, s = None):
         if type(s) is int:

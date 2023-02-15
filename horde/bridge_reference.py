@@ -2,13 +2,14 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
+        14: {"r2_source"},
         13: {"hires_fix", "clip_skip"},
         11: {"tiling"},
         10: {"CodeFormers"},
         8: {"r2"},
         6: {"karras"},
         4: {"inpainting"},
-        2: {"img2img"},
+        3: {"img2img"},
     },
     "SD-WebUI Stable Horde Worker Bridge": {
         2: {"tiling"},
@@ -135,5 +136,5 @@ def check_sampler_capability(sampler, bridge_agent, karras=True):
             # Else, all samplers can be used
             if not karras:
                 available_samplers.update(BRIDGE_SAMPLERS[bridge_name][iter]["no karras"])
-    logger.debug([available_samplers, sampler, sampler in available_samplers])
+    # logger.debug([available_samplers, sampler, sampler in available_samplers])
     return sampler in available_samplers
