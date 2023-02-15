@@ -72,7 +72,6 @@ def convert_source_image_to_webp(source_image_b64):
     except ImageValidationFailed as err:
         raise err
     except Exception as err:
-        logger.error(err)
         raise ImageValidationFailed
 
 def upload_source_image_to_r2(source_image_b64, uuid_string):
@@ -87,7 +86,6 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
     except ImageValidationFailed as err:
         raise err
     except Exception as err:
-        logger.error(err)
         raise ImageValidationFailed
 
 def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=False):
@@ -114,7 +112,6 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                 except UnidentifiedImageError as err:
                     raise ImageValidationFailed("Url does not contain a valid image.")
                 except Exception as err:
-                    logger.error(err)
                     raise ImageValidationFailed("Something went wrong when opening image.")
                 if force_r2:
                     logger.debug(f"uploading {img} {uuid_string}")
@@ -122,7 +119,6 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
         except Exception as err:
             if type(err) == ImageValidationFailed:
                 raise err
-            logger.error(err)
             raise ImageValidationFailed("Something went wrong when retrieving image url.")
         return source_image_string, False
     else:
