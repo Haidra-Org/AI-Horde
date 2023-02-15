@@ -1,8 +1,9 @@
 import uuid
+import json
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.logger import logger
@@ -11,6 +12,7 @@ from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_threshold
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
+from horde.horde_redis import horde_r
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
@@ -428,22 +430,44 @@ class Worker(WorkerTemplate):
             db.session.add(blacklisted_word)
         db.session.commit()
 
+    def refresh_model_cache(self):
+        models_list = json.dumps([m.model for m in self.models])
+        try:
+            horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), models_list)
+        except Exception as err:
+            logger.debug(f"Error when trying to set models cache: {e}. Retrieving from DB.")
+        return models_list
+
     def get_model_names(self):
-        return [m.model for m in self.models]
+        if horde_r is None:
+            return [m.model for m in self.models]
+        model_cache = horde_r.get(f'worker_{self.id}_model_cache')
+        if not model_cache:
+            return self.refresh_model_cache()
+        try:
+            models_ret = json.loads(model_cache)
+        except TypeError as e:
+            logger.error(f"Model cache could not be loaded: {model_cache}")
+            return self.refresh_model_cache()
+        if models_ret is None:
+            return self.refresh_model_cache()
+        return models_ret
+
 
     def set_models(self, models):
         models = self.parse_models(models)
-        existing_models = db.session.query(WorkerModel).filter_by(worker_id=self.id)
-        existing_model_names = set([m.model for m in existing_models.all()])
+        existing_model_names = set(self.get_model_names())
         if existing_model_names == models:
             return
         logger.debug([existing_model_names,models, existing_model_names == models])
-        existing_models.delete()
+        db.session.query(WorkerModel).filter_by(worker_id=self.id).delete()
         db.session.commit()
         for model_name in models:
             model = WorkerModel(worker_id=self.id,model=model_name)
             db.session.add(model)
         db.session.commit()
+        self.refresh_model_cache()
+        
 
     def parse_models(self, models):
         '''Parses the models provided by the worker into a set
