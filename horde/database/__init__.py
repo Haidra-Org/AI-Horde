@@ -25,3 +25,9 @@ if args.reload_all_caches:
     threads.store_totals()
     threads.store_patreon_members()
     threads.store_compiled_filter_regex()
+
+# # Test
+
+# threads.check_waiting_prompts()
+# import sys
+# sys.exit()

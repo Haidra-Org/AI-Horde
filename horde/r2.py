@@ -113,11 +113,11 @@ def download_procgen_image(procgen_id, shared=False):
     else:
         return download_image(s3_client, r2_transient_bucket, f"{procgen_id}.webp")
 
-def download_source_image(procgen_id, shared=False):
-    return download_image(s3_client, r2_source_image_bucket, f"{procgen_id}_src.webp")
+def download_source_image(wp_id, shared=False):
+    return download_image(s3_client, r2_source_image_bucket, f"{wp_id}_src.webp")
 
-def download_source_mask(procgen_id, shared=False):
-    return download_image(s3_client, r2_source_image_bucket, f"{procgen_id}_msk.webp")
+def download_source_mask(wp_id, shared=False):
+    return download_image(s3_client, r2_source_image_bucket, f"{wp_id}_msk.webp")
 
 def upload_source_image(image, filename):
     return upload_image(
