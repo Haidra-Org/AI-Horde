@@ -144,8 +144,8 @@ class AsyncGenerate(AsyncGenerate):
             raise e.UnsupportedSampler
         # if self.args.models == ["stable_diffusion_2.0"] and self.params.get("sampler_name") not in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
-        # if len(self.args['prompt'].split()) > 500:
-        #     raise e.InvalidPromptSize(self.username)
+        if len(self.args['prompt'].split()) > 10000:
+            raise e.InvalidPromptSize(self.username)
         if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"] for model_name in self.args.models):
             raise e.UnsupportedModel
 
