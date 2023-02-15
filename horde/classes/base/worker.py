@@ -429,8 +429,7 @@ class Worker(WorkerTemplate):
         db.session.commit()
 
     def get_model_names(self):
-        model_names = db.session.query(func.distinct(WorkerModel.model).label('name')).filter(WorkerModel.worker_id == self.id).all()
-        return [m.name for m in model_names]
+        return [m.model for m in self.models]
 
     def set_models(self, models):
         models = self.parse_models(models)
@@ -483,16 +482,16 @@ class Worker(WorkerTemplate):
             return [False, 'worker_id']
         #logger.warning(datetime.utcnow())
 
-        my_model_names = self.get_model_names()
-        wp_model_names = waiting_prompt.get_model_names()
-        if len(wp_model_names) > 0:
-            found_matching_model = False
-            for model_name in my_model_names:
-                if model_name in wp_model_names:
-                    found_matching_model = True
-                    break
-            if not found_matching_model:
-                return [False, 'model']
+        # my_model_names = self.get_model_names()
+        # wp_model_names = waiting_prompt.get_model_names()
+        # if len(wp_model_names) > 0:
+        #     found_matching_model = False
+        #     for model_name in my_model_names:
+        #         if model_name in wp_model_names:
+        #             found_matching_model = True
+        #             break
+        #     if not found_matching_model:
+        #         return [False, 'model']
 
         # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
         # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
