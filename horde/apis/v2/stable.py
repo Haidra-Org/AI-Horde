@@ -162,11 +162,12 @@ class JobPop(JobPop):
 
     def get_sorted_wp(self):
         '''We're sending the lists directly, to avoid having to join tables'''
-        return database.get_sorted_wp_filtered_to_worker(
+        sorted_wps = database.get_sorted_wp_filtered_to_worker(
             self.worker,
             self.models,
             self.blacklist,
-        )
+        )        
+        return sorted_wps
 
 
 class Aesthetics(Resource):

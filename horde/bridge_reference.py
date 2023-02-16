@@ -109,7 +109,7 @@ def parse_bridge_agent(bridge_agent):
         logger.debug(f"Could not parse bridge_agent: {bridge_agent}")
         bridge_name = "unknown"
         bridge_version = 0
-    logger.debug([bridge_name, bridge_version])
+    # logger.debug([bridge_name, bridge_version])
     return bridge_name,bridge_version
 
 def check_bridge_capability(capability, bridge_agent):
@@ -121,7 +121,7 @@ def check_bridge_capability(capability, bridge_agent):
     for iter in range(bridge_version + 1):
         if iter in BRIDGE_CAPABILITIES[bridge_name]:
             total_capabilities.update(BRIDGE_CAPABILITIES[bridge_name][iter])
-    logger.debug([total_capabilities, capability, capability in total_capabilities])
+    # logger.debug([total_capabilities, capability, capability in total_capabilities])
     return capability in total_capabilities
 
 def check_sampler_capability(sampler, bridge_agent, karras=True):
