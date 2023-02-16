@@ -20,6 +20,7 @@ from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.enums import State
+from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
 
 ALLOW_ANONYMOUS = True
