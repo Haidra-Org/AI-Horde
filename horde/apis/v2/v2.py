@@ -350,7 +350,7 @@ class AsyncCheck(Resource):
         '''Retrieve the status of an Asynchronous generation request without images.
         Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
         '''
-        wp = database.get_wp_by_id(id)
+        wp = database.get_wp_by_id(id, True)
         if not wp:
             raise e.RequestNotFound(id)
         lite_status = wp.get_lite_status(
