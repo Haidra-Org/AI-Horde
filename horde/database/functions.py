@@ -439,7 +439,7 @@ def count_things_per_model():
     return(things_per_model)
 
 
-def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None): 
+def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
@@ -495,11 +495,14 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
                 WaitingPrompt.r2 == False,
             ),
         ),
-    ).order_by(
+    )
+    if priority_user_ids:
+        final_wp_list = final_wp_list.filter(WaitingPrompt.user_id.in_(priority_user_ids))
+    # logger.debug(final_wp_list)
+    final_wp_list = final_wp_list.order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
     ).limit(25)
-    # logger.debug(final_wp_list)
     return final_wp_list.all()
 
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 

@@ -454,7 +454,7 @@ class JobPop(JobPopTemplate):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
 
-        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
+        wp_list = self.get_sorted_wp(self.priority_user_ids)
         for wp in wp_list:
             self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
@@ -490,9 +490,9 @@ class JobPop(JobPopTemplate):
         # logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
 
-    def get_sorted_wp(self):
+    def get_sorted_wp(self,priority_user_ids=None):
         '''Extendable class to retrieve the sorted WP list for this worker'''
-        return database.get_sorted_wp_filtered_to_worker(self.worker)
+        return database.get_sorted_wp_filtered_to_worker(self.worker,priority_user_ids=priority_user_ids)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):
