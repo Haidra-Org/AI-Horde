@@ -431,9 +431,9 @@ class Worker(WorkerTemplate):
         db.session.commit()
 
     def refresh_model_cache(self):
-        models_list = json.dumps([m.model for m in self.models])
+        models_list = [m.model for m in self.models]
         try:
-            horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), models_list)
+            horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), json.dumps(models_list))
         except Exception as err:
             logger.debug(f"Error when trying to set models cache: {e}. Retrieving from DB.")
         return models_list
