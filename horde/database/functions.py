@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import DataError
+from sqlalchemy.orm import noload, joinedload, load_only
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -445,7 +446,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     final_wp_list = db.session.query(
-        WaitingPrompt
+        WaitingPrompt.id
     ).join(
         WPModels
     ).filter(
@@ -494,8 +495,9 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     ).order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
-    ).limit(50).all()
-    return final_wp_list
+    ).limit(50)
+    logger.debug(final_wp_list)
+    return final_wp_list.all()
 
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
     # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering

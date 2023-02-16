@@ -454,21 +454,17 @@ class JobPop(JobPopTemplate):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
 
-        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
-        for wp in wp_list:
-            self.prioritized_wp.append(wp)
-        # for priority_user in self.priority_users:
-        #     wp_list = database.get_all_wps()
-        #     for wp in wp_list:
-        #         if wp.user == priority_user and wp.needs_gen():
-        #             self.prioritized_wp.append(wp)
-        # logger.warning(datetime.utcnow())
+        wp_list = db.session.query(WaitingPrompt.id).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
+        for wp_id in wp_list:
+            self.prioritized_wp.append(wp_id.id)
         ## End prioritize by bridge request ##
-        for wp in self.get_sorted_wp():
-            if wp not in self.prioritized_wp:
-                self.prioritized_wp.append(wp)
+        for wp_id in self.get_sorted_wp():
+            if wp_id not in self.prioritized_wp:
+                self.prioritized_wp.append(wp_id.id)
         # logger.warning(datetime.utcnow())
-        for wp in self.prioritized_wp:
+        for wp_id in self.prioritized_wp:
+            wp = database.get_wp_by_id(str(wp_id))
+            logger.debug([wp_id,wp])
             check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
