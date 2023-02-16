@@ -573,7 +573,7 @@ def get_wp_queue_stats(wp):
     return(-1,0,0)
 
 
-def get_wp_by_id(wp_id):
+def get_wp_by_id(wp_id, lite=False):
     try:
         wp_uuid = uuid.UUID(wp_id)
     except ValueError as e: 
@@ -581,7 +581,15 @@ def get_wp_by_id(wp_id):
         return None
     if SQLITE_MODE:
         wp_uuid = str(wp_uuid)
-    return db.session.query(WaitingPrompt).filter_by(id=wp_uuid).first()
+    # lite version does not pull ProcGens
+    if lite:
+        query = db.session.query(WaitingPrompt
+        ).options(
+            noload(WaitingPrompt.processing_gens)
+        )
+    else:
+        query = db.session.query(WaitingPrompt)
+    return query.filter_by(id=wp_uuid).first()
 
 def get_progen_by_id(procgen_id):
     try:

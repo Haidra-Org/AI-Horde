@@ -463,7 +463,7 @@ class JobPop(JobPopTemplate):
                 self.prioritized_wp.append(wp_id.id)
         # logger.warning(datetime.utcnow())
         for wp_id in self.prioritized_wp:
-            wp = database.get_wp_by_id(str(wp_id))
+            wp = database.get_wp_by_id(str(wp_id), True)
             check_gen = self.worker.can_generate(wp)
             if not check_gen[0]:
                 skipped_reason = check_gen[1]
