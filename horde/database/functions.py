@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import noload, joinedload, load_only
+from cachetools import cached, TTLCache
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -643,7 +644,7 @@ def get_form_by_id(form_id):
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
-
+@cached(cache=TTLCache(maxsize=1024, ttl=30))
 def get_worker_performances():
     if horde_r == None:
         return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
