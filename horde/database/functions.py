@@ -645,7 +645,29 @@ def get_all_wps():
 
 
 def get_worker_performances():
+    if horde_r == None:
+        return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+    perf_cache = horde_r.get(f'worker_performances_cache')
+    if not perf_cache:
+        return refresh_worker_performances_cache()
+    try:
+        models_ret = json.loads(perf_cache)
+    except TypeError as e:
+        logger.error(f"performance cache could not be loaded: {perf_cache}")
+        return refresh_worker_performances_cache()
+    if models_ret is None:
+        return refresh_worker_performances_cache()
+    return models_ret
+    
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+
+def refresh_worker_performances_cache():
+    performances_list = [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+    try:
+        horde_r.setex(f'worker_performances_cache', timedelta(seconds=30), json.dumps(performances_list))
+    except Exception as err:
+        logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
+    return performances_list
 
 def wp_has_valid_workers(wp, limited_workers_ids = None):
     if not limited_workers_ids: limited_workers_ids = []
