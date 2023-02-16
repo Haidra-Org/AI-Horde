@@ -517,7 +517,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     final_wp_list = final_wp_list.order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
-    ).limit(25)
+    ).limit(50)
     return final_wp_list.all()
 
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 

@@ -352,7 +352,7 @@ class AsyncCheck(Resource):
         '''
         # Sending lite mode to try and reduce the amount of bandwidth
         # This will not retrieve procgens, so ETA will not be completely accurate
-        wp = database.get_wp_by_id(id, True)
+        wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
         lite_status = wp.get_lite_status(
