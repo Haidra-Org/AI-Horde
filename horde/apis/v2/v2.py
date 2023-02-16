@@ -152,7 +152,7 @@ class GenerateTemplate(Resource):
                 #logger.warning(datetime.utcnow())
             if len(self.workers):
                 for worker_id in self.workers:
-                    if not database.find_worker_by_id(worker_id):
+                    if not database.worker_exists(worker_id):
                         raise e.WorkerNotFound(worker_id)
             #logger.warning(datetime.utcnow())
             n = 1
@@ -350,6 +350,8 @@ class AsyncCheck(Resource):
         '''Retrieve the status of an Asynchronous generation request without images.
         Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
         '''
+        # Sending lite mode to try and reduce the amount of bandwidth
+        # This will not retrieve procgens, so ETA will not be completely accurate
         wp = database.get_wp_by_id(id, True)
         if not wp:
             raise e.RequestNotFound(id)

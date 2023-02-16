@@ -153,6 +153,20 @@ def find_worker_by_id(worker_id):
         worker = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).first()
     return worker
 
+def worker_exists(worker_id):
+    try:
+        worker_uuid = uuid.UUID(worker_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID worker_id sent: '{worker_id}'.")
+        return None
+    if SQLITE_MODE:
+        worker_uuid = str(worker_uuid)
+    wc = db.session.query(Worker).filter_by(id=worker_uuid).count()
+    if not wc:
+        wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
+    return wc
+
+
 def get_all_teams():
     return db.session.query(Team).all()
 
