@@ -447,7 +447,9 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     final_wp_list = db.session.query(
-        WaitingPrompt.id
+        WaitingPrompt
+    ).options(
+        noload(WaitingPrompt.processing_gens)
     ).join(
         WPModels
     ).filter(
@@ -496,7 +498,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     ).order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
-    ).limit(50)
+    ).limit(25)
     # logger.debug(final_wp_list)
     return final_wp_list.all()
 
