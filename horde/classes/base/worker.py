@@ -404,7 +404,7 @@ class Worker(WorkerTemplate):
     
     blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete-orphan")
     models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete-orphan")
-    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker")
+    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker", lazy='raise')
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
