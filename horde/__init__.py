@@ -3,7 +3,6 @@ import socket
 from uuid import uuid4
 
 horde_instance_id = str(uuid4())
-HORDE_VERSION = "3.11.2"
 
 from flask_dance.contrib.discord import make_discord_blueprint
 from flask_dance.contrib.github import make_github_blueprint
@@ -15,6 +14,7 @@ from horde.argparser import args, invite_only, raid, maintenance
 from horde.flask import HORDE, cache
 from horde.logger import logger
 from horde.limiter import limiter
+from horde.consts import HORDE_VERSION
 
 
 HORDE.register_blueprint(apiv2)

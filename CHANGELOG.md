@@ -6,6 +6,7 @@
 * Fix for source images being deleted from r2 before being used
 * Added check for controlnet models (@ResidentChief)
 * Fixed Database extra bandwidth load
+* Added version to heartbeat
 
 ## 3.11.1
 

@@ -25,6 +25,7 @@ from horde.horde_redis import horde_r
 from horde.patreon import patrons
 from horde.detection import prompt_checker
 from horde.r2 import upload_prompt
+from horde.consts import HORDE_VERSION
 
 # Not used yet
 authorizations = {
@@ -1538,5 +1539,8 @@ class Heartbeat(Resource):
     def get(self):
         '''If this loads, this node is available
         '''
-        return({'message': 'OK'},200)
+        return {
+            'message': 'OK',
+            'version': HORDE_VERSION,
+        },200
         

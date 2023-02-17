@@ -1,0 +1,1 @@
+HORDE_VERSION = "3.11.2"
