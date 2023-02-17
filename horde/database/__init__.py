@@ -28,6 +28,6 @@ if args.reload_all_caches:
 
 # # Test
 
-# threads.check_waiting_prompts()
-# import sys
-# sys.exit()
+threads.check_waiting_prompts()
+import sys
+sys.exit()

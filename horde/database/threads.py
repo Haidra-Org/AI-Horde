@@ -119,16 +119,12 @@ def store_worker_list():
 @logger.catch(reraise=True)
 def check_waiting_prompts():
     with HORDE.app_context():
-        # Cleans expired WPs
-        expired_wps = db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry < datetime.utcnow())
-        expired_r_wps = expired_wps.filter(
-            # We do not delete shared images
-            WaitingPrompt.shared == False,
-        )
+        # Clean expired source images
         expired_source_img_wps = db.session.query(
             WaitingPrompt.id
         ).filter(
             WaitingPrompt.source_image != None,
+            WaitingPrompt.expiry < datetime.utcnow(),
         ).all()
         for wp in expired_source_img_wps:
             # logger.debug(f"{wp.id}_src")
@@ -137,10 +133,20 @@ def check_waiting_prompts():
             WaitingPrompt.id
         ).filter(
             WaitingPrompt.source_mask != None,
+            WaitingPrompt.expiry < datetime.utcnow(),
         ).all()
+        # Clean expired source masks
         for wp in expired_source_msk_wps:
             # logger.debug(f"{wp.id}_msk")
             delete_source_image(f"{wp.id}_msk")
+        # Cleans expired generated images, but not shared images
+        expired_r_wps = db.session.query(
+            WaitingPrompt.id
+        ).filter(
+            WaitingPrompt.expiry < datetime.utcnow(),
+            # We do not delete shared images
+            WaitingPrompt.shared == False,
+        )
         all_wp_r_id = [wp.id for wp in expired_r_wps.all()]
         expired_r2_procgens = db.session.query(
             ProcessingGeneration.id,
@@ -150,6 +156,7 @@ def check_waiting_prompts():
         # logger.debug([expired_r_wps, expired_r2_procgens])
         for procgen in expired_r2_procgens:
             delete_procgen_image(str(procgen.id))
+        expired_wps = db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry < datetime.utcnow())
         logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
         expired_wps.delete()
         db.session.commit()
