@@ -110,8 +110,7 @@ class WaitingPrompt(db.Model):
 
     def get_model_names(self):
         # Could also do this based on self.models, but no need
-        model_names = db.session.query(func.distinct(WPModels.model).label('name')).filter(WPModels.wp_id == self.id).all()
-        return [m.name for m in model_names]
+        return [m.model for m in self.models]
 
     # These are typically horde-specific so they will be defined in the specific class for this horde type
     def extract_params(self):

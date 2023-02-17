@@ -152,7 +152,7 @@ class GenerateTemplate(Resource):
                 #logger.warning(datetime.utcnow())
             if len(self.workers):
                 for worker_id in self.workers:
-                    if not database.find_worker_by_id(worker_id):
+                    if not database.worker_exists(worker_id):
                         raise e.WorkerNotFound(worker_id)
             #logger.warning(datetime.utcnow())
             n = 1
@@ -350,6 +350,8 @@ class AsyncCheck(Resource):
         '''Retrieve the status of an Asynchronous generation request without images.
         Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
         '''
+        # Sending lite mode to try and reduce the amount of bandwidth
+        # This will not retrieve procgens, so ETA will not be completely accurate
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
@@ -454,18 +456,12 @@ class JobPop(JobPopTemplate):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
 
-        wp_list = db.session.query(WaitingPrompt).filter(WaitingPrompt.user_id.in_(self.priority_user_ids), WaitingPrompt.n > 0).all()
+        wp_list = self.get_sorted_wp(self.priority_user_ids)
         for wp in wp_list:
             self.prioritized_wp.append(wp)
-        # for priority_user in self.priority_users:
-        #     wp_list = database.get_all_wps()
-        #     for wp in wp_list:
-        #         if wp.user == priority_user and wp.needs_gen():
-        #             self.prioritized_wp.append(wp)
-        # logger.warning(datetime.utcnow())
         ## End prioritize by bridge request ##
         for wp in self.get_sorted_wp():
-            if wp not in self.prioritized_wp:
+            if wp.id not in [wp.id for wp in self.prioritized_wp]:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         for wp in self.prioritized_wp:
@@ -496,9 +492,9 @@ class JobPop(JobPopTemplate):
         # logger.warning(datetime.utcnow())
         return({"id": None, "skipped": self.skipped}, 200)
 
-    def get_sorted_wp(self):
+    def get_sorted_wp(self,priority_user_ids=None):
         '''Extendable class to retrieve the sorted WP list for this worker'''
-        return database.get_sorted_wp_filtered_to_worker(self.worker)
+        return database.get_sorted_wp_filtered_to_worker(self.worker,priority_user_ids=priority_user_ids)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):

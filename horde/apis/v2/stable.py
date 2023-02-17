@@ -160,13 +160,15 @@ class JobPop(JobPop):
             priority_usernames = self.priority_usernames,
         )
 
-    def get_sorted_wp(self):
+    def get_sorted_wp(self, priority_user_ids=None):
         '''We're sending the lists directly, to avoid having to join tables'''
-        return database.get_sorted_wp_filtered_to_worker(
+        sorted_wps = database.get_sorted_wp_filtered_to_worker(
             self.worker,
             self.models,
             self.blacklist,
-        )
+            priority_user_ids = priority_user_ids,
+        )        
+        return sorted_wps
 
 
 class Aesthetics(Resource):

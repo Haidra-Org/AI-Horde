@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timedelta
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import DataError
+from sqlalchemy.orm import noload, joinedload, load_only
+from cachetools import cached, TTLCache
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -19,6 +21,7 @@ from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.enums import State
+from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
 
 ALLOW_ANONYMOUS = True
@@ -150,6 +153,20 @@ def find_worker_by_id(worker_id):
     if not worker:
         worker = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).first()
     return worker
+
+def worker_exists(worker_id):
+    try:
+        worker_uuid = uuid.UUID(worker_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID worker_id sent: '{worker_id}'.")
+        return None
+    if SQLITE_MODE:
+        worker_uuid = str(worker_uuid)
+    wc = db.session.query(Worker).filter_by(id=worker_uuid).count()
+    if not wc:
+        wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
+    return wc
+
 
 def get_all_teams():
     return db.session.query(Team).all()
@@ -437,7 +454,7 @@ def count_things_per_model():
     return(things_per_model)
 
 
-def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None): 
+def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
@@ -446,6 +463,8 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     final_wp_list = db.session.query(
         WaitingPrompt
+    ).options(
+        noload(WaitingPrompt.processing_gens)
     ).join(
         WPModels
     ).filter(
@@ -491,11 +510,15 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
                 WaitingPrompt.r2 == False,
             ),
         ),
-    ).order_by(
+    )
+    if priority_user_ids:
+        final_wp_list = final_wp_list.filter(WaitingPrompt.user_id.in_(priority_user_ids))
+    # logger.debug(final_wp_list)
+    final_wp_list = final_wp_list.order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()
-    ).limit(50).all()
-    return final_wp_list
+    ).limit(50)
+    return final_wp_list.all()
 
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
     # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
@@ -570,7 +593,7 @@ def get_wp_queue_stats(wp):
     return(-1,0,0)
 
 
-def get_wp_by_id(wp_id):
+def get_wp_by_id(wp_id, lite=False):
     try:
         wp_uuid = uuid.UUID(wp_id)
     except ValueError as e: 
@@ -578,7 +601,15 @@ def get_wp_by_id(wp_id):
         return None
     if SQLITE_MODE:
         wp_uuid = str(wp_uuid)
-    return db.session.query(WaitingPrompt).filter_by(id=wp_uuid).first()
+    # lite version does not pull ProcGens
+    if lite:
+        query = db.session.query(WaitingPrompt
+        ).options(
+            noload(WaitingPrompt.processing_gens)
+        )
+    else:
+        query = db.session.query(WaitingPrompt)
+    return query.filter_by(id=wp_uuid).first()
 
 def get_progen_by_id(procgen_id):
     try:
@@ -613,9 +644,31 @@ def get_form_by_id(form_id):
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
-
+@cached(cache=TTLCache(maxsize=1024, ttl=30))
 def get_worker_performances():
+    if horde_r == None:
+        return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+    perf_cache = horde_r.get(f'worker_performances_cache')
+    if not perf_cache:
+        return refresh_worker_performances_cache()
+    try:
+        models_ret = json.loads(perf_cache)
+    except TypeError as e:
+        logger.error(f"performance cache could not be loaded: {perf_cache}")
+        return refresh_worker_performances_cache()
+    if models_ret is None:
+        return refresh_worker_performances_cache()
+    return models_ret
+    
     return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+
+def refresh_worker_performances_cache():
+    performances_list = [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+    try:
+        horde_r.setex(f'worker_performances_cache', timedelta(seconds=30), json.dumps(performances_list))
+    except Exception as err:
+        logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
+    return performances_list
 
 def wp_has_valid_workers(wp, limited_workers_ids = None):
     if not limited_workers_ids: limited_workers_ids = []

@@ -135,6 +135,7 @@ cliRequestsData.py
 test_commands.txt
 SQL_statements.txt
 horde.log
+horde*.bz2
 horde.db
 /.idea
 /boto3oeo.py

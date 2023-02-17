@@ -42,10 +42,7 @@ class WorkerExtended(Worker):
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
         #logger.warning(datetime.utcnow())
-        if self.max_pixels < waiting_prompt.params.get('width', 512) * waiting_prompt.params.get('height', 512):
-            return [False, 'max_pixels']
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.source_image and self.bridge_version < 2:
+        if waiting_prompt.source_image and not check_bridge_capability("img2img", self.bridge_agent):
             return [False, 'img2img']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img':
@@ -58,7 +55,7 @@ class WorkerExtended(Worker):
         if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.get_model_names() == ["stable_diffusion_inpainting"]:
             return [False, 'models']
         #logger.warning(datetime.utcnow())
-        if waiting_prompt.source_processing != 'img2img' and self.bridge_version < 4:
+        if waiting_prompt.source_processing != 'img2img' and not check_bridge_capability("img2img", self.bridge_agent):
             return [False, 'painting']
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
         #logger.warning(datetime.utcnow())
@@ -69,9 +66,9 @@ class WorkerExtended(Worker):
         ):
             return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
-        if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and self.bridge_version < 7:
+        if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and not check_bridge_capability("post-processing", self.bridge_agent):
             return [False, 'bridge_version']
-        if "CodeFormers" in waiting_prompt.gen_payload.get('post_processing', []) and self.bridge_version < 9:
+        if "CodeFormers" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("CodeFormers", self.bridge_agent):
             return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
