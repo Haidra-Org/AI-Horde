@@ -664,11 +664,9 @@ def get_worker_performances():
     global simple_cached_performances
     global simple_cached_performances_starttime
     if round((time.time() - simple_cached_performances_starttime), 2) < 30:
-        logger.debug("returning cache")
         return simple_cached_performances
     simple_cached_performances = get_cached_worker_performance()
     simple_cached_performances_starttime = time.time()
-    logger.debug("resetting cache")
     return simple_cached_performances
 
 def refresh_worker_performances_cache():
