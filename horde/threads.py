@@ -49,8 +49,8 @@ class ModelReference(PrimaryTimedFunction):
     quorum = None
     reference = None
     stable_diffusion_names = set()
-    controlnet_models = set()
     nsfw_models = set()
+    controlnet_models = set()
 
     def call_function(self):
         '''Retrieves to nataili model reference and stores in it a var'''
