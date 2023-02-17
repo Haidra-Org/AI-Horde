@@ -1,6 +1,12 @@
 # Changelog
 
 
+## 3.11.2
+
+* Fix for source images being deleted from r2 before being used
+* Added check for controlnet models (@ResidentChief)
+* Fixed Database extra bandwidth load
+
 ## 3.11.1
 
 * All generations now uploaded to R2 and simply converted to b64 when requested by the client
