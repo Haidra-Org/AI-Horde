@@ -664,7 +664,7 @@ def get_worker_performances():
         try:
             return get_cached_worker_performance()
         except:
-            database.get_worker_performances.cache_clear()
+            get_cached_worker_performance.cache_clear()
             try:
                 return get_cached_worker_performance()
             except Exception as err:
