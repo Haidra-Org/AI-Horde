@@ -49,6 +49,7 @@ class ModelReference(PrimaryTimedFunction):
     quorum = None
     reference = None
     stable_diffusion_names = set()
+    controlnet_models = set()
     nsfw_models = set()
 
     def call_function(self):
@@ -64,6 +65,9 @@ class ModelReference(PrimaryTimedFunction):
                     self.stable_diffusion_names.add(model)
                     if self.reference[model].get("nsfw"):
                         self.nsfw_models.add(model)
+                    if self.reference[model].get("type") == "controlnet":
+                        self.controlnet_models.add(model)
+
 
         except Exception:
             logger.error(f"Error when downloading known models list: {e}")
