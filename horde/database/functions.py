@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import noload, joinedload, load_only
-from cachetools import cached, TTLCache
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -644,7 +643,6 @@ def get_form_by_id(form_id):
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
-@cached(cache=TTLCache(maxsize=1024, ttl=30))
 def get_cached_worker_performance():
     if horde_r == None:
         return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
@@ -660,17 +658,18 @@ def get_cached_worker_performance():
         return refresh_worker_performances_cache()
     return models_ret
 
+simple_cached_performances = []
+simple_cached_performances_starttime = time.time()
 def get_worker_performances():
-        try:
-            return get_cached_worker_performance()
-        except:
-            get_cached_worker_performance.cache_clear()
-            try:
-                return get_cached_worker_performance()
-            except Exception as err:
-                logger.error(f"Something went wrong when retrieving cache and cache_clear didn't help. '{e}'. Returning from the DB directly.")
-                return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
-        
+    global simple_cached_performances
+    global simple_cached_performances_starttime
+    if round((time.time() - simple_cached_performances_starttime), 2) < 30:
+        logger.debug("returning cache")
+        return simple_cached_performances
+    simple_cached_performances = get_cached_worker_performance()
+    simple_cached_performances_starttime = time.time()
+    logger.debug("resetting cache")
+    return simple_cached_performances
 
 def refresh_worker_performances_cache():
     performances_list = [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
