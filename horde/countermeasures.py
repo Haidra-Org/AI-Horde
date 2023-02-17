@@ -60,11 +60,15 @@ class CounterMeasures:
 		timeout=2.00
 		is_safe = CounterMeasures.get_safe(ipaddr)
 		if is_safe is None:
-			result = requests.get(os.getenv("IP_CHECKER").format(ipaddr = ipaddr), timeout=timeout)
+			try:
+				result = requests.get(os.getenv("IP_CHECKER").format(ipaddr = ipaddr), timeout=timeout)
+			except Exception as err:
+				logger.error(f"Exception when requesting info from checker")
+				return None
 			if not result.ok:
 				if result.status_code == 429:
 					# If we exceeded the amount of requests we can do to the IP checker, we ask the client to try again later.
-					return(None)
+					return None
 				else:
 					probability = float(result.content)
 				if probability == int(os.getenv("IP_CHECKER_LC")):
@@ -76,7 +80,7 @@ class CounterMeasures:
 				probability = float(result.content)
 				is_safe = CounterMeasures.set_safe(ipaddr, probability < safety_threshold)
 			logger.debug(f"IP {ipaddr} has a probability of {probability}. Safe = {is_safe}")
-		return(is_safe)
+		return is_safe
 
 	@staticmethod
 	def report_suspicion(ipaddr):
