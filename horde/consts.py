@@ -1,1 +1,5 @@
 HORDE_VERSION = "3.11.2"
+
+WHITELISTED_SERVICE_IPS = {
+    "212.227.227.178" # Turing Bot
+}

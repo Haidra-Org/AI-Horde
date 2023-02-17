@@ -5,6 +5,7 @@ from horde.logger import logger
 from horde.argparser import args
 from horde.redis_ctrl import is_redis_up, get_ipaddr_db, get_ipaddr_suspicion_db, get_ipaddr_timeout_db
 from datetime import timedelta
+from horde.consts import WHITELISTED_SERVICE_IPS
 
 ip_r = None
 logger.init("IP Address Cache", status="Connecting")
@@ -99,6 +100,8 @@ class CounterMeasures:
 		ip_s_r.setex(ipaddr, timedelta(hours=24), current_suspicion + 1)
 		# Fibonacci FTW!
 		timeout = (current_suspicion + current_suspicion + 1) * 3
+		if ipaddr in WHITELISTED_SERVICE_IPS and timeout > 300:
+			timeout = 300
 		CounterMeasures.set_timeout(ipaddr, timeout)
 		return timeout
 
