@@ -645,7 +645,7 @@ def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
 @cached(cache=TTLCache(maxsize=1024, ttl=30))
-def get_worker_performances():
+def get_cached_worker_performance():
     if horde_r == None:
         return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
     perf_cache = horde_r.get(f'worker_performances_cache')
@@ -659,8 +659,18 @@ def get_worker_performances():
     if models_ret is None:
         return refresh_worker_performances_cache()
     return models_ret
-    
-    return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+
+def get_worker_performances():
+        try:
+            return get_cached_worker_performance()
+        except:
+            database.get_worker_performances.cache_clear()
+            try:
+                return get_cached_worker_performance()
+            except Exception as err:
+                logger.error(f"Something went wrong when retrieving cache and cache_clear didn't help. '{e}'. Returning from the DB directly.")
+                return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+        
 
 def refresh_worker_performances_cache():
     performances_list = [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
