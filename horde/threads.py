@@ -68,7 +68,6 @@ class ModelReference(PrimaryTimedFunction):
                     if self.reference[model].get("type") == "controlnet":
                         self.controlnet_models.add(model)
 
-
         except Exception:
             logger.error(f"Error when downloading known models list: {e}")
 
