@@ -4,7 +4,7 @@ from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
 

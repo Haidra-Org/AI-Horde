@@ -4,7 +4,7 @@ from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
 
@@ -172,7 +172,7 @@ class TextWorker(Worker):
         del unchecked_models[200:]
         models = set()
         for model in unchecked_models:
-            if model in model_reference.stable_diffusion_names:
+            if model in model_reference.text_model_names:
                 models.add(model)
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")

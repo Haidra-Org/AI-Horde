@@ -6,7 +6,7 @@ from horde.logger import logger
 from horde.horde_redis import horde_r
 from horde.flask import HORDE, SQLITE_MODE # Local Testing
 from horde.database.functions import compile_regex_filter # Local Testing
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 from unidecode import unidecode
 
 class PromptChecker:

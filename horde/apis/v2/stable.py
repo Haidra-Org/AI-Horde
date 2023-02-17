@@ -13,7 +13,7 @@ from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import convert_source_image_to_pil, convert_source_image_to_webp, upload_source_image_to_r2, ensure_source_image_uploaded
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 
 class AsyncGenerate(AsyncGenerate):
     
