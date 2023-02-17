@@ -50,7 +50,6 @@ class ModelReference(PrimaryTimedFunction):
     reference = None
     stable_diffusion_names = set()
     nsfw_models = set()
-    controlnet_models = set()
 
     def call_function(self):
         '''Retrieves to nataili model reference and stores in it a var'''
@@ -65,8 +64,6 @@ class ModelReference(PrimaryTimedFunction):
                     self.stable_diffusion_names.add(model)
                     if self.reference[model].get("nsfw"):
                         self.nsfw_models.add(model)
-                    if self.reference[model].get("type") == "controlnet":
-                        self.controlnet_models.add(model)
 
         except Exception:
             logger.error(f"Error when downloading known models list: {e}")
