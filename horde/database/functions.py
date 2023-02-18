@@ -643,6 +643,8 @@ def get_form_by_id(form_id):
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
 
+#TODO: Convert below three functions into a general "cached db request" (or something) class
+# Which I can reuse to cache the results of other requests
 def retrieve_worker_performances():
     avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).scalar()
     if avg_perf is None:
