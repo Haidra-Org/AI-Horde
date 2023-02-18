@@ -13,19 +13,16 @@ from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
-from horde.classes.base.detection import Filter
-from horde.classes.stable.interrogation_worker import InterrogationWorker
+from horde.classes.kobold.worker import TextWorker
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
+from horde.database.functions import query_prioritized_wps
 from horde.enums import State
 from horde.bridge_reference import check_bridge_capability
 
 
 ALLOW_ANONYMOUS = True
-
-def get_anon():
-    return find_user_by_api_key('anon')
 
 def get_top_worker():
     top_worker = None
@@ -34,7 +31,6 @@ def get_top_worker():
         Worker.contributions.desc()
     ).first()
     return top_worker
-
 
 def get_active_workers():
     active_workers = db.session.query(Worker).filter(
@@ -85,36 +81,6 @@ def get_total_usage():
     return totals
 
 
-def find_user_by_oauth_id(oauth_id):
-    if oauth_id == 'anon' and not ALLOW_ANONYMOUS:
-        return None
-    return db.session.query(User).filter_by(oauth_id=oauth_id).first()
-
-
-def find_user_by_username(username):
-    ulist = username.split('#')
-    if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
-        return(None)
-    # This approach handles someone cheekily putting # in their username
-    user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
-    return user
-
-def find_user_by_id(user_id):
-    if int(user_id) == 0 and not ALLOW_ANONYMOUS:
-        return(None)
-    user = db.session.query(User).filter_by(id=user_id).first()
-    return user
-
-def find_user_by_api_key(api_key):
-    if api_key == 0000000000 and not ALLOW_ANONYMOUS:
-        return(None)
-    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
-    return user
-
-def find_worker_by_name(worker_name, worker_class=Worker):
-    worker = db.session.query(worker_class).filter_by(name=worker_name).first()
-    return worker
-
 def worker_name_exists(worker_name):
     for worker_class in [Worker, InterrogationWorker]:
         worker = db.session.query(worker_class).filter_by(name=worker_name).count()
@@ -135,6 +101,7 @@ def find_worker_by_id(worker_id):
         worker = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).first()
     return worker
 
+
 def worker_exists(worker_id):
     try:
         worker_uuid = uuid.UUID(worker_id)
@@ -148,22 +115,6 @@ def worker_exists(worker_id):
         wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
     return wc
 
-
-def get_all_teams():
-    return db.session.query(Team).all()
-
-def find_team_by_id(team_id):
-    try:
-        team_uuid = uuid.UUID(team_id)
-    except ValueError as e: 
-        logger.debug(f"Non-UUID team_id sent: '{team_id}'.")
-        return None
-    team = db.session.query(Team).filter_by(id=team_id).first()
-    return(team)
-
-def find_team_by_name(team_name):
-    team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
-    return(team)
 
 def get_available_models():
     models_dict = {}
@@ -229,6 +180,7 @@ def get_available_models():
             models_dict[model_name]['eta'] = 10000
     return(list(models_dict.values()))
 
+
 def retrieve_available_models():
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
     if horde_r is None:
@@ -243,49 +195,13 @@ def retrieve_available_models():
         models_ret = get_available_models()
     return(models_ret)
 
-def transfer_kudos(source_user, dest_user, amount):
-    if source_user.is_suspicious():
-        return([0,'Something went wrong when sending kudos. Please contact the mods.'])
-    if source_user.flagged:
-        return([0,'The target account has been flagged for suspicious activity and tranferring kudos to them is blocked.'])
-    if dest_user.is_suspicious():
-        return([0,'Something went wrong when receiving kudos. Please contact the mods.'])
-    if dest_user.flagged:
-        return([0,'Your account has been flagged for suspicious activity. Please contact the mods.'])
-    if amount < 0:
-        return([0,'Nice try...'])
-    if amount > source_user.kudos - source_user.get_min_kudos():
-        return([0,'Not enough kudos.'])
-    source_user.modify_kudos(-amount, 'gifted')
-    dest_user.modify_kudos(amount, 'received')
-    logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
-    return([amount,'OK'])
-
-def transfer_kudos_to_username(source_user, dest_username, amount):
-    dest_user = find_user_by_username(dest_username)
-    if not dest_user:
-        return([0,'Invalid target username.'])
-    if dest_user == get_anon():
-        return([0,'Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.'])
-    if dest_user == source_user:
-        return([0,'Cannot send kudos to yourself, ya monkey!'])
-    kudos = transfer_kudos(source_user,dest_user, amount)
-    return(kudos)
-
-def transfer_kudos_from_apikey_to_username(source_api_key, dest_username, amount):
-    source_user = find_user_by_api_key(source_api_key)
-    if not source_user:
-        return([0,'Invalid API Key.'])
-    if source_user == get_anon():
-        return([0,'You cannot transfer Kudos from Anonymous, smart-ass.'])
-    kudos = transfer_kudos_to_username(source_user, dest_username, amount)
-    return(kudos)
 
 # Should be overriden
 def convert_things_to_kudos(things, **kwargs):
     # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
     kudos = round(things,2)
     return(kudos)
+
 
 def count_waiting_requests(user, models = None):
     # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
@@ -311,41 +227,6 @@ def count_waiting_requests(user, models = None):
             WaitingPrompt.n >= 1, 
         ).count()
 
-def count_waiting_interrogations(user):
-    found_i_forms = db.session.query(
-        InterrogationForms.state,
-        Interrogation.user_id
-    ).join(
-        Interrogation
-    ).filter(
-        Interrogation.user_id == user.id,
-        or_(
-            InterrogationForms.state == State.WAITING,
-            InterrogationForms.state == State.PROCESSING,
-        ),
-    )
-    return found_i_forms.count()
-
-
-
-    # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
-    #     model_names = wp.get_model_names()
-    #     #logger.warning(datetime.utcnow())
-    #     if wp.user == user and not wp.is_completed():
-    #         #logger.warning(datetime.utcnow())
-    #         # If we pass a list of models, we want to count only the WP for these particular models.
-    #         if len(models) > 0:
-    #             matching_model = False
-    #             for model in models:
-    #                 if model in model_names:
-    #                     #logger.warning(datetime.utcnow())
-    #                     matching_model = True
-    #                     break
-    #             if not matching_model:
-    #                 continue
-    #         count += wp.n
-    # #logger.warning(datetime.utcnow())
-    # return(count)
 
 def count_totals():
     queued_thing = f"queued_{thing_name}"
@@ -387,6 +268,7 @@ def count_totals():
     # logger.debug(ret_dict)
     return(ret_dict)
 
+
 def retrieve_totals():
     '''Retrieves horde totals from Redis cache'''
     queued_thing = f"queued_{thing_name}"
@@ -402,7 +284,6 @@ def retrieve_totals():
             queued_thing: 0,
         }
     return(json.loads(totals_ret))
-
 
 def get_organized_wps_by_model():
     org = {}
@@ -422,6 +303,7 @@ def get_organized_wps_by_model():
                 org[model] = []
             org[model].append(wp)
     return(org)    
+
 
 def count_things_per_model():
     things_per_model = {}
@@ -500,6 +382,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         WaitingPrompt.created.asc()
     ).limit(50)
     return final_wp_list.all()
+
 
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
     # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
@@ -592,6 +475,7 @@ def get_wp_by_id(wp_id, lite=False):
         query = db.session.query(WaitingPrompt)
     return query.filter_by(id=wp_uuid).first()
 
+
 def get_progen_by_id(procgen_id):
     try:
         procgen_uuid = uuid.UUID(procgen_id)
@@ -601,6 +485,7 @@ def get_progen_by_id(procgen_id):
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
     return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
+
 
 def get_interrogation_by_id(i_id):
     try:
@@ -612,6 +497,7 @@ def get_interrogation_by_id(i_id):
         i_uuid = str(i_uuid)
     return db.session.query(Interrogation).filter_by(id=i_uuid).first()
 
+
 def get_form_by_id(form_id):
     try:
         form_uuid = uuid.UUID(form_id)
@@ -622,8 +508,10 @@ def get_form_by_id(form_id):
         form_uuid = str(form_uuid)
     return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
+
 def get_all_wps():
     return db.session.query(WaitingPrompt).filter_by(active=True).all()
+
 
 def get_cached_worker_performance():
     if horde_r == None:
@@ -640,24 +528,32 @@ def get_cached_worker_performance():
         return refresh_worker_performances_cache()
     return models_ret
 
-simple_cached_performances = []
-simple_cached_performances_starttime = time.time()
-def get_worker_performances():
-    global simple_cached_performances
-    global simple_cached_performances_starttime
-    if round((time.time() - simple_cached_performances_starttime), 2) < 30:
-        return simple_cached_performances
-    simple_cached_performances = get_cached_worker_performance()
-    simple_cached_performances_starttime = time.time()
-    return simple_cached_performances
+#TODO: Convert below three functions into a general "cached db request" (or something) class
+# Which I can reuse to cache the results of other requests
+def retrieve_worker_performances():
+    avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).scalar()
+    if avg_perf is None:
+        avg_perf = 0
+    else:
+        avg_perf = round(avg_perf, 2)
+    return avg_perf
 
 def refresh_worker_performances_cache():
-    performances_list = [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
+    avg_perf = retrieve_worker_performances()
     try:
-        horde_r.setex(f'worker_performances_cache', timedelta(seconds=30), json.dumps(performances_list))
+        horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), avg_perf)
     except Exception as err:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
-    return performances_list
+    return avg_perf
+
+def get_request_avg():
+    if horde_r == None:
+        return retrieve_worker_performances()
+    perf_cache = horde_r.get(f'worker_performances_avg_cache')
+    if not perf_cache:
+        return refresh_worker_performances_cache()
+    perf_cache = float(perf_cache)
+    return perf_cache
 
 def wp_has_valid_workers(wp, limited_workers_ids = None):
     if not limited_workers_ids: limited_workers_ids = []
@@ -692,21 +588,8 @@ def retrieve_prioritized_wp_queue():
     # logger.debug(len(deserialized_wp_list))
     return deserialized_wp_list
 
-def query_prioritized_wps():
-    return db.session.query(
-                WaitingPrompt.id, 
-                WaitingPrompt.things, 
-                WaitingPrompt.n, 
-                WaitingPrompt.extra_priority, 
-                WaitingPrompt.created,
-                WaitingPrompt.expiry,
-            ).filter(
-                WaitingPrompt.n > 0,
-                WaitingPrompt.faulted == False,
-                WaitingPrompt.active == True,
-            ).order_by(
-                WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.asc()
-            ).all()
+def query_prioritized_text_wps():
+    return query_prioritized_wps()
 
 
 def prune_expired_stats():
@@ -724,8 +607,3 @@ def prune_expired_stats():
     db.session.commit()
     logger.debug("Pruned Expired Stats")
 
-
-def compile_regex_filter(filter_type):
-    all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
-    all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
-    return '|'.join(all_filter_regex)

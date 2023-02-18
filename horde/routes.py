@@ -25,7 +25,7 @@ dance_return_to = '/'
 @HORDE.route('/')
 # @cache.cached(timeout=300)
 def index():
-    with open(f'index_{args.horde}.md') as index_file:
+    with open(f'index_stable.md') as index_file:
         index = index_file.read()
     top_contributor = database.get_top_contributor()
     top_worker = database.get_top_worker()

@@ -1,6 +1,18 @@
 # Changelog
 
 
+# 4.0.0
+
+Add user fields
+* contributed_tokens
+* usage_tokens
+Add WP fields
+* wp_type
+* max_content_length
+* max_length
+* softprompt
+* index faulted
+
 ## 3.11.2
 
 * Fix for source images being deleted from r2 before being used

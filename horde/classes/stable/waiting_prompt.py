@@ -10,6 +10,10 @@ from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
 
 class WaitingPromptExtended(WaitingPrompt):
+    __mapper_args__ = {
+        "polymorphic_identity": "stable",
+    }
+    #TODO: Find a way to index width*height
     width = db.Column(db.Integer, default=512, nullable=False)
     height = db.Column(db.Integer, default=512, nullable=False)
     source_image = db.Column(db.Text, default=None)
@@ -18,18 +22,13 @@ class WaitingPromptExtended(WaitingPrompt):
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
     seed = db.Column(db.BigInteger, default=None, nullable=True)
     seed_variation = db.Column(db.Integer, default=None)
-    kudos = db.Column(db.Float, default=0, nullable=False)
-    r2 = db.Column(db.Boolean, default=False, nullable=False)
+    r2 = db.Column(db.Boolean, default=False, nullable=False, index=True)
     shared = db.Column(db.Boolean, default=False, nullable=False)
 
     @logger.catch(reraise=True)
     def extract_params(self):
         self.n = self.params.pop('n', 1)
         self.jobs = self.n 
-        # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
-        if self.n > 20:
-            logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
-            self.n = 20
         # We store width and height individually in the DB to allow us to index them easier
         if "width" not in self.params:
             self.params["width"] = 512

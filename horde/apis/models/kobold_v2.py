@@ -26,7 +26,7 @@ class Models(v2.Models):
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
         self.root_model_generation_payload_kobold = api.model('ModelPayloadRootKobold', {
-            'n': fields.Integer(example=1), 
+            'n': fields.Integer(example=1, min=1, max=20), 
             'frmtadsnsp': fields.Boolean(example=False,description="Input formatting option. When enabled, adds a leading space to your input if there is no trailing whitespace at the end of the previous action."),
             'frmtrmblln': fields.Boolean(example=False,description="Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines in the output with one newline."),
             'frmtrmspch': fields.Boolean(example=False,description="Output formatting option. When enabled, removes #/@%}{+=~|\^<> from the output."),

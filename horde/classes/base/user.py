@@ -6,7 +6,7 @@ from datetime import datetime
 
 from horde.logger import logger
 from horde.flask import db
-from horde.vars import thing_name, thing_divisor
+from horde.vars import thing_name, thing_divisor, text_thing_divisor, text_thing_name
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
@@ -51,8 +51,10 @@ class User(db.Model):
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
     contributed_thing = db.Column(db.Float, default=0, nullable=False, index=True)
+    contributed_tokens = db.Column(db.Float, default=0, nullable=False, index=True)
     contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
     usage_thing = db.Column(db.Float, default=0, nullable=False)
+    usage_tokens = db.Column(db.Float, default=0, nullable=False)
     usage_requests = db.Column(db.Integer, default=0, nullable=False)
 
     worker_invited = db.Column(db.Integer, default=0, nullable=False)
@@ -144,14 +146,22 @@ class User(db.Model):
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, raw_things, kudos):
+    def record_usage_basics(self, kudos):
         self.last_active = datetime.utcnow()
         self.usage_requests += 1
         self.modify_kudos(-kudos,"accumulated")
+
+    def record_usage(self, raw_things, kudos):
+        self.record_usage_basics(kudos)
         self.usage_thing = round(self.usage_thing + (raw_things * self.usage_multiplier / thing_divisor),2)
         db.session.commit()
 
-    def record_contributions(self, raw_things, kudos):
+    def record_text_usage(self, raw_things, kudos):
+        self.record_usage_basics(kudos)
+        self.usage_tokens = round(self.usage_tokens + (raw_things * self.usage_multiplier / text_thing_divisor),2)
+        db.session.commit()
+
+    def record_contribution_basics(self, kudos):
         self.last_active = datetime.utcnow()
         self.contributed_fulfillments += 1
         # While a worker is untrusted, half of all generated kudos go for evaluation
@@ -163,6 +173,15 @@ class User(db.Model):
             self.check_for_trust()
         else:
             self.modify_kudos(kudos,"accumulated")
+        db.session.commit()
+
+    def record_contributions(self, raw_things, kudos):
+        self.record_contribution_basics(kudos)
+        self.contributed_tokens = round(self.contributed_tokens + raw_things/text_thing_divisor,2)
+        db.session.commit()
+        
+    def record_text_contributions(self, raw_things, kudos):
+        self.record_contribution_basics(kudos)
         self.contributed_thing = round(self.contributed_thing + raw_things/thing_divisor,2)
         db.session.commit()
 

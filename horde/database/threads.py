@@ -278,9 +278,9 @@ def store_patreon_members():
             "entitlement_amount": member.attribute('currently_entitled_amount_cents') / 100,
         }
         note = json.loads(member.attribute('note'))
-        if f"{args.horde}_id" not in note:
+        if f"stable_id" not in note:
             continue
-        user_id = note[f"{args.horde}_id"]
+        user_id = note[f"stable_id"]
         if '#' in user_id:
             user_id = user_id.split("#")[-1]
         user_id = int(user_id)

@@ -58,7 +58,7 @@ class Models(v2.Models):
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
-            'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min = 1, max=20), 
+            'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min=1, max=20), 
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),

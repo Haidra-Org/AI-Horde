@@ -703,20 +703,20 @@ def retrieve_prioritized_wp_queue():
     # logger.debug(len(deserialized_wp_list))
     return deserialized_wp_list
 
-def query_prioritized_wps():
+def query_prioritized_wps(waiting_prompt_type = WaitingPrompt):
     return db.session.query(
-                WaitingPrompt.id, 
-                WaitingPrompt.things, 
-                WaitingPrompt.n, 
-                WaitingPrompt.extra_priority, 
-                WaitingPrompt.created,
-                WaitingPrompt.expiry,
+                waiting_prompt_type.id, 
+                waiting_prompt_type.things, 
+                waiting_prompt_type.n, 
+                waiting_prompt_type.extra_priority, 
+                waiting_prompt_type.created,
+                waiting_prompt_type.expiry,
             ).filter(
-                WaitingPrompt.n > 0,
-                WaitingPrompt.faulted == False,
-                WaitingPrompt.active == True,
+                waiting_prompt_type.n > 0,
+                waiting_prompt_type.faulted == False,
+                waiting_prompt_type.active == True,
             ).order_by(
-                WaitingPrompt.extra_priority.desc(), WaitingPrompt.created.asc()
+                waiting_prompt_type.extra_priority.desc(), waiting_prompt_type.created.asc()
             ).all()
 
 

@@ -30,15 +30,13 @@ icon = {
     "kobold": 1,
 }
 
-thing_name = thing_names[args.horde]
-raw_thing_name = raw_thing_names[args.horde]
-thing_divisor = thing_divisors[args.horde]
-things_per_sec_suspicion_threshold = suspicion_thresholds[args.horde]
-google_verification_string = google_verification_strings[args.horde]
-img_url = f"https://raw.githubusercontent.com/db0/Stable-Horde/main/img_{args.horde}/"
-horde_title = args.horde.capitalize()
-if args.horde == "kobold":
-    horde_title = "KoboldAI"
+thing_name = thing_names["stable"]
+raw_thing_name = raw_thing_names["stable"]
+text_thing_name = thing_names["kobold"]
+thing_divisor = thing_divisors["stable"]
+text_thing_divisor = thing_divisors["kobold"]
+things_per_sec_suspicion_threshold = suspicion_thresholds["stable"]
+google_verification_string = google_verification_strings["stable"]
+img_url = f"https://raw.githubusercontent.com/db0/Stable-Horde/main/img_stable/"
+horde_title = "AI Horde"
 horde_url = "https://stablehorde.net"
-if args.horde == "kobold":
-    horde_url = "https://koboldai.net"

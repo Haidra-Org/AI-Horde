@@ -18,8 +18,6 @@ from horde.consts import HORDE_VERSION
 
 
 HORDE.register_blueprint(apiv2)
-if args.horde == 'kobold':
-    HORDE.register_blueprint(apiv1)
 
 
 @HORDE.after_request
