@@ -49,12 +49,6 @@ def get_things_per_min():
     things_per_min = round(total_things / thing_divisor,2)
     return(things_per_min)
 
-def get_request_avg(worker_performances):
-    if len(worker_performances) == 0:
-        return(0)
-    avg = sum(worker_performances) / len(worker_performances)
-    return(round(avg,1))
-
 def get_model_avg(model):
     return 1000000 #TODO
     # TODO: Add the sum / coun calculation as part of the query
