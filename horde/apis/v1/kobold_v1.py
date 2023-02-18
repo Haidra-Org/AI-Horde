@@ -152,7 +152,7 @@ class SyncGenerate(Resource):
             if wp.is_completed():
                 break
         ret_dict = wp.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(wp, args["servers"]),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -171,7 +171,7 @@ class AsyncStatus(Resource):
         if not wp:
             return("ID not found", 404)
         wp_status = wp.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(wp, args["servers"]),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -188,7 +188,7 @@ class AsyncCheck(Resource):
         if not wp:
             return("ID not found", 404)
         lite_status = wp.get_lite_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()

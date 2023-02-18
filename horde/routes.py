@@ -73,7 +73,7 @@ This is the worker which has generated the most pixels for the horde.
     interrogation_worker_count, interrogation_worker_thread_count = database.count_active_workers("InterrogationWorker")
     image_worker_count, image_worker_thread_count = database.count_active_workers()
     avg_performance = ConvertAmount(
-        stats.get_request_avg(database.get_worker_performances())
+        database.get_request_avg()
         * image_worker_thread_count
     )
     # We multiple with the divisor again, to get the raw amount, which we can convert to prefix accurately

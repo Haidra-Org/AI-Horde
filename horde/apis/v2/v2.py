@@ -260,7 +260,7 @@ class SyncGenerate(GenerateTemplate):
                 break
             # logger.debug(self.wp.is_completed())
         ret_dict = self.wp.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(self.wp, self.workers),
             wp_queue_stats=database.get_wp_queue_stats(self.wp),
             active_worker_count=database.count_active_workers()
@@ -297,7 +297,7 @@ class AsyncStatus(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -323,7 +323,7 @@ class AsyncStatus(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -357,7 +357,7 @@ class AsyncCheck(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         lite_status = wp.get_lite_status(
-            request_avg=stats.get_request_avg(database.get_worker_performances()),
+            request_avg=database.get_request_avg(),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()

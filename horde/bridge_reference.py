@@ -15,7 +15,7 @@ BRIDGE_CAPABILITIES = {
     "SD-WebUI Stable Horde Worker Bridge": {
         2: {"tiling"},
         1: {
-            "img2img",
+            # "img2img",
             "inpainting",
             "karras",
             "r2",
