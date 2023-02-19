@@ -1,4 +1,5 @@
 import random
+from sqlalchemy.sql import expression
 
 from horde.logger import logger
 from horde import vars as hv
@@ -9,22 +10,22 @@ from horde.r2 import generate_procgen_upload_url, download_source_image, downloa
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
 
-class WaitingPromptExtended(WaitingPrompt):
+class ImageWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
         "polymorphic_identity": "image",
     }
     #TODO: Find a way to index width*height
-    width = db.Column(db.Integer, default=512, nullable=False)
-    height = db.Column(db.Integer, default=512, nullable=False)
+    width = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
+    height = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
     source_image = db.Column(db.Text, default=None)
-    source_processing = db.Column(db.String(10), default='img2img', nullable=False)
+    source_processing = db.Column(db.String(10), default='img2img', nullable=False, server_default="img2img")
     source_mask = db.Column(db.Text, default=None)
-    censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
-    seed = db.Column(db.BigInteger, default=None, nullable=True)
+    censor_nsfw = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
+    seed = db.Column(db.BigInteger, default=None)
     seed_variation = db.Column(db.Integer, default=None)
-    kudos = db.Column(db.Float, default=0, nullable=False)
-    r2 = db.Column(db.Boolean, default=False, nullable=False, index=True)
-    shared = db.Column(db.Boolean, default=False, nullable=False)
+    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
+    r2 = db.Column(db.Boolean, default=False, nullable=False, index=True, server_default=expression.literal(False))
+    shared = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
 
     @logger.catch(reraise=True)
     def extract_params(self):

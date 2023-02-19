@@ -1,5 +1,5 @@
 import random
-
+from sqlalchemy.sql import expression
 from horde.logger import logger
 from horde import vars as hv
 from horde.flask import db
@@ -13,9 +13,9 @@ class TextWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
         "polymorphic_identity": "text",
     }    
-    max_length = db.Column(db.Integer, default=80, nullable=False, index=True)
-    max_content_length = db.Column(db.Integer, default=1024, nullable=False, index=True)
-    softprompt = db.Column(db.String(255), default=None, nullable=False)
+    max_length = db.Column(db.Integer, default=80, nullable=False, index=True, server_default=expression.literal(80))
+    max_content_length = db.Column(db.Integer, default=1024, nullable=False, index=True, server_default=expression.literal(1024))
+    softprompt = db.Column(db.String(255), default=None, nullable=True)
 
 
     def extract_params(self, params, **kwargs):

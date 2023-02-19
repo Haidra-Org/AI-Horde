@@ -29,7 +29,6 @@ class ProcessingGeneration(db.Model):
     fake = db.Column(db.Boolean, default=False, nullable=False)
 
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
-    wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("WorkerExtended", back_populates="processing_gens")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

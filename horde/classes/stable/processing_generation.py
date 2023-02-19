@@ -2,6 +2,7 @@ import threading
 import requests
 import os
 import json
+from sqlalchemy.sql import expression
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
@@ -11,11 +12,12 @@ from horde.flask import db
 from horde.image import convert_b64_to_pil, convert_pil_to_b64
 
 
-class ProcessingGenerationExtended(ProcessingGeneration):
+class ImageProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
         "polymorphic_identity": "image",
     }    
-    censored = db.Column(db.Boolean, default=False, nullable=False)
+    censored = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
+    wp = db.relationship("ImageWaitingPrompt", back_populates="processing_gens")
 
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''

@@ -4,19 +4,13 @@ from importlib import import_module
 from horde.flask import db, HORDE
 from horde.utils import hash_api_key
 
-# Should figure out an elegant way to do this with a for loop
-# stats = import_module(name=f'horde.classes.{args.horde}').stats
-try:
-    ProcessingGeneration = import_module(name=f'horde.classes.{args.horde}.processing_generation').ProcessingGenerationExtended
-except (ModuleNotFoundError,AttributeError):
-    ProcessingGeneration = import_module(name='horde.classes.base.processing_generation').ProcessingGeneration
-try:
-    WaitingPrompt = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WaitingPromptExtended
-except (ModuleNotFoundError,AttributeError):
-    WaitingPrompt = import_module(name='horde.classes.base.waiting_prompt').WaitingPrompt
-if args.horde == 'stable':
-    from horde.classes.stable.interrogation import Interrogation, InterrogationForms
-    from horde.classes.stable.interrogation_worker import InterrogationWorker
+# Renaming now for backwards compat. Will fix later
+from horde.classes.stable.processing_generation import ImageProcessingGeneration as ProcessingGeneration
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.stable.interrogation_worker import InterrogationWorker
 try:
     WPAllowedWorkers = import_module(name=f'horde.classes.{args.horde}.waiting_prompt').WPAllowedWorkers
 except (ModuleNotFoundError,AttributeError):
