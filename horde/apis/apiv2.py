@@ -1,8 +1,8 @@
 from flask import Blueprint
 from flask_restx import Api
-from .. import args
+from horde.argparser import args
 from importlib import import_module
-from ..vars import horde_title
+from horde.vars import horde_title
 
 v2 = import_module(name=f'.{args.horde}', package='horde.apis.v2').api
 

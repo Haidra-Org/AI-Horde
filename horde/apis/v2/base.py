@@ -17,11 +17,9 @@ from horde.logger import logger
 from horde.argparser import args, maintenance, invite_only, raid
 from horde.apis import ModelsV2, ParsersV2
 from horde import exceptions as e
-# FIXME: Renamed for backwards compat. To fix later
-from horde.classes.stable.worker import ImageWorker as Worker
 from horde.classes.base.user import User
-# FIXME: Renamed for backwards compat. To fix later
-from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
+from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.classes.base.worker import Worker
 import horde.classes.base.stats as stats
 from horde.classes.base.team import Team
 from horde.classes.base.news import News
@@ -374,9 +372,9 @@ class AsyncCheck(Resource):
 
 
 class JobPopTemplate(Resource):
-
+    worker_class = Worker
     # We split this into its own function, so that it may be overriden and extended
-    def validate(self, worker_class = Worker):
+    def validate(self):
         self.skipped = {}
         self.user = database.find_user_by_api_key(self.args['apikey'])
         if not self.user:
@@ -384,7 +382,7 @@ class JobPopTemplate(Resource):
         if self.user.flagged:
             raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
         self.worker_name = sanitize_string(self.args['name'])
-        self.worker = database.find_worker_by_name(self.worker_name, worker_class=worker_class)
+        self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
             raise e.PolymorphicNameConflict(self.worker_name)
         self.safe_ip = True

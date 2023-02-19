@@ -1,11 +1,10 @@
-import base64
 import requests
 import sys
-from io import BytesIO
-from PIL import Image, UnidentifiedImageError
 from datetime import datetime
 
-from .v2 import *
+from .base import *
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.classes.stable.worker import ImageWorker
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
@@ -15,8 +14,7 @@ from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile
 from horde.image import convert_source_image_to_pil, convert_source_image_to_webp, upload_source_image_to_r2, ensure_source_image_uploaded
 from horde.model_reference import model_reference
 
-class AsyncGenerate(AsyncGenerate):
-    
+class ImageAsyncGenerate(AsyncGenerate):
     def validate(self):
         #logger.warning(datetime.utcnow())
         super().validate()
@@ -62,7 +60,7 @@ class AsyncGenerate(AsyncGenerate):
             shared=True
         if self.args.source_image:
             shared=False
-        self.wp = WaitingPrompt(
+        self.wp = ImageWaitingPrompt(
             self.workers,
             self.models,
             prompt = self.args["prompt"],
@@ -97,7 +95,7 @@ class AsyncGenerate(AsyncGenerate):
                 self.source_mask, self.source_mask_r2stored = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2 = True)
         self.wp.activate(self.source_image, self.source_mask)
 
-class SyncGenerate(SyncGenerate):
+class ImageSyncGenerate(SyncGenerate):
 
     def validate(self):
         super().validate()
@@ -143,7 +141,8 @@ class SyncGenerate(SyncGenerate):
                 logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
     
-class JobPop(JobPop):
+class ImageJobPop(JobPop):
+    worker_class = ImageWorker
     def check_in(self):
         self.worker.check_in(
             self.args.max_pixels, 
@@ -408,7 +407,7 @@ class InterrogationStatus(Resource):
 
 
 class InterrogatePop(JobPopTemplate):
-
+    worker_class = InterrogationWorker
     # The parser for RequestPop
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
@@ -440,7 +439,7 @@ class InterrogatePop(JobPopTemplate):
         if self.args.forms:
             self.forms = self.args.forms
         self.worker_ip = request.remote_addr
-        self.validate(worker_class = InterrogationWorker)
+        self.validate()
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_forms = []
@@ -583,12 +582,6 @@ class HordeLoad(HordeLoad):
         load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min("image")
         return(load_dict,200)
 
-class HordeNews(HordeNews):
-    
-    @cache.cached(timeout=300)
-    def get_news(self):
-        return(horde_news + stable_horde_news)
-
 
 class HordeStatsTotals(Resource):
     get_parser = reqparse.RequestParser()
@@ -617,35 +610,3 @@ class HordeStatsModels(Resource):
         '''
         return compile_imagegen_stats_models(),200
 
-api.add_resource(SyncGenerate, "/generate/sync")
-api.add_resource(AsyncGenerate, "/generate/async")
-api.add_resource(AsyncStatus, "/generate/status/<string:id>")
-api.add_resource(AsyncCheck, "/generate/check/<string:id>")
-api.add_resource(Aesthetics, "/generate/rate/<string:id>")
-api.add_resource(JobPop, "/generate/pop")
-api.add_resource(JobSubmit, "/generate/submit")
-api.add_resource(Users, "/users")
-api.add_resource(UserSingle, "/users/<string:user_id>")
-api.add_resource(FindUser, "/find_user")
-api.add_resource(Workers, "/workers")
-api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
-api.add_resource(TransferKudos, "/kudos/transfer")
-api.add_resource(AwardKudos, "/kudos/award")
-api.add_resource(HordeModes, "/status/modes")
-api.add_resource(HordeLoad, "/status/performance")
-api.add_resource(Models, "/status/models")
-api.add_resource(HordeNews, "/status/news")
-api.add_resource(Heartbeat, "/status/heartbeat")
-api.add_resource(Teams, "/teams")
-api.add_resource(TeamSingle, "/teams/<string:team_id>")
-api.add_resource(OperationsIP, "/operations/ipaddr")
-api.add_resource(Interrogate, "/interrogate/async")
-api.add_resource(InterrogationStatus, "/interrogate/status/<string:id>")
-api.add_resource(InterrogatePop, "/interrogate/pop")
-#TODO APIv2 Merge with status as a POST this part of /interrogate/<string:id>
-api.add_resource(InterrogateSubmit, "/interrogate/submit")
-api.add_resource(Filters, "/filters")
-api.add_resource(FilterRegex, "/filters/regex")
-api.add_resource(FilterSingle, "/filters/<string:filter_id>")
-api.add_resource(HordeStatsTotals, "/stats/img/totals")
-api.add_resource(HordeStatsModels, "/stats/img/models")

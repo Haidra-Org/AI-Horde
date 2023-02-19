@@ -1,12 +1,12 @@
-from .v2 import *
+from horde.classes.stable.waiting_prompt import TextWaitingPrompt
+from .base import *
 
 class AsyncGenerate(AsyncGenerate):
-    
     def initiate_waiting_prompt(self):
         self.softprompts = ['']
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
-        self.wp = WaitingPrompt(
+        self.wp = TextWaitingPrompt(
             prompt = self.args.prompt,
             user_id = self.user.id,
             params = self.params,
