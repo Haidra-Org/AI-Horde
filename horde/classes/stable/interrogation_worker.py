@@ -12,7 +12,7 @@ class WorkerInterrogationForm(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"InterrogationWorker", back_populates="forms")
     form = db.Column(db.String(30))
-    contrib_type = "interrogation"
+    wtype = "interrogation"
 
 
 class InterrogationWorker(WorkerTemplate):
@@ -64,7 +64,7 @@ class InterrogationWorker(WorkerTemplate):
     def record_interrogation(self, kudos, seconds_taken):
         '''We record the servers newest interrogation contribution
         '''
-        self.user.record_contributions(raw_things = 0, kudos = kudos, contrib_type = self.contrib_type)
+        self.user.record_contributions(raw_things = 0, kudos = kudos, contrib_type = self.wtype)
         self.modify_kudos(kudos,'interrogated')
         self.fulfilments += 1
         # TODO: Switch to use desc() and offset to ensure we don't have performances left over

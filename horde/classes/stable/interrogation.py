@@ -7,7 +7,6 @@ from sqlalchemy import Enum, JSON, func, or_
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_divisor
 from horde import vars as hv
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State

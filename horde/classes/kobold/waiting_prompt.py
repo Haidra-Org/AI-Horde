@@ -1,7 +1,6 @@
 import random
 
 from horde.logger import logger
-from horde.vars import text_thing_divisor
 from horde import vars as hv
 from horde.flask import db
 from horde.utils import get_random_seed
@@ -27,7 +26,7 @@ class TextWaitingPrompt(WaitingPrompt):
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.max_length
         # The total amount of to pixelsteps requested.
-        self.total_usage = round(self.max_length * self.n / text_thing_divisor,2)
+        self.total_usage = round(self.max_length * self.n / hv.thing_divisors["text"],2)
         self.models = kwargs.get("models", ['ReadOnly'])
         self.softprompt = kwargs.get("softprompt")
         self.prepare_job_payload(params)

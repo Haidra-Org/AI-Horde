@@ -12,6 +12,9 @@ from horde.image import convert_b64_to_pil, convert_pil_to_b64
 
 
 class ProcessingGenerationExtended(ProcessingGeneration):
+    __mapper_args__ = {
+        "polymorphic_identity": "image",
+    }    
     censored = db.Column(db.Boolean, default=False, nullable=False)
 
     def get_details(self):

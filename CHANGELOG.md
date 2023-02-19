@@ -3,9 +3,8 @@
 
 # 4.0.0
 
-Add user fields
-* contributed_tokens
-* usage_tokens
+Add FulfillmentPerformance fields
+* thing_type
 Add WP fields
 * wp_type
 * max_content_length

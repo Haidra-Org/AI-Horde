@@ -11,7 +11,7 @@ from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
 from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
-from horde.vars import thing_name,thing_divisor
+from horde.vars import thing_name
 from horde import vars as hv
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
@@ -392,7 +392,7 @@ def count_totals():
         current_wp_queue = wp.n + procgens_count
         ret_dict["queued_requests"] += current_wp_queue
         if current_wp_queue > 0:
-            ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
+            ret_dict[queued_thing] += wp.things * current_wp_queue / hv.thing_divisors["image"]
     # We round the end result to avoid to many decimals
     ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
     ret_dict["queued_forms"] = db.session.query(
@@ -583,7 +583,7 @@ def get_wp_queue_stats(wp):
     # logger.info(priority_sorted_list)
     for iter in range(len(priority_sorted_list)):
         iter_wp = priority_sorted_list[iter]
-        queued_things = round(iter_wp.things * iter_wp.n/thing_divisor,2)
+        queued_things = round(iter_wp.things * iter_wp.n/hv.thing_divisors["image"],2)
         things_ahead_in_queue += queued_things
         n_ahead_in_queue += iter_wp.n
         if iter_wp.id == wp.id:

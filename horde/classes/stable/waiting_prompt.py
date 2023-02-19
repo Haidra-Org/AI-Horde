@@ -1,7 +1,6 @@
 import random
 
 from horde.logger import logger
-from horde.vars import thing_divisor
 from horde import vars as hv
 from horde.flask import db
 from horde.utils import get_random_seed
@@ -12,7 +11,7 @@ from horde.bridge_reference import check_bridge_capability
 
 class WaitingPromptExtended(WaitingPrompt):
     __mapper_args__ = {
-        "polymorphic_identity": "stable",
+        "polymorphic_identity": "image",
     }
     #TODO: Find a way to index width*height
     width = db.Column(db.Integer, default=512, nullable=False)
@@ -65,7 +64,7 @@ class WaitingPromptExtended(WaitingPrompt):
         # logger.debug(self.params)
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.width * self.height * self.get_accurate_steps()
-        self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.total_usage = round(self.things * self.n / hv.thing_divisors["image"],2)
         self.prepare_job_payload(self.params)
         self.calculate_kudos()
         # Commit will happen in prepare_job_payload()

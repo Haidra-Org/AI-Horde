@@ -5,8 +5,10 @@ from horde.flask import db
 from horde.model_reference import model_reference
 
 
-class ProcessingGenerationExtended(ProcessingGeneration):
-    censored = db.Column(db.Boolean, default=False, nullable=False)
+class TextProcessingGeneration(ProcessingGeneration):
+    __mapper_args__ = {
+        "polymorphic_identity": "text",
+    }    
 
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''

@@ -580,7 +580,7 @@ class HordeLoad(HordeLoad):
         '''
         load_dict = super().get()[0]
         load_dict["interrogator_count"], load_dict["interrogator_thread_count"] = database.count_active_workers("InterrogationWorker")
-        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min()
+        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min("image")
         return(load_dict,200)
 
 class HordeNews(HordeNews):

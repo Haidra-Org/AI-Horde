@@ -9,7 +9,6 @@ from horde.classes.base.waiting_prompt import WPModels
 from horde.logger import logger
 from horde.argparser import raid
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_threshold
 from horde import vars as hv
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
@@ -102,8 +101,8 @@ class WorkerTemplate(db.Model):
 
     require_upfront_kudos = False
     prioritized_users = []
-    # Used for recording the right type of contributions
-    contrib_type = "image"
+    # Because I didn't use worker_type correctly. I should have called them "text" and "image"
+    wtype = "image"
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -240,7 +239,7 @@ class WorkerTemplate(db.Model):
 
     # We split it to its own function to make it extendable
     def convert_contribution(self,raw_things):
-        converted = round(raw_things/thing_divisor,2)
+        converted = round(raw_things/hv.thing_divisors[self.wtype],2)
         self.contributions = round(self.contributions + converted,2)
         # We reurn the converted amount as well in case we need it
         return(converted)
@@ -250,7 +249,7 @@ class WorkerTemplate(db.Model):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
-        self.user.record_contributions(raw_things = raw_things, kudos = kudos, contrib_type = self.contrib_type)
+        self.user.record_contributions(raw_things = raw_things, kudos = kudos, contrib_type = self.wtype)
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
@@ -262,8 +261,8 @@ class WorkerTemplate(db.Model):
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
-        if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
-            self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
+        if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
+            self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / hv.thing_divisors[self.wtype],2)])
 
     def modify_kudos(self, kudos, action = 'generated'):
         self.kudos = round(self.kudos + kudos, 2)
@@ -317,7 +316,7 @@ class WorkerTemplate(db.Model):
     def get_performance(self):
         performances = [p.performance for p in self.performance]
         if len(performances):
-            ret_str = f'{round(sum(performances) / len(performances) / thing_divisor,1)} {thing_name} per second'
+            ret_str = f'{round(sum(performances) / len(performances) / hv.thing_divisors[self.wtype],1)} {hv.thing_names[self.wtype]} per second'
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)

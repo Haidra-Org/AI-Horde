@@ -16,7 +16,7 @@ class WorkerExtended(Worker):
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
-    contrib_type = "image"
+    wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)

@@ -7,7 +7,6 @@ from sqlalchemy import JSON, func, or_
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_divisor
 from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
 
@@ -126,7 +125,7 @@ class WaitingPrompt(db.Model):
         self.jobs = self.n 
         # This specific per horde so it should be set in the extended class
         self.things = 0
-        self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.total_usage = round(self.things * self.n, 2)
         self.prepare_job_payload()
         db.session.commit()
 
@@ -211,9 +210,10 @@ class WaitingPrompt(db.Model):
                 ret_dict["processing"] += 1
         return ret_dict
 
-    def get_queued_things(self):
-        '''The things still queued to be generated for this waiting prompt'''
-        return round(self.things * self.n/thing_divisor,2)
+    # FIXME: Looks like this is not used anywhere
+    # def get_queued_things(self):
+    #     '''The things still queued to be generated for this waiting prompt'''
+    #     return round(self.things * self.n ,2)
 
     def get_status(
             self, 

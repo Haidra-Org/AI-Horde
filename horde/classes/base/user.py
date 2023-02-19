@@ -7,7 +7,7 @@ from sqlalchemy import Enum
 
 from horde.logger import logger
 from horde.flask import db
-from horde.vars import thing_name, thing_divisor, text_thing_divisor, text_thing_name
+from horde.vars import thing_name, text_thing_divisor, text_thing_name
 from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
@@ -63,11 +63,10 @@ class User(db.Model):
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
+    #TODO: Delete next 4 columns once UserRecords populated
     contributed_thing = db.Column(db.Float, default=0, nullable=False, index=True)
-    contributed_tokens = db.Column(db.Float, default=0, nullable=False, index=True)
     contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
     usage_thing = db.Column(db.Float, default=0, nullable=False)
-    usage_tokens = db.Column(db.Float, default=0, nullable=False)
     usage_requests = db.Column(db.Integer, default=0, nullable=False)
 
     worker_invited = db.Column(db.Integer, default=0, nullable=False)

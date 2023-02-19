@@ -5,7 +5,6 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_divisor
 from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
@@ -44,8 +43,8 @@ class Team(db.Model):
                 continue
             all_performances.append(worker.get_performance_average())
         if len(all_performances):
-            perf_avg = round(sum(all_performances) / len(all_performances) / thing_divisor,1)
-            perf_total = round(sum(all_performances) / thing_divisor,1)
+            perf_avg = round(sum(all_performances) / len(all_performances) / hv.thing_divisors["images"],1)
+            perf_total = round(sum(all_performances) / hv.thing_divisors["images"],1)
         else:
             perf_avg = 0
             perf_total = 0

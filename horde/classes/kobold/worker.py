@@ -14,7 +14,7 @@ class TextWorkerSoftprompts(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"TextWorker", back_populates="softprompts")
     softprompt = db.Column(db.String(255))
-    contrib_type = "text"
+    wtype = "text"
 
 class TextWorker(Worker):
     __mapper_args__ = {
