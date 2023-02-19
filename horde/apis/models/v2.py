@@ -18,7 +18,6 @@ class Parsers:
     job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
     job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker", location="json")
     job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
-    job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
     job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
     job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
     job_pop_parser.add_argument("bridge_agent", type=str, required=False, default="unknown:0:unknown", location="json")
@@ -120,7 +119,6 @@ class Models:
             'name': fields.String(description="The Name of the Worker"),
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
             'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
-            'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
             'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
             'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),

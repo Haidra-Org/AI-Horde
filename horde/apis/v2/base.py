@@ -15,7 +15,6 @@ from horde.flask import cache, db, HORDE
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.argparser import args, maintenance, invite_only, raid
-from horde.apis import ModelsV2, ParsersV2
 from horde import exceptions as e
 from horde.classes.base.user import User
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -43,8 +42,11 @@ authorizations = {
 }
 
 api = Namespace('v2', 'API Version 2' )
-models = ModelsV2(api)
-parsers = ParsersV2()
+
+from horde.apis.models.v2 import Models, Parsers
+
+models = Models(api)
+parsers = Parsers()
 
 handle_bad_request = api.errorhandler(e.BadRequest)(e.handle_bad_requests)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
@@ -190,8 +192,9 @@ class GenerateTemplate(Resource):
             if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
                 raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
 
+    def get_size_too_big_message(self):
+        return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Please confider reducing its size of the request.")
 
-    
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
@@ -209,37 +212,6 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
         self.wp.activate()
-
-class AsyncGenerate(GenerateTemplate):
-
-    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
-    @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(503, 'Maintenance Mode', models.response_model_error)
-    @api.response(429, 'Too Many Prompts', models.response_model_error)
-    def post(self):
-        '''Initiate an Asynchronous request to generate images.
-        This endpoint will immediately return with the UUID of the request for generation.
-        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
-        Perhaps some will appear in the next 10 minutes.
-        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
-        '''
-        try:
-            super().post()
-        except KeyError:
-            logger.error(f"caught missing Key.")
-            logger.error(self.args)
-            logger.error(self.args.params)
-            return {"message": "Internal Server Error"},500
-        ret_dict = {"id":self.wp.id}
-        if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
-            ret_dict['message'] = self.get_size_too_big_message()
-        return(ret_dict, 202)
-
-    def get_size_too_big_message(self):
-        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Please confider reducing its size of the request.")
-
 
 class SyncGenerate(GenerateTemplate):
 
@@ -283,93 +255,6 @@ class SyncGenerate(GenerateTemplate):
             raise e.NoValidWorkers(self.username)
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
-
-class AsyncStatus(Resource):
-    get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-
-    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
-     # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    @api.expect(get_parser)
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
-    @api.response(404, 'Request Not found', models.response_model_error)
-    def get(self, id = ''):
-        '''Retrieve the full status of an Asynchronous generation request.
-        This request will include all already generated images in download URL or base64 encoded .webp files.
-        As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
-        This endpoint is limited to 10 request per minute
-        '''
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(id)
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        # If the status is retrieved after the wp is done we clear it to free the ram
-        # FIXME: I pevent it at the moment due to the race conditions
-        # The WPCleaner is going to clean it up anyway
-        # if wp_status["done"]:
-            # wp.delete()
-        return(wp_status, 200)
-
-    delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-
-    @api.expect(delete_parser)
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
-    @api.response(404, 'Request Not found', models.response_model_error)
-    def delete(self, id = ''):
-        '''Cancel an unfinished request.
-        This request will include all already generated images in base64 encoded .webp files.
-        '''
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(id)
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        logger.info(f"Request with ID {wp.id} has been cancelled.")
-        # FIXME: I pevent it at the moment due to the race conditions
-        # The WPCleaner is going to clean it up anyway
-        wp.n = 0
-        db.session.commit()
-        return(wp_status, 200)
-
-
-class AsyncCheck(Resource):
-    get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-
-    # Increasing this until I can figure out how to pass original IP from reverse proxy
-    decorators = [limiter.limit("10/second", key_func = get_request_path)]
-    @cache.cached(timeout=1)
-    @api.expect(get_parser)
-    @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
-    # @cache.cached(timeout=0.5)
-    @api.response(404, 'Request Not found', models.response_model_error)
-    def get(self, id):
-        '''Retrieve the status of an Asynchronous generation request without images.
-        Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
-        '''
-        # Sending lite mode to try and reduce the amount of bandwidth
-        # This will not retrieve procgens, so ETA will not be completely accurate
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(id)
-        lite_status = wp.get_lite_status(
-            request_avg=database.get_request_avg(),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        return(lite_status, 200)
-
 
 class JobPopTemplate(Resource):
     worker_class = Worker
@@ -420,23 +305,9 @@ class JobPopTemplate(Resource):
 
 class JobPop(JobPopTemplate):
 
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
-    def post(self):
-        '''Check if there are generation requests queued for fulfillment.
-        This endpoint is used by registered workers only
-        '''
-        # logger.warning(datetime.utcnow())
-        self.args = parsers.job_pop_parser.parse_args()
+    def process_post(self):
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
-        self.blacklist = []
-        if self.args.blacklist:
-            self.blacklist = self.args.blacklist
         self.priority_usernames = []
         if self.args.priority_usernames:
             self.priority_usernames = self.args.priority_usernames
@@ -450,7 +321,6 @@ class JobPop(JobPopTemplate):
         self.prioritized_wp = []
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
@@ -526,17 +396,8 @@ class JobPop(JobPopTemplate):
 
 
 class JobSubmit(Resource):
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
-    @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
-    @api.response(400, 'Generation Already Submitted', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
-    @api.response(404, 'Request Not Found', models.response_model_error)
-    def post(self):
-        '''Submit a generated image.
-        This endpoint is used by registered workers only
-        '''
+    
+    def process_post(self):
         self.args = parsers.job_submit_parser.parse_args()
         self.validate()
         return({"reward": self.kudos}, 200)

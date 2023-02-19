@@ -4,7 +4,7 @@ from horde.argparser import args
 from importlib import import_module
 from horde.vars import horde_title
 
-v2 = import_module(name=f'.{args.horde}', package='horde.apis.v2').api
+from horde.apis.v2 import api as v2
 
 blueprint = Blueprint('apiv2', __name__, url_prefix='/api')
 api = Api(blueprint,

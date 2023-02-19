@@ -2,9 +2,9 @@ from flask_restx import fields
 from . import v2
 
 
-class Parsers(v2.Parsers):
+class TextParsers(v2.Parsers):
     def __init__(self):
-        self.generate_parser.add_argument("softprompts", type=list, required=False, help="If specified, only servers who can load this softprompt will generate this request", location="json")
+        self.generate_parser.add_argument("softprompt", type=str, required=False, help="If specified, only servers who can load this softprompt will generate this request", location="json")
         self.generate_parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate", location="json")
         self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate", location="json")
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
@@ -13,7 +13,7 @@ class Parsers(v2.Parsers):
         self.job_pop_parser.add_argument("model", type=str, required=False, help="The model currently available on this worker", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=False, default='', help="The seed of the generation", location="json")
 
-class Models(v2.Models):
+class TextModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)

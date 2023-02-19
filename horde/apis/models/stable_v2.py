@@ -3,7 +3,7 @@ from . import v2
 from horde.logger import logger
 
 
-class Parsers(v2.Parsers):
+class ImageParsers(v2.Parsers):
     def __init__(self):
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
@@ -13,6 +13,7 @@ class Parsers(v2.Parsers):
         self.generate_parser.add_argument("r2", type=bool, default=True, required=False, help="If True, the image will be sent via cloudflare r2 download link", location="json")
         self.generate_parser.add_argument("shared", type=bool, default=False, required=False, help="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True.", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
+        self.job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
         self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
         self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
@@ -20,7 +21,7 @@ class Parsers(v2.Parsers):
         self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the generation", location="json")
         self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
-class Models(v2.Models):
+class ImageModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)
@@ -80,6 +81,7 @@ class Models(v2.Models):
         })
         self.input_model_job_pop = api.inherit('PopInputStable', self.input_model_job_pop, {
             'max_pixels': fields.Integer(default=512*512,description="The maximum amount of pixels this worker can generate"), 
+            'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
             'allow_img2img': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests"),
             'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
