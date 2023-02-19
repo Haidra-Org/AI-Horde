@@ -232,7 +232,7 @@ class ImageJobPop(JobPop):
         self.blacklist = []
         if self.args.blacklist:
             self.blacklist = self.args.blacklist
-        self.process_post()
+        return self.process_post()
 
     def check_in(self):
         self.worker.check_in(
@@ -260,10 +260,10 @@ class ImageJobPop(JobPop):
             self.models,
             self.blacklist,
             priority_user_ids = priority_user_ids,
-        )        
+        )
         return sorted_wps
 
-class ImageJobSubmit(Resource):
+class ImageJobSubmit(JobSubmit):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
@@ -275,7 +275,7 @@ class ImageJobSubmit(Resource):
         '''Submit a generated image.
         This endpoint is used by registered workers only
         '''
-        self.process_post()
+        return self.process_post()
 
 class Aesthetics(Resource):
 

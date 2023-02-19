@@ -294,7 +294,7 @@ class JobPopTemplate(Resource):
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
                 pass
-            self.worker = worker_class(
+            self.worker = self.worker_class(
                 user_id=self.user.id,
                 name=self.worker_name,
             )
@@ -361,8 +361,8 @@ class JobPop(JobPopTemplate):
             # logger.debug(worker_ret)
             if worker_ret is None:
                 continue
-            # logger.debug(worker_ret)
-            return(worker_ret, 200)
+            logger.debug(worker_ret)
+            return worker_ret, 200
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)

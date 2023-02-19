@@ -112,7 +112,7 @@ class TextJobPop(JobPop):
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
         self.args = parsers.job_pop_parser.parse_args()
-        self.process_post()
+        return self.process_post()
 
     def check_in(self):
         self.softprompts = []
@@ -161,7 +161,7 @@ class TextJobPop(JobPop):
         )        
         return sorted_wps
 
-class TextJobSubmit(Resource):
+class TextJobSubmit(JobSubmit):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
@@ -173,7 +173,7 @@ class TextJobSubmit(Resource):
         '''Submit generated text.
         This endpoint is used by registered workers only
         '''
-        self.process_post()
+        return self.process_post()
 
 
 class HordeLoad(HordeLoad):

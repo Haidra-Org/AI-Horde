@@ -418,9 +418,7 @@ class User(db.Model):
             record_key = r.record
             if r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION}:
                 record_key = hv.thing_names[r.record]
-            logger.debug([rtype,r.record,record_key,r.value])
             records_dict[rtype][record_key] = r.value
-        logger.debug(records_dict)
         return records_dict
 
     @logger.catch(reraise=True)
