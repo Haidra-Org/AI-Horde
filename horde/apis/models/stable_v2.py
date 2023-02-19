@@ -69,7 +69,7 @@ class ImageModels(v2.Models):
             'post-processing': fields.Integer(description="How many waiting requests were skipped because they requested post-processing"),
             'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
         })
-        self.response_model_job_pop = api.model('GenerationPayload', {
+        self.response_model_job_pop = api.model('GenerationPayloadStable', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True),
@@ -93,7 +93,7 @@ class ImageModels(v2.Models):
         })
 
 
-        self.input_model_request_generation = api.model('GenerationInput', {
+        self.input_model_request_generation = api.model('GenerationInputStable', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),
             'params': fields.Nested(self.input_model_generation_payload, skip_none=True),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),

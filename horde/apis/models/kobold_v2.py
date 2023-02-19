@@ -10,7 +10,6 @@ class TextParsers(v2.Parsers):
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
         self.job_pop_parser.add_argument("softprompts", type=list, required=False, help="The available softprompt files on this worker for the currently running model", location="json")
         # To remove the below once I updated the KAI server to use "models"
-        self.job_pop_parser.add_argument("model", type=str, required=False, help="The model currently available on this worker", location="json")
         self.job_submit_parser.add_argument("seed", type=str, required=False, default='', help="The seed of the generation", location="json")
 
 class TextModels(v2.Models):
@@ -67,7 +66,7 @@ class TextModels(v2.Models):
             'max_content_length': fields.Integer(default=2048,description="The max amount of context to submit to this AI for sampling."), 
             'softprompts': fields.List(fields.String(description="The available softprompt files on this worker for the currently running model")),
         })
-        self.input_model_request_generation = api.model('GenerationInput', {
+        self.input_model_request_generation = api.model('GenerationInputKobold', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate text"),
             'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
             'softprompt': fields.String(description="Specify which softpompt needs to be used to service this request"),
