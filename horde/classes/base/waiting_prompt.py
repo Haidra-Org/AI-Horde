@@ -8,6 +8,7 @@ from sqlalchemy import JSON, func, or_
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_divisor
+from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
 
 from horde.classes import ProcessingGeneration
@@ -272,12 +273,12 @@ class WaitingPrompt(db.Model):
         ret_dict = self.get_status(lite=True, **kwargs)
         return(ret_dict)
 
-    def record_usage(self, raw_things, kudos):
+    def record_usage(self, raw_things, kudos, usage_type):
         '''Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
-        self.user.record_usage(raw_things, kudos)
+        self.user.record_usage(raw_things, kudos, usage_type)
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()
 

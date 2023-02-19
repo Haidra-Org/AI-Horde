@@ -12,6 +12,7 @@ from horde.classes.base.worker import WorkerModel
 from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
+from horde import vars as hv
 from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
 from horde.classes.kobold.worker import TextWorker
 from horde.utils import hash_api_key

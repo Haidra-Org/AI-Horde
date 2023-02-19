@@ -2,6 +2,7 @@ import random
 
 from horde.logger import logger
 from horde.vars import text_thing_divisor
+from horde import vars as hv
 from horde.flask import db
 from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -63,9 +64,7 @@ class TextWaitingPrompt(WaitingPrompt):
         ret_dict["shared"] = self.shared
         return ret_dict
 
-    def record_usage(self, raw_things, kudos):
+    def record_usage(self, raw_things, kudos, usage_type = "text"):
         '''I need to extend this to point it to record_text_usage()
         '''
-        self.user.record_text_usage(raw_things, kudos)
-        self.consumed_kudos = round(self.consumed_kudos + kudos,2)
-        self.refresh()
+        super().record_usage(raw_things, kudos, usage_type)

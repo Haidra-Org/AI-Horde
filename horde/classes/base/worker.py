@@ -10,6 +10,7 @@ from horde.logger import logger
 from horde.argparser import raid
 from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_threshold
+from horde import vars as hv
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 from horde.horde_redis import horde_r
@@ -101,6 +102,8 @@ class WorkerTemplate(db.Model):
 
     require_upfront_kudos = False
     prioritized_users = []
+    # Used for recording the right type of contributions
+    contrib_type = "image"
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -247,11 +250,11 @@ class WorkerTemplate(db.Model):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
-        self.user.record_contributions(raw_things = raw_things, kudos = kudos)
+        self.user.record_contributions(raw_things = raw_things, kudos = kudos, contrib_type = self.contrib_type)
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
-        if self.team:
+        if self.team and contrib_type == "image":
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:

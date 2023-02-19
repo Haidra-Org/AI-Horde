@@ -2,6 +2,7 @@ from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.logger import logger
 from horde.vars import thing_divisor
+from horde import vars as hv
 
 class WaitingPrompt(WaitingPrompt):
 

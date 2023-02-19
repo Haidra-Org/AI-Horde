@@ -2,6 +2,7 @@ import random
 
 from horde.logger import logger
 from horde.vars import thing_divisor
+from horde import vars as hv
 from horde.flask import db
 from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -192,7 +193,7 @@ class WaitingPromptExtended(WaitingPrompt):
         # logger.debug([s,n])
         return n
 
-    def record_usage(self, raw_things, kudos):
+    def record_usage(self, raw_things, kudos, usage_type = "image"):
         '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
         img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
         Also extra cost when upscaling
@@ -212,8 +213,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if kudos < 10:
             horde_tax -= 1
         kudos += horde_tax
-
-        super().record_usage(raw_things, kudos)
+        super().record_usage(raw_things, kudos, usage_type)
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self):

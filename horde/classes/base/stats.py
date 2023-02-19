@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_divisor
+from horde import vars as hv
 from horde.argparser import args
 
 class ModelPerformance(db.Model):

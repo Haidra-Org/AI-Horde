@@ -7,6 +7,7 @@ from horde.argparser import args
 
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
+from horde import vars as hv
 from horde.horde_redis import horde_r
 from horde import horde_instance_id
 from horde.threads import PrimaryTimedFunction
