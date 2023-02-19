@@ -8,7 +8,10 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_
 
 from horde.horde_redis import horde_r
-from horde.classes import WaitingPrompt, User, ProcessingGeneration
+from horde.classes.base.user import User
+# FIXME: Renamed for backwards compat. To fix later
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
+from horde.classes.stable.processing_generation import ImageProcessingGeneration as ProcessingGeneration
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger

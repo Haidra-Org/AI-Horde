@@ -17,7 +17,15 @@ from horde.logger import logger
 from horde.argparser import args, maintenance, invite_only, raid
 from horde.apis import ModelsV2, ParsersV2
 from horde import exceptions as e
-from horde.classes import stats, Worker, Team, WaitingPrompt, News, User, Filter
+# FIXME: Renamed for backwards compat. To fix later
+from horde.classes.stable.worker import ImageWorker as Worker
+from horde.classes.base.user import User
+# FIXME: Renamed for backwards compat. To fix later
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
+import horde.classes.base.stats as stats
+from horde.classes.base.team import Team
+from horde.classes.base.news import News
+from horde.classes.base.detection import Filter
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures

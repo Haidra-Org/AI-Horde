@@ -30,7 +30,7 @@ class ProcessingGeneration(db.Model):
 
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
-    worker = db.relationship("WorkerExtended", back_populates="processing_gens")
+    worker = db.relationship("Worker", back_populates="processing_gens")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __init__(self, *args, **kwargs):

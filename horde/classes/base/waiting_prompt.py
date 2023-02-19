@@ -10,8 +10,15 @@ from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
 
-from horde.classes import ProcessingGeneration
+from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
 
+procgen_classes = {
+    "template": ProcessingGeneration,
+    "image": ImageProcessingGeneration,
+    "text": TextProcessingGeneration,
+}
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -20,7 +27,7 @@ class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
-    worker = db.relationship(f"WorkerExtended")
+    worker = db.relationship(f"Worker")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
     wp = db.relationship(f"WaitingPrompt", back_populates="workers")
 
@@ -29,7 +36,7 @@ class WPTrickedWorkers(db.Model):
     __tablename__ = "wp_tricked_workers"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
-    worker = db.relationship(f"WorkerExtended")
+    worker = db.relationship(f"Worker")
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
     wp = db.relationship(f"WaitingPrompt", back_populates="tricked_workers")
 
@@ -147,13 +154,15 @@ class WaitingPrompt(db.Model):
             return None
         myself_refresh.n -= 1
         db.session.commit()
-        new_gen = ProcessingGeneration(wp_id=self.id, worker_id=worker.id)
+        procgen_class = procgen_classes[self.wp_type]
+        new_gen = procgen_class(wp_id=self.id, worker_id=worker.id)
         self.refresh()
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
         return self.get_pop_payload(new_gen)
 
     def fake_generation(self, worker):
-        new_gen = ProcessingGeneration(
+        procgen_class = procgen_classes[self.wp_type]
+        new_gen = procgen_class(
             wp_id=self.id, 
             worker_id=worker.id,
             fake=True)
@@ -179,14 +188,15 @@ class WaitingPrompt(db.Model):
             return True
         if self.needs_gen():
             return False
+        procgen_class = procgen_classes[self.wp_type]
         finished_procgens = db.session.query(
-            ProcessingGeneration.wp_id
+            procgen_class.wp_id
         ).filter(
-            ProcessingGeneration.wp_id == self.id,
-            ProcessingGeneration.fake == False,
+            procgen_class.wp_id == self.id,
+            procgen_class.fake == False,
             or_(
-                ProcessingGeneration.faulted == True,
-                ProcessingGeneration.generation != None,
+                procgen_class.faulted == True,
+                procgen_class.generation != None,
             )
         ).count()
         if finished_procgens < self.jobs:

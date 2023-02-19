@@ -76,13 +76,12 @@ class User(db.Model):
     flagged = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
-    workers = db.relationship(f"WorkerExtended", back_populates="user", cascade="all, delete-orphan")
+    workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
-    waiting_prompts = db.relationship("ImageWaitingPrompt", back_populates="user", cascade="all, delete-orphan")
-    text_prompts = db.relationship("TextWaitingPrompt", back_populates="user", cascade="all, delete-orphan")
+    waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
 

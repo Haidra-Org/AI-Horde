@@ -7,6 +7,10 @@ from horde.bridge_reference import check_bridge_capability, check_sampler_capabi
 from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
+from horde.flask import db, SQLITE_MODE
+
+
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 class TextWorkerSoftprompts(db.Model):
     __tablename__ = "text_worker_softprompts"
@@ -22,7 +26,6 @@ class TextWorker(Worker):
     }    
     max_length = db.Column(db.Integer, default=80, nullable=False)
     max_content_length = db.Column(db.Integer, default=1024, nullable=False)
-    allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
     
     softprompts = db.relationship("TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan")
 

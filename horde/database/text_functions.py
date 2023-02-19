@@ -13,8 +13,13 @@ from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
 from horde.vars import thing_name,thing_divisor
 from horde import vars as hv
-from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.classes.base.worker import WorkerPerformance
 from horde.classes.kobold.worker import TextWorker
+from horde.classes.base.user import User
+# FIXME: Renamed for backwards compat. To fix later
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
+import horde.classes.base.stats as stats
 from horde.utils import hash_api_key
 from horde.horde_redis import horde_r
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction

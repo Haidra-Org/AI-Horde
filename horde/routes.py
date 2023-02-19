@@ -12,7 +12,9 @@ from markdown import markdown
 
 from horde.database import functions as database
 from horde.argparser import args, maintenance
-from horde.classes import News, User, stats
+from horde.classes.base.user import User
+from horde.classes.base.news import News
+import horde.classes.base.stats as stats
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key

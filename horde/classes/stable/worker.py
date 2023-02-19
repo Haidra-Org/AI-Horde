@@ -8,7 +8,7 @@ from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
 
-class WorkerExtended(Worker):
+class ImageWorker(Worker):
     __mapper_args__ = {
         "polymorphic_identity": "stable_worker",
     }    

@@ -13,7 +13,13 @@ from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
 from horde.vars import thing_name
 from horde import vars as hv
-from horde.classes import User, Worker, Team, WaitingPrompt, ProcessingGeneration, WorkerPerformance, stats
+from horde.classes.base.worker import WorkerPerformance
+from horde.classes.stable.worker import ImageWorker as Worker
+from horde.classes.base.user import User
+# FIXME: Renamed for backwards compat. To fix later
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
+from horde.classes.stable.processing_generation import ImageProcessingGeneration as ProcessingGeneration
+import horde.classes.base.stats as stats
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
