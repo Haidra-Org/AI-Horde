@@ -112,17 +112,6 @@ class Models(v2.Models):
             'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
             'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
         })
-        self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
-        })
-        self.response_model_use_details = api.inherit('UsageDetailsStable', self.response_model_use_details, {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
-        })
-        self.response_model_user_details = api.inherit('UserDetailsStable', self.response_model_user_details, {
-            "kudos_details": fields.Nested(self.response_model_user_kudos_details),
-            "usage": fields.Nested(self.response_model_use_details),
-            "contributions": fields.Nested(self.response_model_contrib_details),
-        })
         self.response_model_horde_performance = api.inherit('HordePerformanceStable', self.response_model_horde_performance, {
             "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
             "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),

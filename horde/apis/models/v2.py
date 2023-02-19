@@ -175,16 +175,38 @@ class Models:
             "awarded": fields.Float(default=0,description="The amount of Kudos this user has been awarded from things like rating images."),
         })
 
+        #TODO: Obsolete
         self.response_model_contrib_details = api.model('ContributionsDetails', {
+            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
             "fulfillments": fields.Integer(description="How many images this user has generated")
         })
+        #TODO: Obsolete
         self.response_model_use_details = api.model('UsageDetails', {
+            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
             "requests": fields.Integer(description="How many images this user has requested")
         })
 
         self.response_model_monthly_kudos = api.model('MonthlyKudos', {
             "amount": fields.Integer(description="How much recurring Kudos this user receives monthly."),
             "last_received": fields.DateTime(dt_format='rfc822',description="Last date this user received monthly Kudos."),
+        })
+
+        self.response_model_user_thing_records = api.model('UserThingRecords', {
+            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated or requested", default=0),
+            "tokens": fields.Integer(description="How many token this user has generated or requested", default=0),
+        })
+
+        self.response_model_user_amount_records = api.model('UserAmountRecords', {
+            "image": fields.Integer(description="How many images this user has generated or requested", default=0),
+            "text": fields.Integer(description="How many texts this user has generated or requested", default=0),
+            "interrogation": fields.Integer(description="How many texts this user has generated or requested", default=0),
+        })
+
+        self.response_model_user_records = api.model('UserRecords', {
+            "usage": fields.Nested(self.response_model_user_thing_records),
+            "contribution": fields.Nested(self.response_model_user_thing_records),
+            "fulfillment": fields.Nested(self.response_model_user_amount_records),
+            "request": fields.Nested(self.response_model_user_amount_records),
         })
 
         self.response_model_user_details = api.model('UserDetails', {
@@ -205,9 +227,10 @@ class Models:
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),
             "account_age": fields.Integer(example=60, description="How many seconds since this account was created"),
-            # I need to pass these two via inheritabce, or they take over
-            # "usage": fields.Nested(self.response_model_use_details),
-            # "contributions": fields.Nested(self.response_model_contrib_details),
+            "kudos_details": fields.Nested(self.response_model_user_kudos_details),
+            "usage": fields.Nested(self.response_model_use_details), #TODO: OBSOLETE
+            "contributions": fields.Nested(self.response_model_contrib_details), #TODO: OBSOLETE
+            "records": fields.Nested(self.response_model_user_records), #TODO: OBSOLETE
         })
 
         self.input_model_user_details = api.model('ModifyUserInput', {

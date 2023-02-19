@@ -409,6 +409,20 @@ class User(db.Model):
         }
         return usage_dict
 
+    def compile_records_details(self):
+        records_dict = {}
+        for r in self.records:
+            rtype = r.record_type.name.lower()
+            if rtype not in records_dict:
+                records_dict[rtype] = {}
+            record_key = r.record
+            if r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION}:
+                record_key = hv.thing_names[r.record]
+            logger.debug([rtype,r.record,record_key,r.value])
+            records_dict[rtype][record_key] = r.value
+        logger.debug(records_dict)
+        return records_dict
+
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         ret_dict = {
@@ -418,6 +432,7 @@ class User(db.Model):
             "kudos_details": self.compile_kudos_details(),
             "usage": self.compile_usage_details(),
             "contributions": self.compile_contribution_details(),
+            "records": self.compile_records_details(),
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,
