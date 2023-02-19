@@ -8,7 +8,10 @@ from horde.logger import logger
 from horde.flask import db
 from horde.vars import thing_name, thing_divisor, raw_thing_name
 from horde.suspicions import Suspicions, SUSPICION_LOGS
-from horde.classes import User, Worker, Team, stats
+from horde.classes.base.user import User
+from horde.classes.base.team import Team, stats
+import horde.classes.base.stats as stats
+from horde.classes.stable.worker import ImageWorker
 from horde.utils import hash_api_key
 
 
@@ -105,7 +108,7 @@ def convert_worker(saved_dict):
         logger.message(f"Skipping Stale Worker {saved_dict['name']}")
         return
     user = database.find_user_by_oauth_id(saved_dict["oauth_id"])
-    new_worker = Worker(
+    new_worker = ImageWorker(
         id = saved_dict["id"],
         user_id = user.id,
         name = saved_dict["name"],

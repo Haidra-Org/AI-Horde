@@ -4,6 +4,7 @@ from importlib import import_module
 from horde.flask import db, HORDE
 from horde.utils import hash_api_key
 
+# Importing for DB creation
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
@@ -14,14 +15,7 @@ from horde.classes.base.user import User
 from horde.classes.base.team import Team
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-try:
-    News = import_module(name=f'horde.classes.{args.horde}.news').NewsExtended
-except (ModuleNotFoundError,AttributeError):
-    News = import_module(name=f'horde.classes.{args.horde}.news').News
-try:
-    stats = import_module(name=f'horde.classes.{args.horde}.stats')
-except (ModuleNotFoundError,AttributeError):
-    stats = import_module(name='horde.classes.base.stats')
+import horde.classes.base.stats
 from horde.classes.base.detection import Filter
 
 with HORDE.app_context():
