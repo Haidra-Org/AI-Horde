@@ -474,11 +474,14 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         WaitingPrompt
     ).options(
         noload(WaitingPrompt.processing_gens)
-    ).join(
+    ).outerjoin(
         WPModels
     ).filter(
         WaitingPrompt.n > 0,
-        WPModels.model.in_(models_list),
+        or_(
+            WPModels.model.in_(models_list),
+            WPModels.id.is_(None),
+        ),
         WaitingPrompt.width * WaitingPrompt.height <= worker.max_pixels,
         WaitingPrompt.active == True,
         WaitingPrompt.faulted == False,

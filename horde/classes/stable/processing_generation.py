@@ -18,6 +18,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
     }    
     censored = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
     wp = db.relationship("ImageWaitingPrompt", back_populates="processing_gens")
+    worker = db.relationship("ImageWorker", back_populates="processing_gens")
 
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''

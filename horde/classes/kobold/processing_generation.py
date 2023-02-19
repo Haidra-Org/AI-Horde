@@ -9,6 +9,8 @@ class TextProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
         "polymorphic_identity": "text",
     }    
+    wp = db.relationship("TextWaitingPrompt", back_populates="processing_gens")
+    worker = db.relationship("TextWorker", back_populates="processing_gens")
 
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''

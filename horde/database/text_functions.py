@@ -336,35 +336,39 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         noload(TextWaitingPrompt.processing_gens)
     ).outerjoin(
         WPModels
-    # ).filter(
-    #     TextWaitingPrompt.n > 0,
-    #     WPModels.model.in_(models_list),
-    #     TextWaitingPrompt.max_length <= worker.max_length,
-    #     TextWaitingPrompt.max_content_length <= worker.max_content_length,
-    #     TextWaitingPrompt.active == True,
-    #     TextWaitingPrompt.faulted == False,
-    #     TextWaitingPrompt.expiry > datetime.utcnow(),
-    #     or_(
-    #         TextWaitingPrompt.safe_ip == True,
-    #         and_(
-    #             TextWaitingPrompt.safe_ip == False,
-    #             worker.allow_unsafe_ipaddr == True,
-    #         ),
-    #     ),
-    #     or_(
-    #         TextWaitingPrompt.nsfw == False,
-    #         and_(
-    #             TextWaitingPrompt.nsfw == True,
-    #             worker.nsfw == True,
-    #         ),
-    #     ),
-    #     or_(
-    #         worker.maintenance == False,
-    #         and_(
-    #             worker.maintenance == True,
-    #             TextWaitingPrompt.user_id == worker.user_id,
-    #         ),
-    #     ),
+    ).filter(
+        TextWaitingPrompt.n > 0,
+        
+        TextWaitingPrompt.max_length <= worker.max_length,
+        TextWaitingPrompt.max_content_length <= worker.max_content_length,
+        TextWaitingPrompt.active == True,
+        TextWaitingPrompt.faulted == False,
+        TextWaitingPrompt.expiry > datetime.utcnow(),
+        or_(
+            TextWaitingPrompt.safe_ip == True,
+            and_(
+                TextWaitingPrompt.safe_ip == False,
+                worker.allow_unsafe_ipaddr == True,
+            ),
+        ),
+        or_(
+            TextWaitingPrompt.nsfw == False,
+            and_(
+                TextWaitingPrompt.nsfw == True,
+                worker.nsfw == True,
+            ),
+        ),
+        or_(
+            TextWaitingPrompt.nsfw == False,
+            and_(
+                TextWaitingPrompt.nsfw == True,
+                worker.nsfw == True,
+            ),
+        ),
+        or_(
+            WPModels.model.in_(models_list),
+            WPModels.id.is_(None),
+        ),
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(TextWaitingPrompt.user_id.in_(priority_user_ids))
