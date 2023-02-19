@@ -64,7 +64,6 @@ class WaitingPrompt(db.Model):
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
-    kudos = db.Column(db.Float, default=0, nullable=False)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False, index=True)
@@ -128,12 +127,6 @@ class WaitingPrompt(db.Model):
         self.things = 0
         self.total_usage = round(self.things * self.n / thing_divisor,2)
         self.prepare_job_payload()
-        self.calculate_kudos()
-        db.session.commit()
-
-    # To overwrite
-    def calculate_kudos(self):
-        self.kudos = 10
         db.session.commit()
 
     def prepare_job_payload(self):

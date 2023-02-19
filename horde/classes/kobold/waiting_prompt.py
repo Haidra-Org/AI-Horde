@@ -31,10 +31,6 @@ class TextWaitingPrompt(WaitingPrompt):
         self.softprompt = kwargs.get("softprompt")
         self.prepare_job_payload(params)
 
-    def calculate_kudos(self):
-        self.kudos = 10
-        db.session.commit()
-
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict = None):
         '''Prepares the default job payload. This might be further adjusted per job in get_job_payload()'''
@@ -56,18 +52,6 @@ class TextWaitingPrompt(WaitingPrompt):
         kudos += horde_tax
         super().record_text_usage(raw_things, kudos)
 
-    # We can calculate the kudos in advance as they model doesn't affect them
-    def calculate_kudos(self):
-        result = pow((self.params.get('width', 512) * self.params.get('height', 512)) - (64*64), 1.75) / pow((1024*1024) - (64*64), 1.75)
-        # We need to calculate the steps, without affecting the actual steps requested
-        # because some samplers are effectively doubling their steps
-        steps = self.get_accurate_steps()
-        self.kudos = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
-        # For each post processor in requested, we increase the cost by 20%
-        for post_processor in self.gen_payload.get('post_processing', []):
-            self.kudos = round(self.kudos * 1.2,2)
-        db.session.commit()
-
     def log_faulted_prompt(self):
         source_processing = 'txt2img'
         if self.source_image:
@@ -78,3 +62,10 @@ class TextWaitingPrompt(WaitingPrompt):
         ret_dict = super().get_status(**kwargs)
         ret_dict["shared"] = self.shared
         return ret_dict
+
+    def record_usage(self, raw_things, kudos):
+        '''I need to extend this to point it to record_text_usage()
+        '''
+        self.user.record_text_usage(raw_things, kudos)
+        self.consumed_kudos = round(self.consumed_kudos + kudos,2)
+        self.refresh()

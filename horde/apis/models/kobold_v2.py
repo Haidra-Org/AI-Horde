@@ -68,11 +68,10 @@ class Models(v2.Models):
             'softprompts': fields.List(fields.String(description="The available softprompt files on this worker for the currently running model")),
         })
         self.input_model_request_generation = api.model('GenerationInput', {
-            'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate an image"),
+            'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate text"),
             'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
-            'softprompts': fields.List(fields.String(description="Specify which softpompts need to be used to service this request")),
+            'softprompt': fields.String(description="Specify which softpompt needs to be used to service this request"),
             'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
-            'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers censor text."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
         })

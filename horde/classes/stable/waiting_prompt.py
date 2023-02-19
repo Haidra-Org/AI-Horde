@@ -22,6 +22,7 @@ class WaitingPromptExtended(WaitingPrompt):
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
     seed = db.Column(db.BigInteger, default=None, nullable=True)
     seed_variation = db.Column(db.Integer, default=None)
+    kudos = db.Column(db.Float, default=0, nullable=False)
     r2 = db.Column(db.Boolean, default=False, nullable=False, index=True)
     shared = db.Column(db.Boolean, default=False, nullable=False)
 

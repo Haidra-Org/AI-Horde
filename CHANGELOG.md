@@ -12,6 +12,8 @@ Add WP fields
 * max_length
 * softprompt
 * index faulted
+Add Procgen field
+* procgen_type
 
 ## 3.11.2
 

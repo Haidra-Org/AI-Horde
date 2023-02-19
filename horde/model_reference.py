@@ -44,5 +44,10 @@ class ModelReference(PrimaryTimedFunction):
     def get_model_names(self):
         return set(reference.keys())
 
+    def get_text_model_multiplier(self, model_name):
+        # To avoid doing this calculations all the time
+        if not self.text_reference.get(model_name):
+            return 1
+        return self.text_reference[model_name]["parameters"] / 1000000000
 
 model_reference = ModelReference(3600, None)
