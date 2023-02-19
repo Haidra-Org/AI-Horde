@@ -17,16 +17,12 @@ from horde.model_reference import model_reference
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 
 models = ImageModels(api)
-image_models = ImageModels(api)
-image_parsers = ImageParsers()
 parsers = ImageParsers()
-logger.debug(image_models)
-logger.debug(image_models.input_model_request_generation)
 
 class ImageAsyncGenerate(GenerateTemplate):
 
-    @api.expect(parsers.generate_parser, image_models.input_model_request_generation, validate=True)
-    @api.marshal_with(image_models.response_model_async, code=202, description='Generation Queued', skip_none=True)
+    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
+    @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(503, 'Maintenance Mode', models.response_model_error)
@@ -101,7 +97,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.wp = ImageWaitingPrompt(
             self.workers,
             self.models,
-            prompt = self.args["prompt"],
+            prompt = self.args.prompt,
             user_id = self.user.id,
             params = self.params,
             nsfw = self.args.nsfw,

@@ -18,18 +18,17 @@ class TextWaitingPrompt(WaitingPrompt):
     softprompt = db.Column(db.String(255), default=None, nullable=True)
 
 
-    def extract_params(self, params, **kwargs):
-        self.n = params.pop('n', 1)
+    def extract_params(self, **kwargs):
+        self.n = self.params.pop('n', 1)
         self.jobs = self.n 
-        self.max_length = params.get("max_length", 80)
-        self.max_content_length = params.get("max_content_length", 1024)
+        self.max_length = self.params.get("max_length", 80)
+        self.max_content_length = self.params.get("max_content_length", 1024)
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.max_length
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.max_length * self.n / hv.thing_divisors["text"],2)
-        self.models = kwargs.get("models", ['ReadOnly'])
         self.softprompt = kwargs.get("softprompt")
-        self.prepare_job_payload(params)
+        self.prepare_job_payload(self.params)
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict = None):

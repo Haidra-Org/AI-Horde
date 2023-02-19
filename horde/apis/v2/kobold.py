@@ -34,14 +34,14 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def initiate_waiting_prompt(self):
         self.wp = TextWaitingPrompt(
+            self.workers,
+            self.models,
             prompt = self.args.prompt,
             user_id = self.user.id,
             params = self.params,
-            workers = self.workers,
-            models = self.models,
             softprompt = self.args.softprompt,
-            trusted_workers = self.args["trusted_workers"],
-            ipaddr=self.ipaddr,
+            trusted_workers = self.args.trusted_workers,
+            ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
         )
 
