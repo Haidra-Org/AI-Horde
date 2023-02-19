@@ -37,7 +37,7 @@ class UserRecords(db.Model):
     __tablename__ = "user_records"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    user = db.relationship("User", back_populates="suspicions")
+    user = db.relationship("User", back_populates="records")
     # contribution, usage, fulfillment, request
     record_type = db.Column(Enum(UserRecordTypes), nullable=False, index=True)
     record = db.Column(db.String(30), nullable=False)

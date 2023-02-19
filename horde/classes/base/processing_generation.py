@@ -17,6 +17,7 @@ class ProcessingGeneration(db.Model):
         "polymorphic_on": "procgen_type",
     }    
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
 
     model = db.Column(db.String(40), default='', nullable=False)

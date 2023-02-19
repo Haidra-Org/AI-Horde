@@ -37,7 +37,7 @@ class ModelReference(PrimaryTimedFunction):
             self.text_model_names = set()
             for model in self.text_reference:
                 self.text_model_names.add(model)
-                if self.text_model_names[model].get("nsfw"):
+                if self.text_reference[model].get("nsfw"):
                     self.nsfw_models.add(model)
 
         except Exception:
