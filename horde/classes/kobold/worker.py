@@ -8,6 +8,7 @@ from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
 from horde.flask import db, SQLITE_MODE
+from horde.horde_redis import horde_r
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -91,18 +92,18 @@ class TextWorker(Worker):
             return [False, 'max_content_length']
         if self.max_length < waiting_prompt.max_length:
             return [False, 'max_length']
-        matching_softprompt = False
-        for sp in waiting_prompt.softprompts:
+        matching_softprompt = True
+        if waiting_prompt.softprompt:
+            matching_softprompt = False
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
-            if sp == '':
+            if waiting_prompt.softprompt == '':
                 matching_softprompt = True
-                break
-            for sp_name in self.softprompts:
-                if sp in sp_name:
-                    matching_softprompt = True
-                    break
+            if waiting_prompt.softprompt in self.get_softprompt_names():
+                matching_softprompt = True
         if not matching_softprompt:
+            logger.debug('bbbb')
             return [False, 'matching_softprompt']
+        logger.debug('aaa')
         return [True, None]
 
     def get_details(self, is_privileged = False):

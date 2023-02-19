@@ -15,6 +15,7 @@ from horde.vars import thing_name
 from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker as Worker
+from horde.classes.kobold.worker import TextWorker
 from horde.classes.base.user import User
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
@@ -141,7 +142,7 @@ def find_worker_by_name(worker_name, worker_class=Worker):
     return worker
 
 def worker_name_exists(worker_name):
-    for worker_class in [Worker, InterrogationWorker]:
+    for worker_class in [Worker, TextWorker, InterrogationWorker]:
         worker = db.session.query(worker_class).filter_by(name=worker_name).count()
         if worker:
             return True
@@ -156,6 +157,8 @@ def find_worker_by_id(worker_id):
     if SQLITE_MODE:
         worker_uuid = str(worker_uuid)
     worker = db.session.query(Worker).filter_by(id=worker_uuid).first()
+    if not worker:
+        worker = db.session.query(TextWorker).filter_by(id=worker_uuid).first()
     if not worker:
         worker = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).first()
     return worker
@@ -519,7 +522,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(WaitingPrompt.user_id.in_(priority_user_ids))
-    # logger.debug(final_wp_list)
+    logger.debug(final_wp_list)
     final_wp_list = final_wp_list.order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()

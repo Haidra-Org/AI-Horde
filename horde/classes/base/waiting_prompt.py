@@ -108,6 +108,7 @@ class WaitingPrompt(db.Model):
     def set_models(self, model_names = None):
         if not model_names: model_names = []
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
+        logger.debug(model_names)
         for model in model_names:
             model_entry = WPModels(model=model,wp_id=self.id)
             db.session.add(model_entry)
@@ -149,7 +150,7 @@ class WaitingPrompt(db.Model):
 
     def start_generation(self, worker):
         # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
-        myself_refresh = db.session.query(WaitingPrompt).filter(WaitingPrompt.id == self.id, WaitingPrompt.n > 0).with_for_update().first()
+        myself_refresh = db.session.query(type(self)).filter(type(self).id == self.id, type(self).n > 0).with_for_update().first()
         if not myself_refresh:
             return None
         myself_refresh.n -= 1

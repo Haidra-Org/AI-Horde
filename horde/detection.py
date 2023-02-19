@@ -82,7 +82,7 @@ class PromptChecker:
         return prompt_suspicion,matching_groups
 
     def check_nsfw_model_block(self, prompt, models):
-        logger.debug([prompt, models])
+        # logger.debug([prompt, models])
         if not any(m in model_reference.nsfw_models for m in models):
             return False
         if "###" in prompt:

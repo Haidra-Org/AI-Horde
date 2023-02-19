@@ -1,5 +1,7 @@
 from .base import *
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.worker import TextWorker
+from horde.database import text_functions as text_database
 
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
 
@@ -98,7 +100,7 @@ class TextAsyncStatus(Resource):
         return(wp_status, 200)
 
 class TextJobPop(JobPop):
-
+    worker_class = TextWorker
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
     @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
@@ -119,9 +121,6 @@ class TextJobPop(JobPop):
         if self.args.softprompts:
             self.softprompts = self.args.softprompts
         models = self.models
-        # To adjust the below once I updated the KAI server to use "models" arg
-        if self.args.model:
-            models = [self.args.model]
         self.worker.check_in(
             self.args['max_length'],
             self.args['max_content_length'],
@@ -134,27 +133,9 @@ class TextJobPop(JobPop):
         )
 
 
-    # Making it into its own function to allow extension
-    def start_worker(self, wp):
-        for wp in self.prioritized_wp:
-            matching_softprompt = False
-            for sp in wp.softprompts:
-                # If a None softprompts has been provided, we always match, since we can always remove the softprompt
-                if sp == '':
-                    matching_softprompt = sp
-                for sp_name in self.args['softprompts']:
-                    # logger.info([sp_name,sp,sp in sp_name])
-                    if sp in sp_name: # We do a very basic string matching. Don't think we need to do regex
-                        matching_softprompt = sp_name
-                        break
-                if matching_softprompt:
-                    break
-        ret = wp.start_generation(self.worker, matching_softprompt)
-        return(ret)
-
     def get_sorted_wp(self, priority_user_ids=None):
         '''We're sending the lists directly, to avoid having to join tables'''
-        sorted_wps = database.get_sorted_wp_filtered_to_worker(
+        sorted_wps = text_database.get_sorted_text_wp_filtered_to_worker(
             self.worker,
             self.models,
             priority_user_ids = priority_user_ids,

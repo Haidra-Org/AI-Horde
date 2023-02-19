@@ -323,7 +323,7 @@ def count_things_per_model():
     return(things_per_model)
 
 
-def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 
+def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_user_ids=None): 
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
@@ -331,62 +331,49 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     final_wp_list = db.session.query(
-        WaitingPrompt
+        TextWaitingPrompt
     ).options(
-        noload(WaitingPrompt.processing_gens)
-    ).join(
+        noload(TextWaitingPrompt.processing_gens)
+    ).outerjoin(
         WPModels
-    ).filter(
-        WaitingPrompt.n > 0,
-        WPModels.model.in_(models_list),
-        WaitingPrompt.width * WaitingPrompt.height <= worker.max_pixels,
-        WaitingPrompt.active == True,
-        WaitingPrompt.faulted == False,
-        WaitingPrompt.expiry > datetime.utcnow(),
-        or_(
-            WaitingPrompt.source_image == None,
-            and_(
-                WaitingPrompt.source_image != None,
-                worker.allow_img2img == True,
-            ),
-            
-        ),
-        or_(
-            WaitingPrompt.safe_ip == True,
-            and_(
-                WaitingPrompt.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
-        ),
-        or_(
-            WaitingPrompt.nsfw == False,
-            and_(
-                WaitingPrompt.nsfw == True,
-                worker.nsfw == True,
-            ),
-        ),
-        or_(
-            worker.maintenance == False,
-            and_(
-                worker.maintenance == True,
-                WaitingPrompt.user_id == worker.user_id,
-            ),
-        ),
-        or_(
-            worker.bridge_version >= 8,
-            and_(
-                worker.bridge_version < 8,
-                WaitingPrompt.r2 == False,
-            ),
-        ),
+    # ).filter(
+    #     TextWaitingPrompt.n > 0,
+    #     WPModels.model.in_(models_list),
+    #     TextWaitingPrompt.max_length <= worker.max_length,
+    #     TextWaitingPrompt.max_content_length <= worker.max_content_length,
+    #     TextWaitingPrompt.active == True,
+    #     TextWaitingPrompt.faulted == False,
+    #     TextWaitingPrompt.expiry > datetime.utcnow(),
+    #     or_(
+    #         TextWaitingPrompt.safe_ip == True,
+    #         and_(
+    #             TextWaitingPrompt.safe_ip == False,
+    #             worker.allow_unsafe_ipaddr == True,
+    #         ),
+    #     ),
+    #     or_(
+    #         TextWaitingPrompt.nsfw == False,
+    #         and_(
+    #             TextWaitingPrompt.nsfw == True,
+    #             worker.nsfw == True,
+    #         ),
+    #     ),
+    #     or_(
+    #         worker.maintenance == False,
+    #         and_(
+    #             worker.maintenance == True,
+    #             TextWaitingPrompt.user_id == worker.user_id,
+    #         ),
+    #     ),
     )
     if priority_user_ids:
-        final_wp_list = final_wp_list.filter(WaitingPrompt.user_id.in_(priority_user_ids))
+        final_wp_list = final_wp_list.filter(TextWaitingPrompt.user_id.in_(priority_user_ids))
     # logger.debug(final_wp_list)
     final_wp_list = final_wp_list.order_by(
-        WaitingPrompt.extra_priority.desc(), 
-        WaitingPrompt.created.asc()
+        TextWaitingPrompt.extra_priority.desc(), 
+        TextWaitingPrompt.created.asc()
     ).limit(50)
+    logger.debug(final_wp_list.all())
     return final_wp_list.all()
 
 
