@@ -249,7 +249,7 @@ class WaitingPrompt(db.Model):
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_worker_thread_count:
             active_worker_thread_count = queued_n
-        avg_things_per_sec = (request_avg / thing_divisor) * active_worker_thread_count
+        avg_things_per_sec = (request_avg / hv.thing_divisors[self.wp_type]) * active_worker_thread_count
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1

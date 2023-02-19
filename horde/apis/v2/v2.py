@@ -641,6 +641,8 @@ class Workers(Resource):
             admin = database.find_user_by_api_key(self.args['apikey'])
             if admin and admin.moderator:
                 details_privilege = 2
+        if not horde_r:
+            return self.get_worker_info_list(details_privilege)
         if details_privilege == 2:
             cached_workers = horde_r.get('worker_cache_privileged')
         else:
@@ -649,8 +651,14 @@ class Workers(Resource):
             workers_ret = []
             for worker in database.get_active_workers():
                 workers_ret.append(worker.get_details(details_privilege))
-            return workers_ret
+            return self.get_worker_info_list(details_privilege)
         return json.loads(cached_workers)
+
+    def get_worker_info_list(self, details_privilege):
+        workers_ret = []
+        for worker in database.get_active_workers():
+            workers_ret.append(worker.get_details(details_privilege))
+        return workers_ret
 
 class WorkerSingle(Resource):
 

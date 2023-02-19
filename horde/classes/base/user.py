@@ -185,22 +185,19 @@ class User(db.Model):
         self.last_active = datetime.utcnow()
         self.modify_kudos(-kudos,"accumulated")
         self.update_user_record(
-            user_id=self.id, 
             record_type=UserRecordTypes.REQUEST, 
             record=usage_type, 
             increment_value=1
         )
         self.update_user_record(
-            user_id=self.id, 
             record_type=UserRecordTypes.USAGE, 
             record=usage_type, 
-            increment_value=raw_things * self.usage_multiplier / hv.thing_divisors[contrib_type]
+            increment_value=raw_things * self.usage_multiplier / hv.thing_divisors[usage_type]
         )
 
     def record_contributions(self, raw_things, kudos, contrib_type):
         self.last_active = datetime.utcnow()
         self.update_user_record(
-            user_id=self.id, 
             record_type=UserRecordTypes.FULFILLMENT, 
             record=contrib_type, 
             increment_value=1
@@ -215,7 +212,6 @@ class User(db.Model):
         else:
             self.modify_kudos(kudos,"accumulated")
         self.update_user_record(
-            user_id=self.id, 
             record_type=UserRecordTypes.CONTRIBUTION, 
             record=contrib_type, 
             increment_value=raw_things/hv.thing_divisors[contrib_type]
