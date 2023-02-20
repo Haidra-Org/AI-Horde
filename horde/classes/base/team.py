@@ -1,6 +1,7 @@
 import uuid
 
 from datetime import datetime
+from database.functions import find_team_by_name
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.logger import logger

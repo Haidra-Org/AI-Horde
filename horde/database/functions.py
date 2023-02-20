@@ -243,7 +243,7 @@ def get_available_models():
         try:
             r = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
             known_models = list(r.keys())
-        except Exception:
+        except Exception as e:
             logger.error(f"Error when downloading known models list: {e}")
             known_models = []
         ophan_models = db.session.query(
@@ -726,7 +726,7 @@ def refresh_worker_performances_cache(request_type = "image"):
     try:
         horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), ret_dict["image"])
         horde_r.setex(f'text_worker_performances_avg_cache', timedelta(seconds=30), ret_dict["text"])
-    except Exception as err:
+    except Exception as e:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return ret_dict[request_type]
 

@@ -45,7 +45,7 @@ class TextWorker(Worker):
         softprompts_list = [s.softprompt for s in self.softprompts]
         try:
             horde_r.setex(f'worker_{self.id}_softprompts_cache', timedelta(seconds=600), json.dumps(softprompts_list))
-        except Exception as err:
+        except Exception as e:
             logger.debug(f"Error when trying to set softprompts cache: {e}. Retrieving from DB.")
         return softprompts_list
 

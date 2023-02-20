@@ -254,7 +254,7 @@ class WorkerTemplate(db.Model):
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
-        if self.team and contrib_type == "image":
+        if self.team and self.wtype == "image":
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:

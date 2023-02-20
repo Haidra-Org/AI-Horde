@@ -1141,7 +1141,7 @@ class TeamSingle(Resource):
             if ret == "Profanity":
                 raise e.Profanity(self.user.get_unique_alias(), self.args.name, 'team name')
             if ret == "Already Exists":
-                raise e.NameAlreadyExists(user.get_unique_alias(), team.name, self.args.name, 'team')
+                raise e.NameAlreadyExists(self.user.get_unique_alias(), team.name, self.args.name, 'team')
             ret_dict["name"] = team.name
         if not len(ret_dict):
             raise e.NoValidActions("No team modification selected!")
