@@ -78,10 +78,10 @@ def get_active_workers():
         ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).all()
     active_workers += db.session.query(TextWorker).filter(
-        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).all()
     active_workers += db.session.query(InterrogationWorker).filter(
-        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        InterrogationWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).all()
     return active_workers
 
