@@ -59,38 +59,6 @@ def count_waiting_requests(user, models = None):
         ).count()
 
 
-def get_organized_wps_by_model():
-    org = {}
-    #TODO: Offload the sorting to the DB through join() + SELECT statements
-    all_wps = db.session.query(
-        WaitingPrompt
-    ).filter(
-        WaitingPrompt.faulted == False,
-        WaitingPrompt.n >= 1,
-    ).all() # TODO this can likely be improved
-    for wp in all_wps:
-        # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
-        # This will inflate the overall expected times, but it shouldn't be by much.
-        # I don't see a way to do this calculation more accurately though
-        for model in wp.get_model_names():
-            if model not in org:
-                org[model] = []
-            org[model].append(wp)
-    return(org)    
-
-
-def count_things_per_model():
-    things_per_model = {}
-    org = get_organized_wps_by_model()
-    for model in org:
-        for wp in org[model]:
-            current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
-            if current_wp_queue > 0:
-                things_per_model[model] = things_per_model.get(model,0) + wp.things
-        things_per_model[model] = round(things_per_model.get(model,0),2)
-    return(things_per_model)
-
-
 def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_user_ids=None): 
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)

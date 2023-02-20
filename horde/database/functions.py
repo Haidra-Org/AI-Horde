@@ -213,66 +213,71 @@ def find_team_by_name(team_name):
 
 def get_available_models():
     models_dict = {}
-    available_worker_models = db.session.query(
-        WorkerModel.model,
-        func.count(WorkerModel.model).label('total_models'), # TODO: This needs to be multiplied by this worker's threads
-        # ImageWorker.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
-    ).join(
-        ImageWorker,
-    ).filter(
-        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).group_by(WorkerModel.model).all()
-    logger.debug(available_worker_models)
-    for model_row in available_worker_models:
-        model_name = model_row.model
-        models_dict[model_name] = {}
-        models_dict[model_name]["name"] = model_name
-        models_dict[model_name]["count"] = model_row.total_models
+    for model_type, worker_class, wp_class in [
+        ("image", ImageWorker, ImageWaitingPrompt), 
+        ("text", TextWorker, TextWaitingPrompt),
+    ]:
+        available_worker_models = db.session.query(
+            WorkerModel.model,
+            func.count(WorkerModel.model).label('total_models'), # TODO: This needs to be multiplied by this worker's threads
+            # worker_class.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
+        ).join(
+            worker_class,
+        ).filter(
+            worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        ).group_by(WorkerModel.model).all()
+        logger.debug(available_worker_models)
+        for model_row in available_worker_models:
+            model_name = model_row.model
+            models_dict[model_name] = {}
+            models_dict[model_name]["name"] = model_name
+            models_dict[model_name]["count"] = model_row.total_models
+            models_dict[model_name]["type"] = model_type
 
-        models_dict[model_name]['queued'] = 0
-        models_dict[model_name]['eta'] = 0
-        models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
-        models_dict[model_name]['workers'] = []
+            models_dict[model_name]['queued'] = 0
+            models_dict[model_name]['eta'] = 0
+            models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
+            models_dict[model_name]['workers'] = []
 
-    # We don't want to report on any random model name a client might request
-    try:
-        r = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
-        known_models = list(r.keys())
-    except Exception:
-        logger.error(f"Error when downloading known models list: {e}")
-        known_models = []
-    ophan_models = db.session.query(
-        WPModels.model,
-    ).join(
-        ImageWaitingPrompt,
-    ).filter(
-        WPModels.model.not_in(list(models_dict.keys())),
-        WPModels.model.in_(known_models),
-        ImageWaitingPrompt.n > 0,
-    ).group_by(WPModels.model).all()
-    for model_row in ophan_models:
-        model_name = model_row.model
-        models_dict[model_name] = {}
-        models_dict[model_name]["name"] = model_name
-        models_dict[model_name]["count"] = 0
-        models_dict[model_name]['queued'] = 0
-        models_dict[model_name]['eta'] = 0
-        models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
-        models_dict[model_name]['workers'] = []
-    things_per_model = count_things_per_model()
-    # If we request a lite_dict, we only want worker count per model and a dict format
-    for model_name in things_per_model:
-        # This shouldn't happen, but I'm checking anyway
-        if model_name not in models_dict:
-            # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
-            continue
-        models_dict[model_name]['queued'] = things_per_model[model_name]
-        total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
-        # We don't want a division by zero when there's no workers for this model.
-        if total_performance_on_model > 0:
-            models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
-        else:
-            models_dict[model_name]['eta'] = 10000
+        # We don't want to report on any random model name a client might request
+        try:
+            r = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
+            known_models = list(r.keys())
+        except Exception:
+            logger.error(f"Error when downloading known models list: {e}")
+            known_models = []
+        ophan_models = db.session.query(
+            WPModels.model,
+        ).join(
+            wp_class,
+        ).filter(
+            WPModels.model.not_in(list(models_dict.keys())),
+            WPModels.model.in_(known_models),
+            wp_class.n > 0,
+        ).group_by(WPModels.model).all()
+        for model_row in ophan_models:
+            model_name = model_row.model
+            models_dict[model_name] = {}
+            models_dict[model_name]["name"] = model_name
+            models_dict[model_name]["count"] = 0
+            models_dict[model_name]['queued'] = 0
+            models_dict[model_name]['eta'] = 0
+            models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
+            models_dict[model_name]['workers'] = []
+        things_per_model = count_things_per_model(wp_class)
+        # If we request a lite_dict, we only want worker count per model and a dict format
+        for model_name in things_per_model:
+            # This shouldn't happen, but I'm checking anyway
+            if model_name not in models_dict:
+                # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
+                continue
+            models_dict[model_name]['queued'] = things_per_model[model_name]
+            total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
+            # We don't want a division by zero when there's no workers for this model.
+            if total_performance_on_model > 0:
+                models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
+            else:
+                models_dict[model_name]['eta'] = 10000
     return(list(models_dict.values()))
 
 def retrieve_available_models():
@@ -475,14 +480,14 @@ def retrieve_totals():
     return(json.loads(totals_ret))
 
 
-def get_organized_wps_by_model():
+def get_organized_wps_by_model(wp_class):
     org = {}
     #TODO: Offload the sorting to the DB through join() + SELECT statements
     all_wps = db.session.query(
-        ImageWaitingPrompt
+        wp_class
     ).filter(
-        ImageWaitingPrompt.faulted == False,
-        ImageWaitingPrompt.n >= 1,
+        wp_class.faulted == False,
+        wp_class.n >= 1,
     ).all() # TODO this can likely be improved
     for wp in all_wps:
         # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
@@ -494,9 +499,9 @@ def get_organized_wps_by_model():
             org[model].append(wp)
     return(org)    
 
-def count_things_per_model():
+def count_things_per_model(wp_class):
     things_per_model = {}
-    org = get_organized_wps_by_model()
+    org = get_organized_wps_by_model(wp_class)
     for model in org:
         for wp in org[model]:
             current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
