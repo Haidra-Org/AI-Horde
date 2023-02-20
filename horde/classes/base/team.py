@@ -112,7 +112,7 @@ class Team(db.Model):
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
-        worker_list = [{"id": worker.id, "name":worker.name, "online": not worker.is_stale()} for worker in self.workers]
+        worker_list = [worker.get_lite_details() for worker in self.workers]
         perf_avg, perf_total = self.get_performance()
         ret_dict = {
             "name": self.name,

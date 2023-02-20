@@ -46,6 +46,7 @@ class Models:
             "is_possible": fields.Boolean(default=True,description="If False, this request will not be able to be completed with the pool of workers currently available"),
         })
         self.response_model_worker_details_lite = api.model('WorkerDetailsLite', {
+            "type": fields.String(example="image", description="The Type of worker this is.", enum=["image", "text", "interrogation"]),
             "name": fields.String(description="The Name given to this worker."),
             "id": fields.String(description="The UUID of this worker."),
             "online": fields.Boolean(description="True if the worker has checked-in the past 5 minutes."),
@@ -145,6 +146,14 @@ class Models:
             'team': fields.Nested(self.response_model_team_details_lite, "The Team to which this worker is dedicated."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",min_length=5,max_length=500),
             'bridge_agent': fields.String(required=True, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The bridge agent name, version and website", max_length=1000),
+            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
+            "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
+            'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
+            'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
+            'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
+            "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
+            "max_content_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
+            "tokens_generated": fields.Float(description="How many tokens this worker has generated until now"),
         })
 
         self.input_model_worker_modify = api.model('ModifyWorkerInput', {

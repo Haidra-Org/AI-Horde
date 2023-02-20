@@ -75,11 +75,6 @@ class TextModels(v2.Models):
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
         })
-        self.response_model_worker_details = api.inherit('WorkerDetailsKobold', self.response_model_worker_details, {
-            "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
-            "max_content_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
-            "tokens_generated": fields.Float(description="How many tokens this worker has generated until now"),
-        })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsKobold', self.response_model_contrib_details, {
             "tokens": fields.Float(description="How many tokens this user has generated"),
         })

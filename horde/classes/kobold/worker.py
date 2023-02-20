@@ -29,6 +29,7 @@ class TextWorker(Worker):
     max_content_length = db.Column(db.Integer, default=1024, nullable=False)
     
     softprompts = db.relationship("TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan")
+    wtype = "text"
 
     def check_in(self, max_length, max_content_length, softprompts, **kwargs):
         super().check_in(**kwargs)

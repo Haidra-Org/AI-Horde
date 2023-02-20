@@ -30,48 +30,6 @@ from horde.bridge_reference import check_bridge_capability
 
 ALLOW_ANONYMOUS = True
 
-def get_top_worker():
-    top_worker = None
-    top_worker_contribution = 0
-    top_worker = db.session.query(Worker).order_by(
-        Worker.contributions.desc()
-    ).first()
-    return top_worker
-
-def get_active_workers():
-    active_workers = db.session.query(Worker).filter(
-        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).all()
-    return active_workers
-
-def count_active_workers(worker_class = "Worker"):
-    WorkerClass = Worker
-    if worker_class == "InterrogationWorker":
-        WorkerClass = InterrogationWorker
-    active_workers = db.session.query(
-        WorkerClass
-    ).filter(
-        WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).count()
-    active_workers_threads = db.session.query(
-        func.sum(WorkerClass.threads).label('threads')
-    ).filter(
-        WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).first()
-    # logger.debug([worker_class,active_workers,active_workers_threads.threads])
-    if active_workers and active_workers_threads.threads:
-        return active_workers,active_workers_threads.threads
-    return 0,0
-
-
-def count_workers_on_ip(ip_addr):
-    return db.session.query(Worker).filter_by(ipaddr=ip_addr).count()
-
-
-def count_workers_in_ipaddr(ipaddr):
-    return count_workers_on_ip(ipaddr)
-
-
 def get_total_usage():
     totals = {
         thing_name: 0,

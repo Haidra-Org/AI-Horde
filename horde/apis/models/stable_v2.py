@@ -108,13 +108,6 @@ class ImageModels(v2.Models):
             'r2': fields.Boolean(default=True, description="If True, the image will be sent via cloudflare r2 download link"),
             'shared': fields.Boolean(default=False, description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True."),
         })
-        self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
-            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
-            "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
-            'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
-            'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
-            'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
-        })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
             "performance": fields.Float(description="The average performance of the workers in this team, in megapixelsteps per second."),

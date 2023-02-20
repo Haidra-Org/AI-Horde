@@ -102,6 +102,7 @@ class WorkerTemplate(db.Model):
     require_upfront_kudos = False
     prioritized_users = []
     # Because I didn't use worker_type correctly. I should have called them "text" and "image"
+    # TODO: Normalize this to the standard
     wtype = "image"
 
     def create(self, **kwargs):
@@ -305,21 +306,25 @@ class WorkerTemplate(db.Model):
         db.session.commit()
 
     def get_performance_average(self):
-        performances = [p.performance for p in self.performance]
-        if len(performances):
-            ret_num = sum(performances) / len(performances)
-        else:
-            # Always sending at least 1 thing per second, to avoid divisions by zero
-            ret_num = 1
-        return(ret_num)
+        performance_avg = db.session.query(
+            func.avg(WorkerPerformance.performance)
+        ).filter_by(
+            worker_id=self.id
+        ).scalar()
+        if performance_avg:
+            return performance_avg
+        return 1
 
     def get_performance(self):
-        performances = [p.performance for p in self.performance]
-        if len(performances):
-            ret_str = f'{round(sum(performances) / len(performances) / hv.thing_divisors[self.wtype],1)} {hv.thing_names[self.wtype]} per second'
-        else:
-            ret_str = f'No requests fulfilled yet'
-        return(ret_str)
+        performance_avg = db.session.query(
+            func.avg(WorkerPerformance.performance)
+        ).filter_by(
+            worker_id=self.id
+        ).scalar()
+        if performance_avg:
+            return f'{round(performance_avg / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
+        return 'No requests fulfilled yet'
+
 
     def is_stale(self):
         try:
@@ -372,7 +377,7 @@ class WorkerTemplate(db.Model):
         ret_dict = {
             "name": self.name,
             "id": str(self.id),
-            "type": self.worker_type,
+            "type": self.wtype,
             "requests_fulfilled": self.fulfilments,
             "uncompleted_jobs": self.uncompleted_jobs,
             "kudos_rewards": self.kudos,
@@ -394,7 +399,19 @@ class WorkerTemplate(db.Model):
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
             ret_dict['contact'] = self.user.contact
-        return(ret_dict)
+        return ret_dict
+
+    # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def get_lite_details(self):
+        '''We display these in the workers list json'''
+        ret_dict = {
+            "name": self.name,
+            "id": str(self.id),
+            "type": self.wtype,
+            "online": not self.is_stale(),
+        }
+        return ret_dict
 
 
 class Worker(WorkerTemplate):

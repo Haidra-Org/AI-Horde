@@ -22,6 +22,7 @@ class InterrogationWorker(WorkerTemplate):
 
     forms = db.relationship("WorkerInterrogationForm", back_populates="worker")
     processing_forms = db.relationship("InterrogationForms", back_populates="worker")
+    wtype = "interrogation"
 
     def check_in(self, **kwargs):
         super().check_in(**kwargs)

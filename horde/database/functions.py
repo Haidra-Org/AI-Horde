@@ -77,6 +77,12 @@ def get_active_workers():
     active_workers = db.session.query(ImageWorker).filter(
         ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).all()
+    active_workers += db.session.query(TextWorker).filter(
+        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    ).all()
+    active_workers += db.session.query(InterrogationWorker).filter(
+        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    ).all()
     return active_workers
 
 def count_active_workers(worker_class = "ImageWorker"):
