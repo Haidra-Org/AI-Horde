@@ -17,9 +17,8 @@ from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
 from horde.classes.base.user import User
-# FIXME: Renamed for backwards compat. To fix later
-from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
-from horde.classes.stable.processing_generation import ImageProcessingGeneration as ProcessingGeneration
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 import horde.classes.base.stats as stats
@@ -40,7 +39,7 @@ WORKER_CLASS_MAP = {
     "interrogation": InterrogationWorker,
 }
 WP_CLASS_MAP = {
-    "image": WaitingPrompt,
+    "image": ImageWaitingPrompt,
     "text": TextWaitingPrompt,
 }
 
@@ -223,7 +222,7 @@ def get_available_models():
     ).filter(
         ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).group_by(WorkerModel.model).all()
-
+    logger.debug(available_worker_models)
     for model_row in available_worker_models:
         model_name = model_row.model
         models_dict[model_name] = {}
@@ -245,11 +244,11 @@ def get_available_models():
     ophan_models = db.session.query(
         WPModels.model,
     ).join(
-        WaitingPrompt,
+        ImageWaitingPrompt,
     ).filter(
         WPModels.model.not_in(list(models_dict.keys())),
         WPModels.model.in_(known_models),
-        WaitingPrompt.n > 0,
+        ImageWaitingPrompt.n > 0,
     ).group_by(WPModels.model).all()
     for model_row in ophan_models:
         model_name = model_row.model
@@ -279,7 +278,7 @@ def get_available_models():
 def retrieve_available_models():
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
     if horde_r is None:
-        return []
+        return get_available_models()
     model_cache = horde_r.get('models_cache')
     try:
         models_ret = json.loads(model_cache)
@@ -342,20 +341,20 @@ def count_waiting_requests(user, models = None):
         return db.session.query(
             WPModels.id,
         ).join(
-            WaitingPrompt
+            ImageWaitingPrompt
         ).filter(
             WPModels.model.in_(models),
-            WaitingPrompt.user_id == user.id,
-            WaitingPrompt.faulted == False,
-            WaitingPrompt.n >= 1, 
+            ImageWaitingPrompt.user_id == user.id,
+            ImageWaitingPrompt.faulted == False,
+            ImageWaitingPrompt.n >= 1, 
         ).group_by(WPModels.id).count()
     else:
         return db.session.query(
-            WaitingPrompt
+            ImageWaitingPrompt
         ).filter(
-            WaitingPrompt.user_id == user.id,
-            WaitingPrompt.faulted == False,
-            WaitingPrompt.n >= 1, 
+            ImageWaitingPrompt.user_id == user.id,
+            ImageWaitingPrompt.faulted == False,
+            ImageWaitingPrompt.n >= 1, 
         ).count()
 
 def count_waiting_interrogations(user):
@@ -375,7 +374,7 @@ def count_waiting_interrogations(user):
 
 
 
-    # for wp in db.session.query(WaitingPrompt).all():  # TODO this can likely be improved
+    # for wp in db.session.query(ImageWaitingPrompt).all():  # TODO this can likely be improved
     #     model_names = wp.get_model_names()
     #     #logger.warning(datetime.utcnow())
     #     if wp.user == user and not wp.is_completed():
@@ -406,20 +405,20 @@ def count_totals():
     }
     # TODO this can likely be improved
     current_image_wps = db.session.query(
-        WaitingPrompt.id,
-        WaitingPrompt.n,
-        WaitingPrompt.faulted,
-        WaitingPrompt.things,
+        ImageWaitingPrompt.id,
+        ImageWaitingPrompt.n,
+        ImageWaitingPrompt.faulted,
+        ImageWaitingPrompt.things,
     ).filter(
-        WaitingPrompt.n > 0,
-        WaitingPrompt.faulted == False
+        ImageWaitingPrompt.n > 0,
+        ImageWaitingPrompt.faulted == False
     ).all()
     for wp in current_image_wps:
         # TODO: Make this in one query above
         procgens_count = db.session.query(
-            ProcessingGeneration.wp_id,
+            ImageProcessingGeneration.wp_id,
         ).filter(
-            ProcessingGeneration.wp_id == wp.id
+            ImageProcessingGeneration.wp_id == wp.id
         ).count()
         current_wp_queue = wp.n + procgens_count
         ret_dict["queued_requests"] += current_wp_queue
@@ -480,10 +479,10 @@ def get_organized_wps_by_model():
     org = {}
     #TODO: Offload the sorting to the DB through join() + SELECT statements
     all_wps = db.session.query(
-        WaitingPrompt
+        ImageWaitingPrompt
     ).filter(
-        WaitingPrompt.faulted == False,
-        WaitingPrompt.n >= 1,
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.n >= 1,
     ).all() # TODO this can likely be improved
     for wp in all_wps:
         # Each wp we have will be placed on the list for each of it allowed models (in case it's selected multiple)
@@ -515,40 +514,40 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
     final_wp_list = db.session.query(
-        WaitingPrompt
+        ImageWaitingPrompt
     ).options(
-        noload(WaitingPrompt.processing_gens)
+        noload(ImageWaitingPrompt.processing_gens)
     ).outerjoin(
         WPModels
     ).filter(
-        WaitingPrompt.n > 0,
+        ImageWaitingPrompt.n > 0,
         or_(
             WPModels.model.in_(models_list),
             WPModels.id.is_(None),
         ),
-        WaitingPrompt.width * WaitingPrompt.height <= worker.max_pixels,
-        WaitingPrompt.active == True,
-        WaitingPrompt.faulted == False,
-        WaitingPrompt.expiry > datetime.utcnow(),
+        ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
+        ImageWaitingPrompt.active == True,
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.expiry > datetime.utcnow(),
         or_(
-            WaitingPrompt.source_image == None,
+            ImageWaitingPrompt.source_image == None,
             and_(
-                WaitingPrompt.source_image != None,
+                ImageWaitingPrompt.source_image != None,
                 worker.allow_img2img == True,
             ),
             
         ),
         or_(
-            WaitingPrompt.safe_ip == True,
+            ImageWaitingPrompt.safe_ip == True,
             and_(
-                WaitingPrompt.safe_ip == False,
+                ImageWaitingPrompt.safe_ip == False,
                 worker.allow_unsafe_ipaddr == True,
             ),
         ),
         or_(
-            WaitingPrompt.nsfw == False,
+            ImageWaitingPrompt.nsfw == False,
             and_(
-                WaitingPrompt.nsfw == True,
+                ImageWaitingPrompt.nsfw == True,
                 worker.nsfw == True,
             ),
         ),
@@ -556,23 +555,23 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             worker.maintenance == False,
             and_(
                 worker.maintenance == True,
-                WaitingPrompt.user_id == worker.user_id,
+                ImageWaitingPrompt.user_id == worker.user_id,
             ),
         ),
         or_(
             worker.bridge_version >= 8,
             and_(
                 worker.bridge_version < 8,
-                WaitingPrompt.r2 == False,
+                ImageWaitingPrompt.r2 == False,
             ),
         ),
     )
     if priority_user_ids:
-        final_wp_list = final_wp_list.filter(WaitingPrompt.user_id.in_(priority_user_ids))
+        final_wp_list = final_wp_list.filter(ImageWaitingPrompt.user_id.in_(priority_user_ids))
     # logger.debug(final_wp_list)
     final_wp_list = final_wp_list.order_by(
-        WaitingPrompt.extra_priority.desc(), 
-        WaitingPrompt.created.asc()
+        ImageWaitingPrompt.extra_priority.desc(), 
+        ImageWaitingPrompt.created.asc()
     ).limit(50)
     return final_wp_list.all()
 
@@ -659,12 +658,12 @@ def get_wp_by_id(wp_id, lite=False):
         wp_uuid = str(wp_uuid)
     # lite version does not pull ProcGens
     if lite:
-        query = db.session.query(WaitingPrompt
+        query = db.session.query(ImageWaitingPrompt
         ).options(
-            noload(WaitingPrompt.processing_gens)
+            noload(ImageWaitingPrompt.processing_gens)
         )
     else:
-        query = db.session.query(WaitingPrompt)
+        query = db.session.query(ImageWaitingPrompt)
     return query.filter_by(id=wp_uuid).first()
 
 def get_progen_by_id(procgen_id):
@@ -675,7 +674,7 @@ def get_progen_by_id(procgen_id):
         return None
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
-    return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
+    return db.session.query(ImageProcessingGeneration).filter_by(id=procgen_uuid).first()
 
 def get_interrogation_by_id(i_id):
     try:
@@ -698,7 +697,7 @@ def get_form_by_id(form_id):
     return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
 def get_all_wps():
-    return db.session.query(WaitingPrompt).filter_by(active=True).all()
+    return db.session.query(ImageWaitingPrompt).filter_by(active=True).all()
 
 #TODO: Convert below three functions into a general "cached db request" (or something) class
 # Which I can reuse to cache the results of other requests
