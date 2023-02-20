@@ -371,33 +371,8 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
     # logger.debug(final_interrogation_query)
     return final_interrogation_list
 
-# Returns the queue position of the provided WP based on kudos
-# Also returns the amount of things until the wp is generated
-# Also returns the amount of different gens queued
-def get_wp_queue_stats(wp):
-    if not wp.needs_gen():
-        return(-1,0,0)
-    things_ahead_in_queue = 0
-    n_ahead_in_queue = 0
-    priority_sorted_list = retrieve_prioritized_wp_queue()
-    # In case the primary thread has borked, we fall back to the DB
-    if priority_sorted_list is None:
-        logger.warning("Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!")
-        priority_sorted_list = query_prioritized_wps()
-    # logger.info(priority_sorted_list)
-    for iter in range(len(priority_sorted_list)):
-        iter_wp = priority_sorted_list[iter]
-        queued_things = round(iter_wp.things * iter_wp.n/thing_divisor,2)
-        things_ahead_in_queue += queued_things
-        n_ahead_in_queue += iter_wp.n
-        if iter_wp.id == wp.id:
-            things_ahead_in_queue = round(things_ahead_in_queue,2)
-            return(iter, things_ahead_in_queue, n_ahead_in_queue)
-    # -1 means the WP is done and not in the queue
-    return(-1,0,0)
 
-
-def get_wp_by_id(wp_id, lite=False):
+def get_text_wp_by_id(wp_id, lite=False):
     try:
         wp_uuid = uuid.UUID(wp_id)
     except ValueError as e: 
@@ -407,12 +382,12 @@ def get_wp_by_id(wp_id, lite=False):
         wp_uuid = str(wp_uuid)
     # lite version does not pull ProcGens
     if lite:
-        query = db.session.query(WaitingPrompt
+        query = db.session.query(TextWaitingPrompt
         ).options(
-            noload(WaitingPrompt.processing_gens)
+            noload(TextWaitingPrompt.processing_gens)
         )
     else:
-        query = db.session.query(WaitingPrompt)
+        query = db.session.query(TextWaitingPrompt)
     return query.filter_by(id=wp_uuid).first()
 
 
@@ -486,15 +461,6 @@ def refresh_worker_performances_cache():
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return avg_perf
 
-def get_request_avg():
-    if horde_r == None:
-        return retrieve_worker_performances()
-    perf_cache = horde_r.get(f'worker_performances_avg_cache')
-    if not perf_cache:
-        return refresh_worker_performances_cache()
-    perf_cache = float(perf_cache)
-    return perf_cache
-
 def wp_has_valid_workers(wp, limited_workers_ids = None):
     if not limited_workers_ids: limited_workers_ids = []
     # FIXME: Too heavy
@@ -508,25 +474,6 @@ def wp_has_valid_workers(wp, limited_workers_ids = None):
             worker_found = True
             break
     return worker_found
-
-@logger.catch(reraise=True)
-def retrieve_prioritized_wp_queue():
-    if horde_r is None:
-        return None
-    cached_queue = horde_r.get('wp_cache')
-    if cached_queue is None:
-        return None
-    try:
-        retrieved_json_list = json.loads(cached_queue)
-    except (TypeError, OverflowError) as e:
-        logger.error(f"Failed deserializing with error: {e}")
-        return None
-    deserialized_wp_list = []
-    for json_row in retrieved_json_list:
-        fake_wp_row = FakeWPRow(json_row)
-        deserialized_wp_list.append(fake_wp_row)
-    # logger.debug(len(deserialized_wp_list))
-    return deserialized_wp_list
 
 def query_prioritized_text_wps():
     return query_prioritized_wps()

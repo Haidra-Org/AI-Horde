@@ -26,6 +26,7 @@ class ImageWaitingPrompt(WaitingPrompt):
     kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     r2 = db.Column(db.Boolean, default=False, nullable=False, index=True, server_default=expression.literal(False))
     shared = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
+    processing_gens = db.relationship("ImageProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
 
     @logger.catch(reraise=True)
     def extract_params(self):

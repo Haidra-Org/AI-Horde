@@ -81,7 +81,6 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
 
-    processing_gens = db.relationship("ImageProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     models = db.relationship("WPModels", back_populates="wp", cascade="all, delete-orphan")
@@ -234,6 +233,7 @@ class WaitingPrompt(db.Model):
             wp_queue_stats, 
             lite = False
         ):
+        logger.debug([request_avg,active_worker_count,has_valid_workers,wp_queue_stats])
         active_worker_thread_count = active_worker_count[1]
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = max(self.n, 0)
@@ -245,6 +245,7 @@ class WaitingPrompt(db.Model):
         ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
         if not lite:
+            logger.debug(self.processing_gens)
             ret_dict["generations"] = []
             for procgen in self.processing_gens:
                 if procgen.fake:

@@ -63,11 +63,11 @@ class TextAsyncStatus(Resource):
         '''Retrieve the full status of an Asynchronous generation request.
         This request will include all already generated texts.
         '''
-        wp = database.get_wp_by_id(id)
+        wp = text_database.get_text_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
+            request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -88,7 +88,7 @@ class TextAsyncStatus(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
+            request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()

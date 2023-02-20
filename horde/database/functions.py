@@ -34,6 +34,15 @@ from horde.bridge_reference import check_bridge_capability, check_sampler_capabi
 
 
 ALLOW_ANONYMOUS = True
+WORKER_CLASS_MAP = {
+    "image": ImageWorker,
+    "text": TextWorker,
+    "interrogation": InterrogationWorker,
+}
+WP_CLASS_MAP = {
+    "image": WaitingPrompt,
+    "text": TextWaitingPrompt,
+}
 
 def get_anon():
     return find_user_by_api_key('anon')
@@ -443,7 +452,7 @@ def count_totals():
             InterrogationForms.state == State.PROCESSING,
         ),
     ).count()
-    logger.debug(ret_dict)
+    # logger.debug(ret_dict)
     return(ret_dict)
 
 def retrieve_totals():
@@ -616,11 +625,11 @@ def get_wp_queue_stats(wp):
         return(-1,0,0)
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
-    priority_sorted_list = retrieve_prioritized_wp_queue()
+    priority_sorted_list = retrieve_prioritized_wp_queue(wp.wp_type)
     # In case the primary thread has borked, we fall back to the DB
     if priority_sorted_list is None:
         logger.warning("Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!")
-        priority_sorted_list = query_prioritized_wps()
+        priority_sorted_list = query_prioritized_wps(wp.wp_type)
     # logger.info(priority_sorted_list)
     for iter in range(len(priority_sorted_list)):
         iter_wp = priority_sorted_list[iter]
@@ -687,28 +696,39 @@ def get_all_wps():
 
 #TODO: Convert below three functions into a general "cached db request" (or something) class
 # Which I can reuse to cache the results of other requests
-def retrieve_worker_performances():
-    avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).scalar()
+def retrieve_worker_performances(worker_type = ImageWorker):
+    avg_perf = db.session.query(
+        func.avg(WorkerPerformance.performance)
+    ).join(
+        worker_type
+    ).scalar()
     if avg_perf is None:
         avg_perf = 0
     else:
         avg_perf = round(avg_perf, 2)
     return avg_perf
 
-def refresh_worker_performances_cache():
-    avg_perf = retrieve_worker_performances()
+def refresh_worker_performances_cache(request_type = "image"):
+    ret_dict = {
+        "image":retrieve_worker_performances(ImageWorker),
+        "text": retrieve_worker_performances(TextWorker),
+    }
     try:
-        horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), avg_perf)
+        horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), ret_dict["image"])
+        horde_r.setex(f'text_worker_performances_avg_cache', timedelta(seconds=30), ret_dict["text"])
     except Exception as err:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
-    return avg_perf
+    return ret_dict[request_type]
 
-def get_request_avg():
+def get_request_avg(request_type = "image"):
     if horde_r == None:
-        return retrieve_worker_performances()
-    perf_cache = horde_r.get(f'worker_performances_avg_cache')
+        return retrieve_worker_performances(WORKER_CLASS_MAP[request_type])
+    if request_type == "image":
+        perf_cache = horde_r.get(f'worker_performances_avg_cache')
+    else:
+        perf_cache = horde_r.get(f'text_worker_performances_avg_cache')
     if not perf_cache:
-        return refresh_worker_performances_cache()
+        return refresh_worker_performances_cache(request_type)
     perf_cache = float(perf_cache)
     return perf_cache
 
@@ -727,10 +747,10 @@ def wp_has_valid_workers(wp, limited_workers_ids = None):
     return worker_found
 
 @logger.catch(reraise=True)
-def retrieve_prioritized_wp_queue():
+def retrieve_prioritized_wp_queue(wp_type):
     if horde_r is None:
         return None
-    cached_queue = horde_r.get('wp_cache')
+    cached_queue = horde_r.get(f'{wp_type}_wp_cache')
     if cached_queue is None:
         return None
     try:
@@ -745,7 +765,8 @@ def retrieve_prioritized_wp_queue():
     # logger.debug(len(deserialized_wp_list))
     return deserialized_wp_list
 
-def query_prioritized_wps(waiting_prompt_type = WaitingPrompt):
+def query_prioritized_wps(wp_type = "image"):
+    waiting_prompt_type = WP_CLASS_MAP[wp_type]
     return db.session.query(
                 waiting_prompt_type.id, 
                 waiting_prompt_type.things, 

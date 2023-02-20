@@ -150,7 +150,7 @@ class ImageAsyncStatus(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
+            request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -171,7 +171,7 @@ class ImageAsyncStatus(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
+            request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
@@ -205,7 +205,7 @@ class ImageAsyncCheck(Resource):
         if not wp:
             raise e.RequestNotFound(id)
         lite_status = wp.get_lite_status(
-            request_avg=database.get_request_avg(),
+            request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()

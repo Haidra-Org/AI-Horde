@@ -63,24 +63,25 @@ def assign_monthly_kudos():
 def store_prioritized_wp_queue():
     '''Stores the retrieved WP queue as json for 1 second horde-wide'''
     with HORDE.app_context():
-        wp_queue = query_prioritized_wps()
-        serialized_wp_list = []
-        for wp in wp_queue:
-            wp_json = {
-                "id": str(wp.id),
-                "things": wp.things, 
-                "n": wp.n, 
-                "extra_priority": wp.extra_priority, 
-                "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            serialized_wp_list.append(wp_json)
-        try:
-            cached_queue = json.dumps(serialized_wp_list)
-            # We set the expiry in redis to 10 seconds, in case the primary thread dies
-            # However the primary thread is set to set the cache every 1 second
-            horde_r.setex('wp_cache', timedelta(seconds=10), cached_queue)
-        except (TypeError, OverflowError) as e:
-            logger.error(f"Failed serializing with error: {e}")
+        for wp_type in ["image", "text"]:
+            wp_queue = query_prioritized_wps(wp_type)
+            serialized_wp_list = []
+            for wp in wp_queue:
+                wp_json = {
+                    "id": str(wp.id),
+                    "things": wp.things, 
+                    "n": wp.n, 
+                    "extra_priority": wp.extra_priority, 
+                    "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                serialized_wp_list.append(wp_json)
+            try:
+                cached_queue = json.dumps(serialized_wp_list)
+                # We set the expiry in redis to 10 seconds, in case the primary thread dies
+                # However the primary thread is set to set the cache every 1 second
+                horde_r.setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
+            except (TypeError, OverflowError) as e:
+                logger.error(f"Failed serializing with error: {e}")
 
 
 

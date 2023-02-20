@@ -16,6 +16,7 @@ class TextWaitingPrompt(WaitingPrompt):
     max_length = db.Column(db.Integer, default=80, nullable=False, index=True, server_default=expression.literal(80))
     max_content_length = db.Column(db.Integer, default=1024, nullable=False, index=True, server_default=expression.literal(1024))
     softprompt = db.Column(db.String(255), default=None, nullable=True)
+    processing_gens = db.relationship("TextProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
 
 
     def extract_params(self, **kwargs):
@@ -59,7 +60,7 @@ class TextWaitingPrompt(WaitingPrompt):
 
     def get_status(self, **kwargs):
         ret_dict = super().get_status(**kwargs)
-        ret_dict["shared"] = self.shared
+        logger.debug(ret_dict)
         return ret_dict
 
     def record_usage(self, raw_things, kudos, usage_type = "text"):
