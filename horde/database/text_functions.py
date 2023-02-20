@@ -234,63 +234,6 @@ def count_waiting_requests(user, models = None):
         ).count()
 
 
-def count_totals():
-    queued_thing = f"queued_{thing_name}"
-    ret_dict = {
-        "queued_requests": 0,
-        queued_thing: 0,
-    }
-    # TODO this can likely be improved
-    current_wps = db.session.query(
-        WaitingPrompt.id,
-        WaitingPrompt.n,
-        WaitingPrompt.faulted,
-        WaitingPrompt.things,
-    ).filter(
-        WaitingPrompt.n > 0,
-        WaitingPrompt.faulted == False
-    ).all()
-    for wp in current_wps:
-        # TODO: Make this in one query above
-        procgens_count = db.session.query(
-            ProcessingGeneration.wp_id,
-        ).filter(
-            ProcessingGeneration.wp_id == wp.id
-        ).count()
-        current_wp_queue = wp.n + procgens_count
-        ret_dict["queued_requests"] += current_wp_queue
-        if current_wp_queue > 0:
-            ret_dict[queued_thing] += wp.things * current_wp_queue / thing_divisor
-    # We round the end result to avoid to many decimals
-    ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
-    ret_dict["queued_forms"] = db.session.query(
-        InterrogationForms.state,
-    ).filter(
-        or_(
-            InterrogationForms.state == State.WAITING,
-            InterrogationForms.state == State.PROCESSING,
-        ),
-    ).count()
-    # logger.debug(ret_dict)
-    return(ret_dict)
-
-
-def retrieve_totals():
-    '''Retrieves horde totals from Redis cache'''
-    queued_thing = f"queued_{thing_name}"
-    if horde_r is None:
-        return {
-            "queued_requests": 0,
-            queued_thing: 0,
-        }
-    totals_ret = horde_r.get('totals_cache')
-    if totals_ret is None:
-        return {
-            "queued_requests": 0,
-            queued_thing: 0,
-        }
-    return(json.loads(totals_ret))
-
 def get_organized_wps_by_model():
     org = {}
     #TODO: Offload the sorting to the DB through join() + SELECT statements

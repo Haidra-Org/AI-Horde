@@ -115,13 +115,6 @@ class ImageModels(v2.Models):
             'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
             'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
         })
-        self.response_model_horde_performance = api.inherit('HordePerformanceStable', self.response_model_horde_performance, {
-            "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
-            "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
-            "queued_forms": fields.Float(description="The amount of image interrogations waiting and processing currently in this Horde"),
-            "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes"),
-            "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes"),
-        })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
             "performance": fields.Float(description="The average performance of the workers in this team, in megapixelsteps per second."),

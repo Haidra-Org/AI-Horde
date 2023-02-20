@@ -14,12 +14,14 @@ from horde.logger import logger
 from horde.vars import thing_name
 from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
-from horde.classes.stable.worker import ImageWorker as Worker
+from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
 from horde.classes.base.user import User
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt as WaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration as ProcessingGeneration
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
 import horde.classes.base.stats as stats
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.base.detection import Filter
@@ -56,22 +58,24 @@ def get_top_contributor():
 def get_top_worker():
     top_worker = None
     top_worker_contribution = 0
-    top_worker = db.session.query(Worker).order_by(
-        Worker.contributions.desc()
+    top_worker = db.session.query(ImageWorker).order_by(
+        ImageWorker.contributions.desc()
     ).first()
     return top_worker
 
 
 def get_active_workers():
-    active_workers = db.session.query(Worker).filter(
-        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+    active_workers = db.session.query(ImageWorker).filter(
+        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).all()
     return active_workers
 
-def count_active_workers(worker_class = "Worker"):
-    WorkerClass = Worker
+def count_active_workers(worker_class = "ImageWorker"):
+    WorkerClass = ImageWorker
     if worker_class == "InterrogationWorker":
         WorkerClass = InterrogationWorker
+    if worker_class == "TextWorker":
+        WorkerClass = TextWorker
     active_workers = db.session.query(
         WorkerClass
     ).filter(
@@ -89,7 +93,7 @@ def count_active_workers(worker_class = "Worker"):
 
 
 def count_workers_on_ip(ip_addr):
-    return db.session.query(Worker).filter_by(ipaddr=ip_addr).count()
+    return db.session.query(ImageWorker).filter_by(ipaddr=ip_addr).count()
 
 
 def count_workers_in_ipaddr(ipaddr):
@@ -101,7 +105,7 @@ def get_total_usage():
         thing_name: 0,
         "fulfilments": 0,
     }
-    result = db.session.query(func.sum(Worker.contributions).label('contributions'), func.sum(Worker.fulfilments).label('fulfilments')).first()
+    result = db.session.query(func.sum(ImageWorker.contributions).label('contributions'), func.sum(ImageWorker.fulfilments).label('fulfilments')).first()
     if result:
         totals[thing_name] = result.contributions if result.contributions else 0
         totals["fulfilments"] = result.fulfilments if result.fulfilments else 0
@@ -137,12 +141,12 @@ def find_user_by_api_key(api_key):
     user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
     return user
 
-def find_worker_by_name(worker_name, worker_class=Worker):
+def find_worker_by_name(worker_name, worker_class=ImageWorker):
     worker = db.session.query(worker_class).filter_by(name=worker_name).first()
     return worker
 
 def worker_name_exists(worker_name):
-    for worker_class in [Worker, TextWorker, InterrogationWorker]:
+    for worker_class in [ImageWorker, TextWorker, InterrogationWorker]:
         worker = db.session.query(worker_class).filter_by(name=worker_name).count()
         if worker:
             return True
@@ -156,7 +160,7 @@ def find_worker_by_id(worker_id):
         return None
     if SQLITE_MODE:
         worker_uuid = str(worker_uuid)
-    worker = db.session.query(Worker).filter_by(id=worker_uuid).first()
+    worker = db.session.query(ImageWorker).filter_by(id=worker_uuid).first()
     if not worker:
         worker = db.session.query(TextWorker).filter_by(id=worker_uuid).first()
     if not worker:
@@ -171,7 +175,7 @@ def worker_exists(worker_id):
         return None
     if SQLITE_MODE:
         worker_uuid = str(worker_uuid)
-    wc = db.session.query(Worker).filter_by(id=worker_uuid).count()
+    wc = db.session.query(ImageWorker).filter_by(id=worker_uuid).count()
     if not wc:
         wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
     return wc
@@ -198,11 +202,11 @@ def get_available_models():
     available_worker_models = db.session.query(
         WorkerModel.model,
         func.count(WorkerModel.model).label('total_models'), # TODO: This needs to be multiplied by this worker's threads
-        # Worker.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
+        # ImageWorker.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
     ).join(
-        Worker,
+        ImageWorker,
     ).filter(
-        Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
     ).group_by(WorkerModel.model).all()
 
     for model_row in available_worker_models:
@@ -376,13 +380,17 @@ def count_waiting_interrogations(user):
     # return(count)
 
 def count_totals():
-    queued_thing = f"queued_{thing_name}"
+    queued_images = f"queued_{hv.thing_names['image']}"
+    queued_text = f"queued_{hv.thing_names['text']}"
+    queued_forms = f"queued_forms"
     ret_dict = {
         "queued_requests": 0,
-        queued_thing: 0,
+        "queued_text_requests": 0,
+        queued_images: 0,
+        queued_text: 0,
     }
     # TODO this can likely be improved
-    current_wps = db.session.query(
+    current_image_wps = db.session.query(
         WaitingPrompt.id,
         WaitingPrompt.n,
         WaitingPrompt.faulted,
@@ -391,7 +399,7 @@ def count_totals():
         WaitingPrompt.n > 0,
         WaitingPrompt.faulted == False
     ).all()
-    for wp in current_wps:
+    for wp in current_image_wps:
         # TODO: Make this in one query above
         procgens_count = db.session.query(
             ProcessingGeneration.wp_id,
@@ -401,10 +409,33 @@ def count_totals():
         current_wp_queue = wp.n + procgens_count
         ret_dict["queued_requests"] += current_wp_queue
         if current_wp_queue > 0:
-            ret_dict[queued_thing] += wp.things * current_wp_queue / hv.thing_divisors["image"]
+            ret_dict[queued_images] += wp.things * current_wp_queue / hv.thing_divisors["image"]
     # We round the end result to avoid to many decimals
-    ret_dict[queued_thing] = round(ret_dict[queued_thing],2)
-    ret_dict["queued_forms"] = db.session.query(
+    ret_dict[queued_images] = round(ret_dict[queued_images],2)
+    # TODO this can likely be improved
+    current_text_wps = db.session.query(
+        TextWaitingPrompt.id,
+        TextWaitingPrompt.n,
+        TextWaitingPrompt.faulted,
+        TextWaitingPrompt.things,
+    ).filter(
+        TextWaitingPrompt.n > 0,
+        TextWaitingPrompt.faulted == False
+    ).all()
+    for wp in current_text_wps:
+        # TODO: Make this in one query above
+        procgens_count = db.session.query(
+            TextProcessingGeneration.wp_id,
+        ).filter(
+            TextProcessingGeneration.wp_id == wp.id
+        ).count()
+        current_wp_queue = wp.n + procgens_count
+        ret_dict["queued_text_requests"] += current_wp_queue
+        if current_wp_queue > 0:
+            ret_dict[queued_text] += wp.things * current_wp_queue / hv.thing_divisors["image"]
+    # We round the end result to avoid to many decimals
+    ret_dict[queued_text] = round(ret_dict[queued_text],2)
+    ret_dict[queued_forms] = db.session.query(
         InterrogationForms.state,
     ).filter(
         or_(
@@ -412,22 +443,20 @@ def count_totals():
             InterrogationForms.state == State.PROCESSING,
         ),
     ).count()
-    # logger.debug(ret_dict)
+    logger.debug(ret_dict)
     return(ret_dict)
 
 def retrieve_totals():
     '''Retrieves horde totals from Redis cache'''
-    queued_thing = f"queued_{thing_name}"
     if horde_r is None:
-        return {
-            "queued_requests": 0,
-            queued_thing: 0,
-        }
+        return count_totals()
     totals_ret = horde_r.get('totals_cache')
     if totals_ret is None:
         return {
             "queued_requests": 0,
-            queued_thing: 0,
+            f"queued_{hv.thing_names['image']}": 0,
+            f"queued_{hv.thing_names['text']}": 0,
+            f"queued_forms": 0,
         }
     return(json.loads(totals_ret))
 
@@ -464,12 +493,12 @@ def count_things_per_model():
 
 
 def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 
-    # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
+    # This is just the top 100 - Adjusted method to send ImageWorker object. Filters to add.
     # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
-    # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
-    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
-    # TODO: Filter by Worker not in WP.tricked_worker
-    # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
+    # TODO: Filter by (ImageWorker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
+    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ ImageWorker.user.trusted == False
+    # TODO: Filter by ImageWorker not in WP.tricked_worker
+    # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
     final_wp_list = db.session.query(
         WaitingPrompt
     ).options(
@@ -525,7 +554,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(WaitingPrompt.user_id.in_(priority_user_ids))
-    logger.debug(final_wp_list)
+    # logger.debug(final_wp_list)
     final_wp_list = final_wp_list.order_by(
         WaitingPrompt.extra_priority.desc(), 
         WaitingPrompt.created.asc()

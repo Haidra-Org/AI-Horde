@@ -900,7 +900,12 @@ class HordeLoad(Resource):
         '''Details about the current performance of this Horde
         '''
         load_dict = database.retrieve_totals()
+        # TODO: Rename this to image_worker_count in apiv3
         load_dict["worker_count"], load_dict["thread_count"] = database.count_active_workers()
+        load_dict["interrogator_count"], load_dict["interrogator_thread_count"] = database.count_active_workers("InterrogationWorker")
+        load_dict["text_worker_count"], load_dict["text_thread_count"] = database.count_active_workers("TextWorker")
+        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min("image")
+        load_dict["past_minute_tokens"] = stats.get_things_per_min("text")
         return(load_dict,200)
 
 class HordeNews(Resource):

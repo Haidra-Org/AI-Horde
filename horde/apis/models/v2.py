@@ -262,9 +262,19 @@ class Models:
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {
-            "queued_requests": fields.Integer(description="The amount of waiting and processing requests currently in this Horde"),
+            "queued_requests": fields.Integer(description="The amount of waiting and processing image requests currently in this Horde"),
+            "queued_text_requests": fields.Integer(description="The amount of waiting and processing text requests currently in this Horde"),
             "worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes"),
+            "text_worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes"),
             "thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes"),
+            "text_thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes"),
+            "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
+            "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
+            "queued_forms": fields.Float(description="The amount of image interrogations waiting and processing currently in this Horde"),
+            "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes"),
+            "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes"),
+            "queued_tokens": fields.Float(description="The amount of tokens in waiting and processing requests currently in this Horde"),
+            "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute"),
         })
 
         self.response_model_newspiece = api.model('Newspiece', {

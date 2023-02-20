@@ -692,21 +692,6 @@ class InterrogateSubmit(Resource):
             raise e.WrongCredentials(self.user.get_unique_alias(), self.form.worker.name)
 
 
-
-class HordeLoad(HordeLoad):
-    # When we extend the actual method, we need to re-apply the decorators
-    @logger.catch(reraise=True)
-    @cache.cached(timeout=2)
-    @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
-    def get(self):
-        '''Details about the current performance of this Horde
-        '''
-        load_dict = super().get()[0]
-        load_dict["interrogator_count"], load_dict["interrogator_thread_count"] = database.count_active_workers("InterrogationWorker")
-        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min("image")
-        return(load_dict,200)
-
-
 class HordeStatsTotals(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")

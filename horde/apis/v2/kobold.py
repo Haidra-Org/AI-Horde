@@ -163,15 +163,3 @@ class TextJobSubmit(JobSubmitTemplate):
     def get_progen(self):
         '''Set to its own function to it can be overwritten depending on the class'''
         return text_database.get_text_progen_by_id(self.args['id'])
-
-class HordeLoad(HordeLoad):
-    # When we extend the actual method, we need to re-apply the decorators
-    @logger.catch(reraise=True)
-    @cache.cached(timeout=2)
-    @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
-    def get(self):
-        '''Details about the current performance of this Horde
-        '''
-        load_dict = super().get()[0]
-        load_dict["past_minute_tokens"] = stats.get_things_per_min("text")
-        return(load_dict,200)
