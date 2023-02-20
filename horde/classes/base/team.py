@@ -2,6 +2,7 @@ import uuid
 
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import func
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -130,3 +131,19 @@ class Team(db.Model):
             "models": self.get_all_models(),
         }
         return(ret_dict)
+
+def get_all_teams():
+    return db.session.query(Team).all()
+
+def find_team_by_id(team_id):
+    try:
+        team_uuid = uuid.UUID(team_id)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID team_id sent: '{team_id}'.")
+        return None
+    team = db.session.query(Team).filter_by(id=team_id).first()
+    return(team)
+
+def find_team_by_name(team_name):
+    team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
+    return(team)

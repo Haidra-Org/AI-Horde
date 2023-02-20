@@ -32,6 +32,7 @@ from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.enums import State
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
+from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
 
 ALLOW_ANONYMOUS = True
 WORKER_CLASS_MAP = {
@@ -205,23 +206,6 @@ def worker_exists(worker_id):
         wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
     return wc
 
-
-def get_all_teams():
-    return db.session.query(Team).all()
-
-def find_team_by_id(team_id):
-    try:
-        team_uuid = uuid.UUID(team_id)
-    except ValueError as e: 
-        logger.debug(f"Non-UUID team_id sent: '{team_id}'.")
-        return None
-    team = db.session.query(Team).filter_by(id=team_id).first()
-    return(team)
-
-def find_team_by_name(team_name):
-    team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
-    return(team)
-
 def get_available_models():
     models_dict = {}
     for model_type, worker_class, wp_class in [
@@ -254,7 +238,7 @@ def get_available_models():
         try:
             r = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
             known_models = list(r.keys())
-        except Exception:
+        except Exception as e:
             logger.error(f"Error when downloading known models list: {e}")
             known_models = []
         ophan_models = db.session.query(
@@ -745,7 +729,7 @@ def refresh_worker_performances_cache(request_type = "image"):
     try:
         horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), ret_dict["image"])
         horde_r.setex(f'text_worker_performances_avg_cache', timedelta(seconds=30), ret_dict["text"])
-    except Exception as err:
+    except Exception as e:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return ret_dict[request_type]
 
