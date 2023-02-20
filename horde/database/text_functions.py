@@ -473,7 +473,7 @@ def get_wp_by_id(wp_id, lite=False):
     return query.filter_by(id=wp_uuid).first()
 
 
-def get_progen_by_id(procgen_id):
+def get_text_progen_by_id(procgen_id):
     try:
         procgen_uuid = uuid.UUID(procgen_id)
     except ValueError as e: 
@@ -481,7 +481,7 @@ def get_progen_by_id(procgen_id):
         return None
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
-    return db.session.query(ProcessingGeneration).filter_by(id=procgen_uuid).first()
+    return db.session.query(TextProcessingGeneration).filter_by(id=procgen_uuid).first()
 
 
 def get_interrogation_by_id(i_id):

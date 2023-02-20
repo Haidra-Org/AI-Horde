@@ -50,6 +50,6 @@ class ModelReference(PrimaryTimedFunction):
         # To avoid doing this calculations all the time
         if not self.text_reference.get(model_name):
             return 1
-        return self.text_reference[model_name]["parameters"] / 1000000000
+        return int(self.text_reference[model_name]["parameters"]) / 1000000000
 
 model_reference = ModelReference(3600, None)

@@ -34,6 +34,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         Perhaps some will appear in the next 10 minutes.
         Asynchronous requests live for 10 minutes before being considered stale and being deleted.
         '''
+        self.args = parsers.generate_parser.parse_args()
         try:
             super().post()
         except KeyError:
@@ -213,7 +214,7 @@ class ImageAsyncCheck(Resource):
 
 
     
-class ImageJobPop(JobPop):
+class ImageJobPop(JobPopTemplate):
     worker_class = ImageWorker
 
     decorators = [limiter.limit("60/second")]
@@ -232,7 +233,7 @@ class ImageJobPop(JobPop):
         self.blacklist = []
         if self.args.blacklist:
             self.blacklist = self.args.blacklist
-        return self.process_post()
+        return super().post()
 
     def check_in(self):
         self.worker.check_in(
@@ -263,7 +264,7 @@ class ImageJobPop(JobPop):
         )
         return sorted_wps
 
-class ImageJobSubmit(JobSubmit):
+class ImageJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
@@ -275,7 +276,26 @@ class ImageJobSubmit(JobSubmit):
         '''Submit a generated image.
         This endpoint is used by registered workers only
         '''
-        return self.process_post()
+        # We have to parse the args here, to ensure we use the correct parser class
+        self.args = parsers.job_submit_parser.parse_args()
+        return super().post()
+
+    def get_progen(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        return database.get_progen_by_id(self.args['id'])
+
+    def set_generation(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        things_per_sec = stats.record_fulfilment(self.procgen)
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args.seed,
+            censored=self.args.censored,
+            state=self.args.state,
+        )
+
+
 
 class Aesthetics(Resource):
 

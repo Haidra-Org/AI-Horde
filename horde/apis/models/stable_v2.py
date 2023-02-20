@@ -5,6 +5,7 @@ from horde.logger import logger
 
 class ImageParsers(v2.Parsers):
     def __init__(self):
+        super().__init__()
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
         self.generate_parser.add_argument("source_processing", type=str, default="img2img", required=False, help="If source_image is provided, specifies how to process it.", location="json")
@@ -18,7 +19,7 @@ class ImageParsers(v2.Parsers):
         self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_pop_parser.add_argument("allow_post_processing", type=bool, required=False, default=True, help="If True, this worker will pick up requests requesting post-processing.", location="json")
-        self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the generation", location="json")
+        self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the image generation", location="json")
         self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
 class ImageModels(v2.Models):

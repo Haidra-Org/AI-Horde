@@ -115,7 +115,6 @@ def check_for_mod(api_key, operation, whitelisted_users = None):
 class GenerateTemplate(Resource):
     def post(self):
         #logger.warning(datetime.utcnow())
-        self.args = parsers.generate_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.params = {}
@@ -258,54 +257,8 @@ class SyncGenerate(GenerateTemplate):
 
 class JobPopTemplate(Resource):
     worker_class = Worker
-    # We split this into its own function, so that it may be overriden and extended
-    def validate(self):
-        self.skipped = {}
-        self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('prompt pop')
-        if self.user.flagged:
-            raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
-        self.worker_name = sanitize_string(self.args['name'])
-        self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
-        if not self.worker and database.worker_name_exists(self.worker_name):
-            raise e.PolymorphicNameConflict(self.worker_name)
-        self.safe_ip = True
-        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-            if self.safe_ip is None:
-                raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
-                #     self.safe_ip = True
-                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
-                    raise e.UnsafeIP(self.worker_ip)
-        if not self.worker:
-            if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
-            if is_profane(self.args.bridge_agent):
-                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
-            worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
-                raise e.WorkerInviteOnly(worker_count)
-            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
-                pass
-            self.worker = self.worker_class(
-                user_id=self.user.id,
-                name=self.worker_name,
-            )
-            self.worker.create()
-        if self.user != self.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-            
 
-class JobPop(JobPopTemplate):
-
-    def process_post(self):
+    def post(self):
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.priority_usernames = []
@@ -394,16 +347,73 @@ class JobPop(JobPopTemplate):
             safe_ip = self.safe_ip, 
             ipaddr = self.worker_ip)
 
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self):
+        self.skipped = {}
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('prompt pop')
+        if self.user.flagged:
+            raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
+        self.worker_name = sanitize_string(self.args['name'])
+        self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
+        if not self.worker and database.worker_name_exists(self.worker_name):
+            raise e.PolymorphicNameConflict(self.worker_name)
+        self.safe_ip = True
+        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip is False:
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                if not self.safe_ip and not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
+        if not self.worker:
+            if is_profane(self.worker_name):
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
+            if is_profane(self.args.bridge_agent):
+                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
+            worker_count = self.user.count_workers()
+            if invite_only.active and worker_count >= self.user.worker_invited:
+                raise e.WorkerInviteOnly(worker_count)
+            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
+            self.worker = self.worker_class(
+                user_id=self.user.id,
+                name=self.worker_name,
+            )
+            self.worker.create()
+        if self.user != self.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
 
-class JobSubmit(Resource):
+
+class JobSubmitTemplate(Resource):
     
-    def process_post(self):
-        self.args = parsers.job_submit_parser.parse_args()
+    def post(self):
         self.validate()
         return({"reward": self.kudos}, 200)
 
+    def get_progen(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        return database.get_progen_by_id(self.args['id'])
+
+    def set_generation(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        things_per_sec = stats.record_fulfilment(self.procgen)
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args.seed,
+            state=self.args.state,
+        )
+
     def validate(self):
-        self.procgen = database.get_progen_by_id(self.args['id'])
+        self.procgen = self.get_progen()
         if not self.procgen:
             raise e.InvalidJobID(self.args['id'])
         self.user = database.find_user_by_api_key(self.args['apikey'])
@@ -411,14 +421,7 @@ class JobSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        things_per_sec = stats.record_fulfilment(self.procgen)
-        self.kudos = self.procgen.set_generation(
-            generation=self.args['generation'], 
-            things_per_sec=things_per_sec, 
-            seed=self.args.seed,
-            censored=self.args.censored,
-            state=self.args.state,
-        )
+        self.set_generation()
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
         if self.kudos == -1:

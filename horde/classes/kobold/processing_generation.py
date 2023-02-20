@@ -26,7 +26,7 @@ class TextProcessingGeneration(ProcessingGeneration):
 
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker        
-        return round(self.wp.tokens * model_reference.get_text_model_multiplier(self.model) / 21, 2)
+        return round(self.wp.max_length * model_reference.get_text_model_multiplier(self.model) / 21, 2)
 
 
     def log_aborted_generation(self):

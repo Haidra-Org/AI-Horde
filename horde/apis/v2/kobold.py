@@ -22,6 +22,7 @@ class TextAsyncGenerate(GenerateTemplate):
         Perhaps some will appear in the next 20 minutes.
         Asynchronous requests live for 20 minutes before being considered stale and being deleted.
         '''
+        self.args = parsers.generate_parser.parse_args()
         try:
             super().post()
         except KeyError:
@@ -99,7 +100,7 @@ class TextAsyncStatus(Resource):
         db.session.commit()
         return(wp_status, 200)
 
-class TextJobPop(JobPop):
+class TextJobPop(JobPopTemplate):
     worker_class = TextWorker
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
@@ -114,7 +115,7 @@ class TextJobPop(JobPop):
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
         self.args = parsers.job_pop_parser.parse_args()
-        return self.process_post()
+        return super().post()
 
     def check_in(self):
         self.softprompts = []
@@ -140,9 +141,10 @@ class TextJobPop(JobPop):
             self.models,
             priority_user_ids = priority_user_ids,
         )        
+
         return sorted_wps
 
-class TextJobSubmit(JobSubmit):
+class TextJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
@@ -154,8 +156,13 @@ class TextJobSubmit(JobSubmit):
         '''Submit generated text.
         This endpoint is used by registered workers only
         '''
-        return self.process_post()
+        # We have to parse the args here, to ensure we use the correct parser class
+        self.args = parsers.job_submit_parser.parse_args()
+        return super().post()
 
+    def get_progen(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        return text_database.get_text_progen_by_id(self.args['id'])
 
 class HordeLoad(HordeLoad):
     # When we extend the actual method, we need to re-apply the decorators
