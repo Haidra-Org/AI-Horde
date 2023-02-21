@@ -3,6 +3,8 @@
 
 # 4.0.0
 
+* /api/v2/user: `contributions` and `usage` fields are now obsolete. Switch to the `records` field as they will be decommissioned
+
 Add FulfillmentPerformance fields
 * thing_type
 Add WP fields

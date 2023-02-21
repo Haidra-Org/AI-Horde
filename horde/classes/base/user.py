@@ -428,8 +428,8 @@ class User(db.Model):
             "id": self.id,
             "kudos": self.kudos,
             "kudos_details": self.compile_kudos_details(),
-            "usage": self.compile_usage_details(),
-            "contributions": self.compile_contribution_details(),
+            "usage": self.compile_usage_details(), # Obsolete in favor or records
+            "contributions": self.compile_contribution_details(), # Obsolete in favor or records
             "records": self.compile_records_details(),
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,

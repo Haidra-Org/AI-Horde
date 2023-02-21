@@ -46,7 +46,7 @@ def compile_textgen_stats_totals():
     count_day = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
     count_month = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).count()
     count_total = count_query.count()
-    tokens_query = db.session.query(TextGenerationStatistic.max_length)
+    tokens_query = db.session.query(func.sum(TextGenerationStatistic.max_length))
     tokens_minute = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).scalar()
     tokens_hour = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).scalar()
     tokens_day = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).scalar()
@@ -54,36 +54,37 @@ def compile_textgen_stats_totals():
     tokens_total = tokens_query.scalar()
     stats_dict = {
         "minute": {
-            "images": count_minute,
+            "requests": count_minute,
             "tokens": tokens_minute,
         },
         "hour": {
-            "images": count_hour,
+            "requests": count_hour,
             "tokens": tokens_hour,
         },
         "day": {
-            "images": count_day,
+            "requests": count_day,
             "tokens": tokens_day,
         },
         "month": {
-            "images": count_month,
+            "requests": count_month,
             "tokens": tokens_month,
         },
         "total": {
-            "images": count_total,
+            "requests": count_total,
             "tokens": tokens_total,
         },
     }
     return(stats_dict)
 
-def compile_imagegen_stats_models():
+def compile_textgen_stats_models():
     query = db.session.query(
         TextGenerationStatistic.model, func.count()
     ).group_by(
         TextGenerationStatistic.model
     )
-    return {
+    ret_dict = {
         "total": {model: count for model, count in query.all()},
         "day": {model: count for model, count in query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).all()},
         "month": {model: count for model, count in query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).all()},
     }
+    return ret_dict

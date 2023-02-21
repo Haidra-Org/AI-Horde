@@ -2,6 +2,7 @@ from .base import *
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.database import text_functions as text_database
+from horde.classes.kobold.genstats import compile_textgen_stats_totals, compile_textgen_stats_models
 
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
 
@@ -163,3 +164,31 @@ class TextJobSubmit(JobSubmitTemplate):
     def get_progen(self):
         '''Set to its own function to it can be overwritten depending on the class'''
         return text_database.get_text_progen_by_id(self.args['id'])
+
+class TextHordeStatsTotals(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=50)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_stats_img_totals, code=200, description='Horde generated images statistics')
+    def get(self):
+        '''Details how many images have been generated in the past minux,hour,day,month and total
+        Also shows the amount of pixelsteps for the same timeframe.
+        '''
+        return compile_textgen_stats_totals(),200
+
+class TextHordeStatsModels(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=50)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_stats_models, code=200, description='Horde generated images statistics per model')
+    def get(self):
+        '''Details how many images were generated per model for the past day, month and total
+        '''
+        return compile_textgen_stats_models(),200
+

@@ -692,7 +692,7 @@ class InterrogateSubmit(Resource):
             raise e.WrongCredentials(self.user.get_unique_alias(), self.form.worker.name)
 
 
-class HordeStatsTotals(Resource):
+class ImageHordeStatsTotals(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
@@ -706,7 +706,7 @@ class HordeStatsTotals(Resource):
         '''
         return compile_imagegen_stats_totals(),200
 
-class HordeStatsModels(Resource):
+class ImageHordeStatsModels(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 

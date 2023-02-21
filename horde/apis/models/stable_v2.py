@@ -197,11 +197,11 @@ class ImageModels(v2.Models):
             "total": fields.Nested(self.response_model_single_period_total_img_stat),
         })
 
-        self.response_model_model_stats = api.model('SinglePeriodModelStats', {
+        self.response_model_model_stats = api.model('SinglePeriodImgModelStats', {
             "*": fields.Wildcard(fields.Integer(required=True, description="The amount of requests fulfilled for this model")),
         })
 
-        self.response_model_stats_models = api.model('ModelStats', {
+        self.response_model_stats_models = api.model('ImgModelStats', {
             "day": fields.Nested(self.response_model_model_stats),
             "month": fields.Nested(self.response_model_model_stats),
             "total": fields.Nested(self.response_model_model_stats),

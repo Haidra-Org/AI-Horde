@@ -92,3 +92,26 @@ class TextModels(v2.Models):
             "total_speed": fields.Float(description="The total expected speed of this team when all workers are working parallel, in tokens per second."),
         })
         
+        self.response_model_single_period_total_img_stat = api.model('SinglePeriodImgStat', {
+            "requests": fields.Integer(description="The amount of text requests generated during this period."),
+            "tokens": fields.Integer(description="The amount of tokens generated during this period."),
+        })
+
+        self.response_model_stats_img_totals = api.model('StatsTxtTotals', {
+            "minute": fields.Nested(self.response_model_single_period_total_img_stat),
+            "hour": fields.Nested(self.response_model_single_period_total_img_stat),
+            "day": fields.Nested(self.response_model_single_period_total_img_stat),
+            "month": fields.Nested(self.response_model_single_period_total_img_stat),
+            "total": fields.Nested(self.response_model_single_period_total_img_stat),
+        })
+
+        self.response_model_model_stats = api.model('SinglePeriodTxtModelStats', {
+            "*": fields.Wildcard(fields.Integer(required=True, description="The amount of requests fulfilled for this model")),
+        })
+
+        self.response_model_stats_models = api.model('TxtModelStats', {
+            "day": fields.Nested(self.response_model_model_stats),
+            "month": fields.Nested(self.response_model_model_stats),
+            "total": fields.Nested(self.response_model_model_stats),
+        })
+        
