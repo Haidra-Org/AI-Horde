@@ -72,10 +72,10 @@ class ImageAsyncGenerate(GenerateTemplate):
         if self.args.source_image:
             if self.args.source_processing == "img2img" and self.params.get("sampler_name") in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]:
                 raise e.UnsupportedSampler
-            if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
-                raise e.UnsupportedModel
-        if not any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models) and self.params.get("sampler_name") in ["dpmsolver"]:
-            raise e.UnsupportedSampler
+        #     if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
+        #         raise e.UnsupportedModel
+        # if not any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models) and self.params.get("sampler_name") in ["dpmsolver"]:
+        #     raise e.UnsupportedSampler
         # if self.args.models == ["stable_diffusion_2.0"] and self.params.get("sampler_name") not in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
         if len(self.args['prompt'].split()) > 7500:
