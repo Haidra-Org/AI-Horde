@@ -5,17 +5,6 @@
 
 * /api/v2/user: `contributions` and `usage` fields are now obsolete. Switch to the `records` field as they will be decommissioned
 
-Add FulfillmentPerformance fields
-* thing_type
-Add WP fields
-* wp_type
-* max_content_length
-* max_length
-* softprompt
-* index faulted
-Add Procgen field
-* procgen_type
-
 ## 3.11.2
 
 * Fix for source images being deleted from r2 before being used

@@ -1,4 +1,6 @@
 from datetime import datetime
+from sqlalchemy.dialects.postgresql import UUID
+
 from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker

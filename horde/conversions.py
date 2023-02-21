@@ -14,6 +14,21 @@ import horde.classes.base.stats as stats
 from horde.classes.stable.worker import ImageWorker
 from horde.utils import hash_api_key
 
+## Add FulfillmentPerformance fields
+# ALTER TABLE horde_fulfillments ADD COLUMN thing_type VARCHAR(20) NOT NULL DEFAULT 'image';
+# CREATE INDEX idx_horde_fulfillments_thing_type ON public.horde_fulfillments USING btree (thing_type);
+## Add WP fields
+# ALTER TABLE waiting_prompts ADD COLUMN wp_type VARCHAR(30) NOT NULL DEFAULT 'image';
+# CREATE INDEX idx_waiting_prompts_wp_type ON public.waiting_prompts USING btree (wp_type);
+# ALTER TABLE waiting_prompts ADD COLUMN max_length INTEGER NOT NULL DEFAULT 80;
+# CREATE INDEX idx_waiting_prompts_max_length ON public.waiting_prompts USING btree(max_length);
+# ALTER TABLE waiting_prompts ADD COLUMN max_content_length INTEGER NOT NULL DEFAULT 1024;
+# CREATE INDEX idx_waiting_prompts_max_content_length ON public.waiting_prompts USING btree(max_content_length);
+# ALTER TABLE waiting_prompts ADD COLUMN softprompt VARCHAR(255);
+# CREATE INDEX idx_waiting_prompts_faulted ON public.waiting_prompts USING btree(faulted);
+# ALTER TABLE processing_gens ADD COLUMN procgen_type VARCHAR(30) NOT NULL DEFAULT 'image';
+# CREATE INDEX idx_processing_gens_procgen_type ON public.processing_gens USING btree (procgen_type);
+
 
 def convert_json_db():
     convert_json("db/users.json", convert_user)
