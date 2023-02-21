@@ -11,7 +11,7 @@ class TextParsers(v2.Parsers):
         self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
         self.job_pop_parser.add_argument("softprompts", type=list, required=False, help="The available softprompt files on this worker for the currently running model", location="json")
         # To remove the below once I updated the KAI server to use "models"
-        self.job_submit_parser.add_argument("seed", type=str, required=False, default='', help="The seed of the text generation", location="json")
+        self.job_submit_parser.add_argument("seed", type=int, required=False, default='', help="The seed of the text generation", location="json")
 
 class TextModels(v2.Models):
     def __init__(self,api):
@@ -20,7 +20,7 @@ class TextModels(v2.Models):
 
         self.response_model_generation_result = api.inherit('GenerationKobold', self.response_model_generation_result, {
             'text': fields.String(title="Generated Text", description="The generated text."),
-            # 'seed': fields.String(title="Generation Seed", description="The seed which generated this image"),
+            'seed': fields.Integer(title="Generation Seed", description="The seed which generated this text"),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusKobold', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),

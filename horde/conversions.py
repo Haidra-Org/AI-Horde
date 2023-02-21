@@ -28,6 +28,8 @@ from horde.utils import hash_api_key
 # CREATE INDEX idx_waiting_prompts_faulted ON public.waiting_prompts USING btree(faulted);
 # ALTER TABLE processing_gens ADD COLUMN procgen_type VARCHAR(30) NOT NULL DEFAULT 'image';
 # CREATE INDEX idx_processing_gens_procgen_type ON public.processing_gens USING btree (procgen_type);
+# ALTER TABLE workers ADD COLUMN max_length INTEGER NOT NULL DEFAULT 80;
+# ALTER TABLE workers ADD COLUMN max_content_length INTEGER NOT NULL DEFAULT 1024;
 
 
 def convert_json_db():
