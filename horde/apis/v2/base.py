@@ -890,10 +890,11 @@ class Models(Resource):
     def get(self):
         '''Returns a list of models active currently in this horde
         '''
+        self.args = self.get_parser.parse_args()
         models_ret = database.retrieve_available_models(
-            model_type=args.type,
-            min_count=args.min_count,
-            max_count=args.max_count,
+            model_type=self.args.type,
+            min_count=self.args.min_count,
+            max_count=self.args.max_count,
         )
         return (models_ret,200)
 
