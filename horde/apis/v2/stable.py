@@ -160,6 +160,7 @@ class JobPop(JobPop):
             allow_painting = self.args.allow_painting,
             allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
             allow_post_processing = self.args.allow_post_processing,
+            allow_controlnet = self.args.allow_controlnet,
             priority_usernames = self.priority_usernames,
         )
 

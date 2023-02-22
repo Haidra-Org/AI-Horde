@@ -16,6 +16,7 @@ class WorkerExtended(Worker):
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
+    allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
@@ -26,6 +27,7 @@ class WorkerExtended(Worker):
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
         self.allow_post_processing = kwargs.get('allow_post_processing', True)
+        self.allow_controlnet = kwargs.get('allow_controlnet', False)
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])
         paused_string = ''
@@ -126,6 +128,7 @@ class WorkerExtended(Worker):
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
         ret_dict["post-processing"] = self.allow_post_processing        
+        ret_dict["controlnet"] = self.allow_controlnet        
         return ret_dict
 
     def parse_models(self, unchecked_models):
