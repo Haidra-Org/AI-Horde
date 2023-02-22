@@ -16,6 +16,7 @@ class ImageWorker(Worker):
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
+    allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
@@ -27,6 +28,7 @@ class ImageWorker(Worker):
         self.allow_img2img = kwargs.get('allow_img2img', True)
         self.allow_painting = kwargs.get('allow_painting', True)
         self.allow_post_processing = kwargs.get('allow_post_processing', True)
+        self.allow_controlnet = kwargs.get('allow_controlnet', False)
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])
         paused_string = ''
@@ -80,8 +82,11 @@ class ImageWorker(Worker):
             return [False, 'models']
         if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, 'bridge_version']
-        if waiting_prompt.params.get('control_type') and not check_bridge_capability("controlnet", self.bridge_agent):
-            return [False, 'bridge_version']
+        if waiting_prompt.params.get('control_type'):
+            if not check_bridge_capability("controlnet", self.bridge_agent):
+                return [False, 'bridge_version']
+            if not self.allow_controlnet:
+                return [False, 'bridge_version']
         if waiting_prompt.params.get('hires_fix') and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, 'bridge_version']
         if waiting_prompt.params.get('clip_skip', 1) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
@@ -127,6 +132,7 @@ class ImageWorker(Worker):
         if self.bridge_version < 4: allow_painting = False
         ret_dict["painting"] = allow_painting
         ret_dict["post-processing"] = self.allow_post_processing        
+        ret_dict["controlnet"] = self.allow_controlnet        
         return ret_dict
 
     def parse_models(self, unchecked_models):

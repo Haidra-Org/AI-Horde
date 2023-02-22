@@ -19,7 +19,8 @@ class ImageParsers(v2.Parsers):
         self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_pop_parser.add_argument("allow_post_processing", type=bool, required=False, default=True, help="If True, this worker will pick up requests requesting post-processing.", location="json")
-        self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the image generation", location="json")
+        self.job_pop_parser.add_argument("allow_controlnet", type=bool, required=False, default=False, help="If True, this worker will pick up requests requesting ControlNet.", location="json")
+        self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the generation", location="json")
         self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
 class ImageModels(v2.Models):
@@ -88,6 +89,7 @@ class ImageModels(v2.Models):
             'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
             'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
+            'allow_controlnet': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting ControlNet."),
         })
         self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
             'seed': fields.Integer(required=True, description="The seed for this generation"), 
