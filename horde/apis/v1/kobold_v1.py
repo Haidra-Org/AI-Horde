@@ -242,7 +242,7 @@ class PromptPop(Resource):
     parser.add_argument("name", type=str, required=True, help="The server's unique name, to track contributions")
     parser.add_argument("model", type=str, required=True, help="The model currently running on this KoboldAI")
     parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this server can generate")
-    parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
+    parser.add_argument("max_context_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.")
     parser.add_argument("priority_usernames", type=str, action='append', required=False, default=[], help="The usernames which get priority use on this server")
     parser.add_argument("softprompts", type=str, action='append', required=False, default=[], help="The available softprompt files on this cluster for the currently running model")
 
@@ -262,7 +262,7 @@ class PromptPop(Resource):
             server.create(user, args['name'])
         if user != server.user:
             return(f"{get_error(ServerErrors.WRONG_CREDENTIALS,kai_instance = args['name'], username = user.get_unique_alias())}",401)
-        server.check_in(args['max_length'], args['max_content_length'], args["softprompts"], model = args['model'])
+        server.check_in(args['max_length'], args['max_context_length'], args["softprompts"], model = args['model'])
         if server.maintenance:
             return(f"Server has been put into maintenance mode by the owner",403)
         if server.paused:
@@ -390,7 +390,7 @@ class Servers(Resource):
                 "id": server.id,
                 "model": server.model,
                 "max_length": server.max_length,
-                "max_content_length": server.max_content_length,
+                "max_context_length": server.max_context_length,
                 "requests_fulfilled": server.fulfilments,
                 "kudos_rewards": server.kudos,
                 "kudos_details": server.kudos_details,
@@ -411,7 +411,7 @@ class ServerSingle(Resource):
                 "id": server.id,
                 "model": server.model,
                 "max_length": server.max_length,
-                "max_content_length": server.max_content_length,
+                "max_context_length": server.max_context_length,
                 "requests_fulfilled": server.fulfilments,
                 "latest_performance": server.get_performance(),
                 "maintenance_mode": server.maintenance,

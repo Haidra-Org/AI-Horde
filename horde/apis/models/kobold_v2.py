@@ -8,7 +8,7 @@ class TextParsers(v2.Parsers):
         self.generate_parser.add_argument("softprompt", type=str, required=False, help="If specified, only servers who can load this softprompt will generate this request", location="json")
         self.generate_parser.add_argument("models", type=list, required=False, default=[], help="The acceptable models with which to generate", location="json")
         self.job_pop_parser.add_argument("max_length", type=int, required=False, default=512, help="The maximum amount of tokens this worker can generate", location="json")
-        self.job_pop_parser.add_argument("max_content_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
+        self.job_pop_parser.add_argument("max_context_length", type=int, required=False, default=2048, help="The max amount of context to submit to this AI for sampling.", location="json")
         self.job_pop_parser.add_argument("softprompts", type=list, required=False, help="The available softprompt files on this worker for the currently running model", location="json")
         # To remove the below once I updated the KAI server to use "models"
         self.job_submit_parser.add_argument("seed", type=int, required=False, default=0, help="The seed of the text generation", location="json")
@@ -33,17 +33,18 @@ class TextModels(v2.Models):
             'frmttriminc': fields.Boolean(example=False,description="Output formatting option. When enabled, removes some characters from the end of the output such that the output doesn't end in the middle of a sentence. If the output is less than one sentence long, does nothing."),
             'max_context_length': fields.Integer(min=80, max=2048, example=1024, description="Maximum number of tokens to send to the model."), 
             'max_length': fields.Integer(min=16, max=512, description="Number of tokens to generate."), 
-            'rep_pen': fields.Float(description="Base repetition penalty value."), 
+            'rep_pen': fields.Float(description="Base repetition penalty value.",min=1), 
             'rep_pen_range': fields.Integer(description="Repetition penalty range."), 
             'rep_pen_slope': fields.Float(description="Repetition penalty slope."), 
             'singleline': fields.Boolean(example=False,description="Output formatting option. When enabled, removes everything after the first line of the output, including the newline."),
             'soft_prompt': fields.String(description="Soft prompt to use when generating. If set to the empty string or any other string containing no non-whitespace characters, uses no soft prompt."),
-            'temperature': fields.Float(description="Temperature value."), 
+            'temperature': fields.Float(description="Temperature value.", min=0), 
             'tfs': fields.Float(description="Tail free sampling value."), 
             'top_a': fields.Float(description="Top-a sampling value."), 
             'top_k': fields.Integer(description="Top-k sampling value."), 
             'top_p': fields.Float(description="Top-p sampling value."), 
-            'typical': fields.Float(description="Typical sampling value."), 
+            'typical': fields.Float(description="Typical sampling value."),
+            'sampler_order': fields.List(fields.Integer(description="Array of integers representing the sampler order to be used"))
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadKobold', self.root_model_generation_payload_kobold, {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate the text"),
@@ -51,7 +52,7 @@ class TextModels(v2.Models):
         self.input_model_generation_payload = api.inherit('ModelGenerationInputKobold', self.root_model_generation_payload_kobold, {
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundKobold', self.response_model_generations_skipped, {
-            'max_content_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher max_content_length than what this worker provides."),
+            'max_context_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a higher max_context_length than what this worker provides."),
             'max_length': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded more generated tokens that what this worker can provide."),
             'matching_softprompt': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded an available soft-prompt which this worker does not have."),
         })
@@ -64,13 +65,13 @@ class TextModels(v2.Models):
         })
         self.input_model_job_pop = api.inherit('PopInputKobold', self.input_model_job_pop, {
             'max_length': fields.Integer(default=512,description="The maximum amount of tokens this worker can generate"), 
-            'max_content_length': fields.Integer(default=2048,description="The max amount of context to submit to this AI for sampling."), 
+            'max_context_length': fields.Integer(default=2048,description="The max amount of context to submit to this AI for sampling."), 
             'softprompts': fields.List(fields.String(description="The available softprompt files on this worker for the currently running model")),
         })
         self.input_model_request_generation = api.model('GenerationInputKobold', {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate text"),
             'params': fields.Nested(self.input_model_generation_payload,skip_none=True),
-            'softprompt': fields.String(description="Specify which softpompt needs to be used to service this request"),
+            'softprompt': fields.String(description="Specify which softpompt needs to be used to service this request", required=False, min_length = 1),
             'trusted_workers': fields.Boolean(default=True,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),

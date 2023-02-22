@@ -125,7 +125,7 @@ class TextJobPop(JobPopTemplate):
         models = self.models
         self.worker.check_in(
             self.args['max_length'],
-            self.args['max_content_length'],
+            self.args['max_context_length'],
             self.softprompts,
             models = models,
             nsfw = self.args.nsfw,

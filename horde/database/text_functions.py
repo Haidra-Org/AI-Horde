@@ -76,7 +76,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         TextWaitingPrompt.n > 0,
         
         TextWaitingPrompt.max_length <= worker.max_length,
-        TextWaitingPrompt.max_content_length <= worker.max_content_length,
+        TextWaitingPrompt.max_context_length <= worker.max_context_length,
         TextWaitingPrompt.active == True,
         TextWaitingPrompt.faulted == False,
         TextWaitingPrompt.expiry > datetime.utcnow(),

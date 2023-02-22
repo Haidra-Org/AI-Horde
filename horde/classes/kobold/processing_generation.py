@@ -33,7 +33,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         record_text_statistic(self)
         logger.info(
             f"Aborted Stale Generation {self.id} "
-            f"(for {self.wp.max_length} tokens and {self.wp.max_content_length} content length) "
+            f"(for {self.wp.max_length} tokens and {self.wp.max_context_length} content length) "
             f" from by worker: {self.worker.name} ({self.worker.id})"
         )
 

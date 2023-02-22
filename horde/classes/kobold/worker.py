@@ -28,20 +28,20 @@ class TextWorker(Worker):
         "polymorphic_identity": "text_worker",
     }    
     max_length = db.Column(db.Integer, default=80, nullable=False)
-    max_content_length = db.Column(db.Integer, default=1024, nullable=False)
+    max_context_length = db.Column(db.Integer, default=1024, nullable=False)
     
     softprompts = db.relationship("TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan")
     wtype = "text"
 
-    def check_in(self, max_length, max_content_length, softprompts, **kwargs):
+    def check_in(self, max_length, max_context_length, softprompts, **kwargs):
         super().check_in(**kwargs)
         self.max_length = max_length
-        self.max_content_length = max_content_length
+        self.max_context_length = max_context_length
         self.set_softprompts(softprompts)
         paused_string = ''
         if self.paused:
             paused_string = '(Paused) '
-        logger.trace(f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_content_length} max content length.")
+        logger.trace(f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_context_length} max content length.")
 
     def refresh_softprompt_cache(self):
         softprompts_list = [s.softprompt for s in self.softprompts]
@@ -91,8 +91,8 @@ class TextWorker(Worker):
         can_generate = super().can_generate(waiting_prompt)
         if not can_generate[0]:
             return [can_generate[0],can_generate[1]]
-        if self.max_content_length < waiting_prompt.max_content_length:
-            return [False, 'max_content_length']
+        if self.max_context_length < waiting_prompt.max_context_length:
+            return [False, 'max_context_length']
         if self.max_length < waiting_prompt.max_length:
             return [False, 'max_length']
         matching_softprompt = True
@@ -112,7 +112,7 @@ class TextWorker(Worker):
     def get_details(self, is_privileged = False):
         ret_dict = super().get_details(is_privileged)
         ret_dict["max_length"] = self.max_length
-        ret_dict["max_content_length"] = self.max_content_length
+        ret_dict["max_context_length"] = self.max_context_length
         return(ret_dict)
 
     def parse_models(self, unchecked_models):

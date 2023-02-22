@@ -152,7 +152,7 @@ class Models:
             'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
             'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
             "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
-            "max_content_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
+            "max_context_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
             "tokens_generated": fields.Float(description="How many tokens this worker has generated until now"),
         })
 

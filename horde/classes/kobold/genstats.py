@@ -14,7 +14,7 @@ class TextGenerationStatistic(db.Model):
     created = db.Column(db.DateTime(timezone=False), nullable=True)
     model = db.Column(db.String(255), index=True, nullable=False)
     max_length = db.Column(db.Integer, nullable=False)
-    max_content_length = db.Column(db.Integer, nullable=False)
+    max_context_length = db.Column(db.Integer, nullable=False)
     softprompt = db.Column(db.Integer, nullable=True)
     prompt_length = db.Column(db.Integer, nullable=False)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
@@ -31,7 +31,7 @@ def record_text_statistic(procgen):
         created=procgen.start_time,
         model=procgen.model,
         max_length=procgen.wp.max_length,
-        max_content_length=procgen.wp.max_content_length,
+        max_context_length=procgen.wp.max_context_length,
         softprompt=procgen.wp.softprompt,
         prompt_length=len(procgen.wp.prompt),
         state=state,
