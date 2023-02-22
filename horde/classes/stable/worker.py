@@ -81,8 +81,11 @@ class WorkerExtended(Worker):
             return [False, 'models']
         if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, 'bridge_version']
-        if waiting_prompt.params.get('control_type') and not check_bridge_capability("controlnet", self.bridge_agent):
-            return [False, 'bridge_version']
+        if waiting_prompt.params.get('control_type'):
+            if not check_bridge_capability("controlnet", self.bridge_agent):
+                return [False, 'bridge_version']
+            if not self.allow_controlnet:
+                return [False, 'bridge_version']
         if waiting_prompt.params.get('hires_fix') and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, 'bridge_version']
         if waiting_prompt.params.get('clip_skip', 1) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
