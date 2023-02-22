@@ -38,7 +38,13 @@ class ImageWaitingPrompt(WaitingPrompt):
         if "height" not in self.params:
             self.params["height"] = 512
         if "steps" not in self.params:
-            self.params["steps"] = 30
+            if self.params.get('control_type'):
+                self.params["steps"] = 20
+            else:
+                self.params["steps"] = 30
+        elif self.params.get('control_type') and self.params["steps"] > 40:
+            # I transpaently limit CN max steps to 40
+            self.params["steps"] = 40
         if "sampler_name" not in self.params:
             self.params["sampler_name"] = "k_euler_a"
         if "cfg_scale" not in self.params:
@@ -226,6 +232,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
             self.kudos = round(self.kudos * 1.2,2)
+        if self.gen_payload.get('control_type'):
+            self.kudos = round(self.kudos * 3,2)
         db.session.commit()
 
 
@@ -245,6 +253,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.get_accurate_steps() > 50:
             return(True,max_res)
         if self.width * self.height > max_res*max_res:
+            return(True,max_res)
+        if self.params.get('control_type') and self.get_accurate_steps() > 20:
             return(True,max_res)
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
