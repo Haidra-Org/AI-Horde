@@ -9,7 +9,7 @@ from horde.argparser import args
 class ModelPerformance(db.Model):
     __tablename__ = "model_performances"
     id = db.Column(db.Integer, primary_key=True)
-    model = db.Column(db.String(30), index=True)
+    model = db.Column(db.String(255), index=True)
     performance = db.Column(db.Float)
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)  # Maybe index this, but I'm not actually sure how big this table is
 

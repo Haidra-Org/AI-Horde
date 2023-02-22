@@ -20,7 +20,7 @@ class ImageGenerationStatistic(db.Model):
     finished = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
     # Created comes from the procgen
     created = db.Column(db.DateTime(timezone=False), nullable=True)
-    model = db.Column(db.String(30), index=True, nullable=False)
+    model = db.Column(db.String(255), index=True, nullable=False)
     width = db.Column(db.Integer, nullable=False)
     height = db.Column(db.Integer, nullable=False)
     steps = db.Column(db.Integer, nullable=False)

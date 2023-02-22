@@ -12,7 +12,7 @@ class TextGenerationStatistic(db.Model):
     finished = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
     # Created comes from the procgen
     created = db.Column(db.DateTime(timezone=False), nullable=True)
-    model = db.Column(db.String(30), index=True, nullable=False)
+    model = db.Column(db.String(255), index=True, nullable=False)
     max_length = db.Column(db.Integer, nullable=False)
     max_content_length = db.Column(db.Integer, nullable=False)
     softprompt = db.Column(db.Integer, nullable=True)

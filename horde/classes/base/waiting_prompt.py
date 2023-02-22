@@ -46,7 +46,7 @@ class WPModels(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
     wp = db.relationship(f"WaitingPrompt", back_populates="models")
-    model = db.Column(db.String(30), nullable=False)
+    model = db.Column(db.String(255), nullable=False)
 
 
 class WaitingPrompt(db.Model):
