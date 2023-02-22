@@ -879,6 +879,9 @@ class FindUser(Resource):
 class Models(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("type", required=False, type=str, help="Filter the models by type (image or text)", location="args")
+    get_parser.add_argument("min_count", required=False, type=int, help="Filter only models that have at least this amount of threads serving", location="args")
+    get_parser.add_argument("max_count", required=False, type=int, help="Filter the models that have at most this amount of threads serving", location="args")
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=2)
@@ -887,7 +890,12 @@ class Models(Resource):
     def get(self):
         '''Returns a list of models active currently in this horde
         '''
-        return(database.retrieve_available_models(),200)
+        models_ret = database.retrieve_available_models(
+            model_type=args.type,
+            min_count=args.min_count,
+            max_count=args.max_count,
+        )
+        return (models_ret,200)
 
 
 class HordeLoad(Resource):

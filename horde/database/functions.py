@@ -280,7 +280,7 @@ def get_available_models():
                 models_dict[model_name]['eta'] = 10000
     return(list(models_dict.values()))
 
-def retrieve_available_models():
+def retrieve_available_models(model_type=None,min_count=None,max_count=None):
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
     if horde_r is None:
         return get_available_models()
@@ -292,7 +292,13 @@ def retrieve_available_models():
         return []
     if models_ret is None:
         models_ret = get_available_models()
-    return(models_ret)
+    if model_type is not None:
+        models_ret = [md for md in models_ret if md["type"] == model_type]
+    if min_count is not None:
+        models_ret = [md for md in models_ret if md["count"] >= min_count]
+    if max_count is not None:
+        models_ret = [md for md in models_ret if md["count"] <= max_count]
+    return models_ret
 
 def transfer_kudos(source_user, dest_user, amount):
     if source_user.is_suspicious():
