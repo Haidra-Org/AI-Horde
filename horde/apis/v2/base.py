@@ -880,8 +880,9 @@ class Models(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     get_parser.add_argument("type", required=False, type=str, help="Filter the models by type (image or text)", location="args")
-    get_parser.add_argument("min_count", required=False, type=int, help="Filter only models that have at least this amount of threads serving", location="args")
-    get_parser.add_argument("max_count", required=False, type=int, help="Filter the models that have at most this amount of threads serving", location="args")
+    get_parser.add_argument("min_count", required=False, default=None, type=int, help="Filter only models that have at least this amount of threads serving", location="args")
+    get_parser.add_argument("max_count", required=False, default=None, type=int, help="Filter the models that have at most this amount of threads serving", location="args")
+    get_parser.add_argument("contains", type=str, default=None, required=False, help="Only return filter containing this word", location="args")
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=2)
