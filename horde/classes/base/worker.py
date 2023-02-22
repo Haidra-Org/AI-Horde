@@ -435,7 +435,7 @@ class Worker(WorkerTemplate):
         try:
             horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), json.dumps(models_list))
         except Exception as err:
-            logger.debug(f"Error when trying to set models cache: {e}. Retrieving from DB.")
+            logger.debug(f"Error when trying to set models cache: {err}. Retrieving from DB.")
         return models_list
 
     def get_model_names(self):
