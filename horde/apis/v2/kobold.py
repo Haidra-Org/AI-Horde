@@ -208,7 +208,7 @@ class KoboldKudosTransfer(Resource):
         '''Receives kudos from the KoboldAI Horde
         '''
         if request.remote_addr != "167.86.124.45":
-            raise BadRequest("Access Denied")
+            raise e.BadRequest("Access Denied")
         user = database.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
