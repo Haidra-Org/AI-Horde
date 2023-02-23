@@ -289,6 +289,7 @@ def get_available_models():
                 models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
             else:
                 models_dict[model_name]['eta'] = 10000
+    logger.debug(models_dict)
     return(list(models_dict.values()))
 
 def retrieve_available_models(model_type=None,min_count=None,max_count=None):
