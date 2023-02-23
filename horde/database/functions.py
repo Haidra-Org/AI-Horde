@@ -289,7 +289,7 @@ def get_available_models():
                 models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
             else:
                 models_dict[model_name]['eta'] = 10000
-    logger.debug(models_dict)
+    logger.error(models_dict)
     return(list(models_dict.values()))
 
 def retrieve_available_models(model_type=None,min_count=None,max_count=None):
@@ -305,7 +305,7 @@ def retrieve_available_models(model_type=None,min_count=None,max_count=None):
     if models_ret is None:
         models_ret = get_available_models()
     if model_type is not None:
-        models_ret = [md for md in models_ret if md["type"] == model_type]
+        models_ret = [md for md in models_ret if md.get("type", "image")== model_type]
     if min_count is not None:
         models_ret = [md for md in models_ret if md["count"] >= min_count]
     if max_count is not None:
