@@ -15,9 +15,14 @@ from horde.flask import cache, db, HORDE
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.argparser import args, maintenance, invite_only, raid
-from horde.apis import ModelsV2, ParsersV2
 from horde import exceptions as e
-from horde.classes import stats, Worker, Team, WaitingPrompt, News, User, Filter
+from horde.classes.base.user import User
+from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.classes.base.worker import Worker
+import horde.classes.base.stats as stats
+from horde.classes.base.team import Team
+from horde.classes.base.news import News
+from horde.classes.base.detection import Filter
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
@@ -37,8 +42,11 @@ authorizations = {
 }
 
 api = Namespace('v2', 'API Version 2' )
-models = ModelsV2(api)
-parsers = ParsersV2()
+
+from horde.apis.models.v2 import Models, Parsers
+
+models = Models(api)
+parsers = Parsers()
 
 handle_bad_request = api.errorhandler(e.BadRequest)(e.handle_bad_requests)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
@@ -107,7 +115,6 @@ def check_for_mod(api_key, operation, whitelisted_users = None):
 class GenerateTemplate(Resource):
     def post(self):
         #logger.warning(datetime.utcnow())
-        self.args = parsers.generate_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.params = {}
@@ -184,8 +191,9 @@ class GenerateTemplate(Resource):
             if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
                 raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
 
+    def get_size_too_big_message(self):
+        return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Please confider reducing its size of the request.")
 
-    
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
@@ -203,37 +211,6 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
         self.wp.activate()
-
-class AsyncGenerate(GenerateTemplate):
-
-    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
-    @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(503, 'Maintenance Mode', models.response_model_error)
-    @api.response(429, 'Too Many Prompts', models.response_model_error)
-    def post(self):
-        '''Initiate an Asynchronous request to generate images.
-        This endpoint will immediately return with the UUID of the request for generation.
-        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
-        Perhaps some will appear in the next 10 minutes.
-        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
-        '''
-        try:
-            super().post()
-        except KeyError:
-            logger.error(f"caught missing Key.")
-            logger.error(self.args)
-            logger.error(self.args.params)
-            return {"message": "Internal Server Error"},500
-        ret_dict = {"id":self.wp.id}
-        if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
-            ret_dict['message'] = self.get_size_too_big_message()
-        return(ret_dict, 202)
-
-    def get_size_too_big_message(self):
-        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Please confider reducing its size of the request.")
-
 
 class SyncGenerate(GenerateTemplate):
 
@@ -278,162 +255,17 @@ class SyncGenerate(GenerateTemplate):
         # if a worker is available to fulfil this prompt, we activate it and add it to the queue to be generated
         super().activate_waiting_prompt()
 
-class AsyncStatus(Resource):
-    get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-
-    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
-     # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    @api.expect(get_parser)
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
-    @api.response(404, 'Request Not found', models.response_model_error)
-    def get(self, id = ''):
-        '''Retrieve the full status of an Asynchronous generation request.
-        This request will include all already generated images in download URL or base64 encoded .webp files.
-        As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
-        This endpoint is limited to 10 request per minute
-        '''
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(id)
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        # If the status is retrieved after the wp is done we clear it to free the ram
-        # FIXME: I pevent it at the moment due to the race conditions
-        # The WPCleaner is going to clean it up anyway
-        # if wp_status["done"]:
-            # wp.delete()
-        return(wp_status, 200)
-
-    delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-
-    @api.expect(delete_parser)
-    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
-    @api.response(404, 'Request Not found', models.response_model_error)
-    def delete(self, id = ''):
-        '''Cancel an unfinished request.
-        This request will include all already generated images in base64 encoded .webp files.
-        '''
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(id)
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg(),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        logger.info(f"Request with ID {wp.id} has been cancelled.")
-        # FIXME: I pevent it at the moment due to the race conditions
-        # The WPCleaner is going to clean it up anyway
-        wp.n = 0
-        db.session.commit()
-        return(wp_status, 200)
-
-
-class AsyncCheck(Resource):
-    get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-
-    # Increasing this until I can figure out how to pass original IP from reverse proxy
-    decorators = [limiter.limit("10/second", key_func = get_request_path)]
-    @cache.cached(timeout=1)
-    @api.expect(get_parser)
-    @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
-    # @cache.cached(timeout=0.5)
-    @api.response(404, 'Request Not found', models.response_model_error)
-    def get(self, id):
-        '''Retrieve the status of an Asynchronous generation request without images.
-        Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
-        '''
-        # Sending lite mode to try and reduce the amount of bandwidth
-        # This will not retrieve procgens, so ETA will not be completely accurate
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(id)
-        lite_status = wp.get_lite_status(
-            request_avg=database.get_request_avg(),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
-        )
-        return(lite_status, 200)
-
-
 class JobPopTemplate(Resource):
+    worker_class = Worker
 
-    # We split this into its own function, so that it may be overriden and extended
-    def validate(self, worker_class = Worker):
-        self.skipped = {}
-        self.user = database.find_user_by_api_key(self.args['apikey'])
-        if not self.user:
-            raise e.InvalidAPIKey('prompt pop')
-        if self.user.flagged:
-            raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
-        self.worker_name = sanitize_string(self.args['name'])
-        self.worker = database.find_worker_by_name(self.worker_name, worker_class=worker_class)
-        if not self.worker and database.worker_name_exists(self.worker_name):
-            raise e.PolymorphicNameConflict(self.worker_name)
-        self.safe_ip = True
-        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-            if self.safe_ip is None:
-                raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
-                #     self.safe_ip = True
-                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
-                    raise e.UnsafeIP(self.worker_ip)
-        if not self.worker:
-            if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
-            if is_profane(self.args.bridge_agent):
-                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
-            worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
-                raise e.WorkerInviteOnly(worker_count)
-            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
-                pass
-            self.worker = worker_class(
-                user_id=self.user.id,
-                name=self.worker_name,
-            )
-            self.worker.create()
-        if self.user != self.worker.user:
-            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
-            
-
-class JobPop(JobPopTemplate):
-
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
-        '''Check if there are generation requests queued for fulfillment.
-        This endpoint is used by registered workers only
-        '''
-        # logger.warning(datetime.utcnow())
-        self.args = parsers.job_pop_parser.parse_args()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
-        self.blacklist = []
-        if self.args.blacklist:
-            self.blacklist = self.args.blacklist
         self.priority_usernames = []
         if self.args.priority_usernames:
             self.priority_usernames = self.args.priority_usernames
+            if any("#" not in user_id for user_id in self.priority_usernames):
+                raise e.BadRequest("Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'")
         self.models = []
         if self.args.models:
             self.models = self.args.models
@@ -444,8 +276,6 @@ class JobPop(JobPopTemplate):
         self.prioritized_wp = []
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        if any("#" not in user_id for user_id in self.priority_usernames):
-            raise e.BadRequest("Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'")
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
@@ -486,8 +316,8 @@ class JobPop(JobPopTemplate):
             # logger.debug(worker_ret)
             if worker_ret is None:
                 continue
-            # logger.debug(worker_ret)
-            return(worker_ret, 200)
+            logger.debug(worker_ret)
+            return worker_ret, 200
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
@@ -519,25 +349,76 @@ class JobPop(JobPopTemplate):
             safe_ip = self.safe_ip, 
             ipaddr = self.worker_ip)
 
+    # We split this into its own function, so that it may be overriden and extended
+    def validate(self):
+        self.skipped = {}
+        self.user = database.find_user_by_api_key(self.args['apikey'])
+        if not self.user:
+            raise e.InvalidAPIKey('prompt pop')
+        if self.user.flagged:
+            raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
+        self.worker_name = sanitize_string(self.args['name'])
+        self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
+        if not self.worker and database.worker_name_exists(self.worker_name):
+            raise e.PolymorphicNameConflict(self.worker_name)
+        self.check_ip()
+        if not self.worker:
+            if is_profane(self.worker_name):
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
+            if is_profane(self.args.bridge_agent):
+                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
+            worker_count = self.user.count_workers()
+            if invite_only.active and worker_count >= self.user.worker_invited:
+                raise e.WorkerInviteOnly(worker_count)
+            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
+                pass
+            self.worker = self.worker_class(
+                user_id=self.user.id,
+                name=self.worker_name,
+            )
+            self.worker.create()
+        if self.user != self.worker.user:
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
 
-class JobSubmit(Resource):
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
-    @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
-    @api.response(400, 'Generation Already Submitted', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
-    @api.response(404, 'Request Not Found', models.response_model_error)
+    def check_ip(self):
+        self.safe_ip = True
+        if not self.user.trusted and not patrons.is_patron(self.user.id):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip is False:
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                if not self.safe_ip and not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
+
+
+class JobSubmitTemplate(Resource):
+    
     def post(self):
-        '''Submit a generated image.
-        This endpoint is used by registered workers only
-        '''
-        self.args = parsers.job_submit_parser.parse_args()
         self.validate()
         return({"reward": self.kudos}, 200)
 
+    def get_progen(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        return database.get_progen_by_id(self.args['id'])
+
+    def set_generation(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        things_per_sec = stats.record_fulfilment(self.procgen)
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args.seed,
+            state=self.args.state,
+        )
+
     def validate(self):
-        self.procgen = database.get_progen_by_id(self.args['id'])
+        self.procgen = self.get_progen()
         if not self.procgen:
             raise e.InvalidJobID(self.args['id'])
         self.user = database.find_user_by_api_key(self.args['apikey'])
@@ -545,14 +426,7 @@ class JobSubmit(Resource):
             raise e.InvalidAPIKey('worker submit:' + self.args['name'])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        things_per_sec = stats.record_fulfilment(self.procgen)
-        self.kudos = self.procgen.set_generation(
-            generation=self.args['generation'], 
-            things_per_sec=things_per_sec, 
-            seed=self.args.seed,
-            censored=self.args.censored,
-            state=self.args.state,
-        )
+        self.set_generation()
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args['id'])
         if self.kudos == -1:
@@ -624,10 +498,11 @@ class Workers(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("apikey", type=str, required=False, help="A Moderator API key", location='headers')
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("type", required=False, default=None, type=str, help="Filter the workers by type (image, text or interrogation)", location="args")
 
     @api.expect(get_parser)
     @logger.catch(reraise=True)
-    @cache.cached(timeout=10)
+    #@cache.cached(timeout=10, query_string=True)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Workers List', as_list=True, skip_none=True)
     def get(self):
         '''A List with the details of all registered and active workers
@@ -642,16 +517,27 @@ class Workers(Resource):
             admin = database.find_user_by_api_key(self.args['apikey'])
             if admin and admin.moderator:
                 details_privilege = 2
+        if not horde_r:
+            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
         if details_privilege == 2:
             cached_workers = horde_r.get('worker_cache_privileged')
         else:
             cached_workers = horde_r.get('worker_cache')
         if cached_workers is None:
             workers_ret = []
-            for worker in database.get_active_workers():
-                workers_ret.append(worker.get_details(details_privilege))
-            return workers_ret
-        return json.loads(cached_workers)
+            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
+        return self.parse_worker_by_query(json.loads(cached_workers))
+
+    def get_worker_info_list(self, details_privilege):
+        workers_ret = []
+        for worker in database.get_active_workers():
+            workers_ret.append(worker.get_details(details_privilege))
+        return workers_ret
+
+    def parse_worker_by_query(self, workers_list):
+        if not self.args.type:
+            return workers_list
+        return [w for w in workers_list if w["type"] == self.args.type]
 
 class WorkerSingle(Resource):
 
@@ -660,7 +546,7 @@ class WorkerSingle(Resource):
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
     @api.expect(get_parser)
-    @cache.cached(timeout=10)
+    # @cache.cached(timeout=10)
     @api.marshal_with(models.response_model_worker_details, code=200, description='Worker Details', skip_none=True)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
@@ -1000,15 +886,25 @@ class FindUser(Resource):
 class Models(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    # TODO: Remove the default "image" once all UIs have updated
+    get_parser.add_argument("type", required=False, default="image", type=str, help="Filter the models by type (image or text)", location="args")
+    get_parser.add_argument("min_count", required=False, default=None, type=int, help="Filter only models that have at least this amount of threads serving", location="args")
+    get_parser.add_argument("max_count", required=False, default=None, type=int, help="Filter the models that have at most this amount of threads serving", location="args")
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=2)
+    @cache.cached(timeout=2, query_string=True)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_active_model, code=200, description='List All Active Models', as_list=True)
     def get(self):
         '''Returns a list of models active currently in this horde
         '''
-        return(database.retrieve_available_models(),200)
+        self.args = self.get_parser.parse_args()
+        models_ret = database.retrieve_available_models(
+            model_type=self.args.type,
+            min_count=self.args.min_count,
+            max_count=self.args.max_count,
+        )
+        return (models_ret,200)
 
 
 class HordeLoad(Resource):
@@ -1023,7 +919,12 @@ class HordeLoad(Resource):
         '''Details about the current performance of this Horde
         '''
         load_dict = database.retrieve_totals()
+        # TODO: Rename this to image_worker_count in apiv3
         load_dict["worker_count"], load_dict["thread_count"] = database.count_active_workers()
+        load_dict["interrogator_count"], load_dict["interrogator_thread_count"] = database.count_active_workers("interrogation")
+        load_dict["text_worker_count"], load_dict["text_thread_count"] = database.count_active_workers("text")
+        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min("image")
+        load_dict["past_minute_tokens"] = stats.get_things_per_min("text")
         return(load_dict,200)
 
 class HordeNews(Resource):

@@ -9,7 +9,7 @@ from flask_dance.contrib.github import make_github_blueprint
 from flask_dance.contrib.google import make_google_blueprint
 
 from horde.routes import *  # I don't like this, we should be refactoring what things are being loaded
-from horde.apis import apiv1, apiv2
+from horde.apis import apiv2
 from horde.argparser import args, invite_only, raid, maintenance
 from horde.flask import HORDE, cache
 from horde.logger import logger
@@ -18,8 +18,6 @@ from horde.consts import HORDE_VERSION
 
 
 HORDE.register_blueprint(apiv2)
-if args.horde == 'kobold':
-    HORDE.register_blueprint(apiv1)
 
 
 @HORDE.after_request

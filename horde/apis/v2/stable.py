@@ -1,11 +1,10 @@
-import base64
 import requests
 import sys
-from io import BytesIO
-from PIL import Image, UnidentifiedImageError
 from datetime import datetime
 
-from .v2 import *
+from .base import *
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.classes.stable.worker import ImageWorker
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
@@ -13,10 +12,44 @@ from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import convert_source_image_to_pil, convert_source_image_to_webp, upload_source_image_to_r2, ensure_source_image_uploaded
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 
-class AsyncGenerate(AsyncGenerate):
-    
+from horde.apis.models.stable_v2 import ImageModels, ImageParsers
+
+models = ImageModels(api)
+parsers = ImageParsers()
+
+class ImageAsyncGenerate(GenerateTemplate):
+
+    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
+    @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(503, 'Maintenance Mode', models.response_model_error)
+    @api.response(429, 'Too Many Prompts', models.response_model_error)
+    def post(self):
+        '''Initiate an Asynchronous request to generate images.
+        This endpoint will immediately return with the UUID of the request for generation.
+        This endpoint will always be accepted, even if there are no workers available currently to fulfill this request. 
+        Perhaps some will appear in the next 10 minutes.
+        Asynchronous requests live for 10 minutes before being considered stale and being deleted.
+        '''
+        self.args = parsers.generate_parser.parse_args()
+        try:
+            super().post()
+        except KeyError:
+            logger.error(f"caught missing Key.")
+            logger.error(self.args)
+            logger.error(self.args.params)
+            return {"message": "Internal Server Error"},500
+        ret_dict = {"id":self.wp.id}
+        if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
+            ret_dict['message'] = self.get_size_too_big_message()
+        return(ret_dict, 202)
+
+    def get_size_too_big_message(self):
+        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Please confider reducing its size of the request.")
+
     def validate(self):
         #logger.warning(datetime.utcnow())
         super().validate()
@@ -62,10 +95,10 @@ class AsyncGenerate(AsyncGenerate):
             shared=True
         if self.args.source_image:
             shared=False
-        self.wp = WaitingPrompt(
+        self.wp = ImageWaitingPrompt(
             self.workers,
             self.models,
-            prompt = self.args["prompt"],
+            prompt = self.args.prompt,
             user_id = self.user.id,
             params = self.params,
             nsfw = self.args.nsfw,
@@ -76,6 +109,7 @@ class AsyncGenerate(AsyncGenerate):
             safe_ip=self.safe_ip,
             r2=self.args.r2,
             shared=shared,
+            client_agent=self.args["Client-Agent"],
         )
         needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals())
         if needs_kudos:
@@ -97,53 +131,111 @@ class AsyncGenerate(AsyncGenerate):
                 self.source_mask, self.source_mask_r2stored = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2 = True)
         self.wp.activate(self.source_image, self.source_mask)
 
-class SyncGenerate(SyncGenerate):
 
-    def validate(self):
-        super().validate()
-        # Temporary exception. During trial period only trusted users can use img2img
-        if self.args.source_image:
-            if not self.user.trusted and not patrons.is_patron(self.user.id):
-                self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
-                # We allow unsafe IPs when being rate limited as they're only temporary
-                if self.safe_ip is False:
-                    self.safe_ip = False
-                    raise e.NotTrusted
-        if not self.args.source_image and self.args.source_mask:
-            raise e.SourceMaskUnnecessary
-        if len(self.args['prompt'].split()) > 80:
-            raise e.InvalidPromptSize(self.username)
+class ImageAsyncStatus(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
-    
-    # We split this into its own function, so that it may be overriden
-    def initiate_waiting_prompt(self):
-        logger.debug(self.params)
-        self.wp = WaitingPrompt(
-            self.workers,
-            self.models,
-            prompt = self.args["prompt"],
-            user_id = self.user.id,
-            params = self.params,
-            nsfw = self.args.nsfw,
-            censor_nsfw = self.args.censor_nsfw,
-            trusted_workers = self.args.trusted_workers,
-            source_image = convert_source_image_to_webp(self.args.source_image),
-            source_processing = self.args.source_processing,
-            source_mask = convert_source_image_to_webp(self.args.source_mask),
-            ipaddr = self.user_ip,
-            safe_ip=self.safe_ip,
-            r2=self.args.r2,
+    decorators = [limiter.limit("10/minute", key_func = get_request_path)]
+     # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.response(404, 'Request Not found', models.response_model_error)
+    def get(self, id = ''):
+        '''Retrieve the full status of an Asynchronous generation request.
+        This request will include all already generated images in download URL or base64 encoded .webp files.
+        As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
+        This endpoint is limited to 10 request per minute
+        '''
+        wp = database.get_wp_by_id(id)
+        if not wp:
+            raise e.RequestNotFound(id)
+        wp_status = wp.get_status(
+            request_avg=database.get_request_avg("image"),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
         )
-        needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals())
-        if needs_kudos:
-            required_kudos = self.wp.kudos * self.wp.n
-            if required_kudos > self.user.kudos:
-                raise e.KudosUpfront(required_kudos, self.username, resolution)
-            else:
-                logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
+        return(wp_status, 200)
+
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @api.expect(delete_parser)
+    @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
+    @api.response(404, 'Request Not found', models.response_model_error)
+    def delete(self, id = ''):
+        '''Cancel an unfinished request.
+        This request will include all already generated images in base64 encoded .webp files.
+        '''
+        wp = database.get_wp_by_id(id)
+        if not wp:
+            raise e.RequestNotFound(id)
+        wp_status = wp.get_status(
+            request_avg=database.get_request_avg("image"),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        logger.info(f"Request with ID {wp.id} has been cancelled.")
+        # FIXME: I pevent it at the moment due to the race conditions
+        # The WPCleaner is going to clean it up anyway
+        wp.n = 0
+        db.session.commit()
+        return(wp_status, 200)
+
+
+class ImageAsyncCheck(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    # Increasing this until I can figure out how to pass original IP from reverse proxy
+    decorators = [limiter.limit("10/second", key_func = get_request_path)]
+    @cache.cached(timeout=1)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_wp_status_lite, code=200, description='Async Request Status Check')
+    # @cache.cached(timeout=0.5)
+    @api.response(404, 'Request Not found', models.response_model_error)
+    def get(self, id):
+        '''Retrieve the status of an Asynchronous generation request without images.
+        Use this request to check the status of a currently running asynchronous request without consuming bandwidth.
+        '''
+        # Sending lite mode to try and reduce the amount of bandwidth
+        # This will not retrieve procgens, so ETA will not be completely accurate
+        wp = database.get_wp_by_id(id)
+        if not wp:
+            raise e.RequestNotFound(id)
+        lite_status = wp.get_lite_status(
+            request_avg=database.get_request_avg("image"),
+            has_valid_workers=database.wp_has_valid_workers(wp),
+            wp_queue_stats=database.get_wp_queue_stats(wp),
+            active_worker_count=database.count_active_workers()
+        )
+        return(lite_status, 200)
+
 
     
-class JobPop(JobPop):
+class ImageJobPop(JobPopTemplate):
+    worker_class = ImageWorker
+
+    decorators = [limiter.limit("60/second")]
+    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
+    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def post(self):
+        '''Check if there are generation requests queued for fulfillment.
+        This endpoint is used by registered workers only
+        '''
+        # Splitting the post to its own function so that I can have the decorators of post on each extended class
+        # Without copying the whole post() code
+        self.args = parsers.job_pop_parser.parse_args()
+        self.blacklist = []
+        if self.args.blacklist:
+            self.blacklist = self.args.blacklist
+        return super().post()
+
     def check_in(self):
         self.worker.check_in(
             self.args.max_pixels, 
@@ -171,8 +263,40 @@ class JobPop(JobPop):
             self.models,
             self.blacklist,
             priority_user_ids = priority_user_ids,
-        )        
+        )
         return sorted_wps
+
+class ImageJobSubmit(JobSubmitTemplate):
+    decorators = [limiter.limit("60/second")]
+    @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
+    @api.marshal_with(models.response_model_job_submit, code=200, description='Generation Submitted')
+    @api.response(400, 'Generation Already Submitted', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Request Not Found', models.response_model_error)
+    def post(self):
+        '''Submit a generated image.
+        This endpoint is used by registered workers only
+        '''
+        # We have to parse the args here, to ensure we use the correct parser class
+        self.args = parsers.job_submit_parser.parse_args()
+        return super().post()
+
+    def get_progen(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        return database.get_progen_by_id(self.args['id'])
+
+    def set_generation(self):
+        '''Set to its own function to it can be overwritten depending on the class'''
+        things_per_sec = stats.record_fulfilment(self.procgen)
+        self.kudos = self.procgen.set_generation(
+            generation=self.args['generation'], 
+            things_per_sec=things_per_sec, 
+            seed=self.args.seed,
+            censored=self.args.censored,
+            state=self.args.state,
+        )
+
 
 
 class Aesthetics(Resource):
@@ -409,7 +533,7 @@ class InterrogationStatus(Resource):
 
 
 class InterrogatePop(JobPopTemplate):
-
+    worker_class = InterrogationWorker
     # The parser for RequestPop
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
@@ -437,11 +561,13 @@ class InterrogatePop(JobPopTemplate):
         self.priority_usernames = []
         if self.args.priority_usernames:
             self.priority_usernames = self.args.priority_usernames
+            if any("#" not in user_id for user_id in self.priority_usernames):
+                raise e.BadRequest("Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'")
         self.forms = []
         if self.args.forms:
             self.forms = self.args.forms
         self.worker_ip = request.remote_addr
-        self.validate(worker_class = InterrogationWorker)
+        self.validate()
         self.check_in()
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_forms = []
@@ -570,28 +696,7 @@ class InterrogateSubmit(Resource):
             raise e.WrongCredentials(self.user.get_unique_alias(), self.form.worker.name)
 
 
-
-class HordeLoad(HordeLoad):
-    # When we extend the actual method, we need to re-apply the decorators
-    @logger.catch(reraise=True)
-    @cache.cached(timeout=2)
-    @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Maintenance')
-    def get(self):
-        '''Details about the current performance of this Horde
-        '''
-        load_dict = super().get()[0]
-        load_dict["interrogator_count"], load_dict["interrogator_thread_count"] = database.count_active_workers("InterrogationWorker")
-        load_dict["past_minute_megapixelsteps"] = stats.get_things_per_min()
-        return(load_dict,200)
-
-class HordeNews(HordeNews):
-    
-    @cache.cached(timeout=300)
-    def get_news(self):
-        return(horde_news + stable_horde_news)
-
-
-class HordeStatsTotals(Resource):
+class ImageHordeStatsTotals(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
@@ -605,7 +710,7 @@ class HordeStatsTotals(Resource):
         '''
         return compile_imagegen_stats_totals(),200
 
-class HordeStatsModels(Resource):
+class ImageHordeStatsModels(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
@@ -618,35 +723,3 @@ class HordeStatsModels(Resource):
         '''
         return compile_imagegen_stats_models(),200
 
-api.add_resource(SyncGenerate, "/generate/sync")
-api.add_resource(AsyncGenerate, "/generate/async")
-api.add_resource(AsyncStatus, "/generate/status/<string:id>")
-api.add_resource(AsyncCheck, "/generate/check/<string:id>")
-api.add_resource(Aesthetics, "/generate/rate/<string:id>")
-api.add_resource(JobPop, "/generate/pop")
-api.add_resource(JobSubmit, "/generate/submit")
-api.add_resource(Users, "/users")
-api.add_resource(UserSingle, "/users/<string:user_id>")
-api.add_resource(FindUser, "/find_user")
-api.add_resource(Workers, "/workers")
-api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
-api.add_resource(TransferKudos, "/kudos/transfer")
-api.add_resource(AwardKudos, "/kudos/award")
-api.add_resource(HordeModes, "/status/modes")
-api.add_resource(HordeLoad, "/status/performance")
-api.add_resource(Models, "/status/models")
-api.add_resource(HordeNews, "/status/news")
-api.add_resource(Heartbeat, "/status/heartbeat")
-api.add_resource(Teams, "/teams")
-api.add_resource(TeamSingle, "/teams/<string:team_id>")
-api.add_resource(OperationsIP, "/operations/ipaddr")
-api.add_resource(Interrogate, "/interrogate/async")
-api.add_resource(InterrogationStatus, "/interrogate/status/<string:id>")
-api.add_resource(InterrogatePop, "/interrogate/pop")
-#TODO APIv2 Merge with status as a POST this part of /interrogate/<string:id>
-api.add_resource(InterrogateSubmit, "/interrogate/submit")
-api.add_resource(Filters, "/filters")
-api.add_resource(FilterRegex, "/filters/regex")
-api.add_resource(FilterSingle, "/filters/<string:filter_id>")
-api.add_resource(HordeStatsTotals, "/stats/img/totals")
-api.add_resource(HordeStatsModels, "/stats/img/models")

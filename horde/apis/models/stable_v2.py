@@ -3,8 +3,9 @@ from . import v2
 from horde.logger import logger
 
 
-class Parsers(v2.Parsers):
+class ImageParsers(v2.Parsers):
     def __init__(self):
+        super().__init__()
         self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
         self.generate_parser.add_argument("source_processing", type=str, default="img2img", required=False, help="If source_image is provided, specifies how to process it.", location="json")
@@ -13,6 +14,7 @@ class Parsers(v2.Parsers):
         self.generate_parser.add_argument("r2", type=bool, default=True, required=False, help="If True, the image will be sent via cloudflare r2 download link", location="json")
         self.generate_parser.add_argument("shared", type=bool, default=False, required=False, help="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True.", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
+        self.job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
         self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
         self.job_pop_parser.add_argument("allow_painting", type=bool, required=False, default=True, help="If True, this worker will pick up inpainting/outpaining requests", location="json")
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
@@ -21,7 +23,7 @@ class Parsers(v2.Parsers):
         self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the generation", location="json")
         self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
-class Models(v2.Models):
+class ImageModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)
@@ -60,7 +62,7 @@ class Models(v2.Models):
         })
         self.input_model_generation_payload = api.inherit('ModelGenerationInputStable', self.root_model_generation_payload_stable, {
             'steps': fields.Integer(default=30, required=False, min = 1, max=500), 
-            'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min = 1, max=20), 
+            'n': fields.Integer(default=1, required=False, description="The amount of images to generate", min=1, max=20), 
         })
         self.response_model_generations_skipped = api.inherit('NoValidRequestFoundStable', self.response_model_generations_skipped, {
             'max_pixels': fields.Integer(description="How many waiting requests were skipped because they demanded a higher size than this worker provides"),
@@ -70,7 +72,7 @@ class Models(v2.Models):
             'post-processing': fields.Integer(description="How many waiting requests were skipped because they requested post-processing"),
             'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
         })
-        self.response_model_job_pop = api.model('GenerationPayload', {
+        self.response_model_job_pop = api.model('GenerationPayloadStable', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True),
@@ -82,6 +84,7 @@ class Models(v2.Models):
         })
         self.input_model_job_pop = api.inherit('PopInputStable', self.input_model_job_pop, {
             'max_pixels': fields.Integer(default=512*512,description="The maximum amount of pixels this worker can generate"), 
+            'blacklist': fields.List(fields.String(description="Words which, when detected will refuste to pick up any jobs")),
             'allow_img2img': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests"),
             'allow_painting': fields.Boolean(default=True,description="If True, this worker will pick up inpainting/outpainting requests"),
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
@@ -94,7 +97,7 @@ class Models(v2.Models):
         })
 
 
-        self.input_model_request_generation = api.model('GenerationInput', {
+        self.input_model_request_generation = api.model('GenerationInputStable', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),
             'params': fields.Nested(self.input_model_generation_payload, skip_none=True),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
@@ -107,32 +110,6 @@ class Models(v2.Models):
             'source_mask': fields.String(description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel"),
             'r2': fields.Boolean(default=True, description="If True, the image will be sent via cloudflare r2 download link"),
             'shared': fields.Boolean(default=False, description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True."),
-        })
-        self.response_model_worker_details = api.inherit('WorkerDetailsStable', self.response_model_worker_details, {
-            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
-            "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
-            'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
-            'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
-            'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
-            'controlnet': fields.Boolean(default=None,description="If True, this worker supports and allows controlnet requests."),
-        })
-        self.response_model_contrib_details = api.inherit('ContributionsDetailsStable', self.response_model_contrib_details, {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
-        })
-        self.response_model_use_details = api.inherit('UsageDetailsStable', self.response_model_use_details, {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
-        })
-        self.response_model_user_details = api.inherit('UserDetailsStable', self.response_model_user_details, {
-            "kudos_details": fields.Nested(self.response_model_user_kudos_details),
-            "usage": fields.Nested(self.response_model_use_details),
-            "contributions": fields.Nested(self.response_model_contrib_details),
-        })
-        self.response_model_horde_performance = api.inherit('HordePerformanceStable', self.response_model_horde_performance, {
-            "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
-            "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
-            "queued_forms": fields.Float(description="The amount of image interrogations waiting and processing currently in this Horde"),
-            "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes"),
-            "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes"),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
@@ -223,11 +200,11 @@ class Models(v2.Models):
             "total": fields.Nested(self.response_model_single_period_total_img_stat),
         })
 
-        self.response_model_model_stats = api.model('SinglePeriodModelStats', {
+        self.response_model_model_stats = api.model('SinglePeriodImgModelStats', {
             "*": fields.Wildcard(fields.Integer(required=True, description="The amount of requests fulfilled for this model")),
         })
 
-        self.response_model_stats_models = api.model('ModelStats', {
+        self.response_model_stats_models = api.model('ImgModelStats', {
             "day": fields.Nested(self.response_model_model_stats),
             "month": fields.Nested(self.response_model_model_stats),
             "total": fields.Nested(self.response_model_model_stats),

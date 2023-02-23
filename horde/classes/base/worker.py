@@ -9,7 +9,7 @@ from horde.classes.base.waiting_prompt import WPModels
 from horde.logger import logger
 from horde.argparser import raid
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_name, thing_divisor, things_per_sec_suspicion_threshold
+from horde import vars as hv
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 from horde.horde_redis import horde_r
@@ -20,7 +20,7 @@ class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
-    worker = db.relationship(f"WorkerExtended", back_populates="stats")
+    worker = db.relationship(f"Worker", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, default=0, nullable=False)
 
@@ -28,7 +28,7 @@ class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
-    worker = db.relationship(f"WorkerExtended", back_populates="performance")
+    worker = db.relationship(f"Worker", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
     created = db.Column(db.DateTime, default=datetime.utcnow) # TODO maybe index here, but I'm not sure how big this table is
 
@@ -36,21 +36,21 @@ class WorkerBlackList(db.Model):
     __tablename__ = "worker_blacklists"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
-    worker = db.relationship(f"WorkerExtended", back_populates="blacklist")
+    worker = db.relationship(f"Worker", back_populates="blacklist")
     word = db.Column(db.String(20), primary_key=False)
 
 class WorkerSuspicions(db.Model):
     __tablename__ = "worker_suspicions"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
-    worker = db.relationship(f"WorkerExtended", back_populates="suspicions")
+    worker = db.relationship(f"Worker", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 class WorkerModel(db.Model):
     __tablename__ = "worker_models"
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
-    worker = db.relationship(f"WorkerExtended", back_populates="models")
+    worker = db.relationship(f"Worker", back_populates="models")
     model = db.Column(db.String(50))  # TODO model should be a foreign key to a model table
 
 class WorkerTemplate(db.Model):
@@ -101,6 +101,9 @@ class WorkerTemplate(db.Model):
 
     require_upfront_kudos = False
     prioritized_users = []
+    # Because I didn't use worker_type correctly. I should have called them "text" and "image"
+    # TODO: Normalize this to the standard
+    wtype = "image"
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -237,7 +240,7 @@ class WorkerTemplate(db.Model):
 
     # We split it to its own function to make it extendable
     def convert_contribution(self,raw_things):
-        converted = round(raw_things/thing_divisor,2)
+        converted = round(raw_things/hv.thing_divisors[self.wtype],2)
         self.contributions = round(self.contributions + converted,2)
         # We reurn the converted amount as well in case we need it
         return(converted)
@@ -247,11 +250,11 @@ class WorkerTemplate(db.Model):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
-        self.user.record_contributions(raw_things = raw_things, kudos = kudos)
+        self.user.record_contributions(raw_things = raw_things, kudos = kudos, contrib_type = self.wtype)
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
-        if self.team:
+        if self.team and self.wtype == "image":
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
@@ -259,8 +262,8 @@ class WorkerTemplate(db.Model):
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
-        if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
-            self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
+        if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
+            self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / hv.thing_divisors[self.wtype],2)])
 
     def modify_kudos(self, kudos, action = 'generated'):
         self.kudos = round(self.kudos + kudos, 2)
@@ -303,21 +306,25 @@ class WorkerTemplate(db.Model):
         db.session.commit()
 
     def get_performance_average(self):
-        performances = [p.performance for p in self.performance]
-        if len(performances):
-            ret_num = sum(performances) / len(performances)
-        else:
-            # Always sending at least 1 thing per second, to avoid divisions by zero
-            ret_num = 1
-        return(ret_num)
+        performance_avg = db.session.query(
+            func.avg(WorkerPerformance.performance)
+        ).filter_by(
+            worker_id=self.id
+        ).scalar()
+        if performance_avg:
+            return performance_avg
+        return 1
 
     def get_performance(self):
-        performances = [p.performance for p in self.performance]
-        if len(performances):
-            ret_str = f'{round(sum(performances) / len(performances) / thing_divisor,1)} {thing_name} per second'
-        else:
-            ret_str = f'No requests fulfilled yet'
-        return(ret_str)
+        performance_avg = db.session.query(
+            func.avg(WorkerPerformance.performance)
+        ).filter_by(
+            worker_id=self.id
+        ).scalar()
+        if performance_avg:
+            return f'{round(performance_avg / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
+        return 'No requests fulfilled yet'
+
 
     def is_stale(self):
         try:
@@ -370,7 +377,7 @@ class WorkerTemplate(db.Model):
         ret_dict = {
             "name": self.name,
             "id": str(self.id),
-            "type": self.worker_type,
+            "type": self.wtype,
             "requests_fulfilled": self.fulfilments,
             "uncompleted_jobs": self.uncompleted_jobs,
             "kudos_rewards": self.kudos,
@@ -392,7 +399,19 @@ class WorkerTemplate(db.Model):
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
             ret_dict['contact'] = self.user.contact
-        return(ret_dict)
+        return ret_dict
+
+    # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def get_lite_details(self):
+        '''We display these in the workers list json'''
+        ret_dict = {
+            "name": self.name,
+            "id": str(self.id),
+            "type": self.wtype,
+            "online": not self.is_stale(),
+        }
+        return ret_dict
 
 
 class Worker(WorkerTemplate):
@@ -404,7 +423,7 @@ class Worker(WorkerTemplate):
     
     blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete-orphan")
     models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete-orphan")
-    processing_gens = db.relationship("ProcessingGenerationExtended", back_populates="worker", lazy='raise')
+    processing_gens = db.relationship("ImageProcessingGeneration", back_populates="worker", lazy='raise')
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):

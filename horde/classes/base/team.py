@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_divisor
+from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -43,8 +43,8 @@ class Team(db.Model):
                 continue
             all_performances.append(worker.get_performance_average())
         if len(all_performances):
-            perf_avg = round(sum(all_performances) / len(all_performances) / thing_divisor,1)
-            perf_total = round(sum(all_performances) / thing_divisor,1)
+            perf_avg = round(sum(all_performances) / len(all_performances) / hv.thing_divisors["images"],1)
+            perf_total = round(sum(all_performances) / hv.thing_divisors["images"],1)
         else:
             perf_avg = 0
             perf_total = 0
@@ -112,7 +112,7 @@ class Team(db.Model):
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         '''We display these in the workers list json'''
-        worker_list = [{"id": worker.id, "name":worker.name, "online": not worker.is_stale()} for worker in self.workers]
+        worker_list = [worker.get_lite_details() for worker in self.workers]
         perf_avg, perf_total = self.get_performance()
         ret_dict = {
             "name": self.name,

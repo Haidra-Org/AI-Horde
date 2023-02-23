@@ -13,6 +13,13 @@ class ImageGenerationStatisticPP(db.Model):
     imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="post_processors")
     pp = db.Column(db.String(40), nullable=False)
 
+class ImageGenerationStatisticCN(db.Model):
+    __tablename__ = "image_gen_stats_controlnet"
+    id = db.Column(db.Integer, primary_key=True)
+    imgstat_id = db.Column(db.Integer, db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"), nullable=False)
+    imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="controlnet")
+    control_type = db.Column(db.String(40), nullable=False)
+
 
 class ImageGenerationStatistic(db.Model):
     __tablename__ = "image_gen_stats"
@@ -20,7 +27,7 @@ class ImageGenerationStatistic(db.Model):
     finished = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
     # Created comes from the procgen
     created = db.Column(db.DateTime(timezone=False), nullable=True)
-    model = db.Column(db.String(30), index=True, nullable=False)
+    model = db.Column(db.String(255), index=True, nullable=False)
     width = db.Column(db.Integer, nullable=False)
     height = db.Column(db.Integer, nullable=False)
     steps = db.Column(db.Integer, nullable=False)
@@ -33,7 +40,10 @@ class ImageGenerationStatistic(db.Model):
     tiling = db.Column(db.Boolean, nullable=False)
     nsfw = db.Column(db.Boolean, nullable=False)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
+    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     post_processors = db.relationship("ImageGenerationStatisticPP", back_populates="imgstat", cascade="all, delete-orphan")
+    controlnet = db.relationship("ImageGenerationStatisticCN", back_populates="imgstat", cascade="all, delete-orphan")
 
 
 def record_image_statistic(procgen):
@@ -59,6 +69,8 @@ def record_image_statistic(procgen):
         tiling=procgen.wp.params.get("tiling", False),
         img2img=procgen.wp.source_image != None,
         nsfw=procgen.wp.nsfw,
+        bridge_agent=procgen.worker.bridge_agent,
+        client_agent=procgen.wp.client_agent,
         state=state,
     )
     db.session.add(statistic)
@@ -70,6 +82,12 @@ def record_image_statistic(procgen):
         for pp in post_processors:
             new_pp_entry = ImageGenerationStatisticPP(imgstat_id=statistic.id,pp=pp)
             db.session.add(new_pp_entry)
+        db.session.commit()
+    # For now we support only one control_type per request, but in the future we might allow more
+    # So I set it up on an external table to be able to expand
+    if procgen.wp.params.get("control_type", None):
+        new_cn_entry = ImageGenerationStatisticCN(imgstat_id=statistic.id,control_type=procgen.wp.params["control_type"])
+        db.session.add(new_cn_entry)
         db.session.commit()
 
 def compile_imagegen_stats_totals():

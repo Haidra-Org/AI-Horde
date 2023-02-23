@@ -12,7 +12,12 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
     __tablename__ = "processing_gens"
+    __mapper_args__ = {
+        "polymorphic_identity": "template",
+        "polymorphic_on": "procgen_type",
+    }    
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
 
     model = db.Column(db.String(40), default='', nullable=False)
@@ -24,9 +29,7 @@ class ProcessingGeneration(db.Model):
     fake = db.Column(db.Boolean, default=False, nullable=False)
 
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
-    wp = db.relationship("WaitingPromptExtended", back_populates="processing_gens")
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
-    worker = db.relationship("WorkerExtended", back_populates="processing_gens")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __init__(self, *args, **kwargs):
@@ -86,7 +89,6 @@ class ProcessingGeneration(db.Model):
             logger.info(f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}")
         else:
             self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
-            
             self.wp.record_usage(raw_things = self.wp.things, kudos = self.adjust_user_kudos(kudos))
             logger.info(f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}")
 

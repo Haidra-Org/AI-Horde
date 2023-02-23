@@ -12,6 +12,7 @@ class WorkerInterrogationForm(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"InterrogationWorker", back_populates="forms")
     form = db.Column(db.String(30))
+    wtype = "interrogation"
 
 
 class InterrogationWorker(WorkerTemplate):
@@ -21,6 +22,7 @@ class InterrogationWorker(WorkerTemplate):
 
     forms = db.relationship("WorkerInterrogationForm", back_populates="worker")
     processing_forms = db.relationship("InterrogationForms", back_populates="worker")
+    wtype = "interrogation"
 
     def check_in(self, **kwargs):
         super().check_in(**kwargs)
@@ -63,9 +65,10 @@ class InterrogationWorker(WorkerTemplate):
     def record_interrogation(self, kudos, seconds_taken):
         '''We record the servers newest interrogation contribution
         '''
-        self.user.record_contributions(raw_things = 0, kudos = kudos)
+        self.user.record_contributions(raw_things = 0, kudos = kudos, contrib_type = self.wtype)
         self.modify_kudos(kudos,'interrogated')
         self.fulfilments += 1
+        # TODO: Switch to use desc() and offset to ensure we don't have performances left over
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
             db.session.delete(performances.first())

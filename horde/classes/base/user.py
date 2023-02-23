@@ -3,13 +3,16 @@ import os
 
 import dateutil.relativedelta
 from datetime import datetime
+from sqlalchemy import Enum
 
 from horde.logger import logger
 from horde.flask import db
-from horde.vars import thing_name, thing_divisor
+from horde.vars import thing_name, text_thing_divisor, text_thing_name
+from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
+from horde.enums import UserRecordTypes
 
 
 class UserStats(db.Model):
@@ -29,6 +32,16 @@ class UserSuspicions(db.Model):
     user = db.relationship("User", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
+
+class UserRecords(db.Model):
+    __tablename__ = "user_records"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user = db.relationship("User", back_populates="records")
+    # contribution, usage, fulfillment, request
+    record_type = db.Column(Enum(UserRecordTypes), nullable=False, index=True)
+    record = db.Column(db.String(30), nullable=False)
+    value = db.Column(db.Float, default=0, nullable=False)
 
 class User(db.Model):
     __tablename__ = "users"
@@ -50,6 +63,7 @@ class User(db.Model):
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
+    #TODO: Delete next 4 columns once UserRecords populated
     contributed_thing = db.Column(db.Float, default=0, nullable=False, index=True)
     contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
     usage_thing = db.Column(db.Float, default=0, nullable=False)
@@ -62,11 +76,12 @@ class User(db.Model):
     flagged = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
-    workers = db.relationship(f"WorkerExtended", back_populates="user", cascade="all, delete-orphan")
+    workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
+    records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
-    waiting_prompts = db.relationship("WaitingPromptExtended", back_populates="user", cascade="all, delete-orphan")
+    waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
 
@@ -144,16 +159,49 @@ class User(db.Model):
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
 
-    def record_usage(self, raw_things, kudos):
-        self.last_active = datetime.utcnow()
-        self.usage_requests += 1
-        self.modify_kudos(-kudos,"accumulated")
-        self.usage_thing = round(self.usage_thing + (raw_things * self.usage_multiplier / thing_divisor),2)
+    def update_user_record(self, record_type, record, increment_value):
+        record_details = db.session.query(
+            UserRecords
+        ).filter_by(
+            user_id=self.id,
+            record_type=record_type,
+            record=record
+        ).first()
+        if not record_details:
+            record_details = UserRecords(
+                user_id=self.id, 
+                record_type=record_type, 
+                record=record, 
+                value=round(increment_value,2)
+            )
+            db.session.add(record_details)
+        else:
+            # The value is always added to the existing value
+            record_details.value = round(record_details.value + increment_value, 2)
         db.session.commit()
 
-    def record_contributions(self, raw_things, kudos):
+
+    def record_usage(self, raw_things, kudos, usage_type):
         self.last_active = datetime.utcnow()
-        self.contributed_fulfillments += 1
+        self.modify_kudos(-kudos,"accumulated")
+        self.update_user_record(
+            record_type=UserRecordTypes.REQUEST, 
+            record=usage_type, 
+            increment_value=1
+        )
+        self.update_user_record(
+            record_type=UserRecordTypes.USAGE, 
+            record=usage_type, 
+            increment_value=raw_things * self.usage_multiplier / hv.thing_divisors[usage_type]
+        )
+
+    def record_contributions(self, raw_things, kudos, contrib_type):
+        self.last_active = datetime.utcnow()
+        self.update_user_record(
+            record_type=UserRecordTypes.FULFILLMENT, 
+            record=contrib_type, 
+            increment_value=1
+        )
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted and not self.is_anon():
             kudos_eval = round(kudos / 2)
@@ -163,8 +211,12 @@ class User(db.Model):
             self.check_for_trust()
         else:
             self.modify_kudos(kudos,"accumulated")
-        self.contributed_thing = round(self.contributed_thing + raw_things/thing_divisor,2)
-        db.session.commit()
+        self.update_user_record(
+            record_type=UserRecordTypes.CONTRIBUTION, 
+            record=contrib_type, 
+            increment_value=raw_things/hv.thing_divisors[contrib_type]
+        )
+        
 
     def record_uptime(self, kudos):
         self.last_active = datetime.utcnow()
@@ -227,13 +279,9 @@ class User(db.Model):
         if not kudos_details:
             kudos_details = UserStats(user_id=self.id, action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
-            db.session.commit()
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
-            # Avoid overflowing the int
-            if kudos_details.value >= 2147483647:
-                kudos_details.value = 2147483640
-            db.session.commit()
+        db.session.commit()
 
     def ensure_kudos_positive(self):
         if self.kudos < self.get_min_kudos():
@@ -361,6 +409,18 @@ class User(db.Model):
         }
         return usage_dict
 
+    def compile_records_details(self):
+        records_dict = {}
+        for r in self.records:
+            rtype = r.record_type.name.lower()
+            if rtype not in records_dict:
+                records_dict[rtype] = {}
+            record_key = r.record
+            if r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION}:
+                record_key = hv.thing_names[r.record]
+            records_dict[rtype][record_key] = r.value
+        return records_dict
+
     @logger.catch(reraise=True)
     def get_details(self, details_privilege = 0):
         ret_dict = {
@@ -368,8 +428,9 @@ class User(db.Model):
             "id": self.id,
             "kudos": self.kudos,
             "kudos_details": self.compile_kudos_details(),
-            "usage": self.compile_usage_details(),
-            "contributions": self.compile_contribution_details(),
+            "usage": self.compile_usage_details(), # Obsolete in favor or records
+            "contributions": self.compile_contribution_details(), # Obsolete in favor or records
+            "records": self.compile_records_details(),
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,
             "moderator": self.moderator,

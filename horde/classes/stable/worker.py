@@ -4,11 +4,11 @@ from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
 
-class WorkerExtended(Worker):
+class ImageWorker(Worker):
     __mapper_args__ = {
         "polymorphic_identity": "stable_worker",
     }    
@@ -17,6 +17,7 @@ class WorkerExtended(Worker):
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
     allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
+    wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
@@ -34,7 +35,7 @@ class WorkerExtended(Worker):
         if self.paused:
             paused_string = '(Paused) '
         db.session.commit()
-        logger.trace(f"{paused_string}Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
+        logger.trace(f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
         return 50

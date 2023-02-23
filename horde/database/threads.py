@@ -8,7 +8,12 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, or_
 
 from horde.horde_redis import horde_r
-from horde.classes import WaitingPrompt, User, ProcessingGeneration
+from horde.classes.base.user import User
+# FIXME: Renamed for backwards compat. To fix later
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger
@@ -60,24 +65,25 @@ def assign_monthly_kudos():
 def store_prioritized_wp_queue():
     '''Stores the retrieved WP queue as json for 1 second horde-wide'''
     with HORDE.app_context():
-        wp_queue = query_prioritized_wps()
-        serialized_wp_list = []
-        for wp in wp_queue:
-            wp_json = {
-                "id": str(wp.id),
-                "things": wp.things, 
-                "n": wp.n, 
-                "extra_priority": wp.extra_priority, 
-                "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            serialized_wp_list.append(wp_json)
-        try:
-            cached_queue = json.dumps(serialized_wp_list)
-            # We set the expiry in redis to 10 seconds, in case the primary thread dies
-            # However the primary thread is set to set the cache every 1 second
-            horde_r.setex('wp_cache', timedelta(seconds=10), cached_queue)
-        except (TypeError, OverflowError) as e:
-            logger.error(f"Failed serializing with error: {e}")
+        for wp_type in ["image", "text"]:
+            wp_queue = query_prioritized_wps(wp_type)
+            serialized_wp_list = []
+            for wp in wp_queue:
+                wp_json = {
+                    "id": str(wp.id),
+                    "things": wp.things, 
+                    "n": wp.n, 
+                    "extra_priority": wp.extra_priority, 
+                    "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                serialized_wp_list.append(wp_json)
+            try:
+                cached_queue = json.dumps(serialized_wp_list)
+                # We set the expiry in redis to 10 seconds, in case the primary thread dies
+                # However the primary thread is set to set the cache every 1 second
+                horde_r.setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
+            except (TypeError, OverflowError) as e:
+                logger.error(f"Failed serializing with error: {e}")
 
 
 
@@ -121,19 +127,19 @@ def check_waiting_prompts():
     with HORDE.app_context():
         # Clean expired source images
         expired_source_img_wps = db.session.query(
-            WaitingPrompt.id
+            ImageWaitingPrompt.id
         ).filter(
-            WaitingPrompt.source_image != None,
-            WaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.source_image != None,
+            ImageWaitingPrompt.expiry < datetime.utcnow(),
         ).all()
         for wp in expired_source_img_wps:
             # logger.debug(f"{wp.id}_src")
             delete_source_image(f"{wp.id}_src")
         expired_source_msk_wps = db.session.query(
-            WaitingPrompt.id
+            ImageWaitingPrompt.id
         ).filter(
-            WaitingPrompt.source_mask != None,
-            WaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.source_mask != None,
+            ImageWaitingPrompt.expiry < datetime.utcnow(),
         ).all()
         # Clean expired source masks
         for wp in expired_source_msk_wps:
@@ -141,57 +147,60 @@ def check_waiting_prompts():
             delete_source_image(f"{wp.id}_msk")
         # Cleans expired generated images, but not shared images
         expired_r_wps = db.session.query(
-            WaitingPrompt.id
+            ImageWaitingPrompt.id
         ).filter(
-            WaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.expiry < datetime.utcnow(),
             # We do not delete shared images
-            WaitingPrompt.shared == False,
+            ImageWaitingPrompt.shared == False,
         )
         all_wp_r_id = [wp.id for wp in expired_r_wps.all()]
         expired_r2_procgens = db.session.query(
-            ProcessingGeneration.id,
+            ImageProcessingGeneration.id,
         ).filter(
-            ProcessingGeneration.wp_id.in_(all_wp_r_id)
+            ImageProcessingGeneration.wp_id.in_(all_wp_r_id)
         ).all()
         # logger.debug([expired_r_wps, expired_r2_procgens])
         for procgen in expired_r2_procgens:
             delete_procgen_image(str(procgen.id))
-        expired_wps = db.session.query(WaitingPrompt).filter(WaitingPrompt.expiry < datetime.utcnow())
-        logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
-        expired_wps.delete()
-        db.session.commit()
-        # Faults stale ProcGens
-        all_proc_gen = db.session.query(
-            ProcessingGeneration,
-        ).join(
-            WaitingPrompt, 
-        ).filter(
-            ProcessingGeneration.generation == None,
-            ProcessingGeneration.faulted == False,
-            # datetime.utcnow() - ProcessingGeneration.start_time > WaitingPrompt.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
-        ).all()
-        for proc_gen in all_proc_gen:
-            if proc_gen.is_stale(proc_gen.wp.job_ttl):
-                proc_gen.abort()
-                proc_gen.wp.n += 1
-        if len(all_proc_gen) >= 1:
+        for wp_class, procgen_class in [
+            (ImageWaitingPrompt,ImageProcessingGeneration), 
+            (TextWaitingPrompt,TextProcessingGeneration),
+        ]:
+            expired_wps = db.session.query(wp_class).filter(wp_class.expiry < datetime.utcnow())
+            logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
+            expired_wps.delete()
             db.session.commit()
-
-        # Faults WP with 3 or more faulted Procgens
-        wp_ids = db.session.query(
-            ProcessingGeneration.wp_id, 
-        ).filter(
-            ProcessingGeneration.faulted == True
-        ).group_by(
-            ProcessingGeneration.wp_id
-        ).having(func.count(ProcessingGeneration.wp_id) > 2)
-        wp_ids = [wp_id[0] for wp_id in wp_ids]
-        waiting_prompts = db.session.query(WaitingPrompt).filter(WaitingPrompt.id.in_(wp_ids)).filter(WaitingPrompt.faulted == False)
-        logger.debug(f"Found {waiting_prompts.count()} New faulted WPs")
-        waiting_prompts.update({WaitingPrompt.faulted: True}, synchronize_session=False)
-        db.session.commit()
-        for wp in waiting_prompts.all():
-            wp.log_faulted_prompt()
+            # Faults stale ProcGens
+            all_proc_gen = db.session.query(
+                procgen_class,
+            ).join(
+                wp_class, 
+            ).filter(
+                procgen_class.generation == None,
+                procgen_class.faulted == False,
+                # datetime.utcnow() - procgen_class.start_time > wp_class.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
+            ).all()
+            for proc_gen in all_proc_gen:
+                if proc_gen.is_stale(proc_gen.wp.job_ttl):
+                    proc_gen.abort()
+                    proc_gen.wp.n += 1
+            if len(all_proc_gen) >= 1:
+                db.session.commit()
+            # Faults WP with 3 or more faulted Procgens
+            wp_ids = db.session.query(
+                procgen_class.wp_id, 
+            ).filter(
+                procgen_class.faulted == True
+            ).group_by(
+                procgen_class.wp_id
+            ).having(func.count(procgen_class.wp_id) > 2)
+            wp_ids = [wp_id[0] for wp_id in wp_ids]
+            waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted == False)
+            logger.debug(f"Found {waiting_prompts.count()} New faulted WPs")
+            waiting_prompts.update({wp_class.faulted: True}, synchronize_session=False)
+            db.session.commit()
+            for wp in waiting_prompts.all():
+                wp.log_faulted_prompt()
 
 @logger.catch(reraise=True)
 def check_interrogations():
@@ -278,9 +287,9 @@ def store_patreon_members():
             "entitlement_amount": member.attribute('currently_entitled_amount_cents') / 100,
         }
         note = json.loads(member.attribute('note'))
-        if f"{args.horde}_id" not in note:
+        if f"stable_id" not in note:
             continue
-        user_id = note[f"{args.horde}_id"]
+        user_id = note[f"stable_id"]
         if '#' in user_id:
             user_id = user_id.split("#")[-1]
         user_id = int(user_id)
@@ -296,10 +305,10 @@ def increment_extra_priority():
     '''Increases the priority of every WP currently in the queue by 50 kudos'''
     with HORDE.app_context():
         wp_queue = db.session.query(
-            WaitingPrompt
+            ImageWaitingPrompt
         ).update(
             {
-                WaitingPrompt.extra_priority: WaitingPrompt.extra_priority + 50
+                ImageWaitingPrompt.extra_priority: ImageWaitingPrompt.extra_priority + 50
             }, synchronize_session=False
         )
         db.session.commit()

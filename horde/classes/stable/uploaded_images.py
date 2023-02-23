@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_divisor
+from horde import vars as hv
 from horde.utils import get_expiry_date
 
 

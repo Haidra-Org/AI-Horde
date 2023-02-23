@@ -1,18 +1,16 @@
 from flask import Blueprint
 from flask_restx import Api
-from .. import args
+from horde.argparser import args
 from importlib import import_module
-from ..vars import horde_title
+from horde.vars import horde_title
 
-if args.horde == 'kobold':
-    v1 = import_module(name=f'.{args.horde}_v1', package='horde.apis.v1').api
-v2 = import_module(name=f'.{args.horde}', package='horde.apis.v2').api
+from horde.apis.v2 import api as v2
 
 blueprint = Blueprint('apiv2', __name__, url_prefix='/api')
 api = Api(blueprint,
     version='2.0', 
-    title=f'{horde_title} Horde',
-    description=f'The API documentation for the {horde_title} Horde',
+    title=f'{horde_title}',
+    description=f'The API documentation for the {horde_title}',
     contact_email="mail@dbzer0.com",
     default="v2",
     default_label="Latest Version",
@@ -20,5 +18,3 @@ api = Api(blueprint,
 )
 
 api.add_namespace(v2)
-if args.horde == 'kobold':
-    api.add_namespace(v1)

@@ -1,8 +1,8 @@
-# Stable Horde
+# AI Horde
 
-<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Stable Diffusion workers](https://github.com/db0/AI-Horde-Worker). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
+<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Image generation workers](https://github.com/db0/AI-Horde-Worker) and [text generation workers](https://github.com/KoboldAI/KoboldAI-Client). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
 
-For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Also check out our sister project for text generation: [KoboldAI Horde](https://koboldai.net). Finally you can also follow the [main developer's blog](https://dbzer0.com)
+For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Finally you can also follow the [main developer's blog](https://dbzer0.com)
 
 ## Latest [News](/api/v2/status/news)
 
@@ -10,13 +10,22 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 
 ## Stats 
 
+### Image Generation
 * Average Recent Performance: {avg_performance} {avg_thing_name} per second. 
-* Total generated: {total_things} {total_things_name}. 
-* Total images generated: {total_fulfillments}{total_fulfillments_char}.
+* Total generated: {total_image_things} {total_total_image_things_name}. 
+* Total image requests fulfilled: {total_image_fulfillments}{total_image_fulfillments_char}.
+* Active [Workers](/api/v2/workers?type=image)/Threads: {image_workers}/{image_worker_threads}
+* Queue: {total_image_queue} requests for a total of {queued_image_things} {queued_image_things_name}. 
+### Text Generation
+* Average Recent Performance: {avg_text_performance} {avg_text_thing_name} per second. 
+* Total generated: {total_text_things} {total_text_things_name}. 
+* Total texts requests fulfilled: {total_text_fulfillments}{total_text_fulfillments_char}.
+* Active [Workers](/api/v2/workers?type=text)/Threads: {text_workers}/{text_worker_threads}
+* Queue: {total_text_queue} requests for a total of {queued_text_things} {queued_text_things_name}. 
+### Image Interrogation
 * Total images interrogated: {total_forms}{total_forms_char}.
-* Active Image Generating [Workers](/api/v2/workers)/Threads: {image_workers}/{image_worker_threads}
 * Active Interrogation Processing Workers/Threads: {interrogation_workers}/{interrogation_worker_threads}
-* Queue: {total_queue} requests for a total of {queued_things} {queued_things_name}. {total_forms_queue} interrogation forms.
+* Interrogation Queue: {total_forms_queue} interrogation forms.
 
 ## Usage
 
@@ -30,8 +39,9 @@ First [Register an account](/register) which will generate for you an API key. S
 * We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
     * [Stable UI](https://aqualxx.github.io/stable-ui/)
-    * [Diffusion UI](https://diffusionui.com/b/stable_horde)
     * [Art Bot](https://tinybots.net/artbot)
+    * [Diffusion UI](https://diffusionui.com/b/stable_horde)
+    * [AAAI UI](https://artificial-art.eu/)
 * There are also mobile apps:
     * [Stable Horde Flutter](https://ppiqr.app.link/download) (iOS + Android app)
 
@@ -59,9 +69,10 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 
 * The community has made the following
     * Bots
-        * [Telegram Bot](https://t.me/CraiyonArtBot)
-        * [Discord Bot](https://harrisonvanderbyl.github.io/WriterBot/)
-        * [Obsolete Discord Bot](https://github.com/JamDon2/ai-horde-bot)
+        * [CraiyonArt Bot](https://t.me/CraiyonArtBot) (Telegram)
+        * [WriterBot Bot](https://harrisonvanderbyl.github.io/WriterBot/) (Discord)
+        * [Turing Bot](https://github.com/MrlolDev/turing-bot) (Discord)
+        * [AI Horde Bot](https://github.com/JamDon2/ai-horde-bot) (Discord, Obsolete)
     * Plugins
         * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
         * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)

@@ -1,7 +1,8 @@
 import random
+from sqlalchemy.sql import expression
 
 from horde.logger import logger
-from horde.vars import thing_divisor
+from horde import vars as hv
 from horde.flask import db
 from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -9,27 +10,28 @@ from horde.r2 import generate_procgen_upload_url, download_source_image, downloa
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
 
-class WaitingPromptExtended(WaitingPrompt):
-    width = db.Column(db.Integer, default=512, nullable=False)
-    height = db.Column(db.Integer, default=512, nullable=False)
+class ImageWaitingPrompt(WaitingPrompt):
+    __mapper_args__ = {
+        "polymorphic_identity": "image",
+    }
+    #TODO: Find a way to index width*height
+    width = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
+    height = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
     source_image = db.Column(db.Text, default=None)
-    source_processing = db.Column(db.String(10), default='img2img', nullable=False)
+    source_processing = db.Column(db.String(10), default='img2img', nullable=False, server_default="img2img")
     source_mask = db.Column(db.Text, default=None)
-    censor_nsfw = db.Column(db.Boolean, default=False, nullable=False)
-    seed = db.Column(db.BigInteger, default=None, nullable=True)
+    censor_nsfw = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
+    seed = db.Column(db.BigInteger, default=None)
     seed_variation = db.Column(db.Integer, default=None)
-    kudos = db.Column(db.Float, default=0, nullable=False)
-    r2 = db.Column(db.Boolean, default=False, nullable=False)
-    shared = db.Column(db.Boolean, default=False, nullable=False)
+    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
+    r2 = db.Column(db.Boolean, default=False, nullable=False, index=True, server_default=expression.literal(False))
+    shared = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
+    processing_gens = db.relationship("ImageProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
 
     @logger.catch(reraise=True)
     def extract_params(self):
         self.n = self.params.pop('n', 1)
         self.jobs = self.n 
-        # We assume more than 20 is not needed. But I'll re-evalute if anyone asks.
-        if self.n > 20:
-            logger.warning(f"User {self.user.get_unique_alias()} requested {self.n} gens per action. Reducing to 20...")
-            self.n = 20
         # We store width and height individually in the DB to allow us to index them easier
         if "width" not in self.params:
             self.params["width"] = 512
@@ -70,7 +72,7 @@ class WaitingPromptExtended(WaitingPrompt):
         # logger.debug(self.params)
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.width * self.height * self.get_accurate_steps()
-        self.total_usage = round(self.things * self.n / thing_divisor,2)
+        self.total_usage = round(self.things * self.n / hv.thing_divisors["image"],2)
         self.prepare_job_payload(self.params)
         self.calculate_kudos()
         # Commit will happen in prepare_job_payload()
@@ -198,7 +200,7 @@ class WaitingPromptExtended(WaitingPrompt):
         # logger.debug([s,n])
         return n
 
-    def record_usage(self, raw_things, kudos):
+    def record_usage(self, raw_things, kudos, usage_type = "image"):
         '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
         img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
         Also extra cost when upscaling
@@ -218,8 +220,7 @@ class WaitingPromptExtended(WaitingPrompt):
         if kudos < 10:
             horde_tax -= 1
         kudos += horde_tax
-
-        super().record_usage(raw_things, kudos)
+        super().record_usage(raw_things, kudos, usage_type)
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self):

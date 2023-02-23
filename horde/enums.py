@@ -15,3 +15,10 @@ class ImageGenState(enum.Enum):
     CANCELLED = 3
     FAULTED = 4
 
+
+class UserRecordTypes(enum.Enum):
+    CONTRIBUTION = 0
+    USAGE = 1
+    FULFILLMENT = 3
+    REQUEST = 4
+

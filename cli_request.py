@@ -26,6 +26,7 @@ args = arg_parser.parse_args()
 
 class RequestData(object):
     def __init__(self):
+            self.client_agent = "cli_request.py:1.1.0:(discord)db0#1625"
             self.api_key = "0000000000"
             self.filename = "horde_generation.png"
             self.imgen_params = {
@@ -124,7 +125,10 @@ def load_request_data():
 def generate():
     request_data = load_request_data()
     # final_submit_dict["source_image"] = 'Test'
-    headers = {"apikey": request_data.api_key}
+    headers = {
+        "apikey": request_data.api_key,
+        "Client-Agent": request_data.client_agent,
+    }
     # logger.debug(request_data.get_submit_dict())
     submit_req = requests.post(f'{args.horde}/api/v2/generate/async', json = request_data.get_submit_dict(), headers = headers)
     if submit_req.ok:

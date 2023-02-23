@@ -12,11 +12,14 @@ from markdown import markdown
 
 from horde.database import functions as database
 from horde.argparser import args, maintenance
-from horde.classes import News, User, stats
+from horde.classes.base.user import User
+from horde.classes.base.news import News
+import horde.classes.base.stats as stats
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
-from .vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title, horde_url
+from horde.vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title, horde_url
+from horde import vars as hv
 from horde.patreon import patrons
 
 dance_return_to = '/'
@@ -25,7 +28,7 @@ dance_return_to = '/'
 @HORDE.route('/')
 # @cache.cached(timeout=300)
 def index():
-    with open(f'index_{args.horde}.md') as index_file:
+    with open(f'index_stable.md') as index_file:
         index = index_file.read()
     top_contributor = database.get_top_contributor()
     top_worker = database.get_top_worker()
@@ -70,37 +73,56 @@ This is the worker which has generated the most pixels for the horde.
         if iter > 1: break
     totals = database.get_total_usage()
     processing_totals = database.retrieve_totals()
-    interrogation_worker_count, interrogation_worker_thread_count = database.count_active_workers("InterrogationWorker")
-    image_worker_count, image_worker_thread_count = database.count_active_workers()
+    interrogation_worker_count, interrogation_worker_thread_count = database.count_active_workers("interrogation")
+    image_worker_count, image_worker_thread_count = database.count_active_workers("image")
+    text_worker_count, text_worker_thread_count = database.count_active_workers("text")
     avg_performance = ConvertAmount(
         database.get_request_avg()
         * image_worker_thread_count
     )
+    avg_text_performance = ConvertAmount(
+        database.get_request_avg("text")
+        * image_worker_thread_count
+    )
     # We multiple with the divisor again, to get the raw amount, which we can convert to prefix accurately
-    total_things = ConvertAmount(totals[thing_name] * thing_divisor)
-    queued_things = ConvertAmount(processing_totals[f"queued_{thing_name}"] * thing_divisor)
-    total_fulfillments = ConvertAmount(totals["fulfilments"])
+    total_image_things = ConvertAmount(totals[hv.thing_names["image"]] * hv.thing_divisors["image"])
+    total_text_things = ConvertAmount(totals[hv.thing_names["text"]] * hv.thing_divisors["text"])
+    queued_image_things = ConvertAmount(processing_totals[f"queued_{hv.thing_names['image']}"] * hv.thing_divisors['image'])
+    queued_text_things = ConvertAmount(processing_totals[f"queued_{hv.thing_names['text']}"] * hv.thing_divisors['text'])
+    total_image_fulfillments = ConvertAmount(totals["image_fulfilments"])
+    total_text_fulfillments = ConvertAmount(totals["text_fulfilments"])
     total_forms = ConvertAmount(totals["forms"])
     findex = index.format(
         page_title = horde_title,
         horde_img_url = img_url,
         horde_image = align_image,
         avg_performance= avg_performance.amount,
-        avg_thing_name= avg_performance.prefix + raw_thing_name,
-        total_things = total_things.amount,
-        total_things_name = total_things.prefix + raw_thing_name,
-        total_fulfillments = total_fulfillments.amount,
-        total_fulfillments_char = total_fulfillments.char,
+        avg_thing_name= avg_performance.prefix + hv.raw_thing_names["image"],
+        avg_text_performance= avg_text_performance.amount,
+        avg_text_thing_name= avg_text_performance.prefix + hv.raw_thing_names["text"],
+        total_image_things = total_image_things.amount,
+        total_total_image_things_name = total_image_things.prefix + hv.raw_thing_names["image"],
+        total_text_things = total_text_things.amount,
+        total_text_things_name = total_text_things.prefix + hv.raw_thing_names["text"],
+        total_image_fulfillments = total_image_fulfillments.amount,
+        total_image_fulfillments_char = total_image_fulfillments.char,
+        total_text_fulfillments = total_text_fulfillments.amount,
+        total_text_fulfillments_char = total_text_fulfillments.char,
         total_forms = total_forms.amount,
         total_forms_char = total_forms.char,
         image_workers = image_worker_count,
         image_worker_threads = image_worker_thread_count,
+        text_workers = text_worker_count,
+        text_worker_threads = text_worker_thread_count,
         interrogation_workers = interrogation_worker_count,
         interrogation_worker_threads = interrogation_worker_thread_count,
-        total_queue = processing_totals["queued_requests"],
+        total_image_queue = processing_totals["queued_requests"],
+        total_text_queue = processing_totals["queued_text_requests"],
         total_forms_queue = processing_totals.get("queued_forms",0),
-        queued_things = queued_things.amount,
-        queued_things_name = queued_things.prefix + raw_thing_name,
+        queued_image_things = queued_image_things.amount,
+        queued_image_things_name = queued_image_things.prefix + hv.raw_thing_names["image"],
+        queued_text_things = queued_text_things.amount,
+        queued_text_things_name = queued_text_things.prefix + hv.raw_thing_names["text"],
         maintenance_mode = maintenance.active,
         news = news,
     )
@@ -118,7 +140,7 @@ This is the worker which has generated the most pixels for the horde.
     """
     
     head = f"""<head>
-    <title>{horde_title} Horde</title>
+    <title>{horde_title}</title>
     <meta name="google-site-verification" content="{google_verification_string}" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {style}
@@ -224,7 +246,7 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
-                           page_title=f"Join the {horde_title} Horde!",
+                           page_title=f"Join the {horde_title}!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,

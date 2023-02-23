@@ -6,7 +6,7 @@ from horde.logger import logger
 from horde.horde_redis import horde_r
 from horde.flask import HORDE, SQLITE_MODE # Local Testing
 from horde.database.functions import compile_regex_filter # Local Testing
-from horde.threads import model_reference
+from horde.model_reference import model_reference
 from unidecode import unidecode
 
 class PromptChecker:
@@ -82,7 +82,7 @@ class PromptChecker:
         return prompt_suspicion,matching_groups
 
     def check_nsfw_model_block(self, prompt, models):
-        logger.debug([prompt, models])
+        # logger.debug([prompt, models])
         if not any(m in model_reference.nsfw_models for m in models):
             return False
         if "###" in prompt:
