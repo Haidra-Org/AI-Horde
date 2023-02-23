@@ -17,6 +17,8 @@ class TextGenerationStatistic(db.Model):
     max_context_length = db.Column(db.Integer, nullable=False)
     softprompt = db.Column(db.Integer, nullable=True)
     prompt_length = db.Column(db.Integer, nullable=False)
+    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
 
 
@@ -34,6 +36,8 @@ def record_text_statistic(procgen):
         max_context_length=procgen.wp.max_context_length,
         softprompt=procgen.wp.softprompt,
         prompt_length=len(procgen.wp.prompt),
+        bridge_agent=procgen.worker.bridge_agent,
+        client_agent=procgen.wp.client_agent,
         state=state,
     )
     db.session.add(statistic)

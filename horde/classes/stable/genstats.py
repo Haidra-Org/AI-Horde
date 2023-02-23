@@ -33,6 +33,8 @@ class ImageGenerationStatistic(db.Model):
     tiling = db.Column(db.Boolean, nullable=False)
     nsfw = db.Column(db.Boolean, nullable=False)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
+    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     post_processors = db.relationship("ImageGenerationStatisticPP", back_populates="imgstat", cascade="all, delete-orphan")
 
 
@@ -59,6 +61,8 @@ def record_image_statistic(procgen):
         tiling=procgen.wp.params.get("tiling", False),
         img2img=procgen.wp.source_image != None,
         nsfw=procgen.wp.nsfw,
+        bridge_agent=procgen.worker.bridge_agent,
+        client_agent=procgen.wp.client_agent,
         state=state,
     )
     db.session.add(statistic)

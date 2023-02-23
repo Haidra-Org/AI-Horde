@@ -109,6 +109,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             safe_ip=self.safe_ip,
             r2=self.args.r2,
             shared=shared,
+            client_agent=self.args["Client-Agent"],
         )
         needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals())
         if needs_kudos:

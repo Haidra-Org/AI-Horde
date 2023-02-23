@@ -80,6 +80,7 @@ class WaitingPrompt(db.Model):
     total_usage = db.Column(db.Float, default=0, nullable=False)
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
+    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
 
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")

@@ -47,6 +47,7 @@ class TextAsyncGenerate(GenerateTemplate):
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,
+            client_agent=self.args["Client-Agent"],
         )
 
     def get_size_too_big_message(self):
