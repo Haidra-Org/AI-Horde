@@ -93,7 +93,7 @@ class NotModerator(wze.Forbidden):
 
 class NotOwner(wze.Forbidden):
     def __init__(self, username, worker_name):
-        self.specific = "You're not an admin. Sod off!"
+        self.specific = "You're not the owner. Sod off!"
         self.log = f"User '{username}'' tried to modify worker they do not own '{worker_name}'. Aborting!"
 
 class AnonForbidden(wze.Forbidden):

@@ -1,4 +1,5 @@
 from .v2 import *
+import requests
 
 class AsyncGenerate(AsyncGenerate):
     
@@ -100,6 +101,54 @@ class HordeLoad(HordeLoad):
         load_dict["past_minute_tokens"] = db.stats.get_things_per_min()
         return(load_dict,200)
 
+
+class KoboldKudosTransfer(Resource):
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("apikey", type=str, required=False, help="The User API key", location='headers')
+    post_parser.add_argument("username", type=str, required=True, help="The AI Horde user ID which will receive the kudos", location="json")
+
+
+    @api.expect(post_parser)
+    def post(self):
+        '''Transfers all user kudos to the AI Horde
+        '''
+        user = None
+        self.args = self.post_parser.parse_args()
+        if self.args.apikey:
+            user = db.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.InvalidAPIKey('AI Horde Kudos Transfer')
+        if user.is_anon():
+            raise e.KudosValidationError(user.get_unique_alias(),"Cannot transfer from anon")
+        ulist = self.args.username.split('#')
+        if len(ulist) != 2:
+            raise e.KudosValidationError(user.get_unique_alias(),"Invalid username format given")
+        ai_user_id = ulist[-1]
+        if int(ai_user_id) == 0:
+            raise e.KudosValidationError(user.get_unique_alias(),"Cannot transfer to anon")
+        kudos_amount = user.kudos - user.min_kudos
+        if kudos_amount <= 0:
+            raise e.KudosValidationError(user.get_unique_alias(),"Not any kudos to give!")
+        logger.warning(f"{user.get_unique_alias()} Started {kudos_amount} Kudos Transfer to AI Horde ID {ai_user_id}")
+        submit_dict = {
+            "kai_id": user.id,
+            "kudos_amount": kudos_amount,
+        }
+        logger.debug(submit_dict)
+        try:
+            submit_req = requests.post(f'https://stablehorde.net/api/v2/kudos/kai/{ai_user_id}', json = submit_dict)
+        except Exception as err:
+            raise e.KudosValidationError(user.get_unique_alias(),f"Something went wrong when trying to transfter Kudos to AI Horde: {err}")
+        if not submit_req.ok:
+            err = submit_req.json()
+            if "message" in err:
+                err = err["message"]
+            raise e.KudosValidationError(user.get_unique_alias(),f"Something went wrong when trying to transfter Kudos to AI Horde: {err}")
+        user.modify_kudos(-kudos_amount, 'koboldai')
+        return submit_req.json(),200
+
+
+
 api.add_resource(SyncGenerate, "/generate/sync")
 api.add_resource(AsyncGenerate, "/generate/async")
 api.add_resource(AsyncStatus, "/generate/status/<string:id>")
@@ -112,6 +161,7 @@ api.add_resource(FindUser, "/find_user")
 api.add_resource(Workers, "/workers")
 api.add_resource(WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(TransferKudos, "/kudos/transfer")
+api.add_resource(KoboldKudosTransfer, "/kudos/transfer/kai")
 api.add_resource(HordeLoad, "/status/performance")
 api.add_resource(HordeModes, "/status/modes")
 api.add_resource(Models, "/status/models")
