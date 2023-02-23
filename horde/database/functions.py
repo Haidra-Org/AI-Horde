@@ -271,6 +271,7 @@ def get_available_models():
             models_dict[model_name]["name"] = model_name
             models_dict[model_name]["count"] = 0
             models_dict[model_name]['queued'] = 0
+            models_dict[model_name]["type"] = model_type
             models_dict[model_name]['eta'] = 0
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
             models_dict[model_name]['workers'] = []
