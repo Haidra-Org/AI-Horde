@@ -560,6 +560,8 @@ class InterrogatePop(JobPopTemplate):
         self.priority_usernames = []
         if self.args.priority_usernames:
             self.priority_usernames = self.args.priority_usernames
+            if any("#" not in user_id for user_id in self.priority_usernames):
+                raise e.BadRequest("Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'")
         self.forms = []
         if self.args.forms:
             self.forms = self.args.forms
