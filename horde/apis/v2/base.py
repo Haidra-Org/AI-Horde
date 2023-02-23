@@ -884,7 +884,7 @@ class Models(Resource):
     get_parser.add_argument("max_count", required=False, default=None, type=int, help="Filter the models that have at most this amount of threads serving", location="args")
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=2)
+    @cache.cached(timeout=2, query_string=True)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_active_model, code=200, description='List All Active Models', as_list=True)
     def get(self):
