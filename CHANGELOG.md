@@ -3,7 +3,15 @@
 
 # 4.0.0
 
-* /api/v2/user: `contributions` and `usage` fields are now obsolete. Switch to the `records` field as they will be decommissioned
+* Massive Refactoring merged KoboldAI Horde into Stable Horde! Now you can request text generations from the same place you request your image generations and your kudos are in the same place!
+   All new endpoints are under `api/v2/generate/text/` and they work identically to image endpoints but with slightly different payloads. No need to use `/check` as well
+* Unfortunately Users and Worker statistics and kudos could not be transferred, but KoboldAI users can transfer their existing KAI Horde kudos using a dedicated interface
+* `/api/v2/user`: `contributions` and `usage` fields are now obsolete. Switch to the `records` field as they will be decommissioned
+* `/stats/text/totals/`: New endpoints for text statistics
+* `/api/v2/workers` should now show image, interrogation and text workers. You can filter the list using the `type` query. For example `/api/v2/workers?type=text`
+* `/v2/status/models` should now show image and text workers. You can filter the list using the `type` query. For example `/v2/status/models?type=text`
+   By default it is using type=image, to avoid breaking existing UIs, **but this will be removed eventually so ensure your UIs take that into account**.
+* `/v2/status/performance` Now shows text performance as well
 
 ## 3.11.2
 

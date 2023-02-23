@@ -4,10 +4,18 @@ class News:
 
     HORDE_NEWS = [
         {
-            "date_published": "2023-02-20",
+            "date_published": "2023-02-23",
             "newspiece": "KoboldAI Horde has been merged into Stable Horde as a unified AI Horde!",
             "tags": ["text2text", "ai horde"],
             "importance": "Information",
+        },
+        {
+            "date_published": "2023-02-21",
+            "newspiece": (
+                'The Horde now supports ControlNet on all models! All kudos go to [hlky](https://github.com/hlky) who again weaved the dark magic!'
+            ),
+            "tags": ["controlnet", "img2img", "hlky"],
+            "importance": "Information"
         },
         {
             "date_published": "2023-02-14",

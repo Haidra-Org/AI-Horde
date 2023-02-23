@@ -140,7 +140,7 @@ This is the worker which has generated the most pixels for the horde.
     """
     
     head = f"""<head>
-    <title>{horde_title} Horde</title>
+    <title>{horde_title}</title>
     <meta name="google-site-verification" content="{google_verification_string}" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {style}
@@ -246,7 +246,7 @@ def register():
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
-                           page_title=f"Join the {horde_title} Horde!",
+                           page_title=f"Join the {horde_title}!",
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
