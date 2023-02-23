@@ -43,8 +43,8 @@ class Team(db.Model):
                 continue
             all_performances.append(worker.get_performance_average())
         if len(all_performances):
-            perf_avg = round(sum(all_performances) / len(all_performances) / hv.thing_divisors["images"],1)
-            perf_total = round(sum(all_performances) / hv.thing_divisors["images"],1)
+            perf_avg = round(sum(all_performances) / len(all_performances) / hv.thing_divisors["image"],1)
+            perf_total = round(sum(all_performances) / hv.thing_divisors["image"],1)
         else:
             perf_avg = 0
             perf_total = 0
