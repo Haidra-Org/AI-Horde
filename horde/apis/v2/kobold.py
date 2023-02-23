@@ -133,6 +133,7 @@ class TextJobPop(JobPopTemplate):
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
             threads = self.args.threads,
+            bridge_version = self.args.bridge_version,
         )
 
 
