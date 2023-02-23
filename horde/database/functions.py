@@ -72,16 +72,20 @@ def get_top_worker():
     return top_worker
 
 
-def get_active_workers():
-    active_workers = db.session.query(ImageWorker).filter(
-        ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).all()
-    active_workers += db.session.query(TextWorker).filter(
-        TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).all()
-    active_workers += db.session.query(InterrogationWorker).filter(
-        InterrogationWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-    ).all()
+def get_active_workers(worker_type=None):
+    active_workers = []
+    if worker_type is None or worker_type == "image":
+        active_workers += db.session.query(ImageWorker).filter(
+            ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        ).all()
+    if worker_type is None or worker_type == "text":
+        active_workers += db.session.query(TextWorker).filter(
+            TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        ).all()
+    if worker_type is None or worker_type == "interrogation":
+        active_workers += db.session.query(InterrogationWorker).filter(
+            InterrogationWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+        ).all()
     return active_workers
 
 def count_active_workers(worker_class = "ImageWorker"):
