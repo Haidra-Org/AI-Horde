@@ -205,6 +205,7 @@ class KoboldKudosTransfer(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("kai_id", type=int, required=True, location='json')
     post_parser.add_argument("kudos_amount", type=int, required=True, location='json')
+    post_parser.add_argument("trusted", type=bool, default=False, required=True, location='json')
 
 
     @api.expect(post_parser)
@@ -218,6 +219,7 @@ class KoboldKudosTransfer(Resource):
             raise e.UserNotFound(user_id)
         self.args = self.post_parser.parse_args()            
         logger.warning(f"{user.get_unique_alias()} Started {self.args.kudos_amount}Kudos Transfer from KAI ID {self.args.kai_id}")
+        user.trusted = self.args.trusted
         user.modify_kudos(self.args.kudos_amount, 'koboldai')
         return {"new_kudos": user.kudos},200
 
