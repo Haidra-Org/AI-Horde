@@ -237,7 +237,7 @@ def get_available_models():
         ).filter(
             worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300)
         ).group_by(WorkerModel.model).all()
-        logger.debug(available_worker_models)
+        # logger.debug(available_worker_models)
         for model_row in available_worker_models:
             model_name = model_row.model
             models_dict[model_name] = {}
@@ -290,7 +290,6 @@ def get_available_models():
                 models_dict[model_name]['eta'] = int(things_per_model[model_name] / total_performance_on_model)
             else:
                 models_dict[model_name]['eta'] = 10000
-    logger.error(models_dict)
     return(list(models_dict.values()))
 
 def retrieve_available_models(model_type=None,min_count=None,max_count=None):
