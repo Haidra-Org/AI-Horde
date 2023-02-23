@@ -120,7 +120,7 @@ This is the worker which has generated the most pixels for the horde.
         queued_image_things = queued_image_things.amount,
         queued_image_things_name = queued_image_things.prefix + hv.raw_thing_names["image"],
         queued_text_things = queued_text_things.amount,
-        queued_text_things_name = queued_text_things.prefix + hv.raw_thing_names["image"],
+        queued_text_things_name = queued_text_things.prefix + hv.raw_thing_names["text"],
         maintenance_mode = maintenance.active,
         news = news,
     )
