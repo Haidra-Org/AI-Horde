@@ -201,7 +201,6 @@ class WorkerTemplate(db.Model):
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_version = kwargs.get("bridge_version", 1)
         self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
-        logger.debug(self.bridge_agent, kwargs.get("bridge_agent"))
         self.threads = kwargs.get("threads", 1)
         self.require_upfront_kudos = kwargs.get('require_upfront_kudos', False)
         self.allow_unsafe_ipaddr = kwargs.get('allow_unsafe_ipaddr', True)
@@ -255,7 +254,7 @@ class WorkerTemplate(db.Model):
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
-        if self.team and contrib_type == "image":
+        if self.team and self.wtype == "image":
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:

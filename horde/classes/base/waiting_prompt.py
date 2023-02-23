@@ -234,7 +234,6 @@ class WaitingPrompt(db.Model):
             wp_queue_stats, 
             lite = False
         ):
-        logger.debug([request_avg,active_worker_count,has_valid_workers,wp_queue_stats])
         active_worker_thread_count = active_worker_count[1]
         ret_dict = self.count_processing_gens()
         ret_dict["waiting"] = max(self.n, 0)
