@@ -87,7 +87,8 @@ This is the worker which has generated the most pixels for the horde.
     # We multiple with the divisor again, to get the raw amount, which we can convert to prefix accurately
     total_image_things = ConvertAmount(totals[hv.thing_names["image"]] * hv.thing_divisors["image"])
     total_text_things = ConvertAmount(totals[hv.thing_names["text"]] * hv.thing_divisors["text"])
-    queued_image_things = ConvertAmount(processing_totals[f"queued_{thing_name}"] * thing_divisor)
+    queued_image_things = ConvertAmount(processing_totals[f"queued_{hv.thing_names['image']}"] * hv.thing_divisors['image'])
+    queued_text_things = ConvertAmount(processing_totals[f"queued_{hv.thing_names['text']}"] * hv.thing_divisors['text'])
     total_image_fulfillments = ConvertAmount(totals["image_fulfilments"])
     total_text_fulfillments = ConvertAmount(totals["text_fulfilments"])
     total_forms = ConvertAmount(totals["forms"])
