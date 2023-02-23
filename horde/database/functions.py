@@ -88,11 +88,11 @@ def get_active_workers(worker_type=None):
         ).all()
     return active_workers
 
-def count_active_workers(worker_class = "ImageWorker"):
+def count_active_workers(worker_class = "image"):
     WorkerClass = ImageWorker
-    if worker_class == "InterrogationWorker":
+    if worker_class == "interrogation":
         WorkerClass = InterrogationWorker
-    if worker_class == "TextWorker":
+    if worker_class == "text":
         WorkerClass = TextWorker
     active_workers = db.session.query(
         WorkerClass
@@ -120,13 +120,19 @@ def count_workers_in_ipaddr(ipaddr):
 
 def get_total_usage():
     totals = {
-        thing_name: 0,
-        "fulfilments": 0,
+        hv.thing_names['image']: 0,
+        hv.thing_names['text']: 0,
+        "image_fulfilments": 0,
+        "text_fulfilments": 0,
     }
     result = db.session.query(func.sum(ImageWorker.contributions).label('contributions'), func.sum(ImageWorker.fulfilments).label('fulfilments')).first()
     if result:
-        totals[thing_name] = result.contributions if result.contributions else 0
-        totals["fulfilments"] = result.fulfilments if result.fulfilments else 0
+        totals[hv.thing_names['image']] = result.contributions if result.contributions else 0
+        totals["image_fulfilments"] = result.fulfilments if result.fulfilments else 0
+    result = db.session.query(func.sum(TextWorker.contributions).label('contributions'), func.sum(TextWorker.fulfilments).label('fulfilments')).first()
+    if result:
+        totals[hv.thing_names['text']] = result.contributions if result.contributions else 0
+        totals["text_fulfilments"] = result.fulfilments if result.fulfilments else 0
     form_result = result = db.session.query(func.sum(InterrogationWorker.fulfilments).label('forms')).first()
     if form_result:
         totals["forms"] = result.forms if result.forms else 0

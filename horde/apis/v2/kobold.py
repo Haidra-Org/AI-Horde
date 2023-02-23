@@ -71,7 +71,7 @@ class TextAsyncStatus(Resource):
             request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
+            active_worker_count=database.count_active_workers("text")
         )
         return(wp_status, 200)
 
@@ -92,7 +92,7 @@ class TextAsyncStatus(Resource):
             request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
             wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers()
+            active_worker_count=database.count_active_workers("text")
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
