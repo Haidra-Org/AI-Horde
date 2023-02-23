@@ -489,6 +489,7 @@ def retrieve_totals():
     if totals_ret is None:
         return {
             "queued_requests": 0,
+            "queued_text_requests": 0,
             f"queued_{hv.thing_names['image']}": 0,
             f"queued_{hv.thing_names['text']}": 0,
             f"queued_forms": 0,
