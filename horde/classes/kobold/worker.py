@@ -120,7 +120,8 @@ class TextWorker(Worker):
         del unchecked_models[200:]
         models = set()
         for model in unchecked_models:
-            if model in model_reference.text_model_names:
+            # We allow custom models from trusted users
+            if model in model_reference.text_model_names or self.user.trusted:
                 models.add(model)
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
