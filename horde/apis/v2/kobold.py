@@ -194,3 +194,26 @@ class TextHordeStatsModels(Resource):
         '''
         return compile_textgen_stats_models(),200
 
+
+class KoboldKudosTransfer(Resource):
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
+    post_parser.add_argument("kai_id", type=int, required=True, location='json')
+    post_parser.add_argument("kudos_amount", type=int, required=True, location='json')
+
+
+    @logger.catch(reraise=True)
+    @api.expect(get_parser)
+    def post(self, user_id = ''):
+        '''Receives kudos from the KoboldAI Horde
+        '''
+        if request.remote_addr != "167.86.124.45":
+            raise BadRequest("Access Denied")
+        user = database.find_user_by_id(user_id)
+        if not user:
+            raise e.UserNotFound(user_id)
+        self.args = parsers.post_parser.parse_args()            
+        logger.warning(f"{user.get_unique_alias()} Started {self.args.kudos_amount}Kudos Transfer from KAI ID {args.kai_id}")
+        user.modify_kudos(self.args.kudos_amount, 'koboldai')
+        return {"new_kudos": user.kudos},200
+
