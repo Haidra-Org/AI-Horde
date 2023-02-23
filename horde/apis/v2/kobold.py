@@ -133,6 +133,7 @@ class KoboldKudosTransfer(Resource):
         submit_dict = {
             "kai_id": user.id,
             "kudos_amount": kudos_amount,
+            "trusted": user.trusted,
         }
         logger.debug(submit_dict)
         try:
