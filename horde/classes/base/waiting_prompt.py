@@ -245,7 +245,6 @@ class WaitingPrompt(db.Model):
         ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
         if not lite:
-            logger.debug(self.processing_gens)
             ret_dict["generations"] = []
             for procgen in self.processing_gens:
                 if procgen.fake:
