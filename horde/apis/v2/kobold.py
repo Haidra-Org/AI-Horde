@@ -210,7 +210,7 @@ class KoboldKudosTransfer(Resource):
         user = database.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
-        self.args = parsers.post_parser.parse_args()            
+        self.args = self.post_parser.parse_args()            
         logger.warning(f"{user.get_unique_alias()} Started {self.args.kudos_amount}Kudos Transfer from KAI ID {args.kai_id}")
         user.modify_kudos(self.args.kudos_amount, 'koboldai')
         return {"new_kudos": user.kudos},200
