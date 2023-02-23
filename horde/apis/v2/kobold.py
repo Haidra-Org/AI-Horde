@@ -203,7 +203,7 @@ class KoboldKudosTransfer(Resource):
 
 
     @logger.catch(reraise=True)
-    @api.expect(get_parser)
+    @api.expect(post_parser)
     def post(self, user_id = ''):
         '''Receives kudos from the KoboldAI Horde
         '''
