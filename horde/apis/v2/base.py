@@ -534,7 +534,7 @@ class Workers(Resource):
     def parse_worker_by_query(self, workers_list):
         if not self.args.type:
             return workers_list
-        return [w for w in workers_list if w.type == self.args.type]
+        return [w for w in workers_list if w["type"] == self.args.type]
 
 class WorkerSingle(Resource):
 
