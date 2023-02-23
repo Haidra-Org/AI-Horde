@@ -61,6 +61,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             self.censored = True
             db.session.commit()
         elif state == "faulted":
+            self.wp.n += 1
             self.abort()
         if self.is_completed():
             return(0)

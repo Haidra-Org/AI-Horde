@@ -49,6 +49,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         # as well, so it can abort before doing R2 operations
         state = kwargs.get("state", 'ok')
         if state == "faulted":
+            self.wp.n += 1
             self.abort()
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         record_text_statistic(self)
