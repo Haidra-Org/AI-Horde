@@ -46,7 +46,8 @@ class TextAsyncGenerate(GenerateTemplate):
             softprompt = self.args.softprompt,
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
-            safe_ip=self.safe_ip,
+            # We don't have a problem with VPN for text
+            safe_ip=True,
             client_agent=self.args["Client-Agent"],
         )
 
@@ -130,7 +131,8 @@ class TextJobPop(JobPopTemplate):
             self.softprompts,
             models = models,
             nsfw = self.args.nsfw,
-            safe_ip = self.safe_ip,
+            # We don't have a problem with VPN for text
+            safe_ip = True,
             ipaddr = self.worker_ip,
             threads = self.args.threads,
             bridge_agent = self.args.bridge_agent,
