@@ -124,6 +124,7 @@ class TextWorker(Worker):
             # # We allow custom models from trusted users
             # if model in model_reference.text_model_names or self.user.trusted:
             models.add(model)
+        logger.debug(unchecked_models,models)
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models
