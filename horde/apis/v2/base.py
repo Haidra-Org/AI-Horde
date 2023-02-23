@@ -515,15 +515,15 @@ class Workers(Resource):
             if admin and admin.moderator:
                 details_privilege = 2
         if not horde_r:
-            return parse_worker_by_query(self.get_worker_info_list(details_privilege))
+            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
         if details_privilege == 2:
             cached_workers = horde_r.get('worker_cache_privileged')
         else:
             cached_workers = horde_r.get('worker_cache')
         if cached_workers is None:
             workers_ret = []
-            return parse_worker_by_query(self.get_worker_info_list(details_privilege))
-        return parse_worker_by_query(json.loads(cached_workers))
+            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
+        return self.parse_worker_by_query(json.loads(cached_workers))
 
     def get_worker_info_list(self, details_privilege):
         workers_ret = []
