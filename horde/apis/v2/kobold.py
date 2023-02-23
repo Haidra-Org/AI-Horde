@@ -202,7 +202,6 @@ class KoboldKudosTransfer(Resource):
     post_parser.add_argument("kudos_amount", type=int, required=True, location='json')
 
 
-    @logger.catch(reraise=True)
     @api.expect(post_parser)
     def post(self, user_id = ''):
         '''Receives kudos from the KoboldAI Horde
