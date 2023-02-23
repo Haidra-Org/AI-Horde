@@ -46,7 +46,6 @@ class TextAsyncGenerate(GenerateTemplate):
             softprompt = self.args.softprompt,
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
-            # We don't have a problem with VPN for text
             safe_ip=True,
             client_agent=self.args["Client-Agent"],
         )
@@ -131,8 +130,7 @@ class TextJobPop(JobPopTemplate):
             self.softprompts,
             models = models,
             nsfw = self.args.nsfw,
-            # We don't have a problem with VPN for text
-            safe_ip = True,
+            safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
             threads = self.args.threads,
             bridge_agent = self.args.bridge_agent,
@@ -148,6 +146,12 @@ class TextJobPop(JobPopTemplate):
         )        
 
         return sorted_wps
+
+    def check_ip(self):
+        self.safe_ip = True
+        if not self.user.trusted and not patrons.is_patron(self.user.id):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+        # We don't abort for VPN IPs in KAI for now
 
 class TextJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]

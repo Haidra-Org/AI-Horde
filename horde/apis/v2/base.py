@@ -361,19 +361,7 @@ class JobPopTemplate(Resource):
         self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
             raise e.PolymorphicNameConflict(self.worker_name)
-        self.safe_ip = True
-        if not self.worker or not (self.worker.user.trusted or patrons.is_patron(self.worker.user.id)):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-            if self.safe_ip is None:
-                raise e.TooManyNewIPs(self.worker_ip)
-            if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
-                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
-                #     self.safe_ip = True
-                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
-                    raise e.UnsafeIP(self.worker_ip)
+        self.check_ip()
         if not self.worker:
             if is_profane(self.worker_name):
                 raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
@@ -392,6 +380,21 @@ class JobPopTemplate(Resource):
             self.worker.create()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+
+    def check_ip(self):
+        self.safe_ip = True
+        if not self.user.trusted and not patrons.is_patron(self.user.id):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
+            if self.safe_ip is None:
+                raise e.TooManyNewIPs(self.worker_ip)
+            if self.safe_ip is False:
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
+                #     self.safe_ip = True
+                # if a raid is ongoing, we do not inform the suspicious IPs we detected them
+                if not self.safe_ip and not raid.active:
+                    raise e.UnsafeIP(self.worker_ip)
 
 
 class JobSubmitTemplate(Resource):
