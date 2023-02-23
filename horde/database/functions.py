@@ -23,6 +23,7 @@ from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 import horde.classes.base.stats as stats
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.base.team import Team
 from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.utils import hash_api_key
