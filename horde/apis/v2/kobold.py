@@ -197,7 +197,6 @@ class TextHordeStatsModels(Resource):
 
 class KoboldKudosTransfer(Resource):
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
     post_parser.add_argument("kai_id", type=int, required=True, location='json')
     post_parser.add_argument("kudos_amount", type=int, required=True, location='json')
 
