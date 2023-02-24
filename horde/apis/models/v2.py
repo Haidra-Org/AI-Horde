@@ -234,7 +234,6 @@ class Models:
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),
             "account_age": fields.Integer(example=60, description="How many seconds since this account was created"),
-            "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "usage": fields.Nested(self.response_model_use_details), #TODO: OBSOLETE
             "contributions": fields.Nested(self.response_model_contrib_details), #TODO: OBSOLETE
             "records": fields.Nested(self.response_model_user_records), #TODO: OBSOLETE

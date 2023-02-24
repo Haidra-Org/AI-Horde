@@ -29,7 +29,7 @@ class ModelReference(PrimaryTimedFunction):
                         self.nsfw_models.add(model)
                     if self.reference[model].get("type") == "controlnet":
                         self.controlnet_models.add(model)
-        except Exception:
+        except Exception as e:
             logger.error(f"Error when downloading nataili models list: {e}")
         try:
             self.text_reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json", timeout=2).json()
@@ -40,11 +40,11 @@ class ModelReference(PrimaryTimedFunction):
                 if self.text_reference[model].get("nsfw"):
                     self.nsfw_models.add(model)
 
-        except Exception:
+        except Exception as e:
             logger.error(f"Error when downloading known models list: {e}")
 
     def get_model_names(self):
-        return set(reference.keys())
+        return set(self.reference.keys())
 
     def get_text_model_multiplier(self, model_name):
         # To avoid doing this calculations all the time

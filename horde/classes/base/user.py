@@ -109,7 +109,7 @@ class User(db.Model):
         if is_profane(self.username):
             self.report_suspicion(reason = Suspicions.USERNAME_PROFANITY)
 
-    def check_key(api_key):
+    def check_key(self, api_key):
         return(self.api_key == api_key)
 
     def set_username(self,new_username):
