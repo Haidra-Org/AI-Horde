@@ -37,7 +37,12 @@ class InvalidSize(wze.BadRequest):
 class InvalidPromptSize(wze.BadRequest):
     def __init__(self, username):
         self.specific = "Too large prompt. Please reduce the amount of tokens contained."
-        self.log = f"User '{username}' sent an invalid size. Aborting!"
+        self.log = f"User '{username}' sent an invalid prompt due to length. Aborting!"
+
+class InvalidPromptWeight(wze.BadRequest):
+    def __init__(self, username):
+        self.specific = "Too many prompt weights. Please reduce the amount of weights contained."
+        self.log = f"User '{username}' sent an invalid prompt due to weights. Aborting!"
 
 class TooManySteps(wze.BadRequest):
     def __init__(self, username, steps):

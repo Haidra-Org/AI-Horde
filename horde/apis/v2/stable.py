@@ -80,6 +80,8 @@ class ImageAsyncGenerate(GenerateTemplate):
         #     raise e.UnsupportedSampler
         if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
+        if len(self.args['prompt'].count('(')) > 25:
+            raise e.InvalidPromptWeight(self.username)
         if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"] for model_name in self.args.models):
             raise e.UnsupportedModel
 
