@@ -1,0 +1,70 @@
+
+## Add FulfillmentPerformance fields
+
+ALTER TABLE horde_fulfillments ADD COLUMN thing_type VARCHAR(20) NOT NULL DEFAULT 'image';
+CREATE INDEX idx_horde_fulfillments_thing_type ON public.horde_fulfillments USING btree (thing_type);
+
+## Add WP fields
+ALTER TABLE waiting_prompts ADD COLUMN wp_type VARCHAR(30) NOT NULL DEFAULT 'image';
+CREATE INDEX idx_waiting_prompts_wp_type ON public.waiting_prompts USING btree (wp_type);
+ALTER TABLE waiting_prompts ADD COLUMN max_length INTEGER NOT NULL DEFAULT 80;
+CREATE INDEX idx_waiting_prompts_max_length ON public.waiting_prompts USING btree(max_length);
+ALTER TABLE waiting_prompts ADD COLUMN max_context_length INTEGER NOT NULL DEFAULT 1024;
+CREATE INDEX idx_waiting_prompts_max_context_length ON public.waiting_prompts USING btree(max_context_length);
+ALTER TABLE waiting_prompts ADD COLUMN softprompt VARCHAR(255);
+CREATE INDEX idx_waiting_prompts_faulted ON public.waiting_prompts USING btree(faulted);
+ALTER TABLE waiting_prompts ADD COLUMN client_agent TEXT NOT NULL DEFAULT 'unknown:0:unknown';
+ALTER TABLE processing_gens ADD COLUMN procgen_type VARCHAR(30) NOT NULL DEFAULT 'image';
+CREATE INDEX idx_processing_gens_procgen_type ON public.processing_gens USING btree (procgen_type);
+ALTER TABLE workers ADD COLUMN max_length INTEGER NOT NULL DEFAULT 80;
+ALTER TABLE workers ADD COLUMN max_context_length INTEGER NOT NULL DEFAULT 1024;
+ALTER TABLE wp_models ALTER COLUMN model TYPE VARCHAR(255);
+ALTER TABLE model_performances ALTER COLUMN model TYPE VARCHAR(255);
+ALTER TABLE text_gen_stats ALTER COLUMN model TYPE VARCHAR(255);
+ALTER TABLE image_gen_stats ALTER COLUMN model TYPE VARCHAR(255);
+ALTER TABLE image_gen_stats ADD COLUMN client_agent TEXT NOT NULL DEFAULT 'unknown:0:unknown';
+CREATE INDEX idx_image_gen_stats_client_agent ON public.image_gen_stats USING btree (client_agent);
+ALTER TABLE image_gen_stats ADD COLUMN bridge_agent TEXT NOT NULL DEFAULT 'unknown:0:unknown';
+CREATE INDEX idx_image_gen_stats_bridge_agent ON public.image_gen_stats USING btree (bridge_agent);
+
+
+## Adjust user_records
+
+ALTER TABLE user_records ADD CONSTRAINT user_records_user_id_record_type_record_key UNIQUE (user_id, record_type, record);
+DELETE FROM user_records
+WHERE id NOT IN (
+  SELECT MIN(id)
+  FROM user_records
+  GROUP BY user_id, record_type, record
+);
+-- Insert contributed_thing record
+INSERT INTO user_records(user_id, record_type, record, value)
+SELECT id, 'CONTRIBUTION', 'image', contributed_thing
+FROM users
+WHERE contributed_thing <> 0
+ON CONFLICT (user_id, record_type, record)
+DO UPDATE SET value = user_records.value + EXCLUDED.value;
+
+-- Insert contributed_fulfillments record
+INSERT INTO user_records(user_id, record_type, record, value)
+SELECT id, 'FULFILLMENT', 'image', contributed_fulfillments
+FROM users
+WHERE contributed_fulfillments <> 0
+ON CONFLICT (user_id, record_type, record)
+DO UPDATE SET value = user_records.value + EXCLUDED.value;
+
+-- Insert usage_thing record
+INSERT INTO user_records(user_id, record_type, record, value)
+SELECT id, 'USAGE', 'image', usage_thing
+FROM users
+WHERE usage_thing <> 0
+ON CONFLICT (user_id, record_type, record)
+DO UPDATE SET value = user_records.value + EXCLUDED.value;
+
+-- Insert usage_requests record
+INSERT INTO user_records(user_id, record_type, record, value)
+SELECT id, 'REQUEST', 'image', usage_requests
+FROM users
+WHERE usage_requests <> 0
+ON CONFLICT (user_id, record_type, record)
+DO UPDATE SET value = user_records.value + EXCLUDED.value;

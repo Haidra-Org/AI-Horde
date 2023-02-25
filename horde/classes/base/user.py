@@ -35,6 +35,7 @@ class UserSuspicions(db.Model):
 
 class UserRecords(db.Model):
     __tablename__ = "user_records"
+    # __table_args__ = (UniqueConstraint('user_id', 'record_type', 'record', name='user_records_user_id_record_type_record_key'),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="records")
