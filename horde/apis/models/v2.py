@@ -89,7 +89,7 @@ class Models:
 
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload, skip_none=True),
-            'id': fields.String(description="The UUID for this image generation"),
+            'id': fields.String(description="The UUID for this generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True)
         })
         self.input_model_job_submit = api.model('SubmitInput', {

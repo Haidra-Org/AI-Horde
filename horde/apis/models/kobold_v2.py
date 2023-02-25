@@ -58,7 +58,7 @@ class TextModels(v2.Models):
         })
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
-            'id': fields.String(description="The UUID for this image generation"),
+            'id': fields.String(description="The UUID for this text generation"),
             'skipped': fields.Nested(self.response_model_generations_skipped,skip_none=True),
             'softprompt': fields.String(description="The soft prompt requested for this generation"),
             'model': fields.String(description="Which of the available models to use for this request"),
