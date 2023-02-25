@@ -84,7 +84,7 @@ class TextAsyncStatus(Resource):
     @api.response(404, 'Request Not found', models.response_model_error)
     def delete(self, id = ''):
         '''Cancel an unfinished request.
-        This request will include all already generated images in base64 encoded .webp files.
+        This request will include all already generated texts.
         '''
         wp = database.get_wp_by_id(id)
         if not wp:
@@ -180,9 +180,9 @@ class TextHordeStatsTotals(Resource):
     @logger.catch(reraise=True)
     @cache.cached(timeout=50)
     @api.expect(get_parser)
-    @api.marshal_with(models.response_model_stats_img_totals, code=200, description='Horde generated images statistics')
+    @api.marshal_with(models.response_model_stats_img_totals, code=200, description='Horde generated text statistics')
     def get(self):
-        '''Details how many images have been generated in the past minux,hour,day,month and total
+        '''Details how many texts have been generated in the past minux,hour,day,month and total
         Also shows the amount of pixelsteps for the same timeframe.
         '''
         return compile_textgen_stats_totals(),200
@@ -194,9 +194,9 @@ class TextHordeStatsModels(Resource):
     @logger.catch(reraise=True)
     @cache.cached(timeout=50)
     @api.expect(get_parser)
-    @api.marshal_with(models.response_model_stats_models, code=200, description='Horde generated images statistics per model')
+    @api.marshal_with(models.response_model_stats_models, code=200, description='Horde generated text statistics per model')
     def get(self):
-        '''Details how many images were generated per model for the past day, month and total
+        '''Details how many texts were generated per model for the past day, month and total
         '''
         return compile_textgen_stats_models(),200
 
