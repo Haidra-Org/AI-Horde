@@ -14,6 +14,7 @@ raw_thing_names = {
 thing_divisors = {
     "image": 1000000,
     "text": 1,
+    "interrogation": 1,
 }
 
 suspicion_thresholds = {
