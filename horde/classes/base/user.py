@@ -416,7 +416,7 @@ class User(db.Model):
             if rtype not in records_dict:
                 records_dict[rtype] = {}
             record_key = r.record
-            if r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION}:
+            if r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION} and r.record in hv.thing_names:
                 record_key = hv.thing_names[r.record]
             records_dict[rtype][record_key] = r.value
         return records_dict
