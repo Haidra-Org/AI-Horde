@@ -202,8 +202,8 @@ def worker_exists(worker_id):
     if SQLITE_MODE:
         worker_uuid = str(worker_uuid)
     wc = db.session.query(ImageWorker).filter_by(id=worker_uuid).count()
-    if not worker:
-        worker = db.session.query(TextWorker).filter_by(id=worker_uuid).first()
+    if not wc:
+        wc = db.session.query(TextWorker).filter_by(id=worker_uuid).count()
     if not wc:
         wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
     return wc
