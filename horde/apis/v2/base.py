@@ -178,7 +178,7 @@ class GenerateTemplate(Resource):
             #logger.warning(datetime.utcnow())
             prompt_suspicion, _ = prompt_checker(self.args.prompt)
             #logger.warning(datetime.utcnow())
-            if prompt_suspicion >= 2 and gentype != "text":
+            if prompt_suspicion >= 2 and self.gentype != "text":
                 # Moderators do not get ip blocked to allow for experiments
                 if not self.user.moderator:
                     prompt_dict = {
