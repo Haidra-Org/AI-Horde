@@ -70,7 +70,7 @@ class WorkerTemplate(db.Model):
     user = db.relationship("User", back_populates="workers")
     name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     info = db.Column(db.String(1000))
-    ipaddr = db.Column(db.String(15))
+    ipaddr = db.Column(db.String(39))
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
     last_check_in = db.Column(db.DateTime, default=datetime.utcnow, index=True)
