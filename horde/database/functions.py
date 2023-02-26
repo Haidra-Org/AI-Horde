@@ -342,7 +342,11 @@ def convert_things_to_kudos(things, **kwargs):
     kudos = round(things,2)
     return(kudos)
 
-def count_waiting_requests(user, models = None):
+def count_waiting_requests(user, models = None, request_type = "image"):
+    wp_class = ImageWaitingPrompt
+    if request_type == "text":
+        wp_class = TextWaitingPrompt
+       
     # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
     # Currently this is just counting how many requests, but each requests can have more than 1 image waiting
     if not models: models = []
@@ -350,20 +354,20 @@ def count_waiting_requests(user, models = None):
         return db.session.query(
             WPModels.id,
         ).join(
-            ImageWaitingPrompt
+            wp_class
         ).filter(
             WPModels.model.in_(models),
-            ImageWaitingPrompt.user_id == user.id,
-            ImageWaitingPrompt.faulted == False,
-            ImageWaitingPrompt.n >= 1, 
+            wp_class.user_id == user.id,
+            wp_class.faulted == False,
+            wp_class.n >= 1, 
         ).group_by(WPModels.id).count()
     else:
         return db.session.query(
-            ImageWaitingPrompt
+            wp_class
         ).filter(
-            ImageWaitingPrompt.user_id == user.id,
-            ImageWaitingPrompt.faulted == False,
-            ImageWaitingPrompt.n >= 1, 
+            wp_class.user_id == user.id,
+            wp_class.faulted == False,
+            wp_class.n >= 1, 
         ).count()
 
 def count_waiting_interrogations(user):

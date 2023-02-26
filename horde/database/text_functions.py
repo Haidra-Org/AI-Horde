@@ -34,30 +34,6 @@ def convert_things_to_kudos(things, **kwargs):
     return(kudos)
 
 
-def count_waiting_requests(user, models = None):
-    # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
-    # Currently this is just counting how many requests, but each requests can have more than 1 image waiting
-    if not models: models = []
-    if len(models):
-        return db.session.query(
-            WPModels.id,
-        ).join(
-            WaitingPrompt
-        ).filter(
-            WPModels.model.in_(models),
-            WaitingPrompt.user_id == user.id,
-            WaitingPrompt.faulted == False,
-            WaitingPrompt.n >= 1, 
-        ).group_by(WPModels.id).count()
-    else:
-        return db.session.query(
-            WaitingPrompt
-        ).filter(
-            WaitingPrompt.user_id == user.id,
-            WaitingPrompt.faulted == False,
-            WaitingPrompt.n >= 1, 
-        ).count()
-
 
 def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_user_ids=None): 
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
