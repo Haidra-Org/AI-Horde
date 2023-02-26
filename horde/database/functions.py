@@ -455,7 +455,7 @@ def count_totals():
         current_wp_queue = wp.n + procgens_count
         ret_dict["queued_text_requests"] += current_wp_queue
         if current_wp_queue > 0:
-            ret_dict[queued_text] += wp.things * current_wp_queue / hv.thing_divisors["image"]
+            ret_dict[queued_text] += wp.things * current_wp_queue / hv.thing_divisors["text"]
     # We round the end result to avoid to many decimals
     ret_dict[queued_text] = round(ret_dict[queued_text],2)
     ret_dict[queued_forms] = db.session.query(
