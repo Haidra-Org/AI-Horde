@@ -100,7 +100,7 @@ class CounterMeasures:
 		ip_s_r.setex(ipaddr, timedelta(hours=24), current_suspicion + 1)
 		# Fibonacci FTW!
 		timeout = (current_suspicion + current_suspicion + 1) * 3
-		if ipaddr in WHITELISTED_SERVICE_IPS and timeout > 300:
+		if ipaddr in WHITELISTED_SERVICE_IPS and timeout > 20:
 			timeout = 300
 		logger.debug(timeout)
 		CounterMeasures.set_timeout(ipaddr, timeout)
