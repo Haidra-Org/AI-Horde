@@ -157,13 +157,13 @@ class GenerateTemplate(Resource):
                 wp_count = database.count_waiting_requests(
                     user = self.user,
                     models = self.args["models"],
-                    request_type = gentype
+                    request_type = self.gentype
                 )
                 #logger.warning(datetime.utcnow())
             else:
                 wp_count = database.count_waiting_requests(
                     user = self.user,                    
-                    request_type = gentype,
+                    request_type = self.gentype,
                 )
                 #logger.warning(datetime.utcnow())
             if len(self.workers):
