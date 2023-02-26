@@ -20,6 +20,7 @@ models = ImageModels(api)
 parsers = ImageParsers()
 
 class ImageAsyncGenerate(GenerateTemplate):
+    gentype = "image"
 
     @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)

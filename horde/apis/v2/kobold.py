@@ -10,6 +10,7 @@ models = TextModels(api)
 parsers = TextParsers()
 
 class TextAsyncGenerate(GenerateTemplate):
+    gentype = "text"
     @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)

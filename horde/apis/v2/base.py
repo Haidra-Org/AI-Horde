@@ -113,6 +113,7 @@ def check_for_mod(api_key, operation, whitelisted_users = None):
 
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
+    gentype = "template"
     def post(self):
         #logger.warning(datetime.utcnow())
         # I have to extract and store them this way, because if I use the defaults
@@ -177,7 +178,7 @@ class GenerateTemplate(Resource):
             #logger.warning(datetime.utcnow())
             prompt_suspicion, _ = prompt_checker(self.args.prompt)
             #logger.warning(datetime.utcnow())
-            if prompt_suspicion >= 2:
+            if prompt_suspicion >= 2 and gentype != "text":
                 # Moderators do not get ip blocked to allow for experiments
                 if not self.user.moderator:
                     prompt_dict = {
