@@ -60,7 +60,6 @@ class TextWaitingPrompt(WaitingPrompt):
 
     def get_status(self, **kwargs):
         ret_dict = super().get_status(**kwargs)
-        logger.debug(ret_dict)
         return ret_dict
 
     def record_usage(self, raw_things, kudos, usage_type = "text"):
