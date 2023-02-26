@@ -26,6 +26,7 @@ ALTER TABLE image_gen_stats ADD COLUMN client_agent TEXT NOT NULL DEFAULT 'unkno
 CREATE INDEX idx_image_gen_stats_client_agent ON public.image_gen_stats USING btree (client_agent);
 ALTER TABLE image_gen_stats ADD COLUMN bridge_agent TEXT NOT NULL DEFAULT 'unknown:0:unknown';
 CREATE INDEX idx_image_gen_stats_bridge_agent ON public.image_gen_stats USING btree (bridge_agent);
+ALTER TABLE workers ALTER COLUMN ipaddr TYPE VARCHAR(39);
 
 
 ## Adjust user_records

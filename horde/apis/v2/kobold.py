@@ -220,7 +220,8 @@ class KoboldKudosTransfer(Resource):
             raise e.UserNotFound(user_id)
         self.args = self.post_parser.parse_args()            
         logger.warning(f"{user.get_unique_alias()} Started {self.args.kudos_amount}Kudos Transfer from KAI ID {self.args.kai_id}")
-        user.trusted = self.args.trusted
+        if user.trusted is False and self.args.trusted is True:
+            user.trusted = self.args.trusted
         user.modify_kudos(self.args.kudos_amount, 'koboldai')
         return {"new_kudos": user.kudos},200
 
