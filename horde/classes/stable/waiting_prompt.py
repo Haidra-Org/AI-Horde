@@ -4,7 +4,7 @@ from sqlalchemy.sql import expression
 from horde.logger import logger
 from horde import vars as hv
 from horde.flask import db
-from horde.utils import get_random_seed
+from horde.utils import get_random_seed, count_parentheses
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.image import convert_pil_to_b64
@@ -232,8 +232,14 @@ class ImageWaitingPrompt(WaitingPrompt):
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
             self.kudos = round(self.kudos * 1.2,2)
+        logger.debug(self.kudos)
         if self.gen_payload.get('control_type'):
             self.kudos = round(self.kudos * 3,2)
+        logger.debug(self.kudos)
+        weights_count = count_parentheses(self.prompt)
+        # we increase the kudos cost per weight
+        self.kudos += weights_count
+        logger.debug(self.kudos)
         db.session.commit()
 
 
@@ -255,6 +261,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.width * self.height > max_res*max_res:
             return(True,max_res)
         if self.params.get('control_type') and self.get_accurate_steps() > 20:
+            return(True,max_res)
+        # 10 or more weights, require upfront kudos
+        if count_parentheses(self.prompt) > 12:
             return(True,max_res)
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
@@ -289,6 +298,12 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.job_ttl = 260
         elif self.width * self.height >= 512*512:
             self.job_ttl = 150
+        # CN is 3 times slower
+        if self.gen_payload.get('control_type'):
+            self.job_ttl = self.job_ttl * 3
+        weights_count = count_parentheses(self.prompt)
+        self.job_ttl += 3*weights_count
+        logger.debug([weights_count,self.job_ttl])
         db.session.commit()
 
     def log_faulted_prompt(self):

@@ -1,6 +1,12 @@
 # Changelog
 
 
+# 4.0.5
+
+* Increased kudos consumption by 1 per weight.
+* Increased ttl according to CN and weights
+* Weights over 12 require upfront kudos due to extra load on workers
+
 # 4.0.4
 
 * Fixed Diffusers models and SD2@512 being silently ignored.

@@ -84,3 +84,13 @@ def get_random_seed():
     '''Generated a random seed, using a random number unique per node'''
     return random.randint(0, 2**32 - 1)
 
+def count_parentheses(s):
+    open_p = False
+    count = 0
+    for c in s:
+        if c == "(":
+            open_p = True
+        elif c == ")" and open_p:
+            open_p = False
+            count += 1
+    return count
