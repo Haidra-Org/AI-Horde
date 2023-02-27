@@ -11,7 +11,7 @@ from horde.countermeasures import CounterMeasures
 from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
-from horde.image import convert_source_image_to_pil, convert_source_image_to_webp, upload_source_image_to_r2, ensure_source_image_uploaded
+from horde.image import ensure_source_image_uploaded
 from horde.model_reference import model_reference
 
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
@@ -126,9 +126,14 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.source_image = None
         self.source_mask = None
         if self.args.source_image:
-            self.source_image, self.source_image_r2stored = ensure_source_image_uploaded(self.args.source_image, f"{self.wp.id}_src", force_r2 = True)
+            self.source_image, img, self.source_image_r2stored = ensure_source_image_uploaded(self.args.source_image, f"{self.wp.id}_src", force_r2 = True)
             if self.args.source_mask:
-                self.source_mask, self.source_mask_r2stored = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2 = True)
+                self.source_mask, img, self.source_mask_r2stored = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2 = True)
+            elif self.args.source_processing == "inpainting":
+                try:
+                    _red, _green, _blue, _alpha = img.split()
+                except ValueError:
+                    raise e.ImageValidationFailed("Inpainting requests must either include a mask, or an alpha channel.")
         self.wp.activate(self.source_image, self.source_mask)
 
 
@@ -467,7 +472,7 @@ class Interrogate(Resource):
         )
         # If anything goes wrong when uploading an image, we don't want to leave garbage around
         try:
-            self.source_image, self.r2stored = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
+            self.source_image, img, self.r2stored = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
         except Exception as e:
             db.session.delete(self.interrogation)
             db.session.commit()

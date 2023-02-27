@@ -58,7 +58,7 @@ class ImageWorker(Worker):
         if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.get_model_names() == ["stable_diffusion_inpainting"]:
             return [False, 'models']
         #logger.warning(datetime.utcnow())
-        if waiting_prompt.source_processing != 'img2img' and not check_bridge_capability("img2img", self.bridge_agent):
+        if waiting_prompt.source_processing != 'img2img' and not check_bridge_capability("inpainting", self.bridge_agent):
             return [False, 'painting']
         # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
         #logger.warning(datetime.utcnow())

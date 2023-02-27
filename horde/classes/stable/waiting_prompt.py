@@ -232,14 +232,11 @@ class ImageWaitingPrompt(WaitingPrompt):
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
             self.kudos = round(self.kudos * 1.2,2)
-        logger.debug(self.kudos)
         if self.gen_payload.get('control_type'):
             self.kudos = round(self.kudos * 3,2)
-        logger.debug(self.kudos)
         weights_count = count_parentheses(self.prompt)
         # we increase the kudos cost per weight
         self.kudos += weights_count
-        logger.debug(self.kudos)
         db.session.commit()
 
 

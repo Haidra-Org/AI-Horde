@@ -56,6 +56,7 @@ def convert_source_image_to_pil(source_image_b64):
         quality = 90
     elif resolution > resolution_threshold * 0.15:
         quality = 95
+        
     return image,quality,width,height
 
 def convert_source_image_to_webp(source_image_b64):
@@ -78,11 +79,11 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
     '''Convert source images to webp and uploads it to r2, to avoid wasting bandwidth, while still supporting all types'''
     try:
         if source_image_b64 is None:
-            return(source_image_b64)
+            return (None, None)
         image, quality, width, height = convert_source_image_to_pil(source_image_b64)
         filename = f"{uuid_string}.webp"
         download_url = upload_source_image(image, filename)
-        return download_url
+        return (download_url, image)
     except ImageValidationFailed as err:
         raise err
     except Exception as err:
@@ -122,5 +123,6 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
             raise ImageValidationFailed("Something went wrong when retrieving image url.")
         return source_image_string, False
     else:
-        return upload_source_image_to_r2(source_image_string, uuid_string), True
+        download_url, img = upload_source_image_to_r2(source_image_string, uuid_string)
+        return (download_url, img, True)
 
