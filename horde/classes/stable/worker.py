@@ -142,6 +142,8 @@ class ImageWorker(Worker):
         for model in unchecked_models:
             if model in model_reference.stable_diffusion_names:
                 models.add(model)
+            else:
+                self.warning(f"Rejecting unknown model '{model}' from {self.name} ({self.id})")
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models

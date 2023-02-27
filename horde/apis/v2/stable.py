@@ -55,7 +55,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         #logger.warning(datetime.utcnow())
         super().validate()
         #logger.warning(datetime.utcnow())
-        # Temporary exception. During trial period only trusted users can use img2img
         if not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
             # We allow unsafe IPs when being rate limited as they're only temporary
