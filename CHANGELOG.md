@@ -1,6 +1,21 @@
 # Changelog
 
 
+# 4.0.4
+
+* Fixed Diffusers models and SD2@512 being silently ignored.
+
+# 4.0.3
+
+* Fixed IP ban being in minutes instead of seconds
+* Support for ipv6 on workers
+
+# 4.0.2
+
+* Avoids removing trusted status when kai kudos is migrated
+* Fix bad frontpage token divisor
+* Fix worker lookup ignoring text workers
+
 # 4.0.0
 
 * Massive Refactoring merged KoboldAI Horde into Stable Horde! Now you can request text generations from the same place you request your image generations and your kudos are in the same place!
