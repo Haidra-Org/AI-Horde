@@ -23,7 +23,7 @@ class ModelReference(PrimaryTimedFunction):
             # logger.debug(self.reference)
             self.stable_diffusion_names = set()
             for model in self.reference:
-                if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2"}:
+                if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512"}:
                     self.stable_diffusion_names.add(model)
                     if self.reference[model].get("nsfw"):
                         self.nsfw_models.add(model)
