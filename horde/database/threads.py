@@ -306,9 +306,24 @@ def increment_extra_priority():
     with HORDE.app_context():
         wp_queue = db.session.query(
             ImageWaitingPrompt
+        ).filter(
+            ImageWaitingPrompt.n > 0,
+            ImageWaitingPrompt.faulted == False,
+            ImageWaitingPrompt.active == True,
         ).update(
             {
                 ImageWaitingPrompt.extra_priority: ImageWaitingPrompt.extra_priority + 50
+            }, synchronize_session=False
+        )
+        wp_queue = db.session.query(
+            TextWaitingPrompt
+        ).filter(
+            TextWaitingPrompt.n > 0,
+            TextWaitingPrompt.faulted == False,
+            TextWaitingPrompt.active == True,
+        ).update(
+            {
+                TextWaitingPrompt.extra_priority: TextWaitingPrompt.extra_priority + 50
             }, synchronize_session=False
         )
         db.session.commit()

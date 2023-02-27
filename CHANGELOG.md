@@ -1,6 +1,10 @@
 # Changelog
 
 
+# 4.0.6
+
+* Improved filtering for WP priority increase to avoid deadlocks
+
 # 4.0.5
 
 * Increased kudos consumption by 1 per weight.
