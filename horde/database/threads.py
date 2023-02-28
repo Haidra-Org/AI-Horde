@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_
 
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
 from horde.classes.base.user import User
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
@@ -31,17 +31,17 @@ def get_quorum():
     # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
     if SQLITE_MODE: 
         return None
-    quorum = horde_r.get('horde_quorum')
+    quorum = hr.horde_r.get('horde_quorum')
     if not quorum:
-        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        hr.horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.warning(f"Quorum changed to port {args.port} with ID {horde_instance_id}")
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
         return None
     if quorum == horde_instance_id:
-        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        hr.horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
-        horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        hr.horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
     return(quorum)
 
@@ -81,7 +81,7 @@ def store_prioritized_wp_queue():
                 cached_queue = json.dumps(serialized_wp_list)
                 # We set the expiry in redis to 10 seconds, in case the primary thread dies
                 # However the primary thread is set to set the cache every 1 second
-                horde_r.setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
+                hr.horde_r_setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
             except (TypeError, OverflowError) as e:
                 logger.error(f"Failed serializing with error: {e}")
 
@@ -93,15 +93,16 @@ def store_worker_list():
     with HORDE.app_context():
         serialized_workers = []
         serialized_workers_privileged = []
-        # I could do this with a comprehension, but this is clearer to understand
+        # This is too slow. Needs heavy caching currently
+        # TODO: Figure out a way to get only the info I need from the DB query and format it into json by hand?
         for worker in get_active_workers():
             serialized_workers.append(worker.get_details())
             serialized_workers_privileged.append(worker.get_details(2))
         json_workers = json.dumps(serialized_workers)
         json_workers_privileged = json.dumps(serialized_workers_privileged)
         try:
-            horde_r.setex('worker_cache', timedelta(seconds=30), json_workers)
-            horde_r.setex('worker_cache_privileged', timedelta(seconds=30), json_workers_privileged)
+            hr.horde_r_setex('worker_cache', timedelta(seconds=300), json_workers)
+            hr.horde_r_setex('worker_cache_privileged', timedelta(seconds=300), json_workers_privileged)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
@@ -116,7 +117,7 @@ def store_worker_list():
 #             serialized_workers.append(worker.get_details())
 #         json_workers = json.dumps(serialized_workers)
 #         try:
-#             horde_r.setex('worker_cache', timedelta(seconds=30), json_workers)
+#             hr.horde_r_setex('worker_cache', timedelta(seconds=30), json_workers)
 #         except (TypeError, OverflowError) as e:
 #             logger.error(f"Failed serializing workers with error: {e}")
 
@@ -232,7 +233,7 @@ def store_available_models():
     with HORDE.app_context():
         json_models = json.dumps(get_available_models())
         try:
-            horde_r.setex('models_cache', timedelta(seconds=240), json_models)
+            hr.horde_r_setex('models_cache', timedelta(seconds=240), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
@@ -242,7 +243,7 @@ def store_totals():
     with HORDE.app_context():
         json_totals = json.dumps(count_totals())
         try:
-            horde_r.set('totals_cache', json_totals)
+            hr.horde_r_set('totals_cache', json_totals)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing totals with error: {e}")
 
@@ -297,7 +298,7 @@ def store_patreon_members():
             member_dict["alias"] = note["alias"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
-    horde_r.set('patreon_cache', cached_patreons)
+    hr.horde_r_set('patreon_cache', cached_patreons)
 
 
 @logger.catch(reraise=True)
@@ -336,4 +337,4 @@ def store_compiled_filter_regex():
         for filter_id in [10, 11, 20]:
             filter = compile_regex_filter(filter_id)
             # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
-            horde_r.set(f'filter_{filter_id}', filter)
+            hr.horde_r_set(f'filter_{filter_id}', filter)

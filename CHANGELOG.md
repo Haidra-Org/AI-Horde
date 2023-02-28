@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.0.9
+
+* Added backup local redis cache
+
 # 4.0.8
 
 * Fixed limiter for text status

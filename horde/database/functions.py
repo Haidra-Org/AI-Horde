@@ -27,7 +27,7 @@ from horde.classes.base.team import Team
 from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.utils import hash_api_key
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.enums import State
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
@@ -280,9 +280,9 @@ def get_available_models():
 
 def retrieve_available_models(model_type=None,min_count=None,max_count=None):
     '''Retrieves model details from Redis cache, or from DB if cache is unavailable'''
-    if horde_r is None:
+    if hr.horde_r is None:
         return get_available_models()
-    model_cache = horde_r.get('models_cache')
+    model_cache = hr.horde_r_get('models_cache')
     try:
         models_ret = json.loads(model_cache)
     except TypeError as e:
@@ -475,9 +475,9 @@ def count_totals():
 
 def retrieve_totals():
     '''Retrieves horde totals from Redis cache'''
-    if horde_r is None:
+    if hr.horde_r is None:
         return count_totals()
-    totals_ret = horde_r.get('totals_cache')
+    totals_ret = hr.horde_r_get('totals_cache')
     if totals_ret is None:
         return {
             "queued_requests": 0,
@@ -733,19 +733,19 @@ def refresh_worker_performances_cache(request_type = "image"):
         "text": retrieve_worker_performances(TextWorker),
     }
     try:
-        horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), ret_dict["image"])
-        horde_r.setex(f'text_worker_performances_avg_cache', timedelta(seconds=30), ret_dict["text"])
+        hr.horde_r_setex(f'worker_performances_avg_cache', timedelta(seconds=30), ret_dict["image"])
+        hr.horde_r_setex(f'text_worker_performances_avg_cache', timedelta(seconds=30), ret_dict["text"])
     except Exception as e:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return ret_dict[request_type]
 
 def get_request_avg(request_type = "image"):
-    if horde_r == None:
+    if hr.horde_r == None:
         return retrieve_worker_performances(WORKER_CLASS_MAP[request_type])
     if request_type == "image":
-        perf_cache = horde_r.get(f'worker_performances_avg_cache')
+        perf_cache = hr.horde_r_get(f'worker_performances_avg_cache')
     else:
-        perf_cache = horde_r.get(f'text_worker_performances_avg_cache')
+        perf_cache = hr.horde_r_get(f'text_worker_performances_avg_cache')
     if not perf_cache:
         return refresh_worker_performances_cache(request_type)
     perf_cache = float(perf_cache)
@@ -767,9 +767,9 @@ def wp_has_valid_workers(wp, limited_workers_ids = None):
 
 @logger.catch(reraise=True)
 def retrieve_prioritized_wp_queue(wp_type):
-    if horde_r is None:
+    if hr.horde_r is None:
         return None
-    cached_queue = horde_r.get(f'{wp_type}_wp_cache')
+    cached_queue = hr.horde_r_get(f'{wp_type}_wp_cache')
     if cached_queue is None:
         return None
     try:
