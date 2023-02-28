@@ -86,7 +86,7 @@ def delete_source_image(source_image_uuid):
 
 def upload_image(client, bucket, image, filename, quality=100):
     image_io = BytesIO()
-    image.save(image_io, format="WebP", quality=quality)
+    image.save(image_io, format="WebP", quality=quality, exact=True)
     image_io.seek(0)
     try:
         response = client.upload_fileobj(

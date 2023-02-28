@@ -8,7 +8,6 @@ from horde.classes.stable.worker import ImageWorker
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
-from horde.r2 import upload_source_image, generate_img_download_url
 from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import ensure_source_image_uploaded

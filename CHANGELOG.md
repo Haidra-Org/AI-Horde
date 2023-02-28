@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.0.10
+
+* Preserve image alpha channel
+
 # 4.0.9
 
 * Added backup local redis cache

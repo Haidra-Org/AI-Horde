@@ -66,7 +66,7 @@ def convert_source_image_to_webp(source_image_b64):
             return(source_image_b64)
         image, quality, width, height = convert_source_image_to_pil(source_image_b64)
         buffer = BytesIO()
-        image.save(buffer, format="WebP", quality=quality)
+        image.save(buffer, format="WebP", quality=quality, exact=True)
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
         logger.debug(f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars")
         return final_image_b64
