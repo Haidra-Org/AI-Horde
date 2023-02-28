@@ -7,7 +7,7 @@ from horde.logger import logger
 # Threads
 quorum = Quorum(1, threads.get_quorum)
 wp_list_cacher = PrimaryTimedFunction(1, threads.store_prioritized_wp_queue, quorum=quorum)
-worker_cacher = PrimaryTimedFunction(25, threads.store_worker_list, quorum=quorum)
+worker_cacher = PrimaryTimedFunction(30, threads.store_worker_list, quorum=quorum)
 model_cacher = PrimaryTimedFunction(10, threads.store_available_models, quorum=quorum)
 wp_cleaner = PrimaryTimedFunction(60, threads.check_waiting_prompts, quorum=quorum)
 interrogations_cleaner = PrimaryTimedFunction(60, threads.check_interrogations, quorum=quorum)
