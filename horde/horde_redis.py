@@ -48,6 +48,7 @@ def horde_local_setex_to_json(key, seconds, value):
     if horde_local_r:
         try:
             horde_local_r.setex(key, timedelta(seconds=seconds), json.dumps(value))
+            logger.debug(json.dumps(value))
         except Exception as err:
             logger.error(f"Something went wrong when setting local redis: {e}")
 
