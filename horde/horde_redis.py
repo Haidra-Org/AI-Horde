@@ -69,6 +69,7 @@ def horde_r_get(key):
     """
     value = None
     if horde_local_r:
+        logger.warning(f"Got {key} from Local")
         value = horde_local_r.get(key)
     if value is None and horde_r:
         value = horde_r.get(key)
