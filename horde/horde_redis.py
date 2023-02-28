@@ -28,7 +28,7 @@ def horde_r_set(key, value):
         horde_local_r.set(key, value)
 
 def horde_r_setex(key, expiry, value):
-    logger.debug(expiry < timedelta(seconds=5))
+    logger.debug([expiry, timedelta(seconds=5), expiry < timedelta(seconds=5)])
     if horde_r:
         horde_r.setex(key, expiry, value)
     if horde_local_r:
