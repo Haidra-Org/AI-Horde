@@ -59,6 +59,7 @@ class TextAsyncStatus(Resource):
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
 
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
+    decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_wp_status_full, code=200, description='Async Request Full Status')
     @api.response(404, 'Request Not found', models.response_model_error)
