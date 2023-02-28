@@ -78,7 +78,7 @@ class TextWorker(Worker):
         db.session.query(TextWorkerSoftprompts).filter_by(worker_id=self.id).delete()
         db.session.commit()
         for softprompt_name in softprompts:
-            softprompt = WorkerModel(worker_id=self.id,softprompt=softprompt_name)
+            softprompt = TextWorkerSoftprompts(worker_id=self.id,softprompt=softprompt_name)
             db.session.add(softprompt)
         db.session.commit()
         self.refresh_softprompt_cache()
