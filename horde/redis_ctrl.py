@@ -18,6 +18,10 @@ def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((redis_hostname, redis_port)) == 0
 
+def is_local_redis_up() -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", 6379)) == 0
+
 def ger_limiter_url():
     return(f"{redis_address}/{limiter_db}")
 
@@ -29,6 +33,14 @@ def get_horde_db():
         host=redis_hostname,
         port=redis_port,
         db = horde_db,
+        decode_responses=True)
+    return(rdb)
+
+def get_local_horde_db():
+    rdb = redis.Redis(
+        host="127.0.0.1",
+        port=6379,
+        db = 6,
         decode_responses=True)
     return(rdb)
 

@@ -21,7 +21,7 @@ from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 import horde.classes.base.stats as stats
 from horde.utils import hash_api_key
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.database.functions import query_prioritized_wps
 from horde.enums import State
@@ -198,9 +198,9 @@ def get_all_wps():
 
 
 def get_cached_worker_performance():
-    if horde_r == None:
+    if hr.horde_r == None:
         return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
-    perf_cache = horde_r.get(f'worker_performances_cache')
+    perf_cache = hr.horde_r.get(f'worker_performances_cache')
     if not perf_cache:
         return refresh_worker_performances_cache()
     try:
@@ -225,7 +225,7 @@ def retrieve_worker_performances():
 def refresh_worker_performances_cache():
     avg_perf = retrieve_worker_performances()
     try:
-        horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), avg_perf)
+        hr.horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), avg_perf)
     except Exception as e:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return avg_perf

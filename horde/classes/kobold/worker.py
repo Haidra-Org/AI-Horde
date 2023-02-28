@@ -11,7 +11,7 @@ from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
 from horde.flask import db, SQLITE_MODE
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -47,15 +47,15 @@ class TextWorker(Worker):
     def refresh_softprompt_cache(self):
         softprompts_list = [s.softprompt for s in self.softprompts]
         try:
-            horde_r.setex(f'worker_{self.id}_softprompts_cache', timedelta(seconds=600), json.dumps(softprompts_list))
+            hr.horde_r.setex(f'worker_{self.id}_softprompts_cache', timedelta(seconds=600), json.dumps(softprompts_list))
         except Exception as e:
             logger.warning(f"Error when trying to set softprompts cache: {e}. Retrieving from DB.")
         return softprompts_list
 
     def get_softprompt_names(self):
-        if horde_r is None:
+        if hr.horde_r is None:
             return [s.softprompt for s in self.softprompts]
-        softprompts_cache = horde_r.get(f'worker_{self.id}_softprompts_cache')
+        softprompts_cache = hr.horde_r.get(f'worker_{self.id}_softprompts_cache')
         if not softprompts_cache:
             return self.refresh_softprompt_cache()
         try:

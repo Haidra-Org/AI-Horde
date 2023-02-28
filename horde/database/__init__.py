@@ -1,7 +1,6 @@
 from horde.threads import PrimaryTimedFunction
 from horde.database.classes import Quorum
 import horde.database.threads as threads
-from horde.horde_redis import horde_r
 from horde.argparser import args
 from horde.logger import logger
 

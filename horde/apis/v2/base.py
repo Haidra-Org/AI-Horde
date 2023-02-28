@@ -26,7 +26,7 @@ from horde.classes.base.detection import Filter
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
 from horde.patreon import patrons
 from horde.detection import prompt_checker
 from horde.r2 import upload_prompt
@@ -525,12 +525,12 @@ class Workers(Resource):
             admin = database.find_user_by_api_key(self.args['apikey'])
             if admin and admin.moderator:
                 details_privilege = 2
-        if not horde_r:
+        if not hr.horde_r:
             return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
         if details_privilege == 2:
-            cached_workers = horde_r.get('worker_cache_privileged')
+            cached_workers = hr.horde_r.get('worker_cache_privileged')
         else:
-            cached_workers = horde_r.get('worker_cache')
+            cached_workers = hr.horde_r.get('worker_cache')
         if cached_workers is None:
             workers_ret = []
             logger.warning("No worker cache found! Check caching thread!")

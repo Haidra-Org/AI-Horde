@@ -12,7 +12,8 @@ from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
+
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
@@ -452,15 +453,15 @@ class Worker(WorkerTemplate):
     def refresh_model_cache(self):
         models_list = [m.model for m in self.models]
         try:
-            horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), json.dumps(models_list))
+            hr.horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), json.dumps(models_list))
         except Exception as err:
             logger.debug(f"Error when trying to set models cache: {err}. Retrieving from DB.")
         return models_list
 
     def get_model_names(self):
-        if horde_r is None:
+        if hr.horde_r is None:
             return [m.model for m in self.models]
-        model_cache = horde_r.get(f'worker_{self.id}_model_cache')
+        model_cache = hr.horde_r.get(f'worker_{self.id}_model_cache')
         if not model_cache:
             return self.refresh_model_cache()
         try:

@@ -10,7 +10,7 @@ from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
-from horde.horde_redis import horde_r
+from horde import horde_redis as hr
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -66,7 +66,7 @@ class InterrogationForms(db.Model):
             return(-1)
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
         if not self.interrogation.r2stored:
-            horde_r.setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
+            hr.horde_r.setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
         self.result = result
         self.state = State.DONE
         self.record(self.kudos)
@@ -167,7 +167,7 @@ class Interrogation(db.Model):
         '''Checks if the image is already in the redis cache. 
         If it is, it sets the cached forms to DONE and sets the cached value as its result
         '''
-        cached_result = horde_r.get(f'{form.name}_{source_image}')
+        cached_result = hr.horde_r.get(f'{form.name}_{source_image}')
         # The entry might be False, so we need to check explicitly against None
         if cached_result != None:
             form.result = json.loads(cached_result)
