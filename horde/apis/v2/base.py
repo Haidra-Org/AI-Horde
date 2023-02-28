@@ -532,7 +532,7 @@ class Workers(Resource):
         else:
             cached_workers = hr.horde_r_get('worker_cache')
         if cached_workers is None:
-            logger.warning("No worker cache found! Check caching thread!")
+            logger.warning(f"No {details_privilege} worker cache found! Check caching thread!")
             workers = self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
             if details_privilege > 0:
                 hr.horde_local_setex_to_json("worker_cache_privileged", 30, workers)
