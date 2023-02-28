@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 
 from horde.redis_ctrl import get_horde_db, is_redis_up, get_local_horde_db, is_local_redis_up
 from horde.logger import logger
@@ -35,6 +36,20 @@ def horde_r_setex(key, expiry, value):
         expiry = timedelta(5)
     if horde_local_r:
         horde_local_r.setex(key, expiry, value)
+
+def horde_r_local_set_to_json(key, value):
+    if horde_local_r:
+        try:
+            horde_local_r.set(key, json.dumps(value))
+        except Exception as err:
+            logger.error(f"Something went wrong when setting local redis: {e}")
+
+def horde_local_setex_to_json(key, seconds, value):
+    if horde_local_r:
+        try:
+            horde_local_r.setex(key, timedelta(seconds=seconds), json.dumps(value))
+        except Exception as err:
+            logger.error(f"Something went wrong when setting local redis: {e}")
 
 def horde_r_get(key):
     """Retrieves the value from local redis if it exists
