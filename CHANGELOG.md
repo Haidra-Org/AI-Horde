@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.0.8
+
+* Fixed limiter for text status
+* fixed error when invalid priority usernames sent to interrogation
 
 # 4.0.6
 

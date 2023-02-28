@@ -13,6 +13,7 @@ from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import ensure_source_image_uploaded
 from horde.model_reference import model_reference
+from horde import exceptions as e
 
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 
