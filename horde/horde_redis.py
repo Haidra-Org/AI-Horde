@@ -57,7 +57,6 @@ def horde_local_setex_to_json(key, seconds, value):
         locks[key].acquire()
         try:
             horde_local_r.setex(key, timedelta(seconds=seconds), json.dumps(value))
-            logger.warning(len(json.dumps(value)))
         except Exception as err:
             logger.error(f"Something went wrong when setting local redis: {e}")
         locks[key].release()
@@ -69,8 +68,8 @@ def horde_r_get(key):
     """
     value = None
     if horde_local_r:
-        if key in ["worker_cache","worker_cache_privileged"]:
-            logger.warning(f"Got {key} from Local")
+        # if key in ["worker_cache","worker_cache_privileged"]:
+        #     logger.warning(f"Got {key} from Local")
         value = horde_local_r.get(key)
     if value is None and horde_r:
         value = horde_r.get(key)

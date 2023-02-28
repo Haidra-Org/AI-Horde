@@ -93,7 +93,8 @@ def store_worker_list():
     with HORDE.app_context():
         serialized_workers = []
         serialized_workers_privileged = []
-        # I could do this with a comprehension, but this is clearer to understand
+        # This is too slow. Needs heavy caching currently
+        # TODO: Figure out a way to get only the info I need from the DB query and format it into json by hand?
         for worker in get_active_workers():
             serialized_workers.append(worker.get_details())
             serialized_workers_privileged.append(worker.get_details(2))
