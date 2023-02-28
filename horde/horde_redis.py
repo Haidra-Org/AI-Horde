@@ -40,8 +40,8 @@ def horde_r_get(key):
     """
     value = None
     if horde_local_r:
-        ttl = horde_local_r.ttl(key)
-        logger.debug(ttl < timedelta(seconds=5))
+        ttl = abs(horde_local_r.ttl(key))
+        logger.debug(ttl < 5)
         value = horde_local_r.get(key)
     if value is None:
         if horde_r:
