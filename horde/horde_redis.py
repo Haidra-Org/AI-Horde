@@ -69,7 +69,7 @@ def horde_r_get(key):
     """
     value = None
     if horde_local_r:
-        if key == "worker_cache":
+        if key in ["worker_cache","worker_cache_privileged"]:
             logger.warning(f"Got {key} from Local")
         value = horde_local_r.get(key)
     if value is None and horde_r:
