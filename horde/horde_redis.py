@@ -30,6 +30,7 @@ def horde_r_set(key, value):
 def horde_r_setex(key, expiry, value):
     if horde_r:
         horde_r.setex(key, expiry, value)
+    # We don't keep local cache for more than 5 seconds
     if expiry > timedelta(5):
         expiry = timedelta(5)
     if horde_local_r:
