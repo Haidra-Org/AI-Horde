@@ -26,7 +26,10 @@ class ImageProcessingGeneration(ProcessingGeneration):
         if generation == "R2":
             if not self.wp.r2:
                 img = download_procgen_image(self.id, self.wp.shared)
-                generation = convert_pil_to_b64(img)
+                if img is None:
+                    generation = "N/A"
+                else:
+                    generation = convert_pil_to_b64(img)
             else:
                 generation = generate_procgen_download_url(str(self.id), self.wp.shared)
         ret_dict = {
