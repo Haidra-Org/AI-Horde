@@ -533,6 +533,7 @@ class Workers(Resource):
             cached_workers = horde_r.get('worker_cache')
         if cached_workers is None:
             workers_ret = []
+            logger.warning("No worker cache found! Check caching thread!")
             return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
         return self.parse_worker_by_query(json.loads(cached_workers))
 

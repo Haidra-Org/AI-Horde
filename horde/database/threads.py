@@ -100,8 +100,8 @@ def store_worker_list():
         json_workers = json.dumps(serialized_workers)
         json_workers_privileged = json.dumps(serialized_workers_privileged)
         try:
-            horde_r.setex('worker_cache', timedelta(seconds=30), json_workers)
-            horde_r.setex('worker_cache_privileged', timedelta(seconds=30), json_workers_privileged)
+            horde_r.setex('worker_cache', timedelta(seconds=150), json_workers)
+            horde_r.setex('worker_cache_privileged', timedelta(seconds=150), json_workers_privileged)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
