@@ -42,7 +42,7 @@ def horde_r_get(key):
     if horde_local_r:
         ttl = horde_local_r.ttl(key)
         absttl = abs(ttl)
-        logger.debug([key,ttl, absttl, ttl < 5])
+        logger.debug([key,ttl, absttl, ttl < 5])        
         value = horde_local_r.get(key)
     if value is None:
         if horde_r:
@@ -50,11 +50,11 @@ def horde_r_get(key):
             if value is not None and horde_local_r is not None:
                 ttl = horde_r.ttl(key)
                 logger.debug([key,ttl])
-                if ttl == -1 or ttl > 5:
+                if abs(ttl) > 5:
                     ttl = 5
                 # The local redis cache is always very temporary
                 if value is not None:
-                    horde_local_r.setex(key, timedelta(seconds=2), value)
+                    horde_local_r.setex(key, timedelta(seconds=abs(ttl)), value)
     return value
                 
 
