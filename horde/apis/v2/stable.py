@@ -13,7 +13,6 @@ from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import ensure_source_image_uploaded
 from horde.model_reference import model_reference
-from horde import exceptions as e
 
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 
@@ -474,10 +473,10 @@ class Interrogate(Resource):
         # If anything goes wrong when uploading an image, we don't want to leave garbage around
         try:
             self.source_image, img, self.r2stored = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
-        except Exception as e:
+        except Exception as err:
             db.session.delete(self.interrogation)
             db.session.commit()
-            raise e
+            raise err
         self.interrogation.set_source_image(self.source_image, self.r2stored)
         ret_dict = {"id":self.interrogation.id}
         return(ret_dict, 202)
@@ -609,8 +608,8 @@ class InterrogatePop(JobPopTemplate):
         for form in self.prioritized_forms:
             try:
                 can_interrogate, skipped_reason = self.worker.can_interrogate(form)
-            except Exception as e:
-                logger.error(f"Error when checking interrogation for worker. Skipping: {e}.")
+            except Exception as err:
+                logger.error(f"Error when checking interrogation for worker. Skipping: {err}.")
                 continue
             if not can_interrogate:
                 # We don't report on secret skipped reasons
@@ -626,8 +625,8 @@ class InterrogatePop(JobPopTemplate):
                 continue
             try:
                 form_ret = form.pop(self.worker)
-            except Exception as e:
-                logger.error(f"Error when popping interrogation. Skipping: {e}.")
+            except Exception as err:
+                logger.error(f"Error when popping interrogation. Skipping: {err}.")
                 continue
             # logger.debug(worker_ret)
             if form_ret is None:
