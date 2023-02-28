@@ -10,7 +10,7 @@ class PatreonCache(PrimaryTimedFunction):
 
     def call_function(self):
         try:
-            patrons_json = json.loads(hr.horde_r.get("patreon_cache"))
+            patrons_json = json.loads(hr.horde_r_get("patreon_cache"))
             # json keys are always strings, so we need to convert them to ints to easily index user ids later
             for pid in patrons_json:
                 self.patrons[int(pid)] = patrons_json[pid]

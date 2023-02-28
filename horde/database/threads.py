@@ -81,7 +81,7 @@ def store_prioritized_wp_queue():
                 cached_queue = json.dumps(serialized_wp_list)
                 # We set the expiry in redis to 10 seconds, in case the primary thread dies
                 # However the primary thread is set to set the cache every 1 second
-                hr.horde_r.setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
+                hr.horde_r_setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
             except (TypeError, OverflowError) as e:
                 logger.error(f"Failed serializing with error: {e}")
 
@@ -100,8 +100,8 @@ def store_worker_list():
         json_workers = json.dumps(serialized_workers)
         json_workers_privileged = json.dumps(serialized_workers_privileged)
         try:
-            hr.horde_r.setex('worker_cache', timedelta(seconds=150), json_workers)
-            hr.horde_r.setex('worker_cache_privileged', timedelta(seconds=150), json_workers_privileged)
+            hr.horde_r_setex('worker_cache', timedelta(seconds=150), json_workers)
+            hr.horde_r_setex('worker_cache_privileged', timedelta(seconds=150), json_workers_privileged)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
@@ -116,7 +116,7 @@ def store_worker_list():
 #             serialized_workers.append(worker.get_details())
 #         json_workers = json.dumps(serialized_workers)
 #         try:
-#             hr.horde_r.setex('worker_cache', timedelta(seconds=30), json_workers)
+#             hr.horde_r_setex('worker_cache', timedelta(seconds=30), json_workers)
 #         except (TypeError, OverflowError) as e:
 #             logger.error(f"Failed serializing workers with error: {e}")
 
@@ -232,7 +232,7 @@ def store_available_models():
     with HORDE.app_context():
         json_models = json.dumps(get_available_models())
         try:
-            hr.horde_r.setex('models_cache', timedelta(seconds=240), json_models)
+            hr.horde_r_setex('models_cache', timedelta(seconds=240), json_models)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing workers with error: {e}")
 
@@ -242,7 +242,7 @@ def store_totals():
     with HORDE.app_context():
         json_totals = json.dumps(count_totals())
         try:
-            hr.horde_r.set('totals_cache', json_totals)
+            hr.horde_r_set('totals_cache', json_totals)
         except (TypeError, OverflowError) as e:
             logger.error(f"Failed serializing totals with error: {e}")
 
@@ -297,7 +297,7 @@ def store_patreon_members():
             member_dict["alias"] = note["alias"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
-    hr.horde_r.set('patreon_cache', cached_patreons)
+    hr.horde_r_set('patreon_cache', cached_patreons)
 
 
 @logger.catch(reraise=True)
@@ -336,4 +336,4 @@ def store_compiled_filter_regex():
         for filter_id in [10, 11, 20]:
             filter = compile_regex_filter(filter_id)
             # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
-            hr.horde_r.set(f'filter_{filter_id}', filter)
+            hr.horde_r_set(f'filter_{filter_id}', filter)

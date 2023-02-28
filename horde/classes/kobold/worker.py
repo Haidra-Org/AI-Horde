@@ -47,7 +47,7 @@ class TextWorker(Worker):
     def refresh_softprompt_cache(self):
         softprompts_list = [s.softprompt for s in self.softprompts]
         try:
-            hr.horde_r.setex(f'worker_{self.id}_softprompts_cache', timedelta(seconds=600), json.dumps(softprompts_list))
+            hr.horde_r_setex(f'worker_{self.id}_softprompts_cache', timedelta(seconds=600), json.dumps(softprompts_list))
         except Exception as e:
             logger.warning(f"Error when trying to set softprompts cache: {e}. Retrieving from DB.")
         return softprompts_list
@@ -55,7 +55,7 @@ class TextWorker(Worker):
     def get_softprompt_names(self):
         if hr.horde_r is None:
             return [s.softprompt for s in self.softprompts]
-        softprompts_cache = hr.horde_r.get(f'worker_{self.id}_softprompts_cache')
+        softprompts_cache = hr.horde_r_get(f'worker_{self.id}_softprompts_cache')
         if not softprompts_cache:
             return self.refresh_softprompt_cache()
         try:

@@ -528,9 +528,9 @@ class Workers(Resource):
         if not hr.horde_r:
             return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
         if details_privilege == 2:
-            cached_workers = hr.horde_r.get('worker_cache_privileged')
+            cached_workers = hr.horde_r_get('worker_cache_privileged')
         else:
-            cached_workers = hr.horde_r.get('worker_cache')
+            cached_workers = hr.horde_r_get('worker_cache')
         if cached_workers is None:
             workers_ret = []
             logger.warning("No worker cache found! Check caching thread!")

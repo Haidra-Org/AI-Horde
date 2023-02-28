@@ -66,7 +66,7 @@ class InterrogationForms(db.Model):
             return(-1)
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
         if not self.interrogation.r2stored:
-            hr.horde_r.setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
+            hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
         self.result = result
         self.state = State.DONE
         self.record(self.kudos)
@@ -167,7 +167,7 @@ class Interrogation(db.Model):
         '''Checks if the image is already in the redis cache. 
         If it is, it sets the cached forms to DONE and sets the cached value as its result
         '''
-        cached_result = hr.horde_r.get(f'{form.name}_{source_image}')
+        cached_result = hr.horde_r_get(f'{form.name}_{source_image}')
         # The entry might be False, so we need to check explicitly against None
         if cached_result != None:
             form.result = json.loads(cached_result)

@@ -1,3 +1,4 @@
+from datetime import timedelta
 
 from horde.redis_ctrl import get_horde_db, is_redis_up, get_local_horde_db, is_local_redis_up
 from horde.logger import logger
@@ -27,6 +28,7 @@ def horde_r_set(key, value):
         horde_local_r.set(key, value)
 
 def horde_r_setex(key, expiry, value):
+    logger.debug(expiry < timedelta(seconds=5))
     if horde_r:
         horde_r.setex(key, expiry, value)
     if horde_local_r:
@@ -43,13 +45,12 @@ def horde_r_get(key):
     if value is None:
         if horde_r:
             value = horde_r.get(key)
-            if value is not None:
+            if value is not None and horde_local_r is not None:
                 ttl = horde_r.ttl(key)
                 logger.debug(ttl)
-                if ttl is not None:
-                     horde_local_r.setex(key, ttl, value)
-                else:
-                    horde_local_r.set(key, value)
+                # The local redis cache is always very temporary
+                if value is not None:
+                    horde_local_r.setex(key, timedelta(seconds=2), value)
     return value
                 
 

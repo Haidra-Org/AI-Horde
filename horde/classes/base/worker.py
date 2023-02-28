@@ -453,7 +453,7 @@ class Worker(WorkerTemplate):
     def refresh_model_cache(self):
         models_list = [m.model for m in self.models]
         try:
-            hr.horde_r.setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), json.dumps(models_list))
+            hr.horde_r_setex(f'worker_{self.id}_model_cache', timedelta(seconds=600), json.dumps(models_list))
         except Exception as err:
             logger.debug(f"Error when trying to set models cache: {err}. Retrieving from DB.")
         return models_list
@@ -461,7 +461,7 @@ class Worker(WorkerTemplate):
     def get_model_names(self):
         if hr.horde_r is None:
             return [m.model for m in self.models]
-        model_cache = hr.horde_r.get(f'worker_{self.id}_model_cache')
+        model_cache = hr.horde_r_get(f'worker_{self.id}_model_cache')
         if not model_cache:
             return self.refresh_model_cache()
         try:
