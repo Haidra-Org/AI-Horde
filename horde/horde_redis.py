@@ -1,8 +1,11 @@
 from datetime import timedelta
 import json
+from threading import Lock
 
 from horde.redis_ctrl import get_horde_db, is_redis_up, get_local_horde_db, is_local_redis_up
 from horde.logger import logger
+
+locks = {}
 
 horde_r = None
 logger.init("Horde Redis", status="Connecting")
@@ -21,7 +24,6 @@ if is_local_redis_up():
 else:
     logger.init_err("Horde Local Redis", status="Failed")
 
-
 def horde_r_set(key, value):
     if horde_r:
         horde_r.set(key, value)
@@ -39,18 +41,26 @@ def horde_r_setex(key, expiry, value):
 
 def horde_r_local_set_to_json(key, value):
     if horde_local_r:
+        if key not in locks:
+            locks[key] = Lock()
+        locks[key].lock.acquire()
         try:
             horde_local_r.set(key, json.dumps(value))
         except Exception as err:
             logger.error(f"Something went wrong when setting local redis: {e}")
+        locks[key].lock.release()
 
 def horde_local_setex_to_json(key, seconds, value):
     if horde_local_r:
+        if key not in locks:
+            locks[key] = Lock()
+        locks[key].lock.acquire()
         try:
             horde_local_r.setex(key, timedelta(seconds=seconds), json.dumps(value))
-            logger.warning(json.dumps(value))
+            logger.warning(len(json.dumps(value)))
         except Exception as err:
             logger.error(f"Something went wrong when setting local redis: {e}")
+        locks[key].lock.release()
 
 def horde_r_get(key):
     """Retrieves the value from local redis if it exists
