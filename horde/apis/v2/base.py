@@ -535,9 +535,9 @@ class Workers(Resource):
             logger.warning(f"No {details_privilege} worker cache found! Check caching thread!")
             workers = self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
             if details_privilege > 0:
-                hr.horde_local_setex_to_json("worker_cache_privileged", 30, workers)
+                hr.horde_local_setex_to_json("worker_cache_privileged", 300, workers)
             else:
-                hr.horde_local_setex_to_json("worker_cache", 30, workers)
+                hr.horde_local_setex_to_json("worker_cache", 300, workers)
             return workers
         return self.parse_worker_by_query(json.loads(cached_workers))
 

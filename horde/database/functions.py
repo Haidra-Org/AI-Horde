@@ -767,8 +767,6 @@ def wp_has_valid_workers(wp, limited_workers_ids = None):
 
 @logger.catch(reraise=True)
 def retrieve_prioritized_wp_queue(wp_type):
-    if hr.horde_r is None:
-        return None
     cached_queue = hr.horde_r_get(f'{wp_type}_wp_cache')
     if cached_queue is None:
         return None
