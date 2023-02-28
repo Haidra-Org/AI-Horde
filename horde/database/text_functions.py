@@ -93,54 +93,6 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
     return final_wp_list.all()
 
 
-def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
-    # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
-    if forms_list == None:
-        forms_list = []
-    final_interrogation_query = db.session.query(
-        InterrogationForms
-    ).join(
-        Interrogation
-    ).filter(
-        InterrogationForms.state == State.WAITING,
-        InterrogationForms.name.in_(forms_list),
-        InterrogationForms.expiry == None,
-        Interrogation.source_image != None,
-        or_(
-            Interrogation.safe_ip == True,
-            and_(
-                Interrogation.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
-        ),
-        or_(
-            worker.maintenance == False,
-            and_(
-                worker.maintenance == True,
-                Interrogation.user_id == worker.user_id,
-            ),
-        ),
-    ).order_by(
-        Interrogation.extra_priority.desc(), 
-        Interrogation.created.asc()
-    )
-    if priority_user_ids != None:
-        final_interrogation_query.filter(Interrogation.user_id.in_(priority_user_ids))
-    # We use this to not retrieve already retrieved with priority_users 
-    retrieve_limit = 100
-    if excluded_forms != None:
-        excluded_form_ids = [f.id for f in excluded_forms]
-        # We only want to retrieve 100 requests, so we reduce the amount to retrieve from non-prioritized
-        # requests by the prioritized requests.
-        retrieve_limit -= len(excluded_form_ids)
-        if retrieve_limit <= 0:
-            retrieve_limit = 1
-        final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
-    final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
-    # logger.debug(final_interrogation_query)
-    return final_interrogation_list
-
-
 def get_text_wp_by_id(wp_id, lite=False):
     try:
         wp_uuid = uuid.UUID(wp_id)

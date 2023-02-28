@@ -311,6 +311,7 @@ def increment_extra_priority():
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.faulted == False,
             ImageWaitingPrompt.active == True,
+            ImageWaitingPrompt.expiry > datetime.utcnow(),
         ).update(
             {
                 ImageWaitingPrompt.extra_priority: ImageWaitingPrompt.extra_priority + 50
@@ -322,6 +323,7 @@ def increment_extra_priority():
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.faulted == False,
             TextWaitingPrompt.active == True,
+            TextWaitingPrompt.expiry > datetime.utcnow(),
         ).update(
             {
                 TextWaitingPrompt.extra_priority: TextWaitingPrompt.extra_priority + 50
