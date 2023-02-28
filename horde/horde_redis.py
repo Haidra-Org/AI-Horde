@@ -54,7 +54,7 @@ def horde_r_get(key):
                 logger.debug([key,ttl])
                 if ttl > 5:
                     ttl = 5
-                if ttl < 0:
+                if ttl <= 0:
                     ttl = 2
                 # The local redis cache is always very temporary
                 if value is not None:
