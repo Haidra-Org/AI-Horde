@@ -1,5 +1,13 @@
 # Changelog
 
+# 4.1.0
+
+* Added recaptcha to login
+
+# 4.0.11
+
+* Fixed horde modes
+
 # 4.0.10
 
 * Preserve image alpha channel
