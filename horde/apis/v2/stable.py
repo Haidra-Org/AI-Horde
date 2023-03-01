@@ -484,7 +484,7 @@ class Interrogate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
-        if maintenance.active:
+        if database.mode_maintenance():
             raise e.MaintenanceMode('Interrogate')
         with HORDE.app_context():
             if self.args.apikey:

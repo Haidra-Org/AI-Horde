@@ -140,7 +140,7 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
-        if maintenance.active:
+        if database.mode_maintenance():
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
@@ -376,7 +376,7 @@ class JobPopTemplate(Resource):
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
             worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
+            if database.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
