@@ -7,12 +7,12 @@ from datetime import datetime, timedelta
 
 from horde.classes.base.waiting_prompt import WPModels
 from horde.logger import logger
-from horde.argparser import raid
 from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 from horde import horde_redis as hr
+from horde.classes.base import settings
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -286,7 +286,7 @@ class WorkerTemplate(db.Model):
         self.aborted_jobs += 1
         # These are accumulating too fast at 5. Increasing to 20
         dropped_job_threshold = 20
-        if raid.active:
+        if settings.mode_raid():
             dropped_job_threshold = 10
         # Avoiding putting into maintenance interrogation workers due to crashes from the model
         # TODO: Remove once crashes are fixed
@@ -295,7 +295,7 @@ class WorkerTemplate(db.Model):
         if self.aborted_jobs > dropped_job_threshold:
             # if a worker drops too many jobs in an hour, we put them in maintenance
             # except during a raid, as we don't want them to know we detected them.
-            if not raid.active:
+            if not settings.mode_raid():
                 self.toggle_maintenance(
                     True, 
                     "Maintenance mode activated because worker is dropping too many jobs."

@@ -12,6 +12,7 @@ from flask_dance.contrib.google import google
 from markdown import markdown
 
 from horde.database import functions as database
+from horde.classes.base import settings
 from horde.argparser import args, maintenance
 from horde.classes.base.user import User
 from horde.classes.base.news import News
@@ -257,6 +258,13 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
+                if settings.mode_raid():
+                    return render_template(
+                        'error.html', 
+                        page_title="Not Allowed", 
+                        error_message="We cannot allow anonymous registrations at the moment. "
+                                      "Please use one of the oauth2 buttons to login first."
+                    )
             username = sanitize_string(request.form['username'])
             user = User(
                 username=username,

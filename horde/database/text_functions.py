@@ -145,8 +145,12 @@ def get_form_by_id(form_id):
     return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
 
-def get_all_wps():
-    return db.session.query(WaitingPrompt).filter_by(active=True).all()
+def get_all_text_wps():
+    return db.session.query(TextWaitingPrompt).filter(
+        TextWaitingPrompt.active == True,
+        TextWaitingPrompt.faulted == False,
+        TextWaitingPrompt.expiry > datetime.utcnow(),
+    ).all()
 
 
 def get_cached_worker_performance():

@@ -9,12 +9,13 @@ from sqlalchemy import literal
 from sqlalchemy import func, or_, and_
 
 from horde.database import functions as database
+from horde.classes.base import settings
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
 from horde.flask import cache, db, HORDE
 from horde.limiter import limiter
 from horde.logger import logger
-from horde.argparser import args, maintenance, invite_only, raid
+from horde.argparser import args
 from horde import exceptions as e
 from horde.classes.base.user import User
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -140,7 +141,7 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
-        if maintenance.active:
+        if settings.mode_maintenance():
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
@@ -376,7 +377,7 @@ class JobPopTemplate(Resource):
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
             worker_count = self.user.count_workers()
-            if invite_only.active and worker_count >= self.user.worker_invited:
+            if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
@@ -401,7 +402,7 @@ class JobPopTemplate(Resource):
                 # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
                 #     self.safe_ip = True
                 # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
+                if not self.safe_ip and not settings.mode_raid():
                     raise e.UnsafeIP(self.worker_ip)
 
 
@@ -968,9 +969,10 @@ class HordeModes(Resource):
         '''Horde Maintenance Mode Status
         Use this endpoint to quicky determine if this horde is in maintenance, invite_only or raid mode.
         '''
+        cfg = settings.get_settings()
         ret_dict = {
-            "maintenance_mode": maintenance.active,
-            "invite_only_mode": invite_only.active,
+            "maintenance_mode": cfg.maintenance,
+            "invite_only_mode": cfg.invite_only,
             
         }
         is_privileged = False
@@ -981,13 +983,13 @@ class HordeModes(Resource):
                 raise e.InvalidAPIKey('admin worker details')
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
-            ret_dict["raid_mode"] = raid.active
+            ret_dict["raid_mode"] = cfg.raid
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
     parser.add_argument("maintenance", type=bool, required=False, help="Start or stop maintenance mode", location="json")
-    parser.add_argument("shutdown", type=int, required=False, help="Initiate a graceful shutdown of the horde in this amount of seconds. Will put horde in maintenance if not already set.", location="json")
+    # parser.add_argument("shutdown", type=int, required=False, help="Initiate a graceful shutdown of the horde in this amount of seconds. Will put horde in maintenance if not already set.", location="json")
     parser.add_argument("invite_only", type=bool, required=False, help="Start or stop worker invite-only mode", location="json")
     parser.add_argument("raid", type=bool, required=False, help="Start or stop raid mode", location="json")
 
@@ -1005,35 +1007,39 @@ class HordeModes(Resource):
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
         ret_dict = {}
+        cfg = settings.get_settings()
         if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
-            maintenance.toggle(self.args.maintenance)
-            logger.critical(f"Horde entered maintenance mode")
-            for wp in database.get_all_wps():
-                wp.abort_for_maintenance()
-            ret_dict["maintenance_mode"] = maintenance.active
+            cfg.maintenance = self.args.maintenance
+            if cfg.maintenance:
+                logger.critical(f"Horde entered maintenance mode")
+                for wp in database.get_all_wps():
+                    wp.abort_for_maintenance()
+            ret_dict["maintenance_mode"] = cfg.maintenance
         #TODO: Replace this with a node-offline call
-        if self.args.shutdown is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
-                raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
-            maintenance.activate()
-            for wp in database.get_all_wps():
-                wp.abort_for_maintenance()
-            database.shutdown(self.args.shutdown)
-            ret_dict["maintenance_mode"] = maintenance.active
+        # if self.args.shutdown is not None:
+        #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
+        #         raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
+        #     settings.maintenance = True
+        #     for wp in database.get_all_wps():
+        #         wp.abort_for_maintenance()
+        #     database.shutdown(self.args.shutdown)
+        #     ret_dict["maintenance_mode"] = settings.maintenance
         if self.args.invite_only is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
-            invite_only.toggle(self.args.invite_only)
-            ret_dict["invite_only_mode"] = invite_only.active
+            cfg.invite_only = self.args.invite_only
+            ret_dict["invite_only_mode"] = cfg.invite_only
         if self.args.raid is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
-            raid.toggle(self.args.raid)
-            ret_dict["raid_mode"] = raid.active
+            cfg.raid = self.args.raid
+            ret_dict["raid_mode"] = cfg.raid
         if not len(ret_dict):
             raise e.NoValidActions("No mod change selected!")
+        else:
+            db.session.commit()
         return(ret_dict, 200)
 
 class Teams(Resource):
@@ -1160,14 +1166,14 @@ class TeamSingle(Resource):
         ret_dict = {}
         # Only creators can set info notes
         if self.args.info is not None:
-            if not admin.moderator and admin != team.user:
+            if not admin.moderator and admin != team.owner:
                 raise e.NotOwner(admin.get_unique_alias(), team.name)
             ret = team.set_info(self.args.info)
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.info, 'team info')
             ret_dict["info"] = team.info
         if self.args.name is not None:
-            if not admin.moderator and admin != team.user:
+            if not admin.moderator and admin != team.owner:
                 raise e.NotModerator(admin.get_unique_alias(), 'PATCH TeamSingle')
             ret = team.set_name(self.args.name)
             if ret == "Profanity":
@@ -1201,7 +1207,7 @@ class TeamSingle(Resource):
         admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'DELETE TeamSingle')
-        if not admin.moderator and admin != team.user:
+        if not admin.moderator and admin != team.owner:
             raise e.NotModerator(admin.get_unique_alias(), 'DELETE TeamSingle')
         logger.warning(f'{admin.get_unique_alias()} deleted team: {team.name}')
         ret_dict = {

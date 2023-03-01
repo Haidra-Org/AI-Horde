@@ -43,7 +43,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             logger.error(self.args.params)
             return {"message": "Internal Server Error"},500
         ret_dict = {"id":self.wp.id}
-        if not database.wp_has_valid_workers(self.wp, self.workers) and not raid.active:
+        if not database.wp_has_valid_workers(self.wp, self.workers) and not settings.mode_raid():
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
@@ -484,7 +484,7 @@ class Interrogate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
-        if maintenance.active:
+        if settings.mode_maintenance():
             raise e.MaintenanceMode('Interrogate')
         with HORDE.app_context():
             if self.args.apikey:
