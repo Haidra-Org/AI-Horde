@@ -121,7 +121,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
             if type(err) == ImageValidationFailed:
                 raise err
             raise ImageValidationFailed("Something went wrong when retrieving image url.")
-        return source_image_string, False
+        return (source_image_string, None, False)
     else:
         download_url, img = upload_source_image_to_r2(source_image_string, uuid_string)
         return (download_url, img, True)
