@@ -33,6 +33,7 @@ from horde.enums import State
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
 from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
+from horde.model_reference import model_reference
 
 ALLOW_ANONYMOUS = True
 WORKER_CLASS_MAP = {
@@ -237,12 +238,7 @@ def get_available_models():
             models_dict[model_name]['workers'] = []
 
         # We don't want to report on any random model name a client might request
-        try:
-            r = requests.get("https://raw.githubusercontent.com/Sygil-Dev/nataili-model-reference/main/db.json", timeout=2).json()
-            known_models = list(r.keys())
-        except Exception as e:
-            logger.error(f"Error when downloading known models list: {e}")
-            known_models = []
+        known_models = model_reference.stable_diffusion_names()
         ophan_models = db.session.query(
             WPModels.model,
         ).join(
