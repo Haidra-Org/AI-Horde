@@ -1160,14 +1160,14 @@ class TeamSingle(Resource):
         ret_dict = {}
         # Only creators can set info notes
         if self.args.info is not None:
-            if not admin.moderator and admin != team.user:
+            if not admin.moderator and admin != team.owner:
                 raise e.NotOwner(admin.get_unique_alias(), team.name)
             ret = team.set_info(self.args.info)
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.info, 'team info')
             ret_dict["info"] = team.info
         if self.args.name is not None:
-            if not admin.moderator and admin != team.user:
+            if not admin.moderator and admin != team.owner:
                 raise e.NotModerator(admin.get_unique_alias(), 'PATCH TeamSingle')
             ret = team.set_name(self.args.name)
             if ret == "Profanity":
@@ -1201,7 +1201,7 @@ class TeamSingle(Resource):
         admin = database.find_user_by_api_key(self.args['apikey'])
         if not admin:
             raise e.InvalidAPIKey('User action: ' + 'DELETE TeamSingle')
-        if not admin.moderator and admin != team.user:
+        if not admin.moderator and admin != team.owner:
             raise e.NotModerator(admin.get_unique_alias(), 'DELETE TeamSingle')
         logger.warning(f'{admin.get_unique_alias()} deleted team: {team.name}')
         ret_dict = {
