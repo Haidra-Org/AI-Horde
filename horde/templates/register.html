@@ -45,7 +45,7 @@
         <p>To ensure you avoid this fate, please login using one of the buttons above first!</p>
         {% endif %}
         <p><strong>IMPORTANT:</strong> If you have been redirected here from a paid or ad-based client, please be aware that <strong>this is a fully volunteer-run service</strong>. You can always generate images for free here, without paying!</p>
-        <form method="POST" class="main-form">
+        <form method="POST" id="main-form">
             <div class="form-group">
                 <label for="username">Display Name *</label>
                 {% if username is none %}
@@ -54,7 +54,12 @@
                 <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" value="{{ username }}" required>
                 {% endif %}
             </div>
-            <button type="submit" class="btn btn-default">Submit</button>           
+            <script>
+                function onSubmit(token) {
+                  document.getElementById("main-form").submit();
+                }
+            </script>          
+            <button type="submit" class="btn btn-default g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback='onSubmit' data-action='submit'>Submit</button>           
         </form>
         {% if api_key is not none %}
         <h2>API Key</h2>

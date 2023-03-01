@@ -2,6 +2,8 @@ import oauthlib
 import random
 import secrets
 import patreon
+import os
+import requests
 from uuid import uuid4
 
 from flask import render_template, redirect, url_for, request
@@ -221,7 +223,25 @@ def register():
         user = database.find_user_by_oauth_id(oauth_id)
         if user:
             username = user.username
+    use_recaptcha = True
+    secret_key = os.getenv("RECAPTCHA_SECRET_KEY")
+    if not secret_key:
+        use_recaptcha = False
     if request.method == 'POST':
+        if use_recaptcha:
+            try:
+                recaptcha_response = request.form['g-recaptcha-response']
+                payload = {'response': recaptcha_response, 'secret': secret_key}
+                response = requests.post('https://www.google.com/recaptcha/api/siteverify', payload)
+                if not response.ok or not response.json()['success']:
+                    return render_template('recaptcha_error.html',
+                                        page_title=f"Recaptcha validation Error!",
+                                        use_recaptcha=False)
+            except Exception as err:
+                logger.error(err)
+                return render_template('recaptcha_error.html',
+                                    page_title=f"Recaptcha Submit Error!",
+                                    use_recaptcha=False)
         api_key = secrets.token_urlsafe(16)
         hashed_api_key = hash_api_key(api_key)
         if user:
@@ -255,6 +275,8 @@ def register():
         welcome = f"Welcome back {user.get_unique_alias()}"
     return render_template('register.html',
                            page_title=f"Join the {horde_title}!",
+                           use_recaptcha=use_recaptcha,
+                           recaptcha_site=os.getenv("RECAPTCHA_SITE_KEY"),
                            welcome=welcome,
                            user=user,
                            api_key=api_key,
