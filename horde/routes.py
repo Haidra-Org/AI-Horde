@@ -237,6 +237,13 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
+                if database.mode_raid():
+                    return render_template(
+                        'error.html', 
+                        page_title="Not Allowed", 
+                        error_message="We cannot allow anonymous registrations at the moment. "
+                                      "Please use one of the oauth2 buttons to login first."
+                    )
             username = sanitize_string(request.form['username'])
             user = User(
                 username=username,
