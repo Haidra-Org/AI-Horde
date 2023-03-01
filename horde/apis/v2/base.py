@@ -968,9 +968,10 @@ class HordeModes(Resource):
         '''Horde Maintenance Mode Status
         Use this endpoint to quicky determine if this horde is in maintenance, invite_only or raid mode.
         '''
+        settings = database.get_settings()
         ret_dict = {
-            "maintenance_mode": maintenance.active,
-            "invite_only_mode": invite_only.active,
+            "maintenance_mode": settings.maintenance,
+            "invite_only_mode": settings.invite_only,
             
         }
         is_privileged = False
@@ -981,7 +982,7 @@ class HordeModes(Resource):
                 raise e.InvalidAPIKey('admin worker details')
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
-            ret_dict["raid_mode"] = raid.active
+            ret_dict["raid_mode"] = settings.raid
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
@@ -1005,33 +1006,34 @@ class HordeModes(Resource):
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
         ret_dict = {}
+        settings = database.get_settings()
         if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
-            maintenance.toggle(self.args.maintenance)
+            settings.maintenance = self.args.maintenance
             logger.critical(f"Horde entered maintenance mode")
             for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
-            ret_dict["maintenance_mode"] = maintenance.active
+            ret_dict["maintenance_mode"] = settings.maintenance
         #TODO: Replace this with a node-offline call
         if self.args.shutdown is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
-            maintenance.activate()
+            settings.maintenance = True
             for wp in database.get_all_wps():
                 wp.abort_for_maintenance()
             database.shutdown(self.args.shutdown)
-            ret_dict["maintenance_mode"] = maintenance.active
+            ret_dict["maintenance_mode"] = settings.maintenance
         if self.args.invite_only is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
-            invite_only.toggle(self.args.invite_only)
-            ret_dict["invite_only_mode"] = invite_only.active
+            settings.invite_only = self.args.invite_only
+            ret_dict["invite_only_mode"] = settings.invite_only
         if self.args.raid is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
-            raid.toggle(self.args.raid)
-            ret_dict["raid_mode"] = raid.active
+            settings.raid = self.args.raid
+            ret_dict["raid_mode"] = settings.raid
         if not len(ret_dict):
             raise e.NoValidActions("No mod change selected!")
         return(ret_dict, 200)

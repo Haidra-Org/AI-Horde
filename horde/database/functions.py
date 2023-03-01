@@ -34,6 +34,7 @@ from horde.bridge_reference import check_bridge_capability, check_sampler_capabi
 
 from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
 from horde.model_reference import model_reference
+from horde.classes.base.settings import HordeSettings
 
 ALLOW_ANONYMOUS = True
 WORKER_CLASS_MAP = {
@@ -55,7 +56,6 @@ def shutdown(seconds):
     if seconds > 0:
         logger.critical(f"Initiating shutdown in {seconds} seconds")
         time.sleep(seconds)
-    logger.critical(f"DB written to disk. You can now SIGTERM.")
 
 def get_top_contributor():
     top_contribution = 0
@@ -707,7 +707,11 @@ def get_form_by_id(form_id):
     return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
 def get_all_wps():
-    return db.session.query(ImageWaitingPrompt).filter_by(active=True).all()
+    return db.session.query(ImageWaitingPrompt).filter(
+        ImageWaitingPrompt.active == True,
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.expiry > datetime.utcnow(),
+    ).all()    
 
 #TODO: Convert below three functions into a general "cached db request" (or something) class
 # Which I can reuse to cache the results of other requests
@@ -816,3 +820,6 @@ def compile_regex_filter(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
     all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
     return '|'.join(all_filter_regex)
+
+def get_settings():
+    return db.session.query(HordeSettings).first()

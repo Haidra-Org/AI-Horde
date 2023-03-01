@@ -15,6 +15,7 @@ from horde.classes.base.user import User
 from horde.classes.base.team import Team
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
+from horde.classes.base.settings import HordeSettings
 import horde.classes.base.stats
 from horde.classes.base.detection import Filter
 
@@ -36,3 +37,8 @@ with HORDE.app_context():
             concurrency=500
         )
         anon.create()
+    settings = HordeSettings.query.first()
+    if not settings:
+        settings = HordeSettings()
+        db.session.add(settings)
+        db.session.commit()
