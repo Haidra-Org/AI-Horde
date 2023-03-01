@@ -17,8 +17,8 @@ class ModelReference(PrimaryTimedFunction):
         # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
         # We don't want to report on any random model name a client might request
         try:
-            self.reference = requests.get("https://raw.githubusercontent.com/hlky/nataili-model-reference/main/stable_diffusion.json", timeout=2).json()
-            diffusers = requests.get("https://raw.githubusercontent.com/hlky/nataili-model-reference/main/diffusers.json", timeout=2).json()
+            self.reference = requests.get("https://raw.githubusercontent.com/db0/nataili-model-reference/main/stable_diffusion.json", timeout=2).json()
+            diffusers = requests.get("https://raw.githubusercontent.com/db0/nataili-model-reference/main/diffusers.json", timeout=2).json()
             self.reference.update(diffusers)
             # logger.debug(self.reference)
             self.stable_diffusion_names = set()
