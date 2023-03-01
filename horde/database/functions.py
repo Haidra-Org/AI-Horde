@@ -238,7 +238,7 @@ def get_available_models():
             models_dict[model_name]['workers'] = []
 
         # We don't want to report on any random model name a client might request
-        known_models = list(model_reference.stable_diffusion_names())
+        known_models = list(model_reference.stable_diffusion_names)
         ophan_models = db.session.query(
             WPModels.model,
         ).join(
