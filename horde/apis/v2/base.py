@@ -192,7 +192,7 @@ class GenerateTemplate(Resource):
                         "prompt": self.args.prompt,
                         "user": self.username,
                     }
-                    upload_prompt(prompt_dict)
+                    # upload_prompt(prompt_dict)
                     self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                     CounterMeasures.report_suspicion(self.user_ip)
                 raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
