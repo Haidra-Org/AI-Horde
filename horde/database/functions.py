@@ -820,19 +820,3 @@ def compile_regex_filter(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
     all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
     return '|'.join(all_filter_regex)
-
-def get_settings():
-    return db.session.query(HordeSettings).first()
-
-def mode_raid():
-    query = db.session.query(HordeSettings.raid).first()
-    return query.raid
-
-def mode_maintenance():
-    query = db.session.query(HordeSettings.maintenance).first()
-    return query.maintenance
-
-def mode_invite_only():
-    query = db.session.query(HordeSettings.invite_only).first()
-    return query.invite_only
-    

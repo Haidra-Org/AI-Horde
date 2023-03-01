@@ -9,6 +9,7 @@ from sqlalchemy import literal
 from sqlalchemy import func, or_, and_
 
 from horde.database import functions as database
+from horde.classes.base import settings
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
 from horde.flask import cache, db, HORDE
@@ -140,7 +141,7 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
-        if database.mode_maintenance():
+        if settings.mode_maintenance():
             raise e.MaintenanceMode('Generate')
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
@@ -376,7 +377,7 @@ class JobPopTemplate(Resource):
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
             worker_count = self.user.count_workers()
-            if database.mode_invite_only() and worker_count >= self.user.worker_invited:
+            if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
@@ -401,7 +402,7 @@ class JobPopTemplate(Resource):
                 # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
                 #     self.safe_ip = True
                 # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not database.mode_raid():
+                if not self.safe_ip and not settings.mode_raid():
                     raise e.UnsafeIP(self.worker_ip)
 
 
@@ -968,10 +969,10 @@ class HordeModes(Resource):
         '''Horde Maintenance Mode Status
         Use this endpoint to quicky determine if this horde is in maintenance, invite_only or raid mode.
         '''
-        settings = database.get_settings()
+        cfg = settings.get_settings()
         ret_dict = {
-            "maintenance_mode": settings.maintenance,
-            "invite_only_mode": settings.invite_only,
+            "maintenance_mode": cfg.maintenance,
+            "invite_only_mode": cfg.invite_only,
             
         }
         is_privileged = False
@@ -982,7 +983,7 @@ class HordeModes(Resource):
                 raise e.InvalidAPIKey('admin worker details')
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
-            ret_dict["raid_mode"] = settings.raid
+            ret_dict["raid_mode"] = cfg.raid
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
@@ -1006,16 +1007,16 @@ class HordeModes(Resource):
         if not admin:
             raise e.InvalidAPIKey('Admin action: ' + 'PUT HordeModes')
         ret_dict = {}
-        settings = database.get_settings()
+        cfg = settings.get_settings()
         if self.args.maintenance is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT HordeModes')
-            settings.maintenance = self.args.maintenance
-            if settings.maintenance:
+            cfg.maintenance = self.args.maintenance
+            if cfg.maintenance:
                 logger.critical(f"Horde entered maintenance mode")
                 for wp in database.get_all_wps():
                     wp.abort_for_maintenance()
-            ret_dict["maintenance_mode"] = settings.maintenance
+            ret_dict["maintenance_mode"] = cfg.maintenance
         #TODO: Replace this with a node-offline call
         # if self.args.shutdown is not None:
         #     if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
@@ -1028,13 +1029,13 @@ class HordeModes(Resource):
         if self.args.invite_only is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
-            settings.invite_only = self.args.invite_only
-            ret_dict["invite_only_mode"] = settings.invite_only
+            cfg.invite_only = self.args.invite_only
+            ret_dict["invite_only_mode"] = cfg.invite_only
         if self.args.raid is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT HordeModes')
-            settings.raid = self.args.raid
-            ret_dict["raid_mode"] = settings.raid
+            cfg.raid = self.args.raid
+            ret_dict["raid_mode"] = cfg.raid
         if not len(ret_dict):
             raise e.NoValidActions("No mod change selected!")
         else:

@@ -11,6 +11,7 @@ from flask_dance.contrib.google import google
 from markdown import markdown
 
 from horde.database import functions as database
+from horde.classes.base import settings
 from horde.argparser import args, maintenance
 from horde.classes.base.user import User
 from horde.classes.base.news import News
@@ -237,7 +238,7 @@ def register():
             if not oauth_id:
                 oauth_id = str(uuid4())
                 pseudonymous = True
-                if database.mode_raid():
+                if settings.mode_raid():
                     return render_template(
                         'error.html', 
                         page_title="Not Allowed", 
