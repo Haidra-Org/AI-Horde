@@ -94,6 +94,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared=True
         if self.args.source_image:
             shared=False
+        # hlky metldown
+        shared=False
         self.wp = ImageWaitingPrompt(
             self.workers,
             self.models,
