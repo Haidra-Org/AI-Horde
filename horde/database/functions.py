@@ -823,3 +823,16 @@ def compile_regex_filter(filter_type):
 
 def get_settings():
     return db.session.query(HordeSettings).first()
+
+def mode_raid():
+    query = db.session.query(HordeSettings.raid).first()
+    return query.raid
+
+def mode_maintenance():
+    query = db.session.query(HordeSettings.maintenance).first()
+    return query.maintenance
+
+def mode_invite_only():
+    query = db.session.query(HordeSettings.invite_only).first()
+    return query.invite_only
+    

@@ -14,7 +14,7 @@ from flask_restx import Namespace, Resource, reqparse
 from horde.flask import cache, db, HORDE
 from horde.limiter import limiter
 from horde.logger import logger
-from horde.argparser import args, maintenance, invite_only, raid
+from horde.argparser import args
 from horde import exceptions as e
 from horde.classes.base.user import User
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -401,7 +401,7 @@ class JobPopTemplate(Resource):
                 # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
                 #     self.safe_ip = True
                 # if a raid is ongoing, we do not inform the suspicious IPs we detected them
-                if not self.safe_ip and not raid.active:
+                if not self.safe_ip and not database.mode_raid():
                     raise e.UnsafeIP(self.worker_ip)
 
 
