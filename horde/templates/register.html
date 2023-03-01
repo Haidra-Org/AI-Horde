@@ -54,7 +54,12 @@
                 <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" value="{{ username }}" required>
                 {% endif %}
             </div>
-            <button type="submit" class="btn btn-default">Submit</button>           
+            <script>
+                function onSubmit(token) {
+                  document.getElementById("main-form").submit();
+                }
+            </script>          
+            <button type="submit" class="btn btn-default g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback='onSubmit' data-action='submit'>Submit</button>           
         </form>
         {% if api_key is not none %}
         <h2>API Key</h2>
