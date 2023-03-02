@@ -553,8 +553,6 @@ class Worker(WorkerTemplate):
         return(ret_dict)
 
     def delete(self):
-        for procgen in self.processing_gens:
-            procgen.abort()
         for word in self.blacklist:
             db.session.delete(word)
         for model in self.models:
