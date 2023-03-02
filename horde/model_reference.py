@@ -40,8 +40,8 @@ class ModelReference(PrimaryTimedFunction):
                 if self.text_reference[model].get("nsfw"):
                     self.nsfw_models.add(model)
 
-        except Exception as e:
-            logger.error(f"Error when downloading known models list: {e}")
+        except Exception as err:
+            logger.error(f"Error when downloading known models list: {err}")
 
     def get_model_names(self):
         return set(self.reference.keys())
