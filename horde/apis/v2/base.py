@@ -4,7 +4,7 @@ import regex as re
 import time
 import random
 from datetime import datetime
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError,InvalidRequestError
 from sqlalchemy import literal
 from sqlalchemy import func, or_, and_
 
@@ -708,7 +708,7 @@ class WorkerSingle(Resource):
         }
         try:
             worker.delete()
-        except IntegrityError:
+        except (IntegrityError, InvalidRequestError):
             raise e.Locked("Could not delete the worker at this point as it's referenced by a job it completed. Please try again after 20 mins.")
         return(ret_dict, 200)
 
