@@ -82,8 +82,8 @@ def store_prioritized_wp_queue():
                 # We set the expiry in redis to 10 seconds, in case the primary thread dies
                 # However the primary thread is set to set the cache every 1 second
                 hr.horde_r_setex(f'{wp_type}_wp_cache', timedelta(seconds=5), cached_queue)
-            except (TypeError, OverflowError) as e:
-                logger.error(f"Failed serializing with error: {e}")
+            except (TypeError, OverflowError) as err:
+                logger.error(f"Failed serializing with error: {err}")
 
 
 
@@ -103,8 +103,8 @@ def store_worker_list():
         try:
             hr.horde_r_setex('worker_cache', timedelta(seconds=300), json_workers)
             hr.horde_r_setex('worker_cache_privileged', timedelta(seconds=300), json_workers_privileged)
-        except (TypeError, OverflowError) as e:
-            logger.error(f"Failed serializing workers with error: {e}")
+        except (TypeError, OverflowError) as err:
+            logger.error(f"Failed serializing workers with error: {err}")
 
 
 # @logger.catch(reraise=True)
@@ -118,8 +118,8 @@ def store_worker_list():
 #         json_workers = json.dumps(serialized_workers)
 #         try:
 #             hr.horde_r_setex('worker_cache', timedelta(seconds=30), json_workers)
-#         except (TypeError, OverflowError) as e:
-#             logger.error(f"Failed serializing workers with error: {e}")
+#         except (TypeError, OverflowError) as err:
+#             logger.error(f"Failed serializing workers with error: {err}")
 
 
 
@@ -234,8 +234,8 @@ def store_available_models():
         json_models = json.dumps(get_available_models())
         try:
             hr.horde_r_setex('models_cache', timedelta(seconds=240), json_models)
-        except (TypeError, OverflowError) as e:
-            logger.error(f"Failed serializing workers with error: {e}")
+        except (TypeError, OverflowError) as err:
+            logger.error(f"Failed serializing workers with error: {err}")
 
 @logger.catch(reraise=True)
 def store_totals():
@@ -244,8 +244,8 @@ def store_totals():
         json_totals = json.dumps(count_totals())
         try:
             hr.horde_r_set('totals_cache', json_totals)
-        except (TypeError, OverflowError) as e:
-            logger.error(f"Failed serializing totals with error: {e}")
+        except (TypeError, OverflowError) as err:
+            logger.error(f"Failed serializing totals with error: {err}")
 
 @logger.catch(reraise=True)
 def prune_stats():
