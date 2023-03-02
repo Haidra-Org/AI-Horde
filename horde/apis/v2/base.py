@@ -490,7 +490,7 @@ class AwardKudos(Resource):
         user = database.find_user_by_api_key(self.args['apikey'])
         if not user:
             raise e.InvalidAPIKey('kudos transfer to: ' + self.args['username'])
-        if user.id not in [1]:
+        if user.id not in {1}:
             raise e.NotPrivileged(user.get_unique_alias(), "Only special people can award kudos. Now you're very special as well, just not the right kind.", "AwardKudos")
         dest_user = database.find_user_by_username(self.args['username'])
         if not dest_user:
@@ -1319,7 +1319,6 @@ class Filters(Resource):
             api_key = self.args.apikey, 
             operation = 'POST Filter',
             whitelisted_users = [
-                "Zelda_Fan#2230",
                 "Webhead#1193",
             ],
         )

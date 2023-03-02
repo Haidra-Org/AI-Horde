@@ -70,7 +70,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 * The community has made the following
     * Bots
         * [CraiyonArt Bot](https://t.me/CraiyonArtBot) (Telegram)
-        * [WriterBot Bot](https://harrisonvanderbyl.github.io/WriterBot/) (Discord)
+        * [WriterBot](https://harrisonvanderbyl.github.io/WriterBot/) (Discord)
         * [Turing Bot](https://github.com/MrlolDev/turing-bot) (Discord)
         * [AI Horde Bot](https://github.com/JamDon2/ai-horde-bot) (Discord, Obsolete)
     * Plugins
@@ -79,6 +79,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
         * [Unreal Engine Plugin](https://github.com/Mystfit/Unreal-StableDiffusionTools)
         * [Automatic 1111 Web UI](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)
         * [Blender Plugin](https://github.com/benrugg/AI-Render)
+        * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
     * Other
         * [npm SDK 1](https://www.npmjs.com/package/@zeldafan0225/stable_horde)
         * [npm SDK 2](https://www.npmjs.com/package/stable-horde-api)
