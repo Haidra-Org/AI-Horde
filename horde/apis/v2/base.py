@@ -491,7 +491,6 @@ class AwardKudos(Resource):
         if not user:
             raise e.InvalidAPIKey('kudos transfer to: ' + self.args['username'])
         if user.id not in {1}:
-            logger.debug([type(user.id),user.id])
             raise e.NotPrivileged(user.get_unique_alias(), "Only special people can award kudos. Now you're very special as well, just not the right kind.", "AwardKudos")
         dest_user = database.find_user_by_username(self.args['username'])
         if not dest_user:
