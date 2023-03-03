@@ -293,8 +293,9 @@ class JobPop(Resource):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
-        raise e.WorkerMaintenance("This Horde is now disabled. All workers should connect to aihorde.net only!")
         self.args = parsers.job_pop_parser.parse_args()
+        logger.warning(f"Worker '{self.args['name']}' still trying to pop")
+        raise e.WorkerMaintenance("This Horde is now disabled. All workers should connect to aihorde.net only!")
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.blacklist = []
