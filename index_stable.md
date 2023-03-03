@@ -81,8 +81,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
         * [Blender Plugin](https://github.com/benrugg/AI-Render)
         * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
     * Other
-        * [npm SDK 1](https://www.npmjs.com/package/@zeldafan0225/stable_horde)
-        * [npm SDK 2](https://www.npmjs.com/package/stable-horde-api)
+        * [npm SDK](https://www.npmjs.com/package/@zeldafan0225/ai_horde)
 
 ## REST API
 
