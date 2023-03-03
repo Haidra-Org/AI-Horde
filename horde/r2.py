@@ -77,6 +77,8 @@ def delete_procgen_image(procgen_id):
         Bucket=r2_transient_bucket,
         Key=f"{procgen_id}.webp"
     )
+    # if type(check_file(s3_client, f"{procgen_id}.webp")) != bool:
+    #     logger.error("procgen image not deleted!")
 
 def delete_source_image(source_image_uuid):
     response = s3_client.delete_object(
@@ -191,3 +193,4 @@ def check_file(client, filename):
 
 def check_shared_image(filename):
     return type(check_file(s3_client_shared,filename)) == dict
+

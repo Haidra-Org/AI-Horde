@@ -151,20 +151,15 @@ def check_waiting_prompts():
             # logger.debug(f"{wp.id}_msk")
             delete_source_image(f"{wp.id}_msk")
         # Cleans expired generated images, but not shared images
-        expired_r_wps = db.session.query(
-            ImageWaitingPrompt.id
-        ).filter(
-            ImageWaitingPrompt.expiry < datetime.utcnow(),
-            # We do not delete shared images
-            ImageWaitingPrompt.shared == False,
-        )
-        all_wp_r_id = [wp.id for wp in expired_r_wps.all()]
         expired_r2_procgens = db.session.query(
             ImageProcessingGeneration.id,
+        ).join(
+            ImageWaitingPrompt,
         ).filter(
-            ImageProcessingGeneration.wp_id.in_(all_wp_r_id)
+            ImageWaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.shared == False,
         ).all()
-        logger.info(f"Deleting {len(expired_r2_procgens)} procgens from {len(expired_r_wps)} exported WPs")
+        logger.info(f"Deleting {len(expired_r2_procgens)} procgens.")
         for procgen in expired_r2_procgens:
             delete_procgen_image(str(procgen.id))
         for wp_class, procgen_class in [
