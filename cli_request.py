@@ -59,13 +59,13 @@ class RequestData(object):
             final_src_img = Image.open(self.source_image)
             buffer = BytesIO()
             # We send as WebP to avoid using all the horde bandwidth
-            final_src_img.save(buffer, format="Webp", quality=95)
+            final_src_img.save(buffer, format="Webp", quality=95, exact=True)
             submit_dict["source_image"] = base64.b64encode(buffer.getvalue()).decode("utf8")
         if self.source_mask: 
             final_src_mask = Image.open(self.source_mask)
             buffer = BytesIO()
             # We send as WebP to avoid using all the horde bandwidth
-            final_src_mask.save(buffer, format="Webp", quality=95)
+            final_src_mask.save(buffer, format="Webp", quality=95, exact=True)
             submit_dict["source_mask"] = base64.b64encode(buffer.getvalue()).decode("utf8")
         return(submit_dict)
     

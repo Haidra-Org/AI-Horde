@@ -23,7 +23,7 @@ def convert_b64_to_pil(source_image_b64):
 
 def convert_pil_to_b64(source_image, quality=95):
     buffer = BytesIO()
-    source_image.save(buffer, format="webp")
+    source_image.save(buffer, format="webp", exact=True)
     img_bytes = buffer.getvalue()
     return base64.b64encode(img_bytes).decode('utf-8')
 
