@@ -106,7 +106,6 @@ If you are developing a paid or ad-based integration with the Stable Horde, we r
 These are the people who made this software possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
-* [Sygil-Dev](https://github.com/Sygil-Dev) - Worker backend code.
 * [Sponsors](/sponsors) - See our complete sponsor list including our patreon supporters
 
 And of course, everyone contributing their SD to the horde!
