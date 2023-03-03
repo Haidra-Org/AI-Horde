@@ -10,7 +10,7 @@ from PIL import Image
 from io import BytesIO
 
 r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
-r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://edf800e28a742a836054658825faa135.r2.cloudflarestorage.com")
+r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
 r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
 r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
 r2_source_image_bucket = os.getenv("R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images")
@@ -162,11 +162,10 @@ def upload_prompt(prompt_dict):
     with open(filename, "w") as f:
         f.write(json_object)
     try:
-        response = s3_client_shared.upload_file(
-            filename, "temp-storage", filename
+        response = s3_client.upload_file(
+            filename, "prompts", filename
         )
         os.remove(filename)
-        logger.debug(response)
     except ClientError as e:
         logger.error(f"Error encountered while uploading prompt {filename}: {e}")
         return False

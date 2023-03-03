@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.1.1
+
+* Can send images as control
+
 # 4.1.0
 
 * Added recaptcha to login

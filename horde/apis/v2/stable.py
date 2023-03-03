@@ -339,7 +339,6 @@ class Aesthetics(Resource):
         if not wp.shared:
             raise e.InvalidAestheticAttempt("You can only aesthetically rate requests you have opted to share publicly")
         procgen_ids = [str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
-        logger.debug(procgen_ids)
         if self.args.ratings:
             seen_ids = []
             for rating in self.args.ratings:
