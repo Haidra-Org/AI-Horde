@@ -133,6 +133,8 @@ def check_waiting_prompts():
             ImageWaitingPrompt.source_image != None,
             ImageWaitingPrompt.expiry < datetime.utcnow(),
         ).all()
+        if len(expired_source_img_wps):
+            logger.info(f"Deleting {len(expired_source_img_wps)} expired image masks.")
         for wp in expired_source_img_wps:
             # logger.debug(f"{wp.id}_src")
             delete_source_image(f"{wp.id}_src")
@@ -143,6 +145,8 @@ def check_waiting_prompts():
             ImageWaitingPrompt.expiry < datetime.utcnow(),
         ).all()
         # Clean expired source masks
+        if len(expired_source_msk_wps):
+            logger.info(f"Deleting {len(expired_source_msk_wps)} expired image masks.")
         for wp in expired_source_msk_wps:
             # logger.debug(f"{wp.id}_msk")
             delete_source_image(f"{wp.id}_msk")
@@ -160,7 +164,7 @@ def check_waiting_prompts():
         ).filter(
             ImageProcessingGeneration.wp_id.in_(all_wp_r_id)
         ).all()
-        # logger.debug([expired_r_wps, expired_r2_procgens])
+        logger.info(f"Deleting {len(expired_r2_procgens)} procgens from {len(expired_r_wps)} exported WPs")
         for procgen in expired_r2_procgens:
             delete_procgen_image(str(procgen.id))
         for wp_class, procgen_class in [
