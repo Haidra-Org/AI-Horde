@@ -53,6 +53,7 @@ class ImageModels(v2.Models):
             'hires_fix': fields.Boolean(default=False,description="Set to True to process the image at base resolution before upscaling and re-processing"),
             'clip_skip': fields.Integer(required=False, example=1, min=1, max=12, description="The number of CLIP language processor layers to skip"),
             'control_type': fields.String(required=False, enum=["canny", "hed", "depth", "normal", "openpose", "seg", "scribble", "fakescribbles", "hough"]), 
+            'image_is_control': fields.Boolean(default=False,description="Set to True if the image submitted is a pre-generated control map for ControlNet use"),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
