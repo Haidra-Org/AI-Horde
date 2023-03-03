@@ -4,6 +4,12 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-03-03",
+            "newspiece": "The Horde Ratings are back in action. Go to your typical UI and rate away!",
+            "tags": ["ratings"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-02-23",
             "newspiece": "KoboldAI Horde has been merged into Stable Horde as a unified AI Horde!",
             "tags": ["text2text", "ai horde"],
