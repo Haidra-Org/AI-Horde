@@ -64,9 +64,9 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.NotTrusted
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
-        if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
-            raise e.UnsupportedModel
         if "control_type" in self.params and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
+            raise e.UnsupportedModel("You cannot use ControlNet with these models.")
+        if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
             raise e.UnsupportedModel

@@ -80,8 +80,11 @@ class UnsupportedSampler(wze.BadRequest):
         self.log = None
 
 class UnsupportedModel(wze.BadRequest):
-    def __init__(self):
-        self.specific = "This model is not supported in this mode the moment"
+    def __init__(self, message = None):
+        if message:
+            self.specific = message
+        else:
+            self.specific = "This model is not supported in this mode the moment"
         self.log = None
 
 class ProcGenNotFound(wze.BadRequest):
