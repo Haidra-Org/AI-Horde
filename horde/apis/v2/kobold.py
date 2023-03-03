@@ -67,9 +67,10 @@ class TextAsyncStatus(Resource):
         '''Retrieve the full status of an Asynchronous generation request.
         This request will include all already generated texts.
         '''
+        self.args = self.get_parser.parse_args()
         wp = text_database.get_text_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -88,9 +89,10 @@ class TextAsyncStatus(Resource):
         '''Cancel an unfinished request.
         This request will include all already generated texts.
         '''
+        self.args = self.delete_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),

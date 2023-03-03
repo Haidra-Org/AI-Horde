@@ -153,9 +153,10 @@ class ImageAsyncStatus(Resource):
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
         This endpoint is limited to 10 request per minute
         '''
+        self.args = self.get_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -174,9 +175,10 @@ class ImageAsyncStatus(Resource):
         '''Cancel an unfinished request.
         This request will include all already generated images in base64 encoded .webp files.
         '''
+        self.args = self.delete_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -208,9 +210,10 @@ class ImageAsyncCheck(Resource):
         '''
         # Sending lite mode to try and reduce the amount of bandwidth
         # This will not retrieve procgens, so ETA will not be completely accurate
+        self.args = self.get_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         lite_status = wp.get_lite_status(
             request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -325,14 +328,14 @@ class Aesthetics(Resource):
         If you select best-of image, you will gain 4 kudos. Each rating is 5 kudos. Best-of will be ignored when ratings conflict with it.
         You can never gain more kudos than you spent for this generation. Your reward at max will be your kudos consumption - 1.
         '''
+        self.args = self.post_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id)
+            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         if not wp.is_completed():
             raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!")
         if not wp.shared:
             raise e.InvalidAestheticAttempt("You can only aesthetically rate requests you have opted to share publicly")
-        self.args = self.post_parser.parse_args()
         procgen_ids = [str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
         logger.debug(procgen_ids)
         if self.args.ratings:
@@ -508,7 +511,11 @@ class Interrogate(Resource):
 
 
 class InterrogationStatus(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
     decorators = [limiter.limit("10/second", key_func = get_request_path)]
+    @api.expect(get_parser)
      # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
@@ -517,21 +524,27 @@ class InterrogationStatus(Resource):
         This request will include all already generated images.
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
         '''
+        self.args = self.get_parser.parse_args()
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
-            raise e.RequestNotFound(id, 'Interrogation')
+            raise e.RequestNotFound(id, 'Interrogation',client_agent=self.args["Client-Agent"])
         i_status = interrogation.get_status()
         return(i_status, 200)
 
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @api.expect(delete_parser)
     @api.marshal_with(models.response_model_interrogation_status, code=200, description='Interrogation Request Status')
     @api.response(404, 'Request Not found', models.response_model_error)
     def delete(self, id):
         '''Cancel an unfinished interrogation request.
         This request will return all already interrogated image results.
         '''
+        self.args = self.delete_parser.parse_args()
         interrogation = database.get_interrogation_by_id(id)
         if not interrogation:
-            raise e.RequestNotFound(id, 'Interrogation')
+            raise e.RequestNotFound(id, 'Interrogation',client_agent=self.args["Client-Agent"])
         interrogation.cancel()
         i_status = interrogation.get_status()
         logger.info(f"Interrogation with ID {interrogation.id} has been cancelled.")
