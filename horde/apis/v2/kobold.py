@@ -90,7 +90,7 @@ class TextAsyncStatus(Resource):
         This request will include all already generated texts.
         '''
         self.args = self.delete_parser.parse_args()
-        wp = database.get_wp_by_id(id)
+        wp = database.get_text_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
         wp_status = wp.get_status(
