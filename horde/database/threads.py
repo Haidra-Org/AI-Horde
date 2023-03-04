@@ -160,8 +160,11 @@ def check_waiting_prompts():
             ImageWaitingPrompt.shared == False,
         ).all()
         logger.info(f"Deleting {len(expired_r2_procgens)} procgens.")
+        last_procgen = ''
         for procgen in expired_r2_procgens:
             delete_procgen_image(str(procgen.id))
+            last_procgen = str(procgen.id)
+        logger.warning(f"Check Last procgen: {last_procgen}")
         for wp_class, procgen_class in [
             (ImageWaitingPrompt,ImageProcessingGeneration), 
             (TextWaitingPrompt,TextProcessingGeneration),
