@@ -9,8 +9,9 @@ from botocore.exceptions import ClientError
 from PIL import Image
 from io import BytesIO
 
-r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
-r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
+r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://eu2.contabostorage.com")
+r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://eu2.contabostorage.com")
+old_r2 = "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com"
 r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
 r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
 r2_source_image_bucket = os.getenv("R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images")
@@ -65,6 +66,8 @@ def generate_procgen_download_url(procgen_id, shared = False):
     client = s3_client
     if shared:
         client = s3_client_shared
+    if not file_exists(client,  f"{procgen_id}.webp"):
+        client = old_r2
     return generate_presigned_url(
         client = client,
         client_method = "get_object",
@@ -77,8 +80,7 @@ def delete_procgen_image(procgen_id):
         Bucket=r2_transient_bucket,
         Key=f"{procgen_id}.webp"
     )
-    # if type(check_file(s3_client, f"{procgen_id}.webp")) != bool:
-    #     logger.error("procgen image not deleted!")
+
 
 def delete_source_image(source_image_uuid):
     response = s3_client.delete_object(
@@ -194,3 +196,6 @@ def check_file(client, filename):
 def check_shared_image(filename):
     return type(check_file(s3_client_shared,filename)) == dict
 
+def file_exists(client, filename):
+    # If the return of check_file is an int, it means it encountered an error
+    return type(check_file(client, filename)) != int
