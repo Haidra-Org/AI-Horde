@@ -43,6 +43,7 @@ class PrimaryTimedFunction:
                 time.sleep(self.interval)
             except Exception as e:
                 logger.error(f"Exception caught in PrimaryTimer for method {self.function.__name__}(). Avoiding! {e}")
+                self.processing = False
                 time.sleep(10)
 
     # Putting this in its own method, so I can extend it
