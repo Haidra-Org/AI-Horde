@@ -106,6 +106,8 @@ def upload_image(client, bucket, image, filename, quality=100):
     return generate_img_download_url(filename, r2_source_image_bucket)
 
 def download_image(client, bucket, key):
+    if not file_exists(client, f"{procgen_id}.webp"):
+        client = old_r2
     try:
         response = client.get_object(Bucket=bucket, Key=key)
         img = response['Body'].read()
@@ -191,15 +193,15 @@ def generate_uuid_img_upload_url(img_uuid, imgtype):
 def generate_uuid_img_download_url(img_uuid, imgtype):
     return generate_img_download_url(f"{img_uuid}.{imgtype}")
 
-def check_file(client, filename):
+def check_file(client, bucket, filename):
     try:
-        return client.head_object(Bucket=r2_transient_bucket, Key=filename)
+        return client.head_object(Bucket=bucket, Key=filename)
     except ClientError as e:
         return int(e.response['Error']['Code']) != 404
 
 def check_shared_image(filename):
-    return type(check_file(s3_client_shared,filename)) == dict
+    return type(check_file(s3_client_shared,r2_transient_bucket,filename)) == dict
 
-def file_exists(client, filename):
+def file_exists(client, bucket, filename):
     # If the return of check_file is an int, it means it encountered an error
-    return type(check_file(client, filename)) != int
+    return type(check_file(client, bucket, filename)) != int
