@@ -125,8 +125,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
                 raise e.KudosUpfront(required_kudos, self.username, resolution)
-            else:
-                logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
+            # else:
+            #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
 
     # We split this into its own function, so that it may be overriden and extended
