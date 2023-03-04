@@ -9,9 +9,8 @@ from botocore.exceptions import ClientError
 from PIL import Image
 from io import BytesIO
 
-# r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://eu2.contabostorage.com")
-r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
-r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
+r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://eu2.contabostorage.com")
+r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://eu2.contabostorage.com")
 old_r2 = "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com"
 r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
 r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
