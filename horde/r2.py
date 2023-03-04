@@ -9,8 +9,8 @@ from botocore.exceptions import ClientError
 from PIL import Image
 from io import BytesIO
 
-r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://eu2.contabostorage.com")
-r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://eu2.contabostorage.com")
+r2_transient_account = os.getenv("R2_TRANSIENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
+r2_permanent_account = os.getenv("R2_PERMANENT_ACCOUNT", "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com")
 r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
 r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
 r2_source_image_bucket = os.getenv("R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images")
@@ -22,7 +22,7 @@ s3_client_shared = boto3.client('s3',
     aws_secret_access_key=os.getenv('SHARED_AWS_ACCESS_KEY'),
 )
 old_r2 = boto3.client('s3', 
-    endpoint_url="https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com",
+    endpoint_url="https://eu2.contabostorage.com",
     aws_access_key_id=os.getenv('OLD_AWS_ACCESS_KEY_ID'),
     aws_secret_access_key=os.getenv('OLD_AWS_SECRET_ACCESS_KEY'),
 )
