@@ -20,7 +20,7 @@ class ProcessingGeneration(db.Model):
     procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
 
-    model = db.Column(db.String(40), default='', nullable=False)
+    model = db.Column(db.String(255), default='', nullable=False)
     seed = db.Column(db.BigInteger, default=0, nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
