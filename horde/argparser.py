@@ -12,6 +12,7 @@ arg_parser.add_argument('--horde', action='store', default='stable', required=Tr
 arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, will consider all IPs safe")
 arg_parser.add_argument('--quorum', action="store_true", help="If set, will forcefully grab the quorum")
 arg_parser.add_argument('--reload_all_caches', action="store_true", help="If set, will forcefully reload all caches at startup")
+arg_parser.add_argument('--check_prompts', action="store_true", help="If set, will cleanup all prompts and exit")
 args = arg_parser.parse_args()
 
 maintenance = Switch()

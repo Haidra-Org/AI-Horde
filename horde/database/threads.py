@@ -137,7 +137,7 @@ def check_waiting_prompts():
             ImageWaitingPrompt.expiry < cutoff_time,
         ).all()
         if len(expired_source_img_wps):
-            logger.info(f"Deleting {len(expired_source_img_wps)} expired image masks.")
+            logger.info(f"Deleting {len(expired_source_img_wps)} expired source images.")
         for wp in expired_source_img_wps:
             # logger.debug(f"{wp.id}_src")
             delete_source_image(f"{wp.id}_src")

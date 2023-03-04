@@ -32,6 +32,13 @@ if args.reload_all_caches:
     logger.info("store_compiled_filter_regex()")
     threads.store_compiled_filter_regex()
 
+
+
+if args.check_prompts:
+    threads.check_waiting_prompts()
+    import sys
+    sys.exit()
+    
 # # Test
 
 # threads.check_waiting_prompts()
