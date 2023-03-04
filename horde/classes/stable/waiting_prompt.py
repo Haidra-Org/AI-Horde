@@ -75,6 +75,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         self.total_usage = round(self.things * self.n / hv.thing_divisors["image"],2)
         self.prepare_job_payload(self.params)
         self.calculate_kudos()
+        self.set_job_ttl()
         # Commit will happen in prepare_job_payload()
 
     @logger.catch(reraise=True)
@@ -300,7 +301,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.job_ttl = self.job_ttl * 3
         weights_count = count_parentheses(self.prompt)
         self.job_ttl += 3*weights_count
-        logger.debug([weights_count,self.job_ttl])
+        logger.info([weights_count,self.job_ttl])
         db.session.commit()
 
     def log_faulted_prompt(self):

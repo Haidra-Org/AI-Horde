@@ -135,6 +135,7 @@ class WaitingPrompt(db.Model):
         self.things = 0
         self.total_usage = round(self.things * self.n, 2)
         self.prepare_job_payload()
+        self.set_job_ttl()
         db.session.commit()
 
     def prepare_job_payload(self):
