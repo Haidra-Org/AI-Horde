@@ -301,7 +301,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.job_ttl = self.job_ttl * 3
         weights_count = count_parentheses(self.prompt)
         self.job_ttl += 3*weights_count
-        logger.info([weights_count,self.job_ttl])
+        # logger.info([weights_count,self.job_ttl])
         db.session.commit()
 
     def log_faulted_prompt(self):
