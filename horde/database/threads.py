@@ -126,12 +126,15 @@ def store_worker_list():
 @logger.catch(reraise=True)
 def check_waiting_prompts():
     with HORDE.app_context():
+        # Store store the cutoff_time at the start, to avoid things expiring while cleaning
+        # and therefore missing images to cleanup
+        cutoff_time = datetime.utcnow()
         # Clean expired source images
         expired_source_img_wps = db.session.query(
             ImageWaitingPrompt.id
         ).filter(
             ImageWaitingPrompt.source_image != None,
-            ImageWaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.expiry < cutoff_time,
         ).all()
         if len(expired_source_img_wps):
             logger.info(f"Deleting {len(expired_source_img_wps)} expired image masks.")
@@ -142,7 +145,7 @@ def check_waiting_prompts():
             ImageWaitingPrompt.id
         ).filter(
             ImageWaitingPrompt.source_mask != None,
-            ImageWaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.expiry < cutoff_time,
         ).all()
         # Clean expired source masks
         if len(expired_source_msk_wps):
@@ -156,7 +159,7 @@ def check_waiting_prompts():
         ).join(
             ImageWaitingPrompt,
         ).filter(
-            ImageWaitingPrompt.expiry < datetime.utcnow(),
+            ImageWaitingPrompt.expiry < cutoff_time,
             ImageWaitingPrompt.shared == False,
         ).all()
         logger.info(f"Deleting {len(expired_r2_procgens)} procgens.")
@@ -169,7 +172,7 @@ def check_waiting_prompts():
             (ImageWaitingPrompt,ImageProcessingGeneration), 
             (TextWaitingPrompt,TextProcessingGeneration),
         ]:
-            expired_wps = db.session.query(wp_class).filter(wp_class.expiry < datetime.utcnow())
+            expired_wps = db.session.query(wp_class).filter(wp_class.expiry < cutoff_time)
             logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
             expired_wps.delete()
             db.session.commit()
@@ -181,7 +184,7 @@ def check_waiting_prompts():
             ).filter(
                 procgen_class.generation == None,
                 procgen_class.faulted == False,
-                # datetime.utcnow() - procgen_class.start_time > wp_class.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
+                # cutoff_time - procgen_class.start_time > wp_class.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
             ).all()
             for proc_gen in all_proc_gen:
                 if proc_gen.is_stale(proc_gen.wp.job_ttl):
@@ -208,8 +211,9 @@ def check_waiting_prompts():
 @logger.catch(reraise=True)
 def check_interrogations():
     with HORDE.app_context():
-        # Cleans expired WPs
-        expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < datetime.utcnow())
+        # Cleans expired interrogations
+        cutoff_time = datetime.utcnow()
+        expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < cutoff_time)
         expired_r_entries = expired_entries.filter(Interrogation.r2stored == True)
         all_source_image_ids = [i.id for i in expired_r_entries.all()]
         for source_image_id in all_source_image_ids:
@@ -222,7 +226,7 @@ def check_interrogations():
             InterrogationForms,
         ).filter(
             InterrogationForms.state == State.PROCESSING,
-            datetime.utcnow() > InterrogationForms.expiry,
+            cutoff_time > InterrogationForms.expiry,
         ).all()
         for form in all_stale_forms:
             form.abort()
@@ -307,13 +311,14 @@ def store_patreon_members():
 def increment_extra_priority():
     '''Increases the priority of every WP currently in the queue by 50 kudos'''
     with HORDE.app_context():
+        cutoff_time = datetime.utcnow()
         wp_queue = db.session.query(
             ImageWaitingPrompt
         ).filter(
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.faulted == False,
             ImageWaitingPrompt.active == True,
-            ImageWaitingPrompt.expiry > datetime.utcnow(),
+            ImageWaitingPrompt.expiry > cutoff_time,
         ).update(
             {
                 ImageWaitingPrompt.extra_priority: ImageWaitingPrompt.extra_priority + 50
@@ -325,7 +330,7 @@ def increment_extra_priority():
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.faulted == False,
             TextWaitingPrompt.active == True,
-            TextWaitingPrompt.expiry > datetime.utcnow(),
+            TextWaitingPrompt.expiry > cutoff_time,
         ).update(
             {
                 TextWaitingPrompt.extra_priority: TextWaitingPrompt.extra_priority + 50
