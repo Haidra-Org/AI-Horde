@@ -130,38 +130,38 @@ def check_waiting_prompts():
         # and therefore missing images to cleanup
         cutoff_time = datetime.utcnow()
         # Clean expired source images
-        expired_source_img_wps = db.session.query(
-            ImageWaitingPrompt.id
-        ).filter(
-            ImageWaitingPrompt.source_image != None,
-            ImageWaitingPrompt.expiry < cutoff_time,
-        ).all()
-        if len(expired_source_img_wps):
-            logger.info(f"Deleting {len(expired_source_img_wps)} expired source image.")
-        for wp in expired_source_img_wps:
-            # logger.debug(f"{wp.id}_src")
-            delete_source_image(f"{wp.id}_src")
-        expired_source_msk_wps = db.session.query(
-            ImageWaitingPrompt.id
-        ).filter(
-            ImageWaitingPrompt.source_mask != None,
-            ImageWaitingPrompt.expiry < cutoff_time,
-        ).all()
-        # Clean expired source masks
-        if len(expired_source_msk_wps):
-            logger.info(f"Deleting {len(expired_source_msk_wps)} expired image masks.")
-        for wp in expired_source_msk_wps:
-            # logger.debug(f"{wp.id}_msk")
-            delete_source_image(f"{wp.id}_msk")
+        # expired_source_img_wps = db.session.query(
+        #     ImageWaitingPrompt.id
+        # ).filter(
+        #     ImageWaitingPrompt.source_image != None,
+        #     ImageWaitingPrompt.expiry < cutoff_time,
+        # ).all()
+        # if len(expired_source_img_wps):
+        #     logger.info(f"Deleting {len(expired_source_img_wps)} expired source image.")
+        # for wp in expired_source_img_wps:
+        #     # logger.debug(f"{wp.id}_src")
+        #     delete_source_image(f"{wp.id}_src")
+        # expired_source_msk_wps = db.session.query(
+        #     ImageWaitingPrompt.id
+        # ).filter(
+        #     ImageWaitingPrompt.source_mask != None,
+        #     ImageWaitingPrompt.expiry < cutoff_time,
+        # ).all()
+        # # Clean expired source masks
+        # if len(expired_source_msk_wps):
+        #     logger.info(f"Deleting {len(expired_source_msk_wps)} expired image masks.")
+        # for wp in expired_source_msk_wps:
+        #     # logger.debug(f"{wp.id}_msk")
+        #     delete_source_image(f"{wp.id}_msk")
         # Cleans expired generated images, but not shared images
-        expired_r2_procgens = db.session.query(
-            ImageProcessingGeneration.id,
-        ).join(
-            ImageWaitingPrompt,
-        ).filter(
-            ImageWaitingPrompt.expiry < cutoff_time,
-            ImageWaitingPrompt.shared == False,
-        ).all()
+        # expired_r2_procgens = db.session.query(
+        #     ImageProcessingGeneration.id,
+        # ).join(
+        #     ImageWaitingPrompt,
+        # ).filter(
+        #     ImageWaitingPrompt.expiry < cutoff_time,
+        #     ImageWaitingPrompt.shared == False,
+        # ).all()
         # Will handle this with another python process as it's taking too long
         # logger.info(f"Deleting {len(expired_r2_procgens)} procgens.")
         # last_procgen = ''
