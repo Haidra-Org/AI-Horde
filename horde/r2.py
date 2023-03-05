@@ -70,8 +70,8 @@ def generate_procgen_download_url(procgen_id, shared = False):
     client = s3_client
     if shared:
         client = s3_client_shared
-    if not file_exists(client,  f"{procgen_id}.webp"):
-        client = old_r2
+    # if not file_exists(client,  f"{procgen_id}.webp"):
+    #     client = old_r2
     return generate_presigned_url(
         client = client,
         client_method = "get_object",
@@ -106,8 +106,8 @@ def upload_image(client, bucket, image, filename, quality=100):
     return generate_img_download_url(filename, r2_source_image_bucket)
 
 def download_image(client, bucket, key):
-    if not file_exists(client, f"{procgen_id}.webp"):
-        client = old_r2
+    # if not file_exists(client, f"{procgen_id}.webp"):
+    #     client = old_r2
     try:
         response = client.get_object(Bucket=bucket, Key=key)
         img = response['Body'].read()
