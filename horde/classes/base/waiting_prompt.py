@@ -118,7 +118,10 @@ class WaitingPrompt(db.Model):
         Before we add it to the queue
         '''
         self.active = True
-        self.extra_priority = self.user.kudos
+        if self.user.flagged and self.user.kudos > 10:
+            self.extra_priority = round(self.user.kudos / 100) 
+        else:    
+            self.extra_priority = self.user.kudos
         db.session.commit()
 
     def get_model_names(self):
