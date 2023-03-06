@@ -28,7 +28,6 @@ ALTER TABLE image_gen_stats ADD COLUMN bridge_agent TEXT NOT NULL DEFAULT 'unkno
 CREATE INDEX idx_image_gen_stats_bridge_agent ON public.image_gen_stats USING btree (bridge_agent);
 ALTER TABLE workers ALTER COLUMN ipaddr TYPE VARCHAR(39);
 
-
 ## Adjust user_records
 
 ALTER TABLE user_records ADD CONSTRAINT user_records_user_id_record_type_record_key UNIQUE (user_id, record_type, record);

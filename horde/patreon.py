@@ -48,10 +48,16 @@ class PatreonCache(PrimaryTimedFunction):
         if not self.is_patron(user_id):
             return 0
         eamount = int(self.patrons[user_id]["entitlement_amount"] )
-        if eamount == 25 or eamount == 30: #FIXME: Remove at end of month
+        if eamount == 100:
+            return(300000)
+        if eamount == 50:
+            return(500000)
+        if eamount == 25:
             return(300000)
         if eamount == 24:
             return(200000)
+        if eamount == 23:
+            return(150000)
         elif eamount == 10:
             return(50000)
         elif eamount < 10:
