@@ -31,8 +31,8 @@ class PromptChecker:
         self.next_refresh = datetime.utcnow()
         self.refresh_regex()
         # These are checked on top of the normal
-        self.nsfw_model_regex = re.compile(r"girl|\bboy\b|student|\byoung\b|lit[tl]le|\blil\b|small|tiny", re.IGNORECASE)
-        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|\b(?<!1)boy\b|student|\byoung\b|lit[tl]le|\blil\b|small|tiny", re.IGNORECASE)
+        self.nsfw_model_regex = re.compile(r"girl|\bboy\b|student|\byoung\b|lit[tl]le|\blil\b|small|tiny|nina", re.IGNORECASE)
+        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|\b(?<!1)boy\b|student|\byoung\b|lit[tl]le|\blil\b|small|tiny|nina", re.IGNORECASE)
         self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
         self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
         self.whitespace_converter = re.compile(r'[^\w\s]')
