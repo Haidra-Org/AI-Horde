@@ -376,6 +376,9 @@ class JobPopTemplate(Resource):
                 raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
+            colab_search = re.compile(r"\bcolab|\btpu\b", re.IGNORECASE)
+            if self.nsfw_model_regex.search( self.worker_name):
+                raise e.BadRequest("To avoid unwanted attention, please do not use 'Colab' or 'TPU' in your worker names.")
             worker_count = self.user.count_workers()
             if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)

@@ -1,5 +1,12 @@
 # Changelog
 
+# 4.1.4
+
+* Adjust patreon rewards
+* Flaffed users have less priority
+* stopped removing images from R2 from threads.
+* Prevents 'colab' and 'tpu' in worker names.
+
 # 4.1.1
 
 * Can send images as control
