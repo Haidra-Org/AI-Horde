@@ -194,7 +194,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         if type(s) is int:
             return s
         if s is None or s == '':
-            return get_random_seed()
+            return get_random_seed(self.n)
         n = abs(int(s) if s.isdigit() else int.from_bytes(s.encode(), 'little'))
         while n >= 2**32:
             n = n >> 32

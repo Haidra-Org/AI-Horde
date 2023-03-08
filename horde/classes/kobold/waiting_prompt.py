@@ -3,7 +3,6 @@ from sqlalchemy.sql import expression
 from horde.logger import logger
 from horde import vars as hv
 from horde.flask import db
-from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.image import convert_pil_to_b64
