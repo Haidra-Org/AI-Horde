@@ -89,7 +89,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         TextWaitingPrompt.extra_priority.desc(), 
         TextWaitingPrompt.created.asc()
     ).limit(50)
-    logger.debug(final_wp_list.all())
+    # logger.debug(final_wp_list.all())
     return final_wp_list.all()
 
 

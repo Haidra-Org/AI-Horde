@@ -479,7 +479,7 @@ class Worker(WorkerTemplate):
         existing_model_names = set(self.get_model_names())
         if existing_model_names == models:
             return
-        logger.debug([existing_model_names,models, existing_model_names == models])
+        # logger.debug([existing_model_names,models, existing_model_names == models])
         db.session.query(WorkerModel).filter_by(worker_id=self.id).delete()
         db.session.commit()
         for model_name in models:
