@@ -1,9 +1,5 @@
 # Changelog
 
-# 4.1.7
-
-* Attempt to fix duplicating seeds
-
 # 4.1.6
 
 * Fixed default maintenance msg

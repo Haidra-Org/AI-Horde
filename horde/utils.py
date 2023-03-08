@@ -80,9 +80,9 @@ def get_expiry_date():
 def get_interrogation_form_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+3)
 
-def get_random_seed(start_point=0):
+def get_random_seed():
     '''Generated a random seed, using a random number unique per node'''
-    return random.randint(start_point, 2**32 - 1)
+    return random.randint(0, 2**32 - 1)
 
 def count_parentheses(s):
     open_p = False
