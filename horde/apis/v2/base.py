@@ -204,7 +204,7 @@ class GenerateTemplate(Resource):
                     self.args.prompt, 
                     message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
             csam_trigger_check = prompt_checker.check_csam_triggers(self.args.prompt)
-            if csam_trigger_check is not False:
+            if csam_trigger_check is not False and self.gentype != "text":
                 raise e.CorruptPrompt(
                     self.username, 
                     self.user_ip, 

@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.1.8
+
+Age check shouldn't apply to text
+
 # 4.1.7
 
 * Attempt to fix duplicating seeds
