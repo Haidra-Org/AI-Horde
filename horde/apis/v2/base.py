@@ -390,8 +390,9 @@ class JobPopTemplate(Resource):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
             colab_search = re.compile(r"colab|tpu|google", re.IGNORECASE)
             logger.debug(self.worker_name, colab_search, colab_search.search(self.worker_name))
-            if colab_search.search(self.worker_name):
-                raise e.BadRequest(f"To avoid unwanted attention, please do not use '{colab_search.group()}' in your worker names.")
+            cs = colab_search.search(self.worker_name)
+            if cs:
+                raise e.BadRequest(f"To avoid unwanted attention, please do not use '{cs.group()}' in your worker names.")
             worker_count = self.user.count_workers()
             if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
