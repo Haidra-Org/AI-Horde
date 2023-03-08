@@ -50,6 +50,10 @@ class ModelReference(PrimaryTimedFunction):
         model_details = self.reference.get(model_name, {})
         return model_details.get("baseline")
 
+    def get_model_csam_whitelist(self, model_name):
+        model_details = self.reference.get(model_name, {})
+        return set(model_details.get("csam_whitelist", []))
+
     def get_text_model_multiplier(self, model_name):
         # To avoid doing this calculations all the time
         if not self.text_reference.get(model_name):

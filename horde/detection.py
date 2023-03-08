@@ -36,6 +36,7 @@ class PromptChecker:
         self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
         self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
         self.whitespace_converter = re.compile(r'[^\w\s]')
+        self.csam_triggers = re.compile(r'\b(0?[0-9]|1[0-9]|2[0-2])(?![0-9]) ?years? ?old')
 
     def refresh_regex(self):
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
@@ -98,6 +99,17 @@ class PromptChecker:
         if prompt_10_suspicion:
             return True
         return False
+
+    def check_csam_triggers(self, prompt):
+        # logger.debug([prompt, models])
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+        prompt = self.normalize_prompt(prompt)
+        trigger_match = self.csam_triggers.search(prompt)
+        if trigger_match:
+            return trigger_match.group()
+        return False
+
 
     def normalize_prompt(self,prompt):
         """Prepares the prompt to be scanned by the regex, by removing tricks one might use to avoid the filters

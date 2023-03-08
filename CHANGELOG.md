@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.1.5
+
+* Added CSAM trigger detection
+
 # 4.1.4
 
 * Adjust patreon rewards

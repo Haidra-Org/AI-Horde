@@ -198,7 +198,18 @@ class GenerateTemplate(Resource):
                     CounterMeasures.report_suspicion(self.user_ip)
                 raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
             if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
-                raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
+                raise e.CorruptPrompt(
+                    self.username, 
+                    self.user_ip, 
+                    self.args.prompt, 
+                    message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
+            csam_trigger_check = prompt_checker.check_csam_triggers(self.args.prompt)
+            if csam_trigger_check is not False:
+                raise e.CorruptPrompt(
+                    self.username, 
+                    self.user_ip, 
+                    self.args.prompt, 
+                    message = f"The trigger '{csam_trigger_check}' has been detected to generate unethical images on its own and as such has had to be prevented from use. Thank you for understanding.")
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Please confider reducing its size of the request.")
