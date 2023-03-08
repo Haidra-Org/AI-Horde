@@ -23,7 +23,7 @@ from horde.classes.base.worker import Worker
 import horde.classes.base.stats as stats
 from horde.classes.base.team import Team
 from horde.classes.base.news import News
-from horde.classes.base.detection import Filter
+from horde.classes.base.detection import Filter, nsfw_model_regex
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
@@ -388,7 +388,7 @@ class JobPopTemplate(Resource):
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, 'bridge agent')
             colab_search = re.compile(r"\bcolab|\btpu\b", re.IGNORECASE)
-            if self.nsfw_model_regex.search( self.worker_name):
+            if nsfw_model_regex.search( self.worker_name):
                 raise e.BadRequest("To avoid unwanted attention, please do not use 'Colab' or 'TPU' in your worker names.")
             worker_count = self.user.count_workers()
             if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
