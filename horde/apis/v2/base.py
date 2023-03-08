@@ -23,7 +23,7 @@ from horde.classes.base.worker import Worker
 import horde.classes.base.stats as stats
 from horde.classes.base.team import Team
 from horde.classes.base.news import News
-from horde.classes.base.detection import Filter, nsfw_model_regex
+from horde.classes.base.detection import Filter
 from horde.suspicions import Suspicions
 from horde.utils import is_profane, sanitize_string
 from horde.countermeasures import CounterMeasures
