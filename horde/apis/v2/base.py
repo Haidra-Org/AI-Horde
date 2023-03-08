@@ -391,7 +391,7 @@ class JobPopTemplate(Resource):
             colab_search = re.compile(r"colab|tpu|google", re.IGNORECASE)
             logger.debug(self.worker_name, colab_search, colab_search.search(self.worker_name))
             if colab_search.search(self.worker_name):
-                raise e.BadRequest(f"To avoid unwanted attention, please do not use '{colab_search.groups()}' in your worker names.")
+                raise e.BadRequest(f"To avoid unwanted attention, please do not use '{colab_search.group()}' in your worker names.")
             worker_count = self.user.count_workers()
             if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
