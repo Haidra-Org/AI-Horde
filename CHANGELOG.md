@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.1.6
+
+* Fixed default maintenance msg
+* Disabled inpainting temporarily
+
 # 4.1.5
 
 * Added CSAM trigger detection
