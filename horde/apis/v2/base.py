@@ -382,6 +382,7 @@ class JobPopTemplate(Resource):
         if not self.worker and database.worker_name_exists(self.worker_name):
             raise e.PolymorphicNameConflict(self.worker_name)
         self.check_ip()
+        logger.debug(self.worker)
         if not self.worker:
             if is_profane(self.worker_name):
                 raise e.Profanity(self.user.get_unique_alias(), self.worker_name, 'worker name')
