@@ -189,7 +189,7 @@ class WorkerTemplate(db.Model):
     def toggle_maintenance(self, is_maintenance_active, maintenance_msg = None):
         self.maintenance = is_maintenance_active
         self.maintenance_msg = self.default_maintenance_msg
-        if self.maintenance and maintenance_msg is not None:
+        if self.maintenance and maintenance_msg not in [None,'']:
             self.maintenance_msg = sanitize_string(maintenance_msg)
         db.session.commit()   
 
