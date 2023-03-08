@@ -13,7 +13,7 @@ from horde.flask import SQLITE_MODE
 
 profanity.load_censor_words()
 
-random.seed(random.SystemRandom())
+system_random_seed = random.SystemRandom()
 
 def is_profane(text):
     if profanity.contains_profanity(text):
@@ -82,7 +82,7 @@ def get_interrogation_form_expiry_date():
 
 def get_random_seed(start_point=0):
     '''Generated a random seed, using a random number unique per node'''
-    return random.randint(start_point, 2**32 - 1)
+    return system_random_seed.randint(start_point, 2**32 - 1)
 
 def count_parentheses(s):
     open_p = False
