@@ -139,6 +139,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             if self.args.source_mask:
                 self.source_mask, img, self.source_mask_r2stored = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2 = True)
             elif self.args.source_processing == "inpainting":
+                # FIXME
+                raise e.UnsupportedModel("Inpainting is disabled momentarily while we investigate a bug crashing workers performing it.")
                 try:
                     _red, _green, _blue, _alpha = img.split()
                 except ValueError:
