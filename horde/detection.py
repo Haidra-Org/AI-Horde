@@ -36,7 +36,7 @@ class PromptChecker:
         self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
         self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
         self.whitespace_converter = re.compile(r'[^\w\s]')
-        self.csam_triggers = re.compile(r'\b(0?[0-9]|1[0-9]|2[0-2])(?![0-9]) ?years? ?old')
+        self.csam_triggers = re.compile(r'\b(0?[0-9]|1[0-9]|2[0-2])(?![0-9]) *years? *old')
 
     def refresh_regex(self):
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
