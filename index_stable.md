@@ -1,6 +1,23 @@
 # AI Horde
 
-<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Image generation workers](https://github.com/db0/AI-Horde-Worker) and [text generation workers](https://github.com/KoboldAI/KoboldAI-Client). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
+<style>
+@media screen and (min-width: 640px) {
+    .float-right-on-pc{
+        float: right;
+    }
+}
+@media screen and (max-width: 639px) {
+    .center-on-mobile{
+        display:flex;
+        justify-content:center;
+    }
+}
+</style>
+
+<div class="center-on-mobile">
+<img class="float-right-on-pc" src="{horde_img_url}/{horde_image}.jpg" width="300" />
+</div>
+This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Image generation workers](https://github.com/db0/AI-Horde-Worker) and [text generation workers](https://github.com/KoboldAI/KoboldAI-Client). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
 
 For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Finally you can also follow the [main developer's blog](https://dbzer0.com)
 
