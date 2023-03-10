@@ -65,12 +65,14 @@ Connect a worker to the horde, that is all! You will generate kudos for each req
 
 The Kudos cost reflects the amount of processing required to generate the image.
 
-* The kudos cost is calculated by first calculating a base score based on the size of the image. There is an exponential relationship between image size and kudos cost. For example, if you increase width and height by the factor of 1.5, the kudos cost of the image will grow by the factor of 4.
-* It then adds a value based on the complexity of the image generation process and any requested post-processing steps. The score is also multiplied by a factor if a specific control type is requested. Finally, the code counts the number of parentheses in the input text and adds that count to the kudos score.
+* The general idea is for 50 step 512x512 image to cost 10 Kudos, 1024x1024 - 60 Kudos and 2048x2048 - 600 Kudos.
+* There is an exponential relationship between image size and kudos cost.
+* Then the step count is taken into consideration. Some samplers use more or less steps, than user actually requested, which is being taken into account too. There is a linear relationship between step count and kudos cost.
+* Post-processing is taken into account too: each post-processor increases the cost by 20%. The increase is multiplicative, so two post-processors will increase the cost by 44%, not 40%.
+* If ControlNet is used, the cost is increased by the factor of 3.
+* Each weight in the positive and negative prompt increases the Kudos cost by 1. Weight example: (forest:1.1). Weight like (((this))) counts as one weight.
 
 You can take a closer look at the kudos calculation [here](https://github.com/db0/AI-Horde/blob/main/horde/classes/stable/waiting_prompt.py).
-
-Overall, this code helps ensure that users are charged an appropriate amount of credit based on the difficulty of generating their requested images.
 
 ### I don't have a powerful GPU. How can I get Kudos?
 
