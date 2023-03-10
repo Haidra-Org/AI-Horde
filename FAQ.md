@@ -61,6 +61,17 @@ Another big subject. This one actually [has a devlog about it](https://dbzer0.co
 
 Connect a worker to the horde, that is all! You will generate kudos for each request you fulfil, relevant to its difficulty, and you will also generate kudos every 10 minutes your worker stays online.
 
+### How is image Kudos cost calculated?
+
+The Kudos cost reflects the amount of processing required to generate the image.
+
+* The kudos cost is calculated by first calculating a base score based on the size of the image. There is an exponential relationship between image size and kudos cost. For example, if you increase width and height by the factor of 1.5, the kudos cost of the image will grow by the factor of 4.
+* It then adds a value based on the complexity of the image generation process and any requested post-processing steps. The score is also multiplied by a factor if a specific control type is requested. Finally, the code counts the number of parentheses in the input text and adds that count to the kudos score.
+
+You can take a closer look at the kudos calculation [here](https://github.com/db0/AI-Horde/blob/main/horde/classes/stable/waiting_prompt.py).
+
+Overall, this code helps ensure that users are charged an appropriate amount of credit based on the difficulty of generating their requested images.
+
 ### I don't have a powerful GPU. How can I get Kudos?
 
 We use Kudos to support good behaviour in the community. As such we have ways to receive Kudos outside of generating images for others (although that's the best way)
