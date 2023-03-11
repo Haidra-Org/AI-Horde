@@ -3,6 +3,9 @@
 # 4.1.9
 
 * Tweaks on patreon supporters
+* Workers can report CSAM prompts
+* CSAM prompts are recorded
+* fix: whitespace convertor
 
 # 4.1.8
 
