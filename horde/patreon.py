@@ -72,3 +72,5 @@ if hr.horde_r:
     patrons.call_function()
     # pp = pprint.PrettyPrinter(depth=3)
     # pp.pprint(patrons.patrons)
+    # pp.pprint(patrons.get_ids())
+    

@@ -39,6 +39,12 @@ if args.check_prompts:
     threads.check_waiting_prompts()
     import sys
     sys.exit()
+
+if args.new_patreons:
+    threads.store_patreon_members()
+    threads.assign_monthly_kudos()
+    import sys
+    sys.exit()
     
 # # Test
 

@@ -13,6 +13,7 @@ arg_parser.add_argument('--allow_all_ips', action="store_true", help="If set, wi
 arg_parser.add_argument('--quorum', action="store_true", help="If set, will forcefully grab the quorum")
 arg_parser.add_argument('--reload_all_caches', action="store_true", help="If set, will forcefully reload all caches at startup")
 arg_parser.add_argument('--check_prompts', action="store_true", help="If set, will cleanup all prompts and exit")
+arg_parser.add_argument('--new_patreons', action="store_true", help="If set, will reload the patreon db and run the monthly awards")
 args = arg_parser.parse_args()
 
 maintenance = Switch()

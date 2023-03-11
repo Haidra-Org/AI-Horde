@@ -261,7 +261,7 @@ class User(db.Model):
             has_month_passed = True
         if has_month_passed:
             # Not committing as it'll happen in modify_kudos() anyway
-            self.monthly_kudos_last_received = datetime.utcnow()
+            self.monthly_kudos_last_received = self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
 
