@@ -95,7 +95,7 @@ class Models:
         self.input_model_job_submit = api.model('SubmitInput', {
             'id': fields.String(required=True, description="The UUID of this generation", example="00000000-0000-0000-0000-000000000000"), 
             'generation': fields.String(example="R2", required=False, description="R2 result was uploaded to R2, else the string of the result."),
-            'state': fields.String(title="Generation State", required=False, default='ok', enum=["ok", "censored", "faulted"], description="The state of this generation."), 
+            'state': fields.String(title="Generation State", required=False, default='ok', enum=["ok", "censored", "faulted", "csam"], description="The state of this generation."), 
         })
         self.response_model_job_submit = api.model('GenerationSubmitted', {
             'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),

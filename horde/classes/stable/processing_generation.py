@@ -7,7 +7,7 @@ from sqlalchemy.sql import expression
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.genstats import record_image_statistic
-from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image, download_procgen_image
+from horde.r2 import generate_procgen_download_url, upload_shared_metadata, check_shared_image, upload_generated_image, upload_shared_generated_image, download_procgen_image, upload_prompt
 from horde.flask import db
 from horde.image import convert_b64_to_pil, convert_pil_to_b64
 
@@ -60,9 +60,15 @@ class ImageProcessingGeneration(ProcessingGeneration):
         if kwargs.get("censored", False):
             self.censored = True
         state = kwargs.get("state", 'ok')
-        if state == 'censored':
+        if state in ['censored', 'csam']:
             self.censored = True
             db.session.commit()
+            if state == 'csam':
+                prompt_dict = {
+                    "prompt": self.wp.prompt,
+                    "user": self.wp.user.get_unique_alias(),
+                }
+                upload_prompt(prompt_dict)
         elif state == "faulted":
             self.wp.n += 1
             self.abort()
