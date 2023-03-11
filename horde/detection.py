@@ -35,7 +35,7 @@ class PromptChecker:
         self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|\b(?<!1)boy\b|student|\byoung\b|lit[tl]le|\blil\b|small|\btiny|nina", re.IGNORECASE)
         self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
         self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
-        self.whitespace_converter = re.compile(r'[^\w\s]')
+        self.whitespace_converter = re.compile(r"([^\w\s]|_)")
         self.csam_triggers = re.compile(r'\b(0?[0-9]|1[0-9]|2[0-2])(?![0-9]) *years? *old')
 
     def refresh_regex(self):
