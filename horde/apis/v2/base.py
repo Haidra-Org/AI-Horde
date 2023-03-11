@@ -192,6 +192,7 @@ class GenerateTemplate(Resource):
                     prompt_dict = {
                         "prompt": self.args.prompt,
                         "user": self.username,
+                        "type": "regex",
                     }
                     upload_prompt(prompt_dict)
                     self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)

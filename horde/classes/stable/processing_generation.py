@@ -67,6 +67,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
                 prompt_dict = {
                     "prompt": self.wp.prompt,
                     "user": self.wp.user.get_unique_alias(),
+                    "type": "clip",
                 }
                 upload_prompt(prompt_dict)
         elif state == "faulted":
