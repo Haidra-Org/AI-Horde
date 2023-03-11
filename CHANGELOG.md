@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.1.9
+
+* Tweaks on patreon supporters
+
 # 4.1.8
 
 Age check shouldn't apply to text

@@ -4,6 +4,12 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-03-10",
+            "newspiece": "We now have an AI-driven anti-CSAM filter as well. Read about it on [the main developer's blog](https://dbzer0.com/blog/ai-powered-anti-csam-filter-for-stable-diffusion/).",
+            "tags": ["ratings"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-03-03",
             "newspiece": "The Horde Ratings are back in action. Go to your typical UI and rate away!",
             "tags": ["ratings"],
