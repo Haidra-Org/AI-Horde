@@ -1,19 +1,19 @@
 const doesDenoiseStrengthAffectSteps = false; // This is a server-side bug. Switch to true when fixed.
 
 export default function calculateKudos(
-    width, 
-    height, 
-    steps, 
+    width,
+    height,
+    steps,
     samplerName,
     hasSourceImage,
     isImg2Img,
     denoisingStrength,
     postProcessors,
-    usesControlNet, 
-    prompt, 
+    usesControlNet,
+    prompt,
     shareWithLaionEnabled
-    ) {
-    const result = Math.pow((width * height) - (64*64), 1.75) / Math.pow((1024*1024) - (64*64), 1.75);
+) {
+    const result = Math.pow((width * height) - (64 * 64), 1.75) / Math.pow((1024 * 1024) - (64 * 64), 1.75);
     const steps = getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength);
     let kudos = Math.round((0.1232 * steps) + result * (0.1232 * steps * 8.75), 2);
 
@@ -53,19 +53,29 @@ export default function calculateKudos(
 
 function getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength) {
     if (['k_dpm_adaptive'].includes(samplerName)) {
-      return 50;
+        return 50;
     }
     if (['k_heun', 'k_dpm_2', 'k_dpm_2_a', 'k_dpmpp_2s_a'].includes(samplerName)) {
-      steps *= 2;
+        steps *= 2;
     }
     if (hasSourceImage && isImg2Img && doesDenoiseStrengthAffectSteps) {
-      steps *= denoisingStrength;
+        steps *= denoisingStrength;
     }
     return steps;
-  }
-  
+}
 
 
 function countParentheses(prompt) {
-    // implementation for countParentheses function
+    let openP = false;
+    let count = 0;
+    for (let i = 0; i < prompt.length; i++) {
+        const c = prompt[i];
+        if (c === "(") {
+            openP = true;
+        } else if (c === ")" && openP) {
+            openP = false;
+            count++;
+        }
+    }
+    return count;
 }
