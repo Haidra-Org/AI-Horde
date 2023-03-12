@@ -71,6 +71,7 @@ The Kudos cost reflects the amount of processing required to generate the image.
 * Post-processing is taken into account too: each post-processor increases the cost by 20%. The increase is multiplicative, so two post-processors will increase the cost by 44%, not 40%.
 * If ControlNet is used, the cost is increased by the factor of 3.
 * Each weight in the positive and negative prompt increases the Kudos cost by 1. Weight example: (forest:1.1). Weight like (((this))) counts as one weight.
+* There is an additional cost of 3 Kudos for using Horde resources. You can reduce it by 2 Kudos by enabling sharing with LAION. This tax is lowered by 1 Kudos if image costs less than 10 Kudos.
 
 You can take a closer look at the kudos calculation [here](https://github.com/db0/AI-Horde/blob/main/horde/classes/stable/waiting_prompt.py).
 
