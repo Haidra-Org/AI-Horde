@@ -14,7 +14,7 @@ export default function calculateKudos(
     shareWithLaionEnabled
 ) {
     const result = Math.pow((width * height) - (64 * 64), 1.75) / Math.pow((1024 * 1024) - (64 * 64), 1.75);
-    const steps = getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength);
+    steps = getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength);
     let kudos = Math.round((0.1232 * steps) + result * (0.1232 * steps * 8.75), 2);
 
     for (let i = 0; i < postProcessors.length; i++) {
