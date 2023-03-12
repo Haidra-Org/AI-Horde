@@ -83,6 +83,9 @@ The Kudos cost reflects the amount of processing required to generate the image.
 
 You can take a closer look at the kudos calculation [here](https://github.com/db0/AI-Horde/blob/main/horde/classes/stable/waiting_prompt.py).
 
+If you're looking to implement kudos calculation into **your own code**, check out [this ES6 module](https://github.com/db0/AI-Horde/blob/main/kudos/kudos_standalone.js).
+You can find example implementation [here](https://github.com/db0/AI-Horde/blob/main/kudos/example.js) and [here](https://github.com/db0/AI-Horde/blob/main/kudos/example.html).
+
 ### I don't have a powerful GPU. How can I get Kudos?
 
 We use Kudos to support good behaviour in the community. As such we have ways to receive Kudos outside of generating images for others (although that's the best way)
