@@ -1,8 +1,20 @@
-const does_denoise_strength_affect_steps = false; // This is a server-side bug. Switch to true when fixed.
+const doesDenoiseStrengthAffectSteps = false; // This is a server-side bug. Switch to true when fixed.
 
-export default function calculateKudos(width, height, postProcessors, usesControlNet, prompt, hasSourceImage, shareWithLaionEnabled) {
+export default function calculateKudos(
+    width, 
+    height, 
+    steps, 
+    samplerName,
+    hasSourceImage,
+    isImg2Img,
+    denoisingStrength,
+    postProcessors,
+    usesControlNet, 
+    prompt, 
+    shareWithLaionEnabled
+    ) {
     const result = Math.pow((width * height) - (64*64), 1.75) / Math.pow((1024*1024) - (64*64), 1.75);
-    const steps = getAccurateSteps(width, height, postProcessors, prompt);
+    const steps = getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength);
     let kudos = Math.round((0.1232 * steps) + result * (0.1232 * steps * 8.75), 2);
 
     for (let i = 0; i < postProcessors.length; i++) {
@@ -39,9 +51,20 @@ export default function calculateKudos(width, height, postProcessors, usesContro
     return kudos;
 }
 
-function getAccurateSteps(width, height, postProcessors, prompt) {
-    // implementation for getAccurateSteps function
-}
+function getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength) {
+    if (['k_dpm_adaptive'].includes(samplerName)) {
+      return 50;
+    }
+    if (['k_heun', 'k_dpm_2', 'k_dpm_2_a', 'k_dpmpp_2s_a'].includes(samplerName)) {
+      steps *= 2;
+    }
+    if (hasSourceImage && isImg2Img && doesDenoiseStrengthAffectSteps) {
+      steps *= denoisingStrength;
+    }
+    return steps;
+  }
+  
+
 
 function countParentheses(prompt) {
     // implementation for countParentheses function
