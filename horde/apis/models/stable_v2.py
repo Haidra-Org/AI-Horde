@@ -54,7 +54,6 @@ class ImageModels(v2.Models):
             'clip_skip': fields.Integer(required=False, example=1, min=1, max=12, description="The number of CLIP language processor layers to skip"),
             'control_type': fields.String(required=False, enum=["canny", "hed", "depth", "normal", "openpose", "seg", "scribble", "fakescribbles", "hough"]), 
             'image_is_control': fields.Boolean(default=False,description="Set to True if the image submitted is a pre-generated control map for ControlNet use"),
-            'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet to return the created map rather than a generated image"),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
