@@ -26,7 +26,7 @@ def calculate_kudos(params: Params):
     steps = get_accurate_steps(params)
     kudos = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
 
-    for post_processor in range(len(params.post_processors)):
+    for post_processor in params.post_processors:
         kudos = round(kudos * 1.2,2)
 
     if params.uses_control_net:
