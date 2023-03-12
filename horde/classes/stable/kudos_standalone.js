@@ -15,14 +15,14 @@ export default function calculateKudos(
 ) {
     const result = Math.pow((width * height) - (64 * 64), 1.75) / Math.pow((1024 * 1024) - (64 * 64), 1.75);
     steps = getAccurateSteps(steps, samplerName, hasSourceImage, isImg2Img, denoisingStrength);
-    let kudos = Math.round((0.1232 * steps) + result * (0.1232 * steps * 8.75), 2);
+    let kudos = Math.round(((0.1232 * steps) + result * (0.1232 * steps * 8.75)) * 100) / 100;
 
     for (let i = 0; i < postProcessors.length; i++) {
-        kudos = Math.round(kudos * 1.2, 2);
+        kudos = Math.round(kudos * 1.2 * 100) / 100;
     }
 
     if (usesControlNet) {
-        kudos = Math.round(kudos * 3, 2);
+        kudos = Math.round(kudos * 3 * 100) / 100;
     }
 
     const weightsCount = countParentheses(prompt);
@@ -79,3 +79,27 @@ function countParentheses(prompt) {
     }
     return count;
 }
+
+/*
+Test snippet: 
+
+import calc from 'https://github.com/evguu/AI-Horde/blob/faq-edit/horde/classes/stable/kudos_standalone.js';
+
+console.log(
+  calc(
+    1024,
+    768,
+    50,
+    'k_dpm_2',
+    true,
+    true,
+    0.8,
+    ['RealESRGAN_x4plus', 'CodeFormers'],
+    false,
+    '(tag1:1.1) some other info here',
+    false
+  )
+);
+
+
+ */
