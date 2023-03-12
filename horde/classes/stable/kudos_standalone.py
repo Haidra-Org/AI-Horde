@@ -1,3 +1,5 @@
+does_denoise_strength_affect_steps = False # This is a server-side bug. Switch to True when fixed.
+
 class Params:
     def __init__(self, **kwargs):
         self.width = kwargs.get("width")
@@ -57,8 +59,7 @@ def get_accurate_steps(params: Params):
         return 50
     if params.sampler_name in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
         steps *= 2
-    if params.has_source_image and params.is_img2img:
-        # 0.8 is the default on nataili
+    if params.has_source_image and params.is_img2img and does_denoise_strength_affect_steps:
         steps *= params.denoising_strength
     return steps
 
