@@ -69,6 +69,7 @@ The Kudos cost reflects the amount of processing required to generate the image.
    * There is an exponential relationship between image size and kudos cost.
 * Step count is taken into consideration too. Some samplers use a different amount of steps than specified by user. For example, sampler 'k_dpm_adaptive' always uses 50 steps.
    * There is a linear relationship between step count and kudos cost.
+   * If img2img is active, steps get multiplied by denoising strength. So img2img with 10% denoising will have ten times less steps than 100% denoising.
 * Each applied post-processor increases the cost by 20%. 
    * The increase is multiplicative, so using two post-processors will increase the cost by 44%, not 40%.
 * ControlNet usage increases the cost by the factor of 3.
