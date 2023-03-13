@@ -61,6 +61,31 @@ Another big subject. This one actually [has a devlog about it](https://dbzer0.co
 
 Connect a worker to the horde, that is all! You will generate kudos for each request you fulfil, relevant to its difficulty, and you will also generate kudos every 10 minutes your worker stays online.
 
+### How is image Kudos cost calculated?
+
+The Kudos cost reflects the amount of processing required to generate the image.
+
+* The general idea is for a 50 step 512x512 image to cost 10 Kudos, 1024x1024 - 60 Kudos and 2048x2048 - 600 Kudos.
+   * There is an exponential relationship between image size and kudos cost.
+* Step count is taken into consideration too. Some samplers use a different amount of steps than specified by user. For example, sampler 'k_dpm_adaptive' always uses 50 steps.
+   * There is a linear relationship between step count and kudos cost.
+   * If img2img is active, steps get multiplied by denoising strength. So img2img with 10% denoising will have ten times less steps than 100% denoising.
+* Each applied post-processor increases the cost by 20%. 
+   * The increase is multiplicative, so using two post-processors will increase the cost by 44%, not 40%.
+* ControlNet usage increases the cost by the factor of 3.
+* Each weight used increases the Kudos cost by 1. Weight example: (forest:1.1). 
+   * Weight like (((this))) still counts as one weight.
+* If source image is used (img2img, ControlNet), cost is increased by 50%.
+* Some post-processors add additional costs at this point:
+   * RealESRGAN_x4plus (upscaler): adds 30% to the calculated cost
+   * CodeFormers (improves faces): add 30% to the calculated cost
+* There is an additional cost of 3 Kudos for using Horde resources. You can reduce it by 2 Kudos by enabling sharing with LAION. This tax is lowered by 1 Kudos if image costs less than 10 Kudos.
+
+You can take a closer look at the kudos calculation [here](https://github.com/db0/AI-Horde/blob/main/horde/classes/stable/waiting_prompt.py).
+
+If you're looking to implement kudos calculation into **your own code**, check out [this ES6 module](https://github.com/db0/AI-Horde/blob/main/kudos/kudos_standalone.js).
+You can find example implementation [here](https://github.com/db0/AI-Horde/blob/main/kudos/example.js) and [here](https://github.com/db0/AI-Horde/blob/main/kudos/example.html).
+
 ### I don't have a powerful GPU. How can I get Kudos?
 
 We use Kudos to support good behaviour in the community. As such we have ways to receive Kudos outside of generating images for others (although that's the best way)
