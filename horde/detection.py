@@ -138,7 +138,7 @@ class PromptChecker:
     def check_prompt_replacement_length(self,prompt):
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
-        return len(prompt) < 350
+        return len(prompt) < 501
 
     # this function takes a prompt input, and returns a filtered prompt instead
     # when a prompt is sanitized this way, additional negative prompts are also added

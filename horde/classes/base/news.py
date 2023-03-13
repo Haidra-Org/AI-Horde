@@ -4,9 +4,22 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-03-13",
+            "newspiece": 
+                "A new option `replacement_filter` is available for image generations. "
+                "When set to True and a potential CSAM prompt is detected, "
+                "all underage context will be transparently replaced or removed "
+                "and some extra negative prompts will be added to the negative prompt."
+                "When set to False (default) or the prompt size is over 500 chars "
+                "The previous behaviour will be used, where the prompt is rejected and an IP timeout will be put in place. "
+                "This feature should make sending text generations to be turned into images a less frustrating experience.",
+            "tags": ["csam", "text2text", "text2img"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-03-10",
             "newspiece": "We now have an AI-driven anti-CSAM filter as well. Read about it on [the main developer's blog](https://dbzer0.com/blog/ai-powered-anti-csam-filter-for-stable-diffusion/).",
-            "tags": ["ratings"],
+            "tags": ["csam"],
             "importance": "Information",
         },
         {
