@@ -187,17 +187,22 @@ class GenerateTemplate(Resource):
             prompt_suspicion, _ = prompt_checker(self.args.prompt)
             #logger.warning(datetime.utcnow())
             if prompt_suspicion >= 2 and self.gentype != "text":
-                # Moderators do not get ip blocked to allow for experiments
-                if not self.user.moderator:
-                    prompt_dict = {
-                        "prompt": self.args.prompt,
-                        "user": self.username,
-                        "type": "regex",
-                    }
-                    upload_prompt(prompt_dict)
-                    self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
-                    CounterMeasures.report_suspicion(self.user_ip)
-                raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
+
+                # if replacement filter mode is enabled AND prompt is short enough, do that instead
+                if self.args.replacement_filter and prompt_checker.check_prompt_replacement_length(self.args.prompt):
+                    self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
+                else:
+                    # Moderators do not get ip blocked to allow for experiments
+                    if not self.user.moderator:
+                        prompt_dict = {
+                            "prompt": self.args.prompt,
+                            "user": self.username,
+                            "type": "regex",
+                        }
+                        upload_prompt(prompt_dict)
+                        self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
+                        CounterMeasures.report_suspicion(self.user_ip)
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
             if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
                 raise e.CorruptPrompt(
                     self.username, 

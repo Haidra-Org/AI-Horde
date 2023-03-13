@@ -111,6 +111,68 @@ class PromptChecker:
         return False
 
 
+    # tests if the prompt is short enough to apply replacement filter on
+    # negative prompt part is excluded. limit set to 350 chars (not tokens!).
+    def check_prompt_replacement_length(self,prompt):
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+        return len(prompt) < 350
+
+    # this function takes a prompt input, and returns a filtered prompt instead
+    # when a prompt is sanitized this way, additional negative prompts are also added
+    def apply_replacement_filter(self,prompt):
+        negprompt = ""
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+            negprompt = ", "+negprompt
+
+        # since this prompt was already flagged, ALWAYS force some additional NEGATIVE prompts to steer the generation
+        replacednegprompt = "###child, young, teenager" + negprompt
+
+        # we also force the prompt to be normalized to avoid tricks, so nothing will escape the replacement regex
+        # this means prompt weights are lost, but it is fine for textgen image prompts
+        prompt = self.normalize_prompt(prompt) 
+
+        #todo: replace with precompiled regex filters from db, as i'm not too good with databases I duno what's the most optimal way to do so.
+        # it would probably be a simple shared array of objects created in compile_regex_filter(), but you may have a better idea
+        filter_list = [
+        {
+            "regex": re.compile(r'\b(red|yellow).(banana|apple|pear|orange|pineapple)\b', re.IGNORECASE),
+            "description": "ban red and yellow fruits of specific types",
+        },
+        {            
+            "regex": re.compile(r'\b[0-9].{1,3}.(fruits|fruits)', re.IGNORECASE),            
+            "description": "ban mention of too many fruits, 10 to 9999 fruits are illegal"           
+        },
+        {           
+            "regex": re.compile(r'(pizza|bread)', re.IGNORECASE),            
+            "description": "pizza and bread is also not allowed ever, even as part of other words",           
+        },
+        {            
+            "regex": re.compile(r'\bI.hate(.*?)fish\b', re.IGNORECASE), 
+            "description": "any phrase between I hate...fish is removed.",
+        }
+        ]
+
+        #go through each filter rule and replace any matches sequentially
+        for filter_entry in filter_list:
+            prompt = re.sub(filter_entry['regex'], '', prompt) 
+        
+        #if regex has eaten the entire prompt, replace with a placeholder so it doesn't break generation
+        if prompt.strip() == '':
+            prompt = 'Scenery' # a random word can be used here. Scenery should give some nice placeholders
+
+        #at this point all the matching stuff will be filtered out of the prompt. reconstruct sanitized prompt and return
+        return prompt+replacednegprompt
+
+        #test prompt input:  "Hello, I live in a house. My favorite food is a Red Banana and fresh pizza. Also I have 500 fruits. And I hate all types and sizes of fish. The end."
+        #test prompt output: "Hello I live in a house My favorite food is a  and fresh  Also I have  And  The end ###child, young, teenager"
+        #test prompt input:  "Red Banana Red Banana Pizza Pizza Pizza"
+        #test prompt output: "Scenery###child, young, teenager"
+        
+        #you can decide if you want to strip punctuation as part of the prompt normalization. Either should work.
+        #normal non-suspicious prompts will not touch this replacement filter anyway
+
     def normalize_prompt(self,prompt):
         """Prepares the prompt to be scanned by the regex, by removing tricks one might use to avoid the filters
         """
