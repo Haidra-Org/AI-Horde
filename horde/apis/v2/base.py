@@ -186,9 +186,8 @@ class GenerateTemplate(Resource):
             #logger.warning(datetime.utcnow())
             prompt_suspicion, _ = prompt_checker(self.args.prompt)
             #logger.warning(datetime.utcnow())
+            prompt_replaced = False
             if prompt_suspicion >= 2 and self.gentype != "text":
-
-                prompt_replaced = False
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
                 if self.args.replacement_filter and prompt_checker.check_prompt_replacement_length(self.args.prompt):
                     self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
@@ -208,11 +207,19 @@ class GenerateTemplate(Resource):
                         CounterMeasures.report_suspicion(self.user_ip)
                     raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
             if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
-                raise e.CorruptPrompt(
-                    self.username, 
-                    self.user_ip, 
-                    self.args.prompt, 
-                    message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
+                # For NSFW models, we always do replacements
+                # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
+                self.args.prompt = prompt_checker.nsfw_model_prompt_replace(self.args.prompt, self.models, already_replaced=prompt_replaced)
+                if self.args.prompt is None:
+                    prompt_replaced = False
+                elif prompt_replaced is False:
+                    prompt_replaced = True
+                if not prompt_replaced:
+                    raise e.CorruptPrompt(
+                        self.username, 
+                        self.user_ip, 
+                        self.args.prompt, 
+                        message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
             csam_trigger_check = prompt_checker.check_csam_triggers(self.args.prompt)
             if csam_trigger_check is not False and self.gentype != "text":
                 raise e.CorruptPrompt(

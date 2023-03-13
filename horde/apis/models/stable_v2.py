@@ -13,7 +13,7 @@ class ImageParsers(v2.Parsers):
         self.generate_parser.add_argument("models", type=list, required=False, default=['stable_diffusion'], help="The acceptable models with which to generate", location="json")
         self.generate_parser.add_argument("r2", type=bool, default=True, required=False, help="If True, the image will be sent via cloudflare r2 download link", location="json")
         self.generate_parser.add_argument("shared", type=bool, default=False, required=False, help="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True.", location="json")
-        self.generate_parser.add_argument("replacement_filter", type=bool, default=False, required=False, help="If enabled, suspicious prompts are sanitized through a string replacement filter instead.", location="json")
+        self.generate_parser.add_argument("replacement_filter", type=bool, default=True, required=False, help="If enabled, suspicious prompts are sanitized through a string replacement filter instead.", location="json")
         self.job_pop_parser.add_argument("max_pixels", type=int, required=False, default=512*512, help="The maximum amount of pixels this worker can generate", location="json")
         self.job_pop_parser.add_argument("blacklist", type=list, required=False, help="Specifies the words that this worker will not accept in a prompt.", location="json")
         self.job_pop_parser.add_argument("allow_img2img", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests", location="json")
@@ -113,7 +113,7 @@ class ImageModels(v2.Models):
             'source_mask': fields.String(description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel"),
             'r2': fields.Boolean(default=True, description="If True, the image will be sent via cloudflare r2 download link"),
             'shared': fields.Boolean(default=False, description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True."),
-            'replacement_filter': fields.Boolean(default=False,description="If enabled, suspicious prompts are sanitized through a string replacement filter instead."),
+            'replacement_filter': fields.Boolean(default=True,description="If enabled, suspicious prompts are sanitized through a string replacement filter instead."),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),

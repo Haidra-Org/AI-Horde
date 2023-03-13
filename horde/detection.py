@@ -33,8 +33,32 @@ class PromptChecker:
         self.next_refresh = datetime.utcnow()
         self.refresh_regex()
         # These are checked on top of the normal
-        self.nsfw_model_regex = re.compile(r"girl|\bboy\b|student|\byoung\b|lit[tl]le|\blil\b|small|\btiny|nina", re.IGNORECASE)
-        self.nsfw_model_anime_regex = re.compile(r"(?<!1)girl|\b(?<!1)boy\b|student|\byoung\b|lit[tl]le|\blil\b|small|\btiny|nina", re.IGNORECASE)
+        nsfw_model_regex = [
+            {
+                "regex": re.compile(r"student|\byoung\b|lit[tl]?le|\blil\b|small?\b|\btiny", re.IGNORECASE),
+                "replacement": "adult"
+            },
+        ]
+        self.nsfw_model_regex = nsfw_model_regex + [
+                {
+                    "regex": re.compile(r"girl|nina", re.IGNORECASE),
+                    "replacement": "adult woman"
+                },
+                {
+                    "regex": re.compile(r"\bboy\b|\bson\b", re.IGNORECASE),
+                    "replacement": "adult man"
+                },
+            ]
+        self.nsfw_model_anime_regex = nsfw_model_regex + [
+                {
+                    "regex": re.compile(r"(?<!1)girl|nina", re.IGNORECASE),
+                    "replacement": "adult woman"
+                },
+                {
+                    "regex": re.compile(r"\b(?<!1)boy\b|\bson\b", re.IGNORECASE),
+                    "replacement": "adult man"
+                },
+            ]
         self.weight_remover = re.compile(r'\((.*?):\d+\.\d+\)')
         self.whitespace_remover = re.compile(r'(\s(\w)){3,}\b')
         self.whitespace_converter = re.compile(r"([^\w\s]|_)")
@@ -111,16 +135,43 @@ class PromptChecker:
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
         prompt = self.normalize_prompt(prompt)
+        regex_array = self.nsfw_model_regex
         if "Hentai Diffusion" in models and len(models) == 1:
-            nsfw_match = self.nsfw_model_anime_regex.search(prompt)
-        else:
-            nsfw_match = self.nsfw_model_regex.search(prompt)
-        if nsfw_match:
-            return True
+            regex_array = self.nsfw_model_anime_regex
+        for rcheck in regex_array:
+            nsfw_match = rcheck["regex"].search(prompt)
+            if nsfw_match:
+                return True
         prompt_10_suspicion, _ = self(prompt, 10)
         if prompt_10_suspicion:
             return True
         return False
+
+    def nsfw_model_prompt_replace(self, prompt, models, already_replaced = False):
+        # logger.debug([prompt, models])
+        if not any(m in model_reference.nsfw_models for m in models):
+            return False
+        if not already_replaced:
+            prompt = self.apply_replacement_filter(prompt)
+        if prompt is None:
+            return None
+        negprompt = ""
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+            negprompt = "###"+negprompt
+        regex_array = self.nsfw_model_regex
+        if "Hentai Diffusion" in models and len(models) == 1:
+            regex_array = self.nsfw_model_anime_regex
+        for rcheck in regex_array:
+            prompt = rcheck["regex"].sub(
+                rcheck['replacement'], 
+                prompt
+            )
+        logger.debug(prompt)
+        if prompt.strip() == '':
+            return None
+        return prompt + negprompt
+
 
     def check_csam_triggers(self, prompt):
         # logger.debug([prompt, models])
@@ -138,7 +189,7 @@ class PromptChecker:
     def check_prompt_replacement_length(self,prompt):
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
-        return len(prompt) < 501
+        return len(prompt) <= 1000
 
     # this function takes a prompt input, and returns a filtered prompt instead
     # when a prompt is sanitized this way, additional negative prompts are also added
@@ -157,12 +208,10 @@ class PromptChecker:
         prompt = self.normalize_prompt(prompt) 
         #go through each filter rule and replace any matches sequentially
         for filter_entry in self.replacements:
-            prompt = re.sub(
-                filter_entry['regex'], 
+            prompt = filter_entry['regex'].sub(
                 filter_entry['replacement'], 
                 prompt
             ) 
-        
         #if regex has eaten the entire prompt, we return None, which will use the previous approach of IP block.
         if prompt.strip() == '':
             return None
