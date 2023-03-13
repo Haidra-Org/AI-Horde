@@ -2,7 +2,9 @@
 
 # 4.2.0
 
-* Added regex transparent replacements instead of IP blocks
+* Added regex transparent replacements instead of IP blocks. 
+* New arg for `/api/v2/generate/async`: `replacement_filter`. When True (Default), it will transparently replace underage context in CSAM-detected prompts. When false (or when prompt too large) will IP block instead.
+* NSFW models which hit their lightweight CSAM filter, will always replace instead of giving an error. This is to avoid people reverse engineering the CSAM regex through trial and error
 
 # 4.1.9
 
