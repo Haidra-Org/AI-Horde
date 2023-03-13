@@ -354,6 +354,9 @@ def store_compiled_filter_regex():
     with HORDE.app_context():
         for filter_id in [10, 11, 20]:
             filter = compile_regex_filter(filter_id)
+            # Empty string means compilation error
+            if filter == "":
+                continue
             # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
             hr.horde_r_set(f'filter_{filter_id}', filter)
 

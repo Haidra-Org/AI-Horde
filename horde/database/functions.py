@@ -26,7 +26,7 @@ from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.base.team import Team
 from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
-from horde.utils import hash_api_key
+from horde.utils import hash_api_key, validate_regex
 from horde import horde_redis as hr
 from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.enums import State
@@ -819,7 +819,11 @@ def prune_expired_stats():
 def compile_regex_filter(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
     all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
-    return '|'.join(all_filter_regex)
+    regex_string = '|'.join(all_filter_regex)
+    if not validate_regex(regex_string):
+        logger.error("Error when checking compiled regex!. Avoiding cache store")
+        return ""
+    return regex_string
 
 def retrieve_regex_replacements(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex, Filter.replacement).filter_by(filter_type=filter_type)
@@ -829,5 +833,6 @@ def retrieve_regex_replacements(filter_type):
             "replacement": filter.replacement,
         }
         for filter in all_filter_regex_query.all()
+        if validate_regex(filter.regex)
     ]
     return all_filter_regex_dict

@@ -4,6 +4,7 @@ import secrets
 import hashlib
 import os
 import random
+import regex as re
 from datetime import datetime
 import dateutil.relativedelta
 from profanity_check  import predict
@@ -94,3 +95,10 @@ def count_parentheses(s):
             open_p = False
             count += 1
     return count
+
+def validate_regex(regex_string):
+    try:
+        re.compile(regex_string, re.IGNORECASE)
+    except:
+        return False
+    return True
