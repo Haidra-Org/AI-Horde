@@ -820,3 +820,14 @@ def compile_regex_filter(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
     all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
     return '|'.join(all_filter_regex)
+
+def retrieve_regex_replacements(filter_type):
+    all_filter_regex_query = db.session.query(Filter.regex, Filter.replacement).filter_by(filter_type=filter_type)
+    # all_filter_regex_dict = [
+    #     {
+    #         "regex": filter.regex,
+    #         "replacement": filter.replacement,
+    #     }
+    #     for filter in all_filter_regex_query.all()
+    # ]
+    return all_filter_regex_query.all()

@@ -188,10 +188,14 @@ class GenerateTemplate(Resource):
             #logger.warning(datetime.utcnow())
             if prompt_suspicion >= 2 and self.gentype != "text":
 
+                prompt_replaced = False
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
                 if self.args.replacement_filter and prompt_checker.check_prompt_replacement_length(self.args.prompt):
                     self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
-                else:
+                    # If it returns None, it means it replaced everything with an empty string
+                    if self.args.prompt is not None:
+                        prompt_replaced = True
+                if not prompt_replaced:
                     # Moderators do not get ip blocked to allow for experiments
                     if not self.user.moderator:
                         prompt_dict = {
@@ -1297,6 +1301,7 @@ class Filters(Resource):
     put_parser.add_argument("regex", type=str, required=True, help="The filter regex", location="json")
     put_parser.add_argument("filter_type", type=int, required=True, help="The filter type", location="json")
     put_parser.add_argument("description", type=str, required=False, help="Optional description about this filter", location="json")
+    put_parser.add_argument("replacement", type=str, default='', required=False, help="Replacement string to use for this regex", location="json")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(put_parser,models.input_model_filter_put, validate=True)
@@ -1315,6 +1320,7 @@ class Filters(Resource):
                 regex = self.args.regex,
                 filter_type = self.args.filter_type,
                 description = self.args.description,
+                replacement = self.args.replacement,
                 user_id = mod.id,
             )
             db.session.add(new_filter)
@@ -1419,6 +1425,7 @@ class FilterSingle(Resource):
     patch_parser.add_argument("regex", type=str, required=False, help="The filter regex", location="json")
     patch_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="json")
     patch_parser.add_argument("description", type=str, required=False, help="Optional description about this filter", location="json")
+    patch_parser.add_argument("replacement", type=str, default='', required=False, help="Replacement string to use for this regex", location="json")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(patch_parser,models.input_model_filter_patch, validate=True)
@@ -1443,6 +1450,8 @@ class FilterSingle(Resource):
             filter.regex = self.args.regex
         if self.args.description:
             filter.description = self.args.description
+        if self.args.replacement:
+            filter.replacement = self.args.replacement
         db.session.commit()
         logger.info(f"Mod {mod.get_unique_alias()} modified filter {filter.id}")
         return(filter.get_details(),200)

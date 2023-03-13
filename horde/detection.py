@@ -5,7 +5,7 @@ import dateutil.relativedelta
 from horde.logger import logger
 from horde.horde_redis import horde_r
 from horde.flask import HORDE, SQLITE_MODE # Local Testing
-from horde.database.functions import compile_regex_filter # Local Testing
+from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
 from horde.model_reference import model_reference
 from unidecode import unidecode
 
@@ -24,6 +24,7 @@ class PromptChecker:
             "filter_11": None,
             "filter_20": None,
         }
+        self.replacements = []
         # Used for scripting outside of this class
         self.known_ids = [10,11,20]
         self.filters1 = ["filter_10","filter_11"]
@@ -57,6 +58,13 @@ class PromptChecker:
                 self.compiled[filter_id] = re.compile(stored_filter, re.IGNORECASE)
                 self.regex[filter_id] = stored_filter
                 logger.debug(self.compiled[filter_id])
+            self.replacements = [
+                {
+                    "regex": re.compile(f_entry.regex, re.IGNORECASE),
+                    "replacement": f_entry.replacement,
+                }
+                for f_entry in retrieve_regex_replacements(filter_type=10)
+            ]
             self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+1)
 
     def __call__(self, prompt, id = None):
@@ -127,43 +135,27 @@ class PromptChecker:
             negprompt = ", "+negprompt
 
         # since this prompt was already flagged, ALWAYS force some additional NEGATIVE prompts to steer the generation
-        replacednegprompt = "###child, young, teenager" + negprompt
+        #TODO: Remove "old", "mature", "middle-aged" from existing negprompt
+        replacednegprompt = "###(child:1.1), (underage:1.1), (teenager:1.1)" + negprompt
 
         # we also force the prompt to be normalized to avoid tricks, so nothing will escape the replacement regex
         # this means prompt weights are lost, but it is fine for textgen image prompts
         prompt = self.normalize_prompt(prompt) 
 
-        #todo: replace with precompiled regex filters from db, as i'm not too good with databases I duno what's the most optimal way to do so.
-        # it would probably be a simple shared array of objects created in compile_regex_filter(), but you may have a better idea
-        filter_list = [
-        {
-            "regex": re.compile(r'\b(red|yellow).(banana|apple|pear|orange|pineapple)\b', re.IGNORECASE),
-            "description": "ban red and yellow fruits of specific types",
-        },
-        {            
-            "regex": re.compile(r'\b[0-9].{1,3}.(fruits|fruits)', re.IGNORECASE),            
-            "description": "ban mention of too many fruits, 10 to 9999 fruits are illegal"           
-        },
-        {           
-            "regex": re.compile(r'(pizza|bread)', re.IGNORECASE),            
-            "description": "pizza and bread is also not allowed ever, even as part of other words",           
-        },
-        {            
-            "regex": re.compile(r'\bI.hate(.*?)fish\b', re.IGNORECASE), 
-            "description": "any phrase between I hate...fish is removed.",
-        }
-        ]
-
         #go through each filter rule and replace any matches sequentially
-        for filter_entry in filter_list:
-            prompt = re.sub(filter_entry['regex'], '', prompt) 
+        for filter_entry in self.replacements:
+            prompt = re.sub(
+                filter_entry['regex'], 
+                filter_entry['replacement'], 
+                prompt
+            ) 
         
-        #if regex has eaten the entire prompt, replace with a placeholder so it doesn't break generation
+        #if regex has eaten the entire prompt, we return None, which will use the previous approach of IP block.
         if prompt.strip() == '':
-            prompt = 'Scenery' # a random word can be used here. Scenery should give some nice placeholders
+            return None
 
         #at this point all the matching stuff will be filtered out of the prompt. reconstruct sanitized prompt and return
-        return prompt+replacednegprompt
+        return prompt + replacednegprompt
 
         #test prompt input:  "Hello, I live in a house. My favorite food is a Red Banana and fresh pizza. Also I have 500 fruits. And I hate all types and sizes of fish. The end."
         #test prompt output: "Hello I live in a house My favorite food is a  and fresh  Also I have  And  The end ###child, young, teenager"

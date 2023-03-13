@@ -348,11 +348,13 @@ class Models:
             "regex": fields.String(required=True, description="The regex for this filter.", example="ac.*"),
             "filter_type": fields.Integer(required=True, description="The integer defining this filter type", min=10, max=29, example=10),
             "description": fields.String(required=False, description="Description about this regex"),
+            "replacement": fields.String(required=False, default='', description="The replacement string for this regex"),
         })
         self.input_model_filter_patch = api.model('PatchExistingFilter', {
             "regex": fields.String(required=False, description="The regex for this filter.", example="ac.*"),
             "filter_type": fields.Integer(required=False, description="The integer defining this filter type", min=10, max=29, example=10),
             "description": fields.String(required=False, description="Description about this regex"),
+            "replacement": fields.String(required=False, default='', description="The replacement string for this regex"),
         })
 
         self.response_model_filter_details = api.model('FilterDetails', {
@@ -360,6 +362,7 @@ class Models:
             "regex": fields.String(required=True,description="The regex for this filter.", example="ac.*"),
             "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=10),
             "description": fields.String(required=False, description="Description about this regex"),
+            "replacement": fields.String(required=False, default='', description="The replacement string for this regex."),
             "user": fields.String(required=True, description="The moderator which added or last updated this regex"),
         })
         self.response_model_prompt_suspicion = api.model('FilterPromptSuspicion', {

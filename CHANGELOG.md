@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.2.0
+
+* Added regex transparent replacements instead of IP blocks
+
 # 4.1.9
 
 * Tweaks on patreon supporters
