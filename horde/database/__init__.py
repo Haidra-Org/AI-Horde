@@ -18,6 +18,7 @@ prune_stats = PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
 patreon_cacher = PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
 priority_increaser = PrimaryTimedFunction(10, threads.increment_extra_priority, quorum=quorum)
 compiled_filter_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)
+regex_replacements_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex_replacements, quorum=quorum)
 
 if args.reload_all_caches:
     logger.info("store_prioritized_wp_queue()")
@@ -32,6 +33,8 @@ if args.reload_all_caches:
     threads.store_patreon_members()
     logger.info("store_compiled_filter_regex()")
     threads.store_compiled_filter_regex()
+    logger.info("store_compiled_filter_regex_replacements()")
+    threads.store_compiled_filter_regex_replacements()
 
 
 
@@ -48,6 +51,7 @@ if args.new_patreons:
     
 # # Test
 
-# threads.check_waiting_prompts()
+# logger.info("store_compiled_filter_regex_replacements()")
+# threads.store_compiled_filter_regex_replacements()
 # import sys
 # sys.exit()

@@ -103,8 +103,8 @@ class CounterMeasures:
 		ip_s_r.setex(ipaddr, timedelta(hours=suspicion_timeout), current_suspicion + 1)
 		# Fibonacci in seconds FTW!
 		timeout = (current_suspicion + current_suspicion + 1) * 3
-		if ipaddr in WHITELISTED_SERVICE_IPS and timeout > 150:
-			timeout = 150
+		if ipaddr in WHITELISTED_SERVICE_IPS and timeout > 5:
+			timeout = 5
 		CounterMeasures.set_timeout(ipaddr, timeout)
 		return timeout
 
@@ -119,11 +119,11 @@ class CounterMeasures:
 		return int(current_suspicion)
 
 	@staticmethod
-	def set_timeout(ipaddr, seconds):
+	def set_timeout(ipaddr, minutes):
 		'''Puts the ip address into timeout for these amount of seconds'''
 		if not ip_t_r:
 			return
-		ip_t_r.setex(ipaddr, timedelta(seconds=seconds), int(True))
+		ip_t_r.setex(ipaddr, timedelta(minutes=minutes), int(True))
 
 	@staticmethod
 	def retrieve_timeout(ipaddr):

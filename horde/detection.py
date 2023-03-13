@@ -1,11 +1,12 @@
 import os
+import json
 import regex as re
 from datetime import datetime
 import dateutil.relativedelta
 from horde.logger import logger
-from horde.horde_redis import horde_r
+from horde.horde_redis import horde_r_get
 from horde.flask import HORDE, SQLITE_MODE # Local Testing
-from horde.database.functions import compile_regex_filter # Local Testing
+from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
 from horde.model_reference import model_reference
 from unidecode import unidecode
 
@@ -24,6 +25,7 @@ class PromptChecker:
             "filter_11": None,
             "filter_20": None,
         }
+        self.replacements = []
         # Used for scripting outside of this class
         self.known_ids = [10,11,20]
         self.filters1 = ["filter_10","filter_11"]
@@ -42,13 +44,26 @@ class PromptChecker:
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
         if self.next_refresh > datetime.utcnow():
             return
+        if SQLITE_MODE:
+            with HORDE.app_context():
+                stored_replacements = retrieve_regex_replacements(filter_type=10)
+        else:
+            cached_replacements = horde_r_get("cached_regex_replacements")
+            if not cached_replacements:
+                logger.warning("No cached regex replacements found in redis! Check threads!")
+                stored_replacements = []
+            try:
+                stored_replacements = json.loads(cached_replacements)
+            except:
+                logger.warning("Errors when loading cached regex replacements in redis! Check threads!")
+                stored_replacements = []
         for id in [10, 11, 20]:
             filter_id = f"filter_{id}"
             if SQLITE_MODE:
                 with HORDE.app_context():
                     stored_filter = compile_regex_filter(id)
             else:
-                stored_filter = horde_r.get(filter_id)
+                stored_filter = horde_r_get(filter_id)
             # Ensure we don't get catch-all regex
             if not stored_filter:
                 continue
@@ -57,6 +72,13 @@ class PromptChecker:
                 self.compiled[filter_id] = re.compile(stored_filter, re.IGNORECASE)
                 self.regex[filter_id] = stored_filter
                 logger.debug(self.compiled[filter_id])
+            self.replacements = [
+                {
+                    "regex": re.compile(f_entry["regex"], re.IGNORECASE),
+                    "replacement": f_entry["replacement"],
+                }
+                for f_entry in stored_replacements
+            ]
             self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+1)
 
     def __call__(self, prompt, id = None):
@@ -111,6 +133,48 @@ class PromptChecker:
         return False
 
 
+    # tests if the prompt is short enough to apply replacement filter on
+    # negative prompt part is excluded. limit set to 350 chars (not tokens!).
+    def check_prompt_replacement_length(self,prompt):
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+        return len(prompt) < 350
+
+    # this function takes a prompt input, and returns a filtered prompt instead
+    # when a prompt is sanitized this way, additional negative prompts are also added
+    def apply_replacement_filter(self,prompt):
+        negprompt = ""
+        if "###" in prompt:
+            prompt, negprompt = prompt.split("###", 1)
+            negprompt = ", "+negprompt
+
+        # since this prompt was already flagged, ALWAYS force some additional NEGATIVE prompts to steer the generation
+        #TODO: Remove "old", "mature", "middle-aged" from existing negprompt
+        replacednegprompt = "###child, infant, underage, immature, teenager, tween" + negprompt
+
+        # we also force the prompt to be normalized to avoid tricks, so nothing will escape the replacement regex
+        # this means prompt weights are lost, but it is fine for textgen image prompts
+        prompt = self.normalize_prompt(prompt) 
+        #go through each filter rule and replace any matches sequentially
+        for filter_entry in self.replacements:
+            prompt = re.sub(
+                filter_entry['regex'], 
+                filter_entry['replacement'], 
+                prompt
+            ) 
+        
+        #if regex has eaten the entire prompt, we return None, which will use the previous approach of IP block.
+        if prompt.strip() == '':
+            return None
+
+        #at this point all the matching stuff will be filtered out of the prompt. reconstruct sanitized prompt and return
+        logger.debug(prompt + replacednegprompt)
+        return prompt + replacednegprompt
+
+        
+        #you can decide if you want to strip punctuation as part of the prompt normalization. Either should work.
+        #normal non-suspicious prompts will not touch this replacement filter anyway
+
     def normalize_prompt(self,prompt):
         """Prepares the prompt to be scanned by the regex, by removing tricks one might use to avoid the filters
         """
@@ -127,3 +191,6 @@ class PromptChecker:
 
 
 prompt_checker = PromptChecker()
+# Test
+# import sys
+# sys.exit()
