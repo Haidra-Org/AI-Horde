@@ -823,11 +823,11 @@ def compile_regex_filter(filter_type):
 
 def retrieve_regex_replacements(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex, Filter.replacement).filter_by(filter_type=filter_type)
-    # all_filter_regex_dict = [
-    #     {
-    #         "regex": filter.regex,
-    #         "replacement": filter.replacement,
-    #     }
-    #     for filter in all_filter_regex_query.all()
-    # ]
-    return all_filter_regex_query.all()
+    all_filter_regex_dict = [
+        {
+            "regex": filter.regex,
+            "replacement": filter.replacement,
+        }
+        for filter in all_filter_regex_query.all()
+    ]
+    return all_filter_regex_dict

@@ -17,7 +17,15 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.flask import HORDE, db, SQLITE_MODE
 from horde.logger import logger
-from horde.database.functions import query_prioritized_wps, get_active_workers, get_available_models, count_totals, prune_expired_stats, compile_regex_filter
+from horde.database.functions import (
+    query_prioritized_wps, 
+    get_active_workers, 
+    get_available_models, 
+    count_totals, 
+    prune_expired_stats, 
+    compile_regex_filter, 
+    retrieve_regex_replacements
+)
 from horde import horde_instance_id
 from horde.argparser import args
 from horde.r2 import delete_procgen_image, delete_source_image
@@ -348,3 +356,12 @@ def store_compiled_filter_regex():
             filter = compile_regex_filter(filter_id)
             # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
             hr.horde_r_set(f'filter_{filter_id}', filter)
+
+
+@logger.catch(reraise=True)
+def store_compiled_filter_regex_replacements():
+    '''Compiles all regex and their replacements and stores them in redis'''
+    with HORDE.app_context():
+        replacements = retrieve_regex_replacements(10)
+        # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
+        hr.horde_r_set(f'cached_regex_replacements', json.dumps(replacements))

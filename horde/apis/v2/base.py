@@ -1441,7 +1441,7 @@ class FilterSingle(Resource):
         filter = Filter.query.filter_by(id=filter_id).first()
         if not filter:
             raise e.ThingNotFound('Filter', filter_id)
-        if not self.args.filter_type and not self.args.regex and not self.args.description:
+        if not self.args.filter_type and not self.args.regex and not self.args.description and not self.args.replacement:
             raise e.NoValidActions("No filter patching selected!")
         filter.user_id = mod.id,
         if self.args.filter_type:
