@@ -107,6 +107,20 @@ class WorkerTemplate(db.Model):
     # TODO: Normalize this to the standard
     wtype = "image"
 
+    @hybrid_property
+    def speed(self) -> int:
+        performance_avg = db.session.query(
+            func.avg(WorkerPerformance.performance)
+        ).filter_by(
+            worker_id=self.id
+        ).scalar()
+        if performance_avg:
+            return performance_avg
+        # We return a baseline speed if the workers hasn't fulfilled anything
+        # in order to avoid a division by zero
+        return 1 * hv.thing_divisors[self.wtype]
+        
+
     def create(self, **kwargs):
         self.check_for_bad_actor()
         db.session.add(self)
@@ -308,21 +322,11 @@ class WorkerTemplate(db.Model):
         self.uncompleted_jobs += 1
         db.session.commit()
 
-    @hybrid_property
-    def speed(self) -> int:
-        performance_avg = db.session.query(
-            func.avg(WorkerPerformance.performance)
-        ).filter_by(
-            worker_id=self.id
-        ).scalar()
-        logger.debug(performance_avg)
-        if performance_avg:
-            return performance_avg
-        return 1
-        
     # def is_slow(self):
 
     def get_performance(self):
+        from sqlalchemy import select
+        logger.debug(select(self.speed))
         return f'{round(self.speed / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
         # #TODO: Need to figure how to handle this using self.speed
         return 'No requests fulfilled yet'
