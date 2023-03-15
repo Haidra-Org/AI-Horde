@@ -315,6 +315,7 @@ class WorkerTemplate(db.Model):
         ).filter_by(
             worker_id=self.id
         ).scalar()
+        logger.debug(speed)
         if performance_avg:
             return performance_avg
         return 1
