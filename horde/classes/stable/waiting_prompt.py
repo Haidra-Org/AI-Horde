@@ -249,10 +249,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
         '''
-        if not self.slow_workers:
-            return(True,max_res) 
         queue = counted_totals["queued_requests"]
         max_res = 1124 - round(queue * 0.9)
+        if not self.slow_workers:
+            return(True,max_res) 
         if max_res < 576:
             max_res = 576
             # SD 2.0 requires at least 768 to do its thing
@@ -260,8 +260,6 @@ class ImageWaitingPrompt(WaitingPrompt):
                 max_res = 768
         if max_res > 1024:
             max_res = 1024
-        if not self.slow_workers:
-            return(True,max_res) 
         if self.get_accurate_steps() > 50:
             return(True,max_res)
         if self.width * self.height > max_res*max_res:

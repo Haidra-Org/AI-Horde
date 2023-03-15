@@ -1,0 +1,2 @@
+
+ALTER TABLE waiting_prompts ADD COLUMN slow_workers BOOLEAN default true;
