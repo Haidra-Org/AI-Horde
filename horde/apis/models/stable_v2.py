@@ -48,7 +48,7 @@ class ImageModels(v2.Models):
             'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
             'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
-            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"]),unique=True),
+            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers"]),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
             'tiling': fields.Boolean(default=False,description="Set to True to create images that stitch together seamlessly"),
             'hires_fix': fields.Boolean(default=False,description="Set to True to process the image at base resolution before upscaling and re-processing"),

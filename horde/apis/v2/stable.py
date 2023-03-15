@@ -89,7 +89,7 @@ class ImageAsyncGenerate(GenerateTemplate):
              raise e.UnsupportedSampler("You cannot use pix2pix with the DDIM sampler")
         if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
-        if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"] for model_name in self.args.models):
+        if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers"] for model_name in self.args.models):
             raise e.UnsupportedModel
 
     def get_size_too_big_message(self):
