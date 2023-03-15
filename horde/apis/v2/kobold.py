@@ -67,7 +67,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 raise e.KudosUpfront(
                     required_kudos, 
                     self.username, 
-                    message=f"Due to heavy demand, for requests over {tokens} tokens, the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
+                    message=f"Due to heavy demand, for requests over {tokens} tokens, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
                 )                
 
     def get_size_too_big_message(self):
