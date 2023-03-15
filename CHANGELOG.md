@@ -7,7 +7,7 @@
    * If False, the request will only be picked up by workers who have a decent speed (0.3 MPS/s for Image, 2 tokens/s for Text). However selecting this option will incur a 20% Kudos consumption penalty and require upfront kudos.  
    
    The purpose of this option is to give people the ability to onboard slower workers while also allowing other people to avoid those workers if needed.
-   
+* Added check for load on Text Gen and requirement for upfront kudos when requesting too many tokens while load is high   
 
 # 4.3.0
 
