@@ -325,8 +325,6 @@ class WorkerTemplate(db.Model):
     # def is_slow(self):
 
     def get_performance(self):
-        from sqlalchemy import select
-        logger.debug(select(self.speed))
         return f'{round(self.speed / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
         # #TODO: Need to figure how to handle this using self.speed
         return 'No requests fulfilled yet'
@@ -563,3 +561,7 @@ class Worker(WorkerTemplate):
         for model in self.models:
             db.session.delete(model)
         super().delete()
+
+
+from sqlalchemy import select
+logger.debug(select(Worker.speed))
