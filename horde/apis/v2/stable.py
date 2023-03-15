@@ -151,7 +151,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.KudosUpfront(
                     required_kudos, 
                     self.username, 
-                    message=f"Due to heavy demand, for requests over {res}x{res} or over 50 steps (25 for k_heun and k_dpm_2*), and for 12 or more weights, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
+                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (25 for k_heun and k_dpm_2*), and for 12 or more weights, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
                 )
             # else:
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
