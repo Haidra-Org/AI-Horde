@@ -42,7 +42,7 @@ class Team(db.Model):
             # So for now I'm ignoring it
             if worker.worker_type == "interrogation_worker":
                 continue
-            all_performances.append(worker.get_performance_average())
+            all_performances.append(worker.speed)
         if len(all_performances):
             perf_avg = round(sum(all_performances) / len(all_performances) / hv.thing_divisors["image"],1)
             perf_total = round(sum(all_performances) / hv.thing_divisors["image"],1)

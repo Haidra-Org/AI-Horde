@@ -3,6 +3,7 @@ import json
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime, timedelta
 
 from horde.classes.base.waiting_prompt import WPModels
@@ -259,7 +260,8 @@ class WorkerTemplate(db.Model):
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
-            db.session.delete(performances.first())
+            # Ensure we don't forget anything
+            db.session.delete(performances.offset(20).all())
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
@@ -306,7 +308,8 @@ class WorkerTemplate(db.Model):
         self.uncompleted_jobs += 1
         db.session.commit()
 
-    def get_performance_average(self):
+    @hybrid_property
+    def speed(self) -> int:
         performance_avg = db.session.query(
             func.avg(WorkerPerformance.performance)
         ).filter_by(
@@ -315,15 +318,12 @@ class WorkerTemplate(db.Model):
         if performance_avg:
             return performance_avg
         return 1
+        
+    # def is_slow(self):
 
     def get_performance(self):
-        performance_avg = db.session.query(
-            func.avg(WorkerPerformance.performance)
-        ).filter_by(
-            worker_id=self.id
-        ).scalar()
-        if performance_avg:
-            return f'{round(performance_avg / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
+        return f'{round(self.speed / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
+        # #TODO: Need to figure how to handle this using self.speed
         return 'No requests fulfilled yet'
 
 
