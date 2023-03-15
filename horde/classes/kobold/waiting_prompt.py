@@ -71,7 +71,7 @@ class TextWaitingPrompt(WaitingPrompt):
         else returns False
         '''
         queue = counted_totals["queued_text_requests"]
-        max_tokens = 511 - round(queue * 0.9)
+        max_tokens = 513 - round(queue * 0.9)
         if not self.slow_workers:
             return(True,max_tokens) 
         if max_tokens < 256:
