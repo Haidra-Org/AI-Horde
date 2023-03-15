@@ -40,6 +40,10 @@ BRIDGE_CAPABILITIES = {
 
 BRIDGE_SAMPLERS = {
     "AI Horde Worker": {
+        17: {
+            "karras": {},
+            "no karras": {"DDIM"}
+        },
         12: {
             "karras": {"k_dpmpp_sde"},
             "no karras": {}
@@ -77,7 +81,7 @@ BRIDGE_SAMPLERS = {
                 "k_dpmpp_sde",
             },
             "no karras": {
-                "ddim",
+                "DDIM",
                 "plms",
             },
         },

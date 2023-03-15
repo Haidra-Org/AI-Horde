@@ -210,6 +210,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             kudos = kudos * 1.5
         if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
+        if 'RealESRGAN_x4plus_anime_6B' in self.gen_payload.get('post_processing', []):
+            kudos = kudos * 1.3
         # Codeformers are expensive to calculate, so we increase the kudos burn
         if 'CodeFormers' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3

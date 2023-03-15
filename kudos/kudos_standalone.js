@@ -35,6 +35,9 @@ export default function calculateKudos(
     if (postProcessors.includes('RealESRGAN_x4plus')) {
         kudos = kudos * 1.3;
     }
+    if (postProcessors.includes('RealESRGAN_x4plus_anime_6B')) {
+        kudos = kudos * 1.3;
+    }
     if (postProcessors.includes('CodeFormers')) {
         kudos = kudos * 1.3;
     }
