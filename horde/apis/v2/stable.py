@@ -105,6 +105,12 @@ class ImageAsyncGenerate(GenerateTemplate):
         )
         if upscaler_count > 1:
             raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
+        if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
+            raise e.BadRequest(
+                "This Client-Agent appears badly designed and is causing too many warnings. "
+                "First ensure it provides a proper name and contact details. "
+                "Then contact us on Discord to discuss the issue it's creating."
+            )
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
