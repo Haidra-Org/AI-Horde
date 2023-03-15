@@ -3,6 +3,7 @@ import json
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime, timedelta
 
 from horde.classes.base.waiting_prompt import WPModels
@@ -105,6 +106,30 @@ class WorkerTemplate(db.Model):
     # Because I didn't use worker_type correctly. I should have called them "text" and "image"
     # TODO: Normalize this to the standard
     wtype = "image"
+
+    @hybrid_property
+    def speed(self) -> int:
+        performance_avg = db.session.query(
+            func.avg(WorkerPerformance.performance)
+        ).filter_by(
+            worker_id=self.id
+        ).scalar()
+        if performance_avg:
+            return performance_avg
+        # We return a baseline speed if the workers hasn't fulfilled anything
+        # in order to avoid a division by zero
+        return 1 * hv.thing_divisors[self.wtype]
+        
+    @speed.expression
+    def speed(cls):
+        performance_avg = (
+            db.select(
+                func.avg(WorkerPerformance.performance)
+                ).where(
+                    WorkerPerformance.worker_id == cls.id
+                ).label("speed")
+        )
+        return db.case([(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])], else_=performance_avg)
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -259,7 +284,15 @@ class WorkerTemplate(db.Model):
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
-            db.session.delete(performances.first())
+            # Ensure we don't forget anything
+            subquery = (
+                db.session.query(WorkerPerformance.id)
+                .filter_by(worker_id=self.id)
+                .order_by(WorkerPerformance.created.asc())
+                .offset(20)
+                .subquery()
+            )
+            db.session.query(WorkerPerformance).filter(WorkerPerformance.id.notin_(subquery)).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
@@ -306,24 +339,11 @@ class WorkerTemplate(db.Model):
         self.uncompleted_jobs += 1
         db.session.commit()
 
-    def get_performance_average(self):
-        performance_avg = db.session.query(
-            func.avg(WorkerPerformance.performance)
-        ).filter_by(
-            worker_id=self.id
-        ).scalar()
-        if performance_avg:
-            return performance_avg
-        return 1
+    # def is_slow(self):
 
     def get_performance(self):
-        performance_avg = db.session.query(
-            func.avg(WorkerPerformance.performance)
-        ).filter_by(
-            worker_id=self.id
-        ).scalar()
-        if performance_avg:
-            return f'{round(performance_avg / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
+        return f'{round(self.speed / hv.thing_divisors[self.wtype], 1)} {hv.thing_names[self.wtype]} per second'
+        # #TODO: Need to figure how to handle this using self.speed
         return 'No requests fulfilled yet'
 
 
@@ -414,6 +434,8 @@ class WorkerTemplate(db.Model):
         }
         return ret_dict
 
+# Don't know if this works, need to recreate the DB to find out
+# db.Index('ix_image_workers_speed', WorkerTemplate.speed)
 
 class Worker(WorkerTemplate):
     '''A worker is meant to receive a text prompt and pass it though a generative model'''
@@ -558,3 +580,4 @@ class Worker(WorkerTemplate):
         for model in self.models:
             db.session.delete(model)
         super().delete()
+

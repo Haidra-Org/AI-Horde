@@ -72,7 +72,7 @@ class ProcessingGeneration(db.Model):
             return
         self.faulted = True
         # We  don't want cancelled requests to raise suspicion
-        things_per_sec = self.worker.get_performance_average()
+        things_per_sec = self.worker.speed
         kudos = self.get_gen_kudos()
         self.cancelled = True
         self.record(things_per_sec,kudos)
@@ -131,7 +131,7 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def get_seconds_needed(self):
-        return(self.wp.things / self.worker.get_performance_average())
+        return(self.wp.things / self.worker.speed)
 
     def get_expected_time_left(self):
         if self.is_completed():

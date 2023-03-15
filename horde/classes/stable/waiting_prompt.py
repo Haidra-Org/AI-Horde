@@ -207,7 +207,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         Also extra cost when upscaling
         '''
         if self.source_image:
-            kudos = kudos * 1.5
+            kudos = kudos * 1.3
         if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
         if 'RealESRGAN_x4plus_anime_6B' in self.gen_payload.get('post_processing', []):
@@ -223,6 +223,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         if kudos < 10:
             horde_tax -= 1
         kudos += horde_tax
+        if not self.slow_workers:
+            kudos = kudos * 1.2
         super().record_usage(raw_things, kudos, usage_type)
 
     # We can calculate the kudos in advance as they model doesn't affect them
@@ -249,6 +251,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         '''
         queue = counted_totals["queued_requests"]
         max_res = 1124 - round(queue * 0.9)
+        if not self.slow_workers:
+            return(True,max_res) 
         if max_res < 576:
             max_res = 576
             # SD 2.0 requires at least 768 to do its thing

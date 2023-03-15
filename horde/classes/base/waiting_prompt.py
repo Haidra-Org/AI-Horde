@@ -68,7 +68,8 @@ class WaitingPrompt(db.Model):
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
-    trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
+    trusted_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    slow_workers = db.Column(db.Boolean, default=True, nullable=False, index=True)
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)

@@ -5,6 +5,7 @@ from horde.database import text_functions as text_database
 from horde.classes.kobold.genstats import compile_textgen_stats_totals, compile_textgen_stats_models
 
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
+from horde.model_reference import model_reference
 
 models = TextModels(api)
 parsers = TextParsers()
@@ -46,10 +47,28 @@ class TextAsyncGenerate(GenerateTemplate):
             params = self.params,
             softprompt = self.args.softprompt,
             trusted_workers = self.args.trusted_workers,
+            slow_workers = self.args.slow_workers,
             ipaddr = self.user_ip,
             safe_ip=True,
             client_agent=self.args["Client-Agent"],
         )
+        needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals())
+        if needs_kudos:
+            if len(self.models) == 0:
+                required_kudos = 20 * self.wp.n
+            else:
+                highest_multiplier = 0
+                for model in self.models:
+                    model_multiplier = model_reference.get_text_model_multiplier(model)
+                    if model_multiplier > highest_multiplier:
+                        highest_multiplier = model_multiplier
+                required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
+            if required_kudos > self.user.kudos:
+                raise e.KudosUpfront(
+                    required_kudos, 
+                    self.username, 
+                    message=f"Due to heavy demand, for requests over {tokens} tokens, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
+                )                
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the amount of tokens to generate.")

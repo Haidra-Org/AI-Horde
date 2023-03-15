@@ -1,0 +1,3 @@
+
+ALTER TABLE waiting_prompts ADD COLUMN slow_workers BOOLEAN default true;
+CREATE INDEX ix_waiting_prompts_slow_workers ON public.waiting_prompts USING btree (slow_workers);

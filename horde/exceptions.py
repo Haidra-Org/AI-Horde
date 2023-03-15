@@ -171,8 +171,8 @@ class TooManyNewIPs(wze.Forbidden):
         self.log = f"Too many new IPs to check: {ipaddr}. Asked to retry"
 
 class KudosUpfront(wze.Forbidden):
-    def __init__(self, kudos_required, username, res):
-        self.specific = f"Due to heavy demand, for requests over {res}x{res} or over 50 steps (25 for k_heun and k_dpm_2*), and for 12 or more weights, the client needs to already have the required kudos. This request requires {kudos_required} kudos to fulfil."
+    def __init__(self, kudos_required, username, message):
+        self.specific = message
         self.log = f"{username} attempted request for {kudos_required} kudos without having enough."
 
 class InvalidJobID(wze.NotFound):

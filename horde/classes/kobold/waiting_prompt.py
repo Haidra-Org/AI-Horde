@@ -65,3 +65,20 @@ class TextWaitingPrompt(WaitingPrompt):
         '''I need to extend this to point it to record_text_usage()
         '''
         super().record_usage(raw_things, kudos, usage_type)
+
+    def require_upfront_kudos(self, counted_totals):
+        '''Returns True if this wp requires that the user already has the required kudos to fulfil it
+        else returns False
+        '''
+        queue = counted_totals["queued_text_requests"]
+        max_tokens = 513 - round(queue * 0.9)
+        # logger.debug([queue,max_tokens])
+        if not self.slow_workers:
+            return(True,max_tokens) 
+        if max_tokens < 256:
+            max_tokens = 256
+        if max_tokens > 512:
+            max_tokens = 512
+        if self.max_length > max_tokens:
+            return (True,max_tokens)
+        return (False,max_tokens)
