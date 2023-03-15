@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.3.0
+
+* Added RealESRGAN_x4plus_anime_6B post-processor (@ResidentChief)
+* Added DDIM sampler (@ResidentChief)
+
 # 4.2.0
 
 * Added regex transparent replacements instead of IP blocks. 

@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-03-15",
+            "newspiece": 
+                "the AI Horde now supports the DDIM sampler and the RealESRGAN_x4plus_anime_6B upscaler! "
+                "Keep in mind that you cannot use two upscalers at the same time. "
+                "All kudos to [ResidentChief](https://github.com/ResidentChief)!",
+            "tags": ["upscale", "post-processing", "ResidentChief", "samplers"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-03-13",
             "newspiece": 
                 "A new option `replacement_filter` is available for image generations. "
