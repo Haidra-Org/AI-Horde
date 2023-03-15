@@ -97,14 +97,15 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.InvalidPromptSize(self.username)
         if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers"] for model_name in self.args.models):
             raise e.UnsupportedModel
-        upscaler_count = len(
-            [
-                pp for pp in self.args.params.get("post_processing", [])
-                if pp in ["RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B"]
-            ]
-        )
-        if upscaler_count > 1:
-            raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
+        if self.args.params:
+            upscaler_count = len(
+                [
+                    pp for pp in self.args.params.get("post_processing", [])
+                    if pp in ["RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B"]
+                ]
+            )
+            if upscaler_count > 1:
+                raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
         if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
             raise e.BadRequest(
                 "This Client-Agent appears badly designed and is causing too many warnings. "
