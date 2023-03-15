@@ -285,7 +285,14 @@ class WorkerTemplate(db.Model):
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
             # Ensure we don't forget anything
-            performances.offset(20).delete()
+            subquery = (
+                db.session.query(WorkerPerformance.id)
+                .filter_by(worker_id=self.id)
+                .order_by(WorkerPerformance.created.asc())
+                .offset(20)
+                .subquery()
+            )
+            db.session.query(WorkerPerformance).filter(WorkerPerformance.id.notin_(subquery)).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
