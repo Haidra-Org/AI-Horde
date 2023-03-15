@@ -136,6 +136,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             nsfw = self.args.nsfw,
             censor_nsfw = self.args.censor_nsfw,
             trusted_workers = self.args.trusted_workers,
+            slow_workers = self.args.slow_workers,
             source_processing = self.args.source_processing,
             ipaddr = self.user_ip,
             safe_ip=self.safe_ip,

@@ -46,6 +46,7 @@ class TextAsyncGenerate(GenerateTemplate):
             params = self.params,
             softprompt = self.args.softprompt,
             trusted_workers = self.args.trusted_workers,
+            slow_workers = self.args.slow_workers,
             ipaddr = self.user_ip,
             safe_ip=True,
             client_agent=self.args["Client-Agent"],

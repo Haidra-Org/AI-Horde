@@ -22,11 +22,12 @@ from horde.classes.base.detection import Filter
 with HORDE.app_context():
 
     # from sqlalchemy import select
-    q = ImageWorker.query.filter(ImageWorker.speed > 2000000)
-    logger.debug(q)
-    logger.debug(q.count())
-    import sys
-    sys.exit()
+    # logger.debug(select(ImageWorker.speed))
+    # q = ImageWorker.query.filter(ImageWorker.speed > 2000000)
+    # logger.debug(q)
+    # logger.debug(q.count())
+    # import sys
+    # sys.exit()
     db.create_all()
 
     if args.convert_flag == "SQL":

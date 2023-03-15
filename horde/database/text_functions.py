@@ -81,6 +81,10 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
             WPModels.model.in_(models_list),
             WPModels.id.is_(None),
         ),
+        or_(
+            worker.speed >= 2, # 2 tokens/s
+            TextWaitingPrompt.slow_workers == True,
+        ),
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(TextWaitingPrompt.user_id.in_(priority_user_ids))
