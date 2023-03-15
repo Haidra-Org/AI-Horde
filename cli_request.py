@@ -26,8 +26,7 @@ args = arg_parser.parse_args()
 
 class RequestData(object):
     def __init__(self):
-            # self.client_agent = "cli_request.py:1.1.0:(discord)db0#1625"
-            self.client_agent = "My-Project:v0.0.1:My-Contact"
+            self.client_agent = "cli_request.py:1.1.0:(discord)db0#1625"
             self.api_key = "0000000000"
             self.filename = "horde_generation.png"
             self.imgen_params = {
