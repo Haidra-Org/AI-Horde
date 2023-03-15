@@ -22,7 +22,7 @@ from horde.classes.base.detection import Filter
 with HORDE.app_context():
 
     # from sqlalchemy import select
-    q = ImageWorker.query.filter(ImageWorker.speed > 1)
+    q = ImageWorker.query.filter(ImageWorker.speed > 2000000)
     logger.debug(q)
     logger.debug(q.count())
     import sys
