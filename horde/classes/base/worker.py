@@ -120,6 +120,16 @@ class WorkerTemplate(db.Model):
         # in order to avoid a division by zero
         return 1 * hv.thing_divisors[self.wtype]
         
+    @speed.expression
+    def speed(cls):
+        performance_avg = (
+            db.select(
+                func.avg(WorkerPerformance.performance)
+                ).where(
+                    WorkerPerformance.worker_id == cls.id
+                ).label("speed")
+        )
+        return db.case([(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])], else_=performance_avg)
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
