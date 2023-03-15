@@ -64,18 +64,20 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.NotTrusted
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
-        if "control_type" in self.params and any(model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models):
-            raise e.UnsupportedModel("You cannot use ControlNet with these models.")
+        if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models):
+            raise e.UnsupportedModel(f"No current model available for this particular ControlNet for SD2.x")
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.")
-        if self.params.get("image_is_control"):
-            raise e.UnsupportedModel("This feature is disabled for the moment.")
+        #if self.params.get("image_is_control"):
+        #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
             raise e.UnsupportedModel("Controlnet Requires a source image.")
         if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
             raise e.UnsupportedModel
+        if self.args.source_mask and self.params.get("sampler_name") == "DDIM":
+            raise e.UnsupportedModel("You cannot use a mask with the DDIM sampler")
         if self.args.source_image:
             if self.args.source_processing == "img2img" and self.params.get("sampler_name") in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]:
                 raise e.UnsupportedSampler
@@ -83,8 +85,8 @@ class ImageAsyncGenerate(GenerateTemplate):
         #         raise e.UnsupportedModel
         # if not any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models) and self.params.get("sampler_name") in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
-        # if self.args.models == ["stable_diffusion_2.0"] and self.params.get("sampler_name") not in ["dpmsolver"]:
-        #     raise e.UnsupportedSampler
+        if self.args.models == ["pix2pix"] and self.params.get("sampler_name") == "DDIM":
+             raise e.UnsupportedSampler("You cannot use pix2pix with the DDIM sampler")
         if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
         if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "CodeFormers"] for model_name in self.args.models):
