@@ -427,7 +427,7 @@ class WorkerTemplate(db.Model):
         }
         return ret_dict
 
-db.Index('ix_image_workers_speed', ImageWorker.speed)
+db.Index('ix_image_workers_speed', WorkerTemplate.speed)
 
 class Worker(WorkerTemplate):
     '''A worker is meant to receive a text prompt and pass it though a generative model'''
