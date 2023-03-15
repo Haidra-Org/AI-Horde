@@ -20,6 +20,10 @@ import horde.classes.base.stats
 from horde.classes.base.detection import Filter
 
 with HORDE.app_context():
+
+    from sqlalchemy import select
+    logger.debug(select(ImageWorker.speed))
+
     db.create_all()
 
     if args.convert_flag == "SQL":

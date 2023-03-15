@@ -562,6 +562,3 @@ class Worker(WorkerTemplate):
             db.session.delete(model)
         super().delete()
 
-
-from sqlalchemy import select
-logger.debug(select(Worker.speed))
