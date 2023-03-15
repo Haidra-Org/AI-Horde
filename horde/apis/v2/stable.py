@@ -64,7 +64,13 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.NotTrusted
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
-        if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models):
+        if (
+            self.params.get("control_type") in ["normal", "mlsd", "hough"]
+            and any(
+                model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") 
+                for model_name in self.args.models
+            )
+        ):
             raise e.UnsupportedModel(f"No current model available for this particular ControlNet for SD2.x")
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.")
@@ -91,6 +97,14 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.InvalidPromptSize(self.username)
         if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers"] for model_name in self.args.models):
             raise e.UnsupportedModel
+        upscaler_count = len(
+            [
+                pp for pp in self.args.params.get("post_processing", [])
+                if pp in ["RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B"]
+            ]
+        )
+        if upscaler_count > 1:
+            raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
