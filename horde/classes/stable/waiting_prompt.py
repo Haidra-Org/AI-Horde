@@ -215,6 +215,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         # Codeformers are expensive to calculate, so we increase the kudos burn
         if 'CodeFormers' in self.gen_payload.get('post_processing', []):
             kudos = kudos * 1.3
+        if 'strip_background' in self.gen_payload.get('post_processing', []):
+            kudos = kudos * 1.2
         # This represents the cost of using the resources of the horde
         horde_tax = 3
         # Sharing images reduces the rax
@@ -237,7 +239,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
             self.kudos = round(self.kudos * 1.2,2)
-        if self.gen_payload.get('control_type'):
+        if self.gen_payload.get('control_type') and not self.gen_payload.get('return_control_map', False):
             self.kudos = round(self.kudos * 3,2)
         weights_count = count_parentheses(self.prompt)
         # we increase the kudos cost per weight
