@@ -66,12 +66,12 @@ class TextWaitingPrompt(WaitingPrompt):
         '''
         super().record_usage(raw_things, kudos, usage_type)
 
-    def require_upfront_kudos(self, counted_totals):
+    def require_upfront_kudos(self, counted_totals, total_workers):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
         '''
         queue = counted_totals["queued_text_requests"]
-        max_tokens = 513 - round(queue * 0.9)
+        max_tokens = 400 + (total_workers*10) - round(queue * 0.9)
         # logger.debug([queue,max_tokens])
         if not self.slow_workers:
             return(True,max_tokens) 

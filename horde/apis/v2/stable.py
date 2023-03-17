@@ -144,7 +144,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared=shared,
             client_agent=self.args["Client-Agent"],
         )
-        needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals())
+        needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals(),database.count_active_workers("image"))
         if needs_kudos:
             required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
