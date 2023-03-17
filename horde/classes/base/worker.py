@@ -292,7 +292,7 @@ class WorkerTemplate(db.Model):
                 .offset(20)
                 .subquery()
             )
-            db.session.query(WorkerPerformance).filter(WorkerPerformance.id.notin_(subquery)).delete(synchronize_session=False)
+            db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(WorkerPerformance.id.notin_(subquery)).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
         db.session.commit()
