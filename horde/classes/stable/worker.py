@@ -73,6 +73,8 @@ class ImageWorker(Worker):
             return [False, 'bridge_version']
         if "CodeFormers" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("CodeFormers", self.bridge_agent):
             return [False, 'bridge_version']
+        if "strip_background" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("strip_background", self.bridge_agent):
+            return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, 'img2img']
@@ -81,6 +83,8 @@ class ImageWorker(Worker):
         if not waiting_prompt.source_image and (self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]):
             return [False, 'models']
         if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
+            return [False, 'bridge_version']
+        if waiting_prompt.params.get('return_control_map') and not check_bridge_capability("return_control_map", self.bridge_agent):
             return [False, 'bridge_version']
         if waiting_prompt.params.get('control_type'):
             if not check_bridge_capability("controlnet", self.bridge_agent):
