@@ -4,6 +4,8 @@
 
 * Fixed worker performances showing wrong
 * Adjusted so that max resolution and tokens without kudos upfront is based on amount of workers active
+* Added new `api/v2/generate/async` post-processor `strip_background`. Will remove background from image (@ResidentChief)
+* Added new `api/v2/generate/async` param `return_control_map`. Will return control map instead of final image (@ResidentChief)
 
 # 4.3.1
 
