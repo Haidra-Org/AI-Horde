@@ -48,13 +48,14 @@ class ImageModels(v2.Models):
             'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
             'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
-            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers"]),unique=True),
+            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers", "strip_background"]),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
             'tiling': fields.Boolean(default=False,description="Set to True to create images that stitch together seamlessly"),
             'hires_fix': fields.Boolean(default=False,description="Set to True to process the image at base resolution before upscaling and re-processing"),
             'clip_skip': fields.Integer(required=False, example=1, min=1, max=12, description="The number of CLIP language processor layers to skip"),
             'control_type': fields.String(required=False, enum=["canny", "hed", "depth", "normal", "openpose", "seg", "scribble", "fakescribbles", "hough"]), 
             'image_is_control': fields.Boolean(default=False,description="Set to True if the image submitted is a pre-generated control map for ControlNet use"),
+            'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet map returned instead of a generated image"),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
