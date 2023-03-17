@@ -95,6 +95,7 @@ def count_active_workers(worker_class = "image"):
     worker_cache = hr.horde_r_get_json(f"count_active_workers_{worker_class}")
     logger.debug([type(worker_cache),worker_cache])
     if worker_cache:
+        logger.debug(tuple(worker_cache))
         return tuple(worker_cache)
     WorkerClass = ImageWorker
     if worker_class == "interrogation":
