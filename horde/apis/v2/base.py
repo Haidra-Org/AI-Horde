@@ -529,8 +529,8 @@ class AwardKudos(Resource):
             raise e.KudosValidationError(user.get_unique_alias(), 'Invalid target username.', 'award')
         if dest_user.is_anon():
             raise e.KudosValidationError(user.get_unique_alias(), 'Cannot award anon. No go.', 'award')
-        if dest_user.is_suspicious():
-            return([0,'Target user is rejected.'])
+        # if dest_user.is_suspicious():
+        #     return([0,'Target user is rejected.'])
         if dest_user.flagged:
             return([0,'Target user is rejected.'])
         dest_user.modify_kudos(self.args.amount, "awarded")
