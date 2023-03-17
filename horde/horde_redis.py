@@ -83,5 +83,3 @@ def horde_r_get(key):
             if value is not None:
                 horde_local_r.setex(key, timedelta(seconds=abs(ttl)), value)
     return value
-                
-
