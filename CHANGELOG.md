@@ -1,6 +1,10 @@
 # Changelog
 
-# 4.3.2
+# 4.4.1
+
+* Added bridge version control for `strip_background` and `return_control_map`
+
+# 4.4.0
 
 * Fixed worker performances showing wrong
 * Adjusted so that max resolution and tokens without kudos upfront is based on amount of workers active
