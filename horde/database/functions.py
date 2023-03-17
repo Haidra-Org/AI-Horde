@@ -92,6 +92,9 @@ def get_active_workers(worker_type=None):
     return active_workers
 
 def count_active_workers(worker_class = "image"):
+    worker_cache = hr.horde_r_get_json(f"count_active_workers_{worker_class}")
+    if worker_cache:
+        return tuple(worker_cache)
     WorkerClass = ImageWorker
     if worker_class == "interrogation":
         WorkerClass = InterrogationWorker
@@ -109,6 +112,7 @@ def count_active_workers(worker_class = "image"):
     ).first()
     # logger.debug([worker_class,active_workers,active_workers_threads.threads])
     if active_workers and active_workers_threads.threads:
+        hr.horde_r_setex_json(f"count_active_workers_{worker_class}", timedelta(seconds=300), [active_workers,active_workers_threads.threads])
         return active_workers,active_workers_threads.threads
     return 0,0
 
@@ -574,10 +578,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
                 worker.bridge_version < 8,
                 ImageWaitingPrompt.r2 == False,
             ),
-        ),
-        or_(
-            worker.speed >= 300000, # 0.3 MPS/s
-            ImageWaitingPrompt.slow_workers == True,
         ),
     )
     if priority_user_ids:

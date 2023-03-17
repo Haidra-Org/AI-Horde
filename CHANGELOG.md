@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.3.2
+
+* Fixed worker performances showing wrong
+* Adjusted so that max resolution and tokens without kudos upfront is based on amount of workers active
+
 # 4.3.1
 
 * Added new option for `/async` (both text and image): `slow_workers`.

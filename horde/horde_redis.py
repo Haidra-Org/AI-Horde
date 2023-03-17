@@ -39,6 +39,14 @@ def horde_r_setex(key, expiry, value):
     if horde_local_r:
         horde_local_r.setex(key, expiry, value)
 
+
+def horde_r_setex_json(key, expiry, value):
+    """Same as horde_r_setex()
+    but also converts the python builtin value to json
+    """
+    horde_r_setex(key, expiry, json.dumps(value))
+
+
 def horde_r_local_set_to_json(key, value):
     if horde_local_r:
         if key not in locks:
@@ -83,5 +91,12 @@ def horde_r_get(key):
             if value is not None:
                 horde_local_r.setex(key, timedelta(seconds=abs(ttl)), value)
     return value
-                
 
+def horde_r_get_json(key):
+    """Same as horde_r_get()
+    but also converts the json to python built-ins
+    """
+    value = horde_r_get(key)
+    if value is None:
+        return None
+    return json.loads(value)
