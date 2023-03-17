@@ -2,7 +2,7 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
-        17: {"strip_background", "return_control_map"}
+        18: {"strip_background", "return_control_map"}
         16: {"image_is_control"},
         15: {"controlnet"},
         14: {"r2_source"},
