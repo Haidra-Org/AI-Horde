@@ -250,8 +250,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         else returns False
         '''
         queue = counted_totals["queued_requests"]
-        max_res = 1000 + (total_threads*10) - round(queue * 0.9)
-        logger.debug([max_res,queue,total_threads])
+        max_res = 1024 + (total_threads*10) - round(queue * 0.9)
         if not self.slow_workers:
             return(True,max_res) 
         if max_res < 576:
