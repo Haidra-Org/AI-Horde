@@ -245,12 +245,12 @@ class ImageWaitingPrompt(WaitingPrompt):
         db.session.commit()
 
 
-    def require_upfront_kudos(self, counted_totals, total_workers):
+    def require_upfront_kudos(self, counted_totals, total_threads):
         '''Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
         '''
         queue = counted_totals["queued_requests"]
-        max_res = 1000 + (total_workers*10) - round(queue * 0.9)
+        max_res = 1000 + (total_threads*10) - round(queue * 0.9)
         logger.debug(max_res)
         if not self.slow_workers:
             return(True,max_res) 

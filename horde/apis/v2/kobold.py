@@ -52,7 +52,8 @@ class TextAsyncGenerate(GenerateTemplate):
             safe_ip=True,
             client_agent=self.args["Client-Agent"],
         )
-        needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(),database.count_active_workers("text"))
+        _, total_threads = database.count_active_workers("text")
+        needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
         if needs_kudos:
             if len(self.models) == 0:
                 required_kudos = 20 * self.wp.n
