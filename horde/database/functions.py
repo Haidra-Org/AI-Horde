@@ -92,7 +92,7 @@ def get_active_workers(worker_type=None):
     return active_workers
 
 def count_active_workers(worker_class = "image"):
-    worker_cache = hr.horde_r_get(f"count_active_workers_{worker_class}")
+    worker_cache = hr.horde_r_get_json(f"count_active_workers_{worker_class}")
     logger.debug([type(worker_cache),worker_cache])
     if worker_cache:
         return tuple(worker_cache)
@@ -113,9 +113,9 @@ def count_active_workers(worker_class = "image"):
     ).first()
     # logger.debug([worker_class,active_workers,active_workers_threads.threads])
     if active_workers and active_workers_threads.threads:
-        hr.horde_r_setex(f"count_active_workers_{worker_class}", timedelta(seconds=300), json.dumps([active_workers_threads.threads]))
+        hr.horde_r_setex_json(f"count_active_workers_{worker_class}", timedelta(seconds=300), [active_workers_threads.threads])
         return active_workers,active_workers_threads.threads
-    hr.horde_r_setex(f"count_active_workers_{worker_class}", timedelta(seconds=300), [0,0])
+    hr.horde_r_setex_json(f"count_active_workers_{worker_class}", timedelta(seconds=300), [0,0])
     return 0,0
 
 
