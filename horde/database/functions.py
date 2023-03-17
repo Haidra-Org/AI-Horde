@@ -114,7 +114,7 @@ def count_active_workers(worker_class = "image"):
     ).first()
     # logger.debug([worker_class,active_workers,active_workers_threads.threads])
     if active_workers and active_workers_threads.threads:
-        hr.horde_r_setex_json(f"count_active_workers_{worker_class}", timedelta(seconds=300), [active_workers_threads.threads])
+        hr.horde_r_setex_json(f"count_active_workers_{worker_class}", timedelta(seconds=300), [active_workers,active_workers_threads.threads])
         return active_workers,active_workers_threads.threads
     hr.horde_r_setex_json(f"count_active_workers_{worker_class}", timedelta(seconds=300), [0,0])
     return 0,0
