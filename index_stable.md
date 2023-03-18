@@ -66,6 +66,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
     * [Mastodon Bots](https://github.com/db0/mastodon-stable-horde-generate) which you can use directly via Activity Pub to generate images.
         * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
         * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
+    * [Reddit Bot](https://github.com/db0/reddit-stable-horde-generate) which you can use [directly via reddit](https://www.reddit.com/user/StableHorde/comments/znhtaw/faq/) to generate images.
 
 * The community has made the following
     * Bots
