@@ -102,21 +102,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             while self.gen_payload["seed"] >= 2**32:
                 self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
         # logger.debug([self.gen_payload["seed"],self.seed_variation])
-        if procgen.worker.bridge_version >= 2:
-            if not self.nsfw and self.censor_nsfw:
-                self.gen_payload["use_nsfw_censor"] = True
-        else:
-            # These parameters are not used in bridge v1
-            for v2_param in ["use_gfpgan","use_real_esrgan","use_ldsr","use_upscaling"]:
-                if v2_param in self.gen_payload:
-                    del self.gen_payload[v2_param]
-            if not self.nsfw and self.censor_nsfw:
-                if "toggles" not in self.gen_payload:
-                    self.gen_payload["toggles"] = [1, 4, 8]
-                elif 8 not in self.gen_payload["toggles"]:
-                    self.gen_payload["toggles"].append(8)
-            if "denoising_strength" in self.gen_payload:
-                del self.gen_payload["denoising_strength"]
+        if not self.nsfw and self.censor_nsfw:
+            self.gen_payload["use_nsfw_censor"] = True
         db.session.commit()
         return(self.gen_payload)
 

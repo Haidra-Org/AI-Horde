@@ -11,6 +11,7 @@ from horde import vars as hv
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
 from horde import horde_redis as hr
+from horde.consts import KNOWN_POST_PROCESSORS
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -51,12 +52,15 @@ class InterrogationForms(db.Model):
         self.worker_id = worker.id
         # This also commits
         self.interrogation.refresh()
-        return {
+        ret_dict = {
             "id": self.id,
             "form": self.name,
             "payload": self.payload,
             "source_image": self.interrogation.source_image,
         }
+        if self.name in KNOWN_POST_PROCESSORS:
+           ret_dict["r2_upload"] = generate_procgen_upload_url(str(self.id), False)
+        return ret_dict
     
     def deliver(self, result, state):
         if self.state != State.PROCESSING:
@@ -192,6 +196,8 @@ class Interrogation(db.Model):
             kudos = 1
             # Interrogations are more intensive so they reward better
             if form["name"] == "interrogation":
+                kudos = 3
+            if form["name"] in KNOWN_POST_PROCESSORS:
                 kudos = 3
             form_entry = InterrogationForms(
                 name=form["name"],
