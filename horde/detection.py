@@ -179,6 +179,8 @@ class PromptChecker:
 
 
     def check_csam_triggers(self, prompt):
+        if args.disable_filters:
+            return False
         # logger.debug([prompt, models])
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
