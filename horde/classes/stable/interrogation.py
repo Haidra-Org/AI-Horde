@@ -72,16 +72,16 @@ class InterrogationForms(db.Model):
             self.abort()
             return(-1)
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
-        if not self.interrogation.r2stored:
-            if self.name in KNOWN_POST_PROCESSORS:
-                # Post-processed images live in R2 only for 120 minutes
-                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(minutes=90), json.dumps(result))
-            else:
-                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
         self.result = result
         for form_name in self.result:
             if self.result[form_name] == 'R2':
                 self.result[form_name] = generate_procgen_download_url(str(self.id), False)
+        if not self.interrogation.r2stored:
+            if self.name in KNOWN_POST_PROCESSORS:
+                # Post-processed images live in R2 only for 120 minutes
+                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(minutes=90), json.dumps(self.result))
+            else:
+                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(self.result))
         self.state = State.DONE
         self.record(self.kudos)
         db.session.commit()
