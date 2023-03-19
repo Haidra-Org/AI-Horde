@@ -106,7 +106,7 @@ class ImageModels(v2.Models):
             'params': fields.Nested(self.input_model_generation_payload, skip_none=True),
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
             'trusted_workers': fields.Boolean(default=False,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
-            'slow_workers': fields.Boolean(default=True,description="When false, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
+            'slow_workers': fields.Boolean(default=True,description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
             'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
