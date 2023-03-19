@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.5.0
+
+* Renamed Horde Interrogation Worker to Horde Alchemist
+* Horde Alchemist can now also perform post-processing on images, instead of only interrogation. Form names are the various post-processor names.
+
 # 4.4.1
 
 * Added bridge version control for `strip_background` and `return_control_map`

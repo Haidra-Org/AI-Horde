@@ -74,8 +74,8 @@ class InterrogationForms(db.Model):
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
         if not self.interrogation.r2stored:
             if self.name in KNOWN_POST_PROCESSORS:
-                # Post-processed images live in R2 only for 20 minutes
-                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(minutes=15), json.dumps(result))
+                # Post-processed images live in R2 only for 120 minutes
+                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(minutes=90), json.dumps(result))
             else:
                 hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
         self.result = result
