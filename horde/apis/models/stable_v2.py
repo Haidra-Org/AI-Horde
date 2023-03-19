@@ -1,7 +1,7 @@
 from flask_restx import fields
 from . import v2
 from horde.logger import logger
-
+from horde.consts import KNOWN_POST_PROCESSORS
 
 class ImageParsers(v2.Parsers):
     def __init__(self):
@@ -48,7 +48,7 @@ class ImageModels(v2.Models):
             'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
             'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
-            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers", "strip_background"]),unique=True),
+            'post_processing': fields.List(fields.String(description="The list of post-processors to apply to the image, in the order to be applied",enum=list(KNOWN_POST_PROCESSORS.keys())),unique=True),
             'karras': fields.Boolean(default=False,description="Set to True to enable karras noise scheduling tweaks"),
             'tiling': fields.Boolean(default=False,description="Set to True to create images that stitch together seamlessly"),
             'hires_fix': fields.Boolean(default=False,description="Set to True to process the image at base resolution before upscaling and re-processing"),
@@ -127,7 +127,7 @@ class ImageModels(v2.Models):
             "*": fields.Wildcard(fields.String)
         })
         self.input_model_interrogation_form = api.model('ModelInterrogationFormStable', {
-            'name': fields.String(required=True, enum=["caption", "interrogation", "nsfw"], description="The type of interrogation this is", unique=True), 
+            'name': fields.String(required=True, enum=["caption", "interrogation", "nsfw"] + list(KNOWN_POST_PROCESSORS.keys()), description="The type of interrogation this is", unique=True), 
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
         })
         self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {
@@ -137,14 +137,6 @@ class ImageModels(v2.Models):
         self.response_model_interrogation = api.model('RequestInterrogationResponse', {
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
             'message': fields.String(default=None,description="Any extra information from the horde about this request"),
-        })
-        self.response_model_interrogation_result = api.model('InterrogationResult', {
-            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which interrogated this image"),
-            'worker_name': fields.String(title="Worker Name", description="The name of the worker which interrogated this image"),
-            'form': fields.String(title="Interrogation Form", description="The form which interrogated this image"),
-            'state': fields.String(title="Interrogation Form State", description="The status of this interrogation form"),
-            'nsfw': fields.Boolean(title="NSFW", description="If true, this image has been detected to have NSFW context"),
-            'caption': fields.String(title="Caption", description="The caption generated for this image")
         })
         # Intentionally left blank to allow to add payloads later
         self.response_model_interrogation_form_result = api.model('InterrogationFormResult', {
@@ -162,7 +154,7 @@ class ImageModels(v2.Models):
         self.input_model_interrogation_pop = api.model('InterrogationPopInput', {
             'name': fields.String(description="The Name of the Worker"),
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
-            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"], unique=True)),
+            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"]+list(KNOWN_POST_PROCESSORS.keys()), unique=True)),
             'amount': fields.Integer(default=1, description="The amount of forms to pop at the same time"),
             'bridge_version': fields.Integer(default=1, description="The version of the bridge used by this worker"),
             'bridge_agent': fields.String(required=False, default="unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
@@ -170,9 +162,10 @@ class ImageModels(v2.Models):
         })
         self.response_model_interrogation_pop_payload = api.model('InterrogationPopFormPayload', {
             'id': fields.String(description="The UUID of the interrogation form. Use this to post the results in the future"),
-            'form': fields.String(description="The name of this interrogation form", enum=["caption", "interrogation", "nsfw"]),
+            'form': fields.String(description="The name of this interrogation form", enum=["caption", "interrogation", "nsfw"]+list(KNOWN_POST_PROCESSORS.keys())),
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
-            'source_image': fields.String(description="The URL From which the source image can be downloaded"),
+            'source_image': fields.String(description="The URL From which the source image can be downloaded."),
+            'r2_upload': fields.String(description="The URL in which the post-processed image can be uploaded."),
         })
         self.response_model_interrogation_forms_skipped = api.model('NoValidInterrogationsFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),

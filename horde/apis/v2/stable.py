@@ -12,6 +12,7 @@ from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import ensure_source_image_uploaded
 from horde.model_reference import model_reference
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 
@@ -97,13 +98,13 @@ class ImageAsyncGenerate(GenerateTemplate):
              raise e.UnsupportedSampler("You cannot use pix2pix with the DDIM sampler")
         if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
-        if any(model_name in ["GFPGAN", "RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "CodeFormers"] for model_name in self.args.models):
+        if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
             raise e.UnsupportedModel
         if self.args.params:
             upscaler_count = len(
                 [
                     pp for pp in self.args.params.get("post_processing", [])
-                    if pp in ["RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B"]
+                    if pp in KNOWN_UPSCALERS
                 ]
             )
             if upscaler_count > 1:

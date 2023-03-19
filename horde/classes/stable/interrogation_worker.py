@@ -12,7 +12,6 @@ class WorkerInterrogationForm(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"InterrogationWorker", back_populates="forms")
     form = db.Column(db.String(30))
-    wtype = "interrogation"
 
 
 class InterrogationWorker(WorkerTemplate):

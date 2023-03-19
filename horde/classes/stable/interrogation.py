@@ -11,6 +11,8 @@ from horde import vars as hv
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
 from horde import horde_redis as hr
+from horde.consts import KNOWN_POST_PROCESSORS
+from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -51,12 +53,17 @@ class InterrogationForms(db.Model):
         self.worker_id = worker.id
         # This also commits
         self.interrogation.refresh()
-        return {
+        ret_dict = {
             "id": self.id,
             "form": self.name,
             "payload": self.payload,
             "source_image": self.interrogation.source_image,
         }
+        if self.name in KNOWN_POST_PROCESSORS:
+           ret_dict["r2_upload"] = generate_procgen_upload_url(str(self.id), False)
+        logger.debug([self.name in KNOWN_POST_PROCESSORS,self.name, KNOWN_POST_PROCESSORS])
+        logger.debug(ret_dict)
+        return ret_dict
     
     def deliver(self, result, state):
         if self.state != State.PROCESSING:
@@ -66,8 +73,15 @@ class InterrogationForms(db.Model):
             return(-1)
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
         if not self.interrogation.r2stored:
-            hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
+            if self.name in KNOWN_POST_PROCESSORS:
+                # Post-processed images live in R2 only for 120 minutes
+                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(minutes=90), json.dumps(result))
+            else:
+                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(result))
         self.result = result
+        for form_name in self.result:
+            if self.result[form_name] == 'R2':
+                self.result[form_name] = generate_procgen_download_url(str(self.id), False)
         self.state = State.DONE
         self.record(self.kudos)
         db.session.commit()
@@ -192,6 +206,8 @@ class Interrogation(db.Model):
             kudos = 1
             # Interrogations are more intensive so they reward better
             if form["name"] == "interrogation":
+                kudos = 3
+            if form["name"] in KNOWN_POST_PROCESSORS:
                 kudos = 3
             form_entry = InterrogationForms(
                 name=form["name"],

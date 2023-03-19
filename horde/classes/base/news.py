@@ -4,6 +4,18 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-03-19",
+            "newspiece": 
+                "The AI Horde Interrogator Worker has now been renamed to 'Alchemist' "
+                "The Horde alchemist can not run all the post-processors, along with all the interrogation forms. "
+                "This means that if you have an existing image you wish to face-fix or upscale, you can just do that "
+                "by requesting it via alchemy. "
+                "For now, the alchemist does not support extracting ControlNet intermediate images, but this will be coming soon. "
+                "The endpoints remain as `api/v2interrogation/` for now but I plan to rename them in v3.",
+            "tags": ["upscale", "post-processing", "alchemy"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-03-15",
             "newspiece": 
                 "the AI Horde now supports the DDIM sampler and the RealESRGAN_x4plus_anime_6B upscaler! "
