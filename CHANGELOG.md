@@ -4,6 +4,7 @@
 
 * Renamed Horde Interrogation Worker to Horde Alchemist
 * Horde Alchemist can now also perform post-processing on images, instead of only interrogation. Form names are the various post-processor names.
+* post-processed images will be likewise uploaded to R2, and the form result will be the download URL
 
 # 4.4.1
 
