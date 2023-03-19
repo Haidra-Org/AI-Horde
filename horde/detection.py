@@ -9,6 +9,7 @@ from horde.flask import HORDE, SQLITE_MODE # Local Testing
 from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
 from horde.model_reference import model_reference
 from unidecode import unidecode
+from horde.argparser import args
 
 class PromptChecker:
     
@@ -106,6 +107,8 @@ class PromptChecker:
             self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+1)
 
     def __call__(self, prompt, id = None):
+        if args.disable_filters:
+            return 0,[]
         self.refresh_regex()
         prompt_suspicion = 0
         if "###" in prompt:
