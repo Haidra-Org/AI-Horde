@@ -66,3 +66,6 @@ HORDE.register_blueprint(github_blueprint, url_prefix="/github")
 #     redirect_url='/finish_dance',
 # )
 # HORDE.register_blueprint(patreon_blueprint, url_prefix="/patreon")
+
+if args.test:
+    import horde.sandbox

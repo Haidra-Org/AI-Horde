@@ -416,52 +416,50 @@ def count_totals():
         queued_images: 0,
         queued_text: 0,
     }
-    # TODO this can likely be improved
-    current_image_wps = db.session.query(
+    all_image_wp_counts = db.session.query(
         ImageWaitingPrompt.id,
-        ImageWaitingPrompt.n,
-        ImageWaitingPrompt.faulted,
-        ImageWaitingPrompt.things,
+        (func.sum(ImageWaitingPrompt.n) + func.count(ImageProcessingGeneration.wp_id)).label("total_count"),
+        func.sum(ImageWaitingPrompt.things).label("total_things")
+    ).outerjoin(
+        ImageProcessingGeneration,
+        and_(
+            ImageWaitingPrompt.id == ImageProcessingGeneration.wp_id,
+            ImageProcessingGeneration.generation == None
+        )
     ).filter(
         ImageWaitingPrompt.n > 0,
         ImageWaitingPrompt.faulted == False
-    ).all()
-    for wp in current_image_wps:
-        # TODO: Make this in one query above
-        procgens_count = db.session.query(
-            ImageProcessingGeneration.wp_id,
-        ).filter(
-            ImageProcessingGeneration.wp_id == wp.id
-        ).count()
-        current_wp_queue = wp.n + procgens_count
-        ret_dict["queued_requests"] += current_wp_queue
-        if current_wp_queue > 0:
-            ret_dict[queued_images] += wp.things * current_wp_queue / hv.thing_divisors["image"]
-    # We round the end result to avoid to many decimals
-    ret_dict[queued_images] = round(ret_dict[queued_images],2)
-    # TODO this can likely be improved
-    current_text_wps = db.session.query(
+    ).group_by(
+        ImageWaitingPrompt.id
+    ).subquery('all_image_wp_counts')
+    total_image_sum = db.session.query(
+        func.sum(all_image_wp_counts.c.total_count).label("total_count_sum"),
+        func.sum(all_image_wp_counts.c.total_things).label("total_things_sum")
+    ).select_from(all_image_wp_counts).one()
+    ret_dict["queued_requests"] = int(total_image_sum.total_count_sum)
+    ret_dict[queued_images] = int(total_image_sum.total_things_sum)
+    all_text_wp_counts = db.session.query(
         TextWaitingPrompt.id,
-        TextWaitingPrompt.n,
-        TextWaitingPrompt.faulted,
-        TextWaitingPrompt.things,
+        (func.sum(TextWaitingPrompt.n) + func.count(TextProcessingGeneration.wp_id)).label("total_count"),
+        func.sum(TextWaitingPrompt.things).label("total_things")
+    ).outerjoin(
+        TextProcessingGeneration,
+        and_(
+            TextWaitingPrompt.id == TextProcessingGeneration.wp_id,
+            TextProcessingGeneration.generation == None
+        )
     ).filter(
         TextWaitingPrompt.n > 0,
         TextWaitingPrompt.faulted == False
-    ).all()
-    for wp in current_text_wps:
-        # TODO: Make this in one query above
-        procgens_count = db.session.query(
-            TextProcessingGeneration.wp_id,
-        ).filter(
-            TextProcessingGeneration.wp_id == wp.id
-        ).count()
-        current_wp_queue = wp.n + procgens_count
-        ret_dict["queued_text_requests"] += current_wp_queue
-        if current_wp_queue > 0:
-            ret_dict[queued_text] += wp.things * current_wp_queue / hv.thing_divisors["text"]
-    # We round the end result to avoid to many decimals
-    ret_dict[queued_text] = round(ret_dict[queued_text],2)
+    ).group_by(
+        TextWaitingPrompt.id
+    ).subquery('all_text_wp_counts')
+    total_text_sum = db.session.query(
+        func.sum(all_text_wp_counts.c.total_count).label("total_count_sum"),
+        func.sum(all_text_wp_counts.c.total_things).label("total_things_sum")
+    ).select_from(all_text_wp_counts).one()
+    ret_dict["queued_text_requests"] = int(total_text_sum.total_count_sum)
+    ret_dict[queued_text] = int(total_text_sum.total_things_sum)
     ret_dict[queued_forms] = db.session.query(
         InterrogationForms.state,
     ).filter(

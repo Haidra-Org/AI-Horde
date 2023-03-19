@@ -15,6 +15,7 @@ arg_parser.add_argument('--reload_all_caches', action="store_true", help="If set
 arg_parser.add_argument('--check_prompts', action="store_true", help="If set, will cleanup all prompts and exit")
 arg_parser.add_argument('--new_patreons', action="store_true", help="If set, will reload the patreon db and run the monthly awards")
 arg_parser.add_argument('--disable_filters', action="store_true", help="Testing filter work")
+arg_parser.add_argument('--test', action="store_true", help="Test")
 args = arg_parser.parse_args()
 
 maintenance = Switch()
