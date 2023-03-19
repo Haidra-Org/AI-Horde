@@ -24,7 +24,7 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 * Queue: {total_text_queue} requests for a total of {queued_text_things} {queued_text_things_name}. 
 ### Image Alchemy
 * Total processed: {total_forms}{total_forms_char}.
-* Active Alchemists/Threads: {interrogation_workers}/{interrogation_worker_threads}
+* Active [Alchemists](/api/v2/workers?type=interrogation)/Threads: {interrogation_workers}/{interrogation_worker_threads}
 * Queue: {total_forms_queue} alchemy forms.
 
 ## Usage
