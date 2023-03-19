@@ -154,7 +154,7 @@ class ImageModels(v2.Models):
         self.input_model_interrogation_pop = api.model('InterrogationPopInput', {
             'name': fields.String(description="The Name of the Worker"),
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
-            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"], unique=True)),
+            'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil", enum=["caption", "interrogation", "nsfw"]+list(KNOWN_POST_PROCESSORS.keys()), unique=True)),
             'amount': fields.Integer(default=1, description="The amount of forms to pop at the same time"),
             'bridge_version': fields.Integer(default=1, description="The version of the bridge used by this worker"),
             'bridge_agent': fields.String(required=False, default="unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
@@ -162,9 +162,10 @@ class ImageModels(v2.Models):
         })
         self.response_model_interrogation_pop_payload = api.model('InterrogationPopFormPayload', {
             'id': fields.String(description="The UUID of the interrogation form. Use this to post the results in the future"),
-            'form': fields.String(description="The name of this interrogation form", enum=["caption", "interrogation", "nsfw"]),
+            'form': fields.String(description="The name of this interrogation form", enum=["caption", "interrogation", "nsfw"]+list(KNOWN_POST_PROCESSORS.keys())),
             'payload': fields.Nested(self.input_model_interrogation_form_payload, skip_none=True), 
-            'source_image': fields.String(description="The URL From which the source image can be downloaded"),
+            'source_image': fields.String(description="The URL From which the source image can be downloaded."),
+            'r2_upload': fields.String(description="The URL in which the post-processed image can be uploaded."),
         })
         self.response_model_interrogation_forms_skipped = api.model('NoValidInterrogationsFound', {
             'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
