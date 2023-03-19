@@ -353,7 +353,7 @@ class JobPopTemplate(Resource):
             # logger.debug(worker_ret)
             if worker_ret is None:
                 continue
-            logger.debug(worker_ret)
+            # logger.debug(worker_ret)
             return worker_ret, 200
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
