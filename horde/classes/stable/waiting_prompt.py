@@ -9,6 +9,7 @@ from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
+from horde.consts import KNOWN_POST_PROCESSORS
 
 class ImageWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
@@ -208,18 +209,11 @@ class ImageWaitingPrompt(WaitingPrompt):
         '''
         if self.source_image:
             kudos = kudos * 1.3
-        if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
-            kudos = kudos * 1.3
-        if 'RealESRGAN_x4plus_anime_6B' in self.gen_payload.get('post_processing', []):
-            kudos = kudos * 1.3
-        # Codeformers are expensive to calculate, so we increase the kudos burn
-        if 'CodeFormers' in self.gen_payload.get('post_processing', []):
-            kudos = kudos * 1.3
-        if 'strip_background' in self.gen_payload.get('post_processing', []):
-            kudos = kudos * 1.2
+        for pp in self.gen_payload.get('post_processing', []):
+            kudos = kudos * KNOWN_POST_PROCESSORS[pp]
         # This represents the cost of using the resources of the horde
         horde_tax = 3
-        # Sharing images reduces the rax
+        # Sharing images reduces the tax
         if self.shared:
             horde_tax = 1
         if kudos < 10:
