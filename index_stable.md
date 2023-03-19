@@ -22,10 +22,10 @@ For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/
 * Total texts requests fulfilled: {total_text_fulfillments}{total_text_fulfillments_char}.
 * Active [Workers](/api/v2/workers?type=text)/Threads: {text_workers}/{text_worker_threads}
 * Queue: {total_text_queue} requests for a total of {queued_text_things} {queued_text_things_name}. 
-### Image Interrogation
-* Total images interrogated: {total_forms}{total_forms_char}.
-* Active Interrogation Processing Workers/Threads: {interrogation_workers}/{interrogation_worker_threads}
-* Interrogation Queue: {total_forms_queue} interrogation forms.
+### Image Alchemy
+* Total images processed: {total_forms}{total_forms_char}.
+* Active Alchemist Processing Workers/Threads: {interrogation_workers}/{interrogation_worker_threads}
+* Alchemy Queue: {total_forms_queue} alchemy forms.
 
 ## Usage
 
