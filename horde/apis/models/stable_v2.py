@@ -138,14 +138,6 @@ class ImageModels(v2.Models):
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
             'message': fields.String(default=None,description="Any extra information from the horde about this request"),
         })
-        self.response_model_interrogation_result = api.model('InterrogationResult', {
-            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which interrogated this image"),
-            'worker_name': fields.String(title="Worker Name", description="The name of the worker which interrogated this image"),
-            'form': fields.String(title="Interrogation Form", description="The form which interrogated this image"),
-            'state': fields.String(title="Interrogation Form State", description="The status of this interrogation form"),
-            'nsfw': fields.Boolean(title="NSFW", description="If true, this image has been detected to have NSFW context"),
-            'caption': fields.String(title="Caption", description="The caption generated for this image")
-        })
         # Intentionally left blank to allow to add payloads later
         self.response_model_interrogation_form_result = api.model('InterrogationFormResult', {
             "*": fields.Wildcard(fields.Raw)
