@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.5.1
+
+* Improved total_counts() calculation and speed
+
 # 4.5.0
 
 * Renamed Horde Interrogation Worker to Horde Alchemist

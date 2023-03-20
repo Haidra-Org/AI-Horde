@@ -437,7 +437,7 @@ def count_totals():
         func.sum(all_image_wp_counts.c.total_things).label("total_things_sum")
     ).select_from(all_image_wp_counts).one()
     ret_dict["queued_requests"] = int(total_image_sum.total_count_sum)
-    ret_dict[queued_images] = int(total_image_sum.total_things_sum)
+    ret_dict[queued_images] = round(int(total_image_sum.total_things_sum) / hv.thing_divisors["image"], 2)
     all_text_wp_counts = db.session.query(
         TextWaitingPrompt.id,
         (func.sum(TextWaitingPrompt.n) + func.count(TextProcessingGeneration.wp_id)).label("total_count"),
@@ -459,7 +459,7 @@ def count_totals():
         func.sum(all_text_wp_counts.c.total_things).label("total_things_sum")
     ).select_from(all_text_wp_counts).one()
     ret_dict["queued_text_requests"] = int(total_text_sum.total_count_sum)
-    ret_dict[queued_text] = int(total_text_sum.total_things_sum)
+    ret_dict[queued_text] = int(total_text_sum.total_things_sum) / hv.thing_divisors["text"]
     ret_dict[queued_forms] = db.session.query(
         InterrogationForms.state,
     ).filter(
