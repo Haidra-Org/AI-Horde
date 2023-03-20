@@ -321,31 +321,27 @@ def increment_extra_priority():
     '''Increases the priority of every WP currently in the queue by 50 kudos'''
     with HORDE.app_context():
         cutoff_time = datetime.utcnow()
-        wp_queue = db.session.query(
-            ImageWaitingPrompt
-        ).filter(
-            ImageWaitingPrompt.n > 0,
-            ImageWaitingPrompt.faulted == False,
-            ImageWaitingPrompt.active == True,
-            # ImageWaitingPrompt.expiry > cutoff_time,
-        ).update(
-            {
-                ImageWaitingPrompt.extra_priority: ImageWaitingPrompt.extra_priority + 50
-            }, synchronize_session=False
-        )
-        wp_queue = db.session.query(
-            TextWaitingPrompt
-        ).filter(
-            TextWaitingPrompt.n > 0,
-            TextWaitingPrompt.faulted == False,
-            TextWaitingPrompt.active == True,
-            # TextWaitingPrompt.expiry > cutoff_time,
-        ).update(
-            {
-                TextWaitingPrompt.extra_priority: TextWaitingPrompt.extra_priority + 50
-            }, synchronize_session=False
-        )
-        db.session.commit()
+        for wp_class in [ImageWaitingPrompt, TextWaitingPrompt]:
+            wp_ids = db.session.query(
+                wp_class.id
+            ).filter(
+                wp_class.n > 0,
+                wp_class.faulted == False,
+                wp_class.active == True,
+                # Commented to avoid running into a deadlock with the WP delete thread
+                # wp_class.expiry > cutoff_time,
+            )
+            logger.debug(f"Found {wp_ids.count()} of class {wp_class} to increase priority")
+            for wp in wp_ids.all():
+                db.session.query(
+                    wp_class
+                ).filter_by(
+                    id=wp.id
+                ).update(
+                    {wp_class.extra_priority: wp_class.extra_priority + 50},
+                    synchronize_session=False
+                )
+                db.session.commit()
 
 
 @logger.catch(reraise=True)

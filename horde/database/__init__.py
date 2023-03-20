@@ -52,6 +52,6 @@ if args.new_patreons:
 # # Test
 
 # logger.info("store_compiled_filter_regex_replacements()")
-# threads.store_compiled_filter_regex_replacements()
+# threads.increment_extra_priority()
 # import sys
 # sys.exit()
