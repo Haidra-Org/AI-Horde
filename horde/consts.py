@@ -9,8 +9,8 @@ KNOWN_POST_PROCESSORS = {
     "GFPGAN": 1.0, 
     "RealESRGAN_x4plus": 1.3, 
     "RealESRGAN_x4plus_anime_6B": 1.3,
-    "NMKD_Siax": 1.3,
-    "4x_AnimeSharp": 1.3, 
+    "NMKD_Siax": 1.1,
+    "4x_AnimeSharp": 1.1, 
     "CodeFormers": 1.3, 
     "strip_background": 1.2,
 }
