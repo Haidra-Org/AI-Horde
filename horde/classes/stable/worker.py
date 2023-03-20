@@ -72,6 +72,7 @@ class ImageWorker(Worker):
         #logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and not check_bridge_capability("post-processing", self.bridge_agent):
             return [False, 'bridge_version']
+        # FIXME: Something's wrong with the below
         # for pp in KNOWN_POST_PROCESSORS:
         #     if pp in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability(pp, self.bridge_agent):
         #         return [False, 'bridge_version']
