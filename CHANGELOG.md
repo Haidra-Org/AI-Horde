@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.6.0
+
+* Added `NMKD_Siax` and `4x_AnimeSharp` Upscalers (@ResidentChief)
+
 # 4.5.1
 
 * Improved total_counts() calculation and speed
