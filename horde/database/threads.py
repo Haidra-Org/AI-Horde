@@ -331,7 +331,7 @@ def increment_extra_priority():
                 # Commented to avoid running into a deadlock with the WP delete thread
                 # wp_class.expiry > cutoff_time,
             )
-            logger.debug(f"Found {wp_ids.count()} of class {wp_class} to increase priority")
+            # logger.debug(f"Found {wp_ids.count()} of class {wp_class} to increase priority")
             for wp in wp_ids.all():
                 db.session.query(
                     wp_class
