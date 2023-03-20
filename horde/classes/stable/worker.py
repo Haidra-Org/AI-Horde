@@ -7,6 +7,7 @@ from horde.bridge_reference import check_bridge_capability, check_sampler_capabi
 from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
+from horde.consts import KNOWN_POST_PROCESSORS
 
 class ImageWorker(Worker):
     __mapper_args__ = {
@@ -71,16 +72,9 @@ class ImageWorker(Worker):
         #logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and not check_bridge_capability("post-processing", self.bridge_agent):
             return [False, 'bridge_version']
-        if "CodeFormers" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("CodeFormers", self.bridge_agent):
-            return [False, 'bridge_version']
-        if "strip_background" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("strip_background", self.bridge_agent):
-            return [False, 'bridge_version']
-        if "NMKD_Siax" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("NMKD_Siax", self.bridge_agent):
-            return [False, 'bridge_version']
-        if "4x_AnimeSharp" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("4x_AnimeSharp", self.bridge_agent):
-            return [False, 'bridge_version']
-        if "RealESRGAN_x4plus_anime_6B" in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability("RealESRGAN_x4plus_anime_6B", self.bridge_agent):
-            return [False, 'bridge_version']
+        for pp in KNOWN_POST_PROCESSORS:
+            if pp in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability(pp, self.bridge_agent):
+                return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, 'img2img']
