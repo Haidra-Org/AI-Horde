@@ -11,7 +11,7 @@ BRIDGE_CAPABILITIES = {
         11: {"tiling"},
         9: {"CodeFormers"},
         8: {"r2"},
-        7: {"post-processing"},
+        7: {"post-processing", "GFPGAN", "RealESRGAN_x4plus"},
         6: {"karras"},
         4: {"inpainting"},
         3: {"img2img"},
