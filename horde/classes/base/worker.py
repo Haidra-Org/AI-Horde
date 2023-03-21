@@ -88,6 +88,9 @@ class WorkerTemplate(db.Model):
     bridge_version = db.Column(db.Integer, default=1, nullable=False)
     bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     last_reward_uptime = db.Column(db.BigInteger, default=0, nullable=False)
+    # Used by all workers to record how much they can pick up to generate
+    # The value of this column is dfferent per worker type
+    max_power = db.Column(db.Integer, default=20, nullable=False)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)

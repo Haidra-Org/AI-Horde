@@ -12,8 +12,6 @@ class WorkerInterrogationForm(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"InterrogationWorker", back_populates="forms")
     form = db.Column(db.String(30))
-    # We're re-using the max_pixels column to avoid creating a new one for max_tiles
-    max_pixels = db.Column(db.Integer, default=80, nullable=False)
 
 
 class InterrogationWorker(WorkerTemplate):
@@ -27,7 +25,7 @@ class InterrogationWorker(WorkerTemplate):
 
     def check_in(self, max_tiles, **kwargs):
         super().check_in(**kwargs)
-        self.max_pixels = max_tiles
+        self.max_power = max_tiles
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
         self.set_forms(kwargs.get("forms"))
@@ -38,7 +36,7 @@ class InterrogationWorker(WorkerTemplate):
         if self.paused:
             paused_string = '(Paused) '
         db.session.commit()
-        logger.trace(f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names}")
+        logger.trace(f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names} @ {self.max_power} max tiles")
 
     def calculate_uptime_reward(self):
         return 40

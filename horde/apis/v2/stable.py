@@ -509,7 +509,6 @@ class Interrogate(Resource):
         self.validate()
         #logger.warning(datetime.utcnow())
         self.interrogation = Interrogation(
-            self.forms,
             user_id = self.user.id,
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
@@ -526,6 +525,7 @@ class Interrogate(Resource):
             db.session.commit()
             raise err
         self.interrogation.set_source_image(self.source_image, self.r2stored, self.image_tiles)
+        self.interrogation.set_forms(self.forms)
         ret_dict = {"id":self.interrogation.id}
         return(ret_dict, 202)
 

@@ -604,6 +604,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
         InterrogationForms.name.in_(forms_list),
         InterrogationForms.expiry == None,
         Interrogation.source_image != None,
+        Interrogation.image_tiles <= worker.max_power,
         or_(
             Interrogation.safe_ip == True,
             and_(
