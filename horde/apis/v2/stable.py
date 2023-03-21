@@ -518,7 +518,7 @@ class Interrogate(Resource):
         try:
             self.source_image, img, self.r2stored = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
             self.image_tiles = calculate_image_tiles(img)
-            if self.image_tiles > 500:
+            if self.image_tiles > 255:
                 raise e.ImageValidationFailed(f"Image is too large ({self.image_tiles} tiles) and would cause horde alchemists to run out of VRAM trying to process it.")
         except Exception as err:
             db.session.delete(self.interrogation)
