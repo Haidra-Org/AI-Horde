@@ -27,7 +27,7 @@ def record_fulfilment(procgen):
     starting_time = procgen.start_time
     model = procgen.model
     thing_type = procgen.procgen_type
-    seconds_taken = (datetime.utcnow() - starting_time).seconds
+    seconds_taken = (datetime.utcnow() - starting_time).total_seconds()
     if seconds_taken == 0:
         things_per_sec = 1
     else:

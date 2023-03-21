@@ -124,7 +124,7 @@ class ProcessingGeneration(db.Model):
     def is_stale(self, ttl):
         if self.is_completed() or self.is_faulted():
             return False
-        return (datetime.utcnow() - self.start_time).seconds > ttl
+        return (datetime.utcnow() - self.start_time).total_seconds() > ttl
 
     def delete(self):
         db.session.delete(self)
@@ -137,7 +137,7 @@ class ProcessingGeneration(db.Model):
         if self.is_completed():
             return(0)
         seconds_needed = self.get_seconds_needed()
-        seconds_elapsed = (datetime.utcnow() - self.start_time).seconds
+        seconds_elapsed = (datetime.utcnow() - self.start_time).total_seconds()
         expected_time = seconds_needed - seconds_elapsed
         # In case we run into a slow request
         if expected_time < 0:

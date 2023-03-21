@@ -240,7 +240,7 @@ class WorkerTemplate(db.Model):
             if not self.user.trusted:
                 self.report_suspicion(reason = Suspicions.UNSAFE_IP)
         if not self.is_stale() and not self.paused and not self.maintenance:
-            self.uptime += (datetime.utcnow() - self.last_check_in).seconds
+            self.uptime += (datetime.utcnow() - self.last_check_in).total_seconds()
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 if self.team:
@@ -316,7 +316,7 @@ class WorkerTemplate(db.Model):
 
     def log_aborted_job(self):
         # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.
-        if (datetime.utcnow() - self.last_aborted_job).seconds > 3600:
+        if (datetime.utcnow() - self.last_aborted_job).total_seconds() > 3600:
             self.aborted_jobs = 0
             self.last_aborted_job = datetime.utcnow()
         self.aborted_jobs += 1
@@ -352,7 +352,7 @@ class WorkerTemplate(db.Model):
 
     def is_stale(self):
         try:
-            if (datetime.utcnow() - self.last_check_in).seconds > 300:
+            if (datetime.utcnow() - self.last_check_in).total_seconds() > 300:
                 return(True)
         # If the last_check_in isn't set, it's a new worker, so it's stale by default
         except AttributeError:

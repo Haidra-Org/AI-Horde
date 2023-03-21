@@ -75,6 +75,7 @@ class ImageWorker(Worker):
             return [False, 'bridge_version']
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability(pp, self.bridge_agent):
+                logger.debug(pp)
                 return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:

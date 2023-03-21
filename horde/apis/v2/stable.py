@@ -401,7 +401,7 @@ class Aesthetics(Resource):
             "user": {
                 "username": wp.user.get_unique_alias(),
                 "trusted": wp.user.trusted,
-                "account_age": (datetime.utcnow() - wp.user.created).seconds,
+                "account_age": (datetime.utcnow() - wp.user.created).total_seconds(),
                 "usage_requests": wp.user.usage_requests,
                 "kudos": wp.user.kudos,
                 "kudos_accumulated": wp.user.compile_kudos_details().get("accumulated",0),

@@ -439,7 +439,7 @@ class User(db.Model):
             "flagged": self.flagged,
             "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
-            "account_age": (datetime.utcnow() - self.created).seconds,
+            "account_age": (datetime.utcnow() - self.created).total_seconds(),
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }

@@ -100,7 +100,7 @@ class InterrogationForms(db.Model):
         cancel_txt = ""
         if self.state == State.CANCELLED:
             cancel_txt = " CANCELLED"
-        self.worker.record_interrogation(kudos = self.kudos, seconds_taken = (datetime.utcnow() - self.initiated).seconds)
+        self.worker.record_interrogation(kudos = self.kudos, seconds_taken = (datetime.utcnow() - self.initiated).total_seconds())
         self.interrogation.record_usage(kudos = self.kudos + 1)
         logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}")
 

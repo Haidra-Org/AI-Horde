@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.6.2
+
+Fixed incorrectly using `.seconds` instead of `.total_seconds()` in timedeltas
+
 # 4.6.1
 
 * Added `max_tiles` to alchemist pop. Now alchemists will not pick up source images with higher amount of 512x512 tiles than their max_tiles
