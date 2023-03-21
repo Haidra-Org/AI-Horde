@@ -23,8 +23,9 @@ class InterrogationWorker(WorkerTemplate):
     processing_forms = db.relationship("InterrogationForms", back_populates="worker")
     wtype = "interrogation"
 
-    def check_in(self, **kwargs):
+    def check_in(self, max_tiles, **kwargs):
         super().check_in(**kwargs)
+        self.max_power = max_tiles
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
         self.set_forms(kwargs.get("forms"))
@@ -35,7 +36,7 @@ class InterrogationWorker(WorkerTemplate):
         if self.paused:
             paused_string = '(Paused) '
         db.session.commit()
-        logger.trace(f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names}")
+        logger.trace(f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names} @ {self.max_power} max tiles")
 
     def calculate_uptime_reward(self):
         return 40

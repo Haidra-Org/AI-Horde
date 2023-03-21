@@ -28,6 +28,7 @@ class TextWorker(Worker):
     __mapper_args__ = {
         "polymorphic_identity": "text_worker",
     }    
+    #TODO: Switch to max_power
     max_length = db.Column(db.Integer, default=80, nullable=False)
     max_context_length = db.Column(db.Integer, default=1024, nullable=False)
     

@@ -1,0 +1,4 @@
+
+ALTER TABLE interrogations ADD COLUMN image_tiles INTEGER default 1 not null;
+CREATE INDEX ix_interrogations_image_tiles ON public.interrogations USING btree (image_tiles);
+ALTER TABLE workers ADD COLUMN max_power INTEGER default 8 not null;
