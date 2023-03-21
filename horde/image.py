@@ -126,3 +126,13 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
         download_url, img = upload_source_image_to_r2(source_image_string, uuid_string)
         return (download_url, img, True)
 
+
+def calculate_image_tiles(image):
+    '''Returns the amount of 512x512 tiles the image
+    is composed of
+    image is a PIL object
+    '''
+    width, height = image.size
+    tiles_x = (width + 511) // 512
+    tiles_y = (height + 511) // 512
+    return  tiles_x*tiles_y

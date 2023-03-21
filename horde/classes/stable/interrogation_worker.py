@@ -12,6 +12,8 @@ class WorkerInterrogationForm(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"InterrogationWorker", back_populates="forms")
     form = db.Column(db.String(30))
+    # We're re-using the max_pixels column to avoid creating a new one for max_tiles
+    max_pixels = db.Column(db.Integer, default=80, nullable=False)
 
 
 class InterrogationWorker(WorkerTemplate):
@@ -23,8 +25,9 @@ class InterrogationWorker(WorkerTemplate):
     processing_forms = db.relationship("InterrogationForms", back_populates="worker")
     wtype = "interrogation"
 
-    def check_in(self, **kwargs):
+    def check_in(self, max_tiles, **kwargs):
         super().check_in(**kwargs)
+        self.max_pixels = max_tiles
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
         self.set_forms(kwargs.get("forms"))

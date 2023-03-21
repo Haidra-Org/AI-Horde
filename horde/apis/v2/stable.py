@@ -10,7 +10,7 @@ from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
 from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
-from horde.image import ensure_source_image_uploaded
+from horde.image import ensure_source_image_uploaded, calculate_image_tiles
 from horde.model_reference import model_reference
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 
@@ -518,11 +518,14 @@ class Interrogate(Resource):
         # If anything goes wrong when uploading an image, we don't want to leave garbage around
         try:
             self.source_image, img, self.r2stored = ensure_source_image_uploaded(self.args.source_image, str(self.interrogation.id))
+            self.image_tiles = calculate_image_tiles(img)
+            if self.image_tiles > 500:
+                raise e.ImageValidationFailed(f"Image is too large ({self.image_tiles} tiles) and would cause horde alchemists to run out of VRAM trying to process it.")
         except Exception as err:
             db.session.delete(self.interrogation)
             db.session.commit()
             raise err
-        self.interrogation.set_source_image(self.source_image, self.r2stored)
+        self.interrogation.set_source_image(self.source_image, self.r2stored, self.image_tiles)
         ret_dict = {"id":self.interrogation.id}
         return(ret_dict, 202)
 
@@ -604,6 +607,7 @@ class InterrogatePop(JobPopTemplate):
     post_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
     post_parser.add_argument("bridge_agent", type=str, required=False, default="unknown:0:unknown", location="json")
     post_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
+    post_parser.add_argument("max_tiles", type=int, required=False, default=80, help="The maximum amount of 512x512 tiles this worker can post-process", location="json")
 
 
     decorators = [limiter.limit("60/second")]
@@ -702,6 +706,7 @@ class InterrogatePop(JobPopTemplate):
 
     def check_in(self):
         self.worker.check_in(
+            max_tiles = self.args.max_tiles, 
             forms = self.forms, 
             safe_ip = self.safe_ip,
             ipaddr = self.worker_ip,
