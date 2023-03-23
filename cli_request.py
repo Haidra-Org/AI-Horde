@@ -1,6 +1,6 @@
 import requests, json, os, time, argparse, base64
 from cli_logger import logger, set_logger_verbosity, quiesce_logger, test_logger
-from PIL import Image, ImageFont, ImageDraw, ImageFilter, ImageOps
+from PIL import Image
 from io import BytesIO
 from requests.exceptions import ConnectionError
 

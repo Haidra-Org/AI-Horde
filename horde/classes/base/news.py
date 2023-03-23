@@ -4,10 +4,18 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-03-23",
+            "newspiece": 
+                "Inpainting is re-enabled that to the work of [ResidentChief](https://github.com/ResidentChief)! "
+                "Now also have support for multiple inpainting models.",
+            "tags": ["inpainting", "ResidentChief"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-03-19",
             "newspiece": 
                 "The AI Horde Interrogator Worker has now been renamed to 'Alchemist' "
-                "The Horde alchemist can not run all the post-processors, along with all the interrogation forms. "
+                "The Horde alchemist can now run all the post-processors, along with all the interrogation forms. "
                 "This means that if you have an existing image you wish to face-fix or upscale, you can just do that "
                 "by requesting it via alchemy. "
                 "For now, the alchemist does not support extracting ControlNet intermediate images, but this will be coming soon. "
