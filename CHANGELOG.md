@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.6.3
+
+Re-enabled inpainting
+
 # 4.6.2
 
 Fixed incorrectly using `.seconds` instead of `.total_seconds()` in timedeltas
