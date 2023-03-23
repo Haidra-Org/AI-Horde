@@ -53,10 +53,10 @@ class ImageWorker(Worker):
         if waiting_prompt.source_processing != 'img2img':
             if not check_bridge_capability("inpainting", self.bridge_agent):
                 return [False, 'painting']
-            if model_reference.has_inpainting_models(self.get_model_names()):
+            if not model_reference.has_inpainting_models(self.get_model_names()):
                 return [False, 'models']
         # If the only model loaded is the inpainting ones, we skip the worker when this kind of work is not required
-        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and model_reference.has_only_inpainting_models():
+        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and model_reference.has_only_inpainting_models(self.get_model_names()):
             return [False, 'models']
         if not check_sampler_capability(
             waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a'), 
@@ -69,7 +69,6 @@ class ImageWorker(Worker):
             return [False, 'bridge_version']
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability(pp, self.bridge_agent):
-                logger.debug(pp)
                 return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
