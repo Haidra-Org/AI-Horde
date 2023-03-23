@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.6.4
+
+Whitelisted workers for Waiting prompts are limited to 5
+
 # 4.6.3
 
 Re-enabled inpainting
