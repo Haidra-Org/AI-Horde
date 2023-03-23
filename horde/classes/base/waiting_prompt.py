@@ -100,7 +100,12 @@ class WaitingPrompt(db.Model):
         self.extract_params()
 
     def set_workers(self, worker_ids = None):
-        if not worker_ids: worker_ids = []
+        if not worker_ids: 
+            worker_ids = []
+        else:
+            # We only allow whitelisting up to 5 worker IDs
+            worker_ids = worker_ids[0:5]
+        logger.debug(worker_ids)
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
         for wid in worker_ids:
             worker_entry = WPAllowedWorkers(worker_id=wid,wp_id=self.id)
@@ -108,8 +113,7 @@ class WaitingPrompt(db.Model):
 
     def set_models(self, model_names = None):
         if not model_names: model_names = []
-        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        logger.debug(model_names)
+        # logger.debug(model_names)
         for model in model_names:
             model_entry = WPModels(model=model,wp_id=self.id)
             db.session.add(model_entry)

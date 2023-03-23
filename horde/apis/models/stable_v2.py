@@ -108,7 +108,7 @@ class ImageModels(v2.Models):
             'trusted_workers': fields.Boolean(default=False,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'slow_workers': fields.Boolean(default=True,description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
             'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
-            'workers': fields.List(fields.String(description="Specify which workers are allowed to service this request")),
+            'workers': fields.List(fields.String(description="Specify up to 5 workers which are allowed to service this request.")),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
             'source_image': fields.String(required=False, description="The Base64-encoded webp to use for img2img"),
             'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
