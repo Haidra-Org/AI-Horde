@@ -51,19 +51,13 @@ class ImageWorker(Worker):
             return [False, 'img2img']
         #logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img':
-            if self.bridge_version < 4:
+            if not check_bridge_capability("inpainting", self.bridge_agent):
                 return [False, 'painting']
-            if "stable_diffusion_inpainting" not in self.get_model_names():
+            if model_reference.has_inpainting_models(self.get_model_names()):
                 return [False, 'models']
-        # If the only model loaded is the inpainting one, we skip the worker when this kind of work is not required
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and self.get_model_names() == ["stable_diffusion_inpainting"]:
+        # If the only model loaded is the inpainting ones, we skip the worker when this kind of work is not required
+        if waiting_prompt.source_processing not in ['inpainting', 'outpainting'] and model_reference.has_only_inpainting_models():
             return [False, 'models']
-        #logger.warning(datetime.utcnow())
-        if waiting_prompt.source_processing != 'img2img' and not check_bridge_capability("inpainting", self.bridge_agent):
-            return [False, 'painting']
-        # These samplers are currently crashing nataili. Disabling them from these workers until we can figure it out
-        #logger.warning(datetime.utcnow())
         if not check_sampler_capability(
             waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a'), 
             self.bridge_agent, 

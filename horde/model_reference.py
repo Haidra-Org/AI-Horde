@@ -60,4 +60,20 @@ class ModelReference(PrimaryTimedFunction):
             return 1
         return int(self.text_reference[model_name]["parameters"]) / 1000000000
 
+    def has_inpainting_models(self, model_names):
+        for model in model_names:
+            model_details = self.reference.get(model_name, {})
+            if model_details.get("style") == "inpainting":
+                return True
+        return False
+
+    def has_only_inpainting_models(self, model_names):
+        if len(model_names) == 0:
+            return False
+        for model in model_names:
+            model_details = self.reference.get(model_name, {})
+            if model_details.get("style") != "inpainting":
+                return False
+        return True
+
 model_reference = ModelReference(3600, None)
