@@ -40,8 +40,8 @@ First [Register an account](/register) which will generate for you an API key. S
 * We have also a few dedicated Web UIs with even less requirements:
     * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [Art Bot](https://tinybots.net/artbot)
-    * [Diffusion UI](https://diffusionui.com/b/stable_horde)
     * [AAAI UI](https://artificial-art.eu/)
+    * [Diffusion UI](https://diffusionui.com/b/stable_horde) (Broken)
 * There are also mobile apps:
     * [Stable Horde Flutter](https://ppiqr.app.link/download) (iOS + Android app)
 

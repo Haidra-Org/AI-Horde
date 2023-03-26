@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.6.5
+
+* Prevent a1111 webui worker from picking up hires-fix jobs as it seems to be failing
+* Make max_pixels column bigint
+
 # 4.6.4
 
 Whitelisted workers for Waiting prompts are limited to 5
