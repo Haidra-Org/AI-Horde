@@ -14,7 +14,7 @@ class ImageWorker(Worker):
         "polymorphic_identity": "stable_worker",
     }
     #TODO: Switch to max_power
-    max_pixels = db.Column(db.Integer, default=512 * 512, nullable=False)
+    max_pixels = db.Column(db.BigInteger, default=512 * 512, nullable=False)
     allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
