@@ -207,8 +207,11 @@ class ThingNotFound(wze.NotFound):
         self.log = f"Attempted to retrieve {thing_type} with non-existent ID '{thing_id}'"
 
 class UserNotFound(wze.NotFound):
-    def __init__(self, user_id, lookup_type = 'ID'):
-        self.specific = f"User with {lookup_type} '{user_id}' not found."
+    def __init__(self, user_id, lookup_type = 'ID', message=None):
+        if message:
+            self.specific = message
+        else:
+            self.specific = f"User with {lookup_type} '{user_id}' not found."
         self.log = f"Attempted to retrieve user with non-existent {lookup_type} '{user_id}'"
 
 class DuplicateGen(wze.BadRequest):

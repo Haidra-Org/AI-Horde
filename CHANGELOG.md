@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.6.6
+
+`/api/v2/users/user_id` won't block non-mod API keys, but will just use the lowest permissions
+
 # 4.6.5
 
 * Prevent a1111 webui worker from picking up hires-fix jobs as it seems to be failing

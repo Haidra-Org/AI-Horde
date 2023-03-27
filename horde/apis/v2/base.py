@@ -776,6 +776,8 @@ class UserSingle(Resource):
     def get(self, user_id = ''):
         '''Details and statistics about a specific user
         '''
+        if not user_id.isdigit():
+            raise e.UserNotFound("Please use only the numerical part of the userID. E.g. the '1' in 'db0#1'")
         user = database.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
@@ -783,14 +785,10 @@ class UserSingle(Resource):
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
             admin = database.find_user_by_api_key(self.args['apikey'])
-            if not admin:
-                raise e.InvalidAPIKey('privileged user details')
             if admin.moderator:
                 details_privilege = 2
             elif admin == user:
                 details_privilege = 1
-            else:
-                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
         ret_dict = {}
         return(user.get_details(details_privilege),200)
 
