@@ -578,7 +578,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             ),
         ),
         or_(
-            worker.speed >= 300000, # 0.3 MPS/s
+            worker.speed >= 500000, # 0.5 MPS/s
             ImageWaitingPrompt.slow_workers == True,
         ),
     )
