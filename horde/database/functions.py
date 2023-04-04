@@ -640,8 +640,6 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
             retrieve_limit = 1
         final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
     final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
-    logger.debug(final_interrogation_query)
-    logger.debug(worker.speed)
     return final_interrogation_list
 
 # Returns the queue position of the provided WP based on kudos

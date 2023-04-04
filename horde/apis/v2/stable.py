@@ -663,7 +663,6 @@ class InterrogatePop(JobPopTemplate):
             ):
                 self.prioritized_forms.append(form)
         # logger.warning(datetime.utcnow())
-        logger.debug(self.prioritized_forms)
         worker_ret = {"forms": []}
         for form in self.prioritized_forms:
             try:
