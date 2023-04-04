@@ -619,6 +619,10 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
                 Interrogation.user_id == worker.user_id,
             ),
         ),
+        or_(
+            worker.speed < 10, # 10 seconds per form
+            Interrogation.slow_workers == True,
+        ),
     ).order_by(
         Interrogation.extra_priority.desc(), 
         Interrogation.created.asc()
@@ -636,7 +640,6 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
             retrieve_limit = 1
         final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
     final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
-    # logger.debug(final_interrogation_query)
     return final_interrogation_list
 
 # Returns the queue position of the provided WP based on kudos

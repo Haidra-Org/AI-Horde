@@ -133,6 +133,7 @@ class ImageModels(v2.Models):
         self.input_interrogate_request_generation = api.model('ModelInterrogationInputStable', {
             'forms': fields.List(fields.Nested(self.input_model_interrogation_form)),
             'source_image': fields.String(required=False, description="The public URL of the image to interrogate"),
+            'slow_workers': fields.Boolean(default=True,description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
         })
         self.response_model_interrogation = api.model('RequestInterrogationResponse', {
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
