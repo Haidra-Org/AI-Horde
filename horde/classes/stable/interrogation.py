@@ -156,7 +156,7 @@ class Interrogation(db.Model):
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False)
-    slow_workers = db.Column(db.Boolean, default=False, nullable=False)
+    slow_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
     image_tiles = db.Column(db.Integer, default=1, nullable=False, index=True)
     # This is used so I know to delete up the image 30 mins after this request expires
     r2stored = db.Column(db.Boolean, default=False, nullable=False)
