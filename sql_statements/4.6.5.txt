@@ -1,0 +1,1 @@
+ALTER TABLE workers ALTER COLUMN max_pixels TYPE bigint;

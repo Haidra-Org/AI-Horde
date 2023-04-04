@@ -1,0 +1,2 @@
+ALTER TABLE interrogations ADD COLUMN slow_workers boolean default true not null;
+CREATE INDEX ix_interrogations_slow_workers ON public.interrogations USING btree (slow_workers);
