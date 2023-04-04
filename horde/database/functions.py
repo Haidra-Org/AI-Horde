@@ -605,13 +605,13 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
         InterrogationForms.expiry == None,
         Interrogation.source_image != None,
         Interrogation.image_tiles <= worker.max_power,
-        or_(
-            Interrogation.safe_ip == True,
-            and_(
-                Interrogation.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
-        ),
+        # or_(
+        #     Interrogation.safe_ip == True,
+        #     and_(
+        #         Interrogation.safe_ip == False,
+        #         worker.allow_unsafe_ipaddr == True,
+        #     ),
+        # ),
         or_(
             worker.maintenance == False,
             and_(
