@@ -481,6 +481,7 @@ class Interrogate(Resource):
     post_parser.add_argument("forms", type=list, required=False, default=None, help="The acceptable forms with which to interrogate", location="json")
     post_parser.add_argument("source_image", type=str, required=True, location="json")
     post_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
+    post_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
 
     @api.expect(post_parser, models.input_interrogate_request_generation, validate=True)
     @api.marshal_with(models.response_model_interrogation, code=202, description='Interrogation Queued', skip_none=True)
@@ -509,6 +510,7 @@ class Interrogate(Resource):
         self.interrogation = Interrogation(
             user_id = self.user.id,
             trusted_workers = self.args.trusted_workers,
+            slow_workers = self.args.slow_workers,
             ipaddr = self.user_ip,
             safe_ip = self.safe_ip,
         )

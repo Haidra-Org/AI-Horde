@@ -619,6 +619,10 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
                 Interrogation.user_id == worker.user_id,
             ),
         ),
+        or_(
+            worker.speed < 10, # 10 seconds per form
+            Interrogation.slow_workers == True,
+        ),
     ).order_by(
         Interrogation.extra_priority.desc(), 
         Interrogation.created.asc()

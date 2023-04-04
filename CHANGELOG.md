@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.6.7
+
+* slow_worker for Dreamers now are < 0.5MPS/s
+* Added slow_worker for Alchemists
+
 # 4.6.6
 
 `/api/v2/users/user_id` won't block non-mod API keys, but will just use the lowest permissions
