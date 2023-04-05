@@ -34,7 +34,9 @@ First [Register an account](/register) which will generate for you an API key. S
    * if you do not want to register, you can use '0000000000' as api_key to connect anonymously. However anonymous accounts have the lowest priority when there's too many concurrent requests!
    * To increase your priority you will need a unique API key and then to increase your Kudos. [Read how Kudos are working](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/).
 
-### GUI
+### GUIs
+
+#### Image Generation
 
 * We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
@@ -47,7 +49,7 @@ First [Register an account](/register) which will generate for you an API key. S
 
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
-### Command Line
+##### Command Line
 1. Git clone [this repository](https://github.com/db0/Stable-Horde)
 1. Make sure you have python3 installed
 1. Open a git bash (or just bash in linux)
@@ -57,6 +59,13 @@ First [Register an account](/register) which will generate for you an API key. S
 You can use `./cli_requests.py -h` to see the command line arguments to use
 
 You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
+
+#### Text Generation
+
+The following tools provide an interface for Text Generation on the AI Horde
+* [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
+* [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
+* [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
 
 ### Tools
 
