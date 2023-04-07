@@ -327,7 +327,7 @@ class WorkerTemplate(db.Model):
         # Avoiding putting into maintenance interrogation workers due to crashes from the model
         # TODO: Remove once crashes are fixed
         if self.worker_type == "interrogation_worker":
-            dropped_job_threshold = 5000
+            dropped_job_threshold = 100
         if self.aborted_jobs > dropped_job_threshold:
             # if a worker drops too many jobs in an hour, we put them in maintenance
             # except during a raid, as we don't want them to know we detected them.
