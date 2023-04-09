@@ -31,7 +31,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             if not self.worker.user.trusted:
                 return 1
             # Trusted users with an unknown model gain 1 per token requested, as we don't know their parameters amount
-            return self.wp.max_length * 0.2
+            return self.wp.max_length * 0.15
         return round(self.wp.max_length * model_reference.get_text_model_multiplier(self.model) / 21, 2)
 
 
