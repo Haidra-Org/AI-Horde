@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.6.8
+
+* Reduced kudos calculation for unapproved textgen models a bit.
+
 # 4.6.7
 
 * slow_worker for Dreamers now are < 0.5MPS/s
