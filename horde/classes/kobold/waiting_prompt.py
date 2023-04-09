@@ -5,7 +5,6 @@ from horde import vars as hv
 from horde.flask import db
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
-from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
 
 class TextWaitingPrompt(WaitingPrompt):

@@ -161,9 +161,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
 
-    # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
-        # Not using yet, but might need later
         self.source_image = None
         self.source_mask = None
         if self.args.source_image:
