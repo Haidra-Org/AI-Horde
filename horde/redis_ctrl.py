@@ -1,6 +1,7 @@
 import os
 import socket
 import redis
+import json
 
 from horde.logger import logger
 
@@ -14,6 +15,7 @@ ipaddr_db = 2
 cache_db = 3
 ipaddr_supicion_db = 4
 ipaddr_timeout_db = 5
+
 def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((redis_hostname, redis_port)) == 0
@@ -29,38 +31,51 @@ def ger_cache_url():
     return(f"{redis_address}/{cache_db}")
 
 def get_horde_db():
-    rdb = redis.Redis(
+    return redis.Redis(
         host=redis_hostname,
         port=redis_port,
         db = horde_db,
         decode_responses=True)
-    return(rdb)
 
 def get_local_horde_db():
-    rdb = redis.Redis(
+    return redis.Redis(
         host="127.0.0.1",
         port=6379,
         db = 6,
         decode_responses=True)
-    return(rdb)
 
 def get_ipaddr_db():
-    rdb = redis.Redis(
+    return redis.Redis(
         host=redis_hostname,
         port=redis_port,
         db = ipaddr_db)
-    return(rdb)
 
 def get_ipaddr_suspicion_db():
-    rdb = redis.Redis(
+    return redis.Redis(
         host=redis_hostname,
         port=redis_port,
         db = ipaddr_supicion_db)
-    return(rdb)
 
 def get_ipaddr_timeout_db():
-    rdb = redis.Redis(
+    return redis.Redis(
         host=redis_hostname,
         port=redis_port,
         db = ipaddr_timeout_db)
-    return(rdb)
+
+def get_redis_db_server(server_ip):
+    return redis.Redis(
+        host=server_ip,
+        port=redis_port,
+        db = horde_db,
+        decode_responses=True)
+
+def get_all_redis_db_servers():
+    """An array of all the redis servers in the cluster
+    We use this to always store the entries in all servers
+    This allows redis to transparently failover.
+    """
+    try:
+        return [get_redis_db_server(rs) for rs in json.loads(os.getenv("REDIS_SERVERS"))]
+    except:
+        logger.error(f"Error setting up REDIS_SERVERS array. Falling back to loadbalancer.")
+        return [get_horde_db()]

@@ -2,15 +2,17 @@ from datetime import timedelta
 import json
 from threading import Lock
 
-from horde.redis_ctrl import get_horde_db, is_redis_up, get_local_horde_db, is_local_redis_up
+from horde.redis_ctrl import get_horde_db, is_redis_up, get_local_horde_db, is_local_redis_up, get_all_redis_db_servers
 from horde.logger import logger
 
 locks = {}
 
 horde_r = None
+all_horde_redis = []
 logger.init("Horde Redis", status="Connecting")
 if is_redis_up():
     horde_r = get_horde_db()
+    all_horde_redis = get_all_redis_db_servers()
     logger.init_ok("Horde Redis", status="Connected")
 else:
     logger.init_err("Horde Redis", status="Failed")
@@ -25,14 +27,14 @@ else:
     logger.init_err("Horde Local Redis", status="Failed")
 
 def horde_r_set(key, value):
-    if horde_r:
-        horde_r.set(key, value)
+    for hr in all_horde_redis:
+        hr.set(key, value)
     if horde_local_r:
         horde_local_r.set(key, value)
 
 def horde_r_setex(key, expiry, value):
-    if horde_r:
-        horde_r.setex(key, expiry, value)
+    for hr in all_horde_redis:
+        hr.setex(key, expiry, value)
     # We don't keep local cache for more than 5 seconds
     if expiry > timedelta(5):
         expiry = timedelta(5)
