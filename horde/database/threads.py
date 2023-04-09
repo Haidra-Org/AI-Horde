@@ -41,15 +41,15 @@ def get_quorum():
         return None
     quorum = hr.horde_r.get('horde_quorum')
     if not quorum:
-        hr.horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        hr.horde_r_setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.critical(f"Quorum changed to port {args.port} with ID {horde_instance_id}")
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
         return None
     if quorum == horde_instance_id:
-        hr.horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        hr.horde_r_setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
-        hr.horde_r.setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
+        hr.horde_r_setex('horde_quorum', timedelta(seconds=2), horde_instance_id)
         logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
     return(quorum)
 

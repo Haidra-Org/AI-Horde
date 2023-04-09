@@ -185,7 +185,7 @@ def retrieve_worker_performances():
 def refresh_worker_performances_cache():
     avg_perf = retrieve_worker_performances()
     try:
-        hr.horde_r.setex(f'worker_performances_avg_cache', timedelta(seconds=30), avg_perf)
+        hr.horde_r_setex(f'worker_performances_avg_cache', timedelta(seconds=30), avg_perf)
     except Exception as e:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return avg_perf
