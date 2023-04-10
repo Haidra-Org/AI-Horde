@@ -63,6 +63,7 @@ You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and
 #### Text Generation
 
 The following tools provide an interface for Text Generation on the AI Horde
+
 * [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
 * [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
 * [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
