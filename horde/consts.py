@@ -8,6 +8,7 @@ WHITELISTED_SERVICE_IPS = {
 KNOWN_POST_PROCESSORS = {
     "GFPGAN": 1.0, 
     "RealESRGAN_x4plus": 1.3, 
+    "RealESRGAN_x2plus": 1.2, 
     "RealESRGAN_x4plus_anime_6B": 1.3,
     "NMKD_Siax": 1.1,
     "4x_AnimeSharp": 1.1, 
@@ -17,6 +18,7 @@ KNOWN_POST_PROCESSORS = {
 
 KNOWN_UPSCALERS = [
     "RealESRGAN_x4plus", 
+    "RealESRGAN_x2plus", 
     "RealESRGAN_x4plus_anime_6B", 
     "NMKD_Siax",
     "4x_AnimeSharp"
