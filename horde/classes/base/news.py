@@ -4,6 +4,14 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-04-16",
+            "newspiece": 
+                "The AI Horde has received its first patreon sponsorship "
+                "Many thanks to [pawkygame VR](https://discord.gg/Zbe63QTU9X) for their support!",
+            "tags": ["sponsor", "patreon"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-03-23",
             "newspiece": 
                 "Inpainting is re-enabled that to the work of [ResidentChief](https://github.com/ResidentChief)! "

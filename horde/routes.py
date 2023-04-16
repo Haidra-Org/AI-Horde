@@ -157,13 +157,10 @@ This is the worker which has generated the most pixels for the horde.
 @cache.cached(timeout=300)
 def patrons_route():
     all_patrons = ", ".join(patrons.get_names(min_entitlement=3, max_entitlement=99))
-    all_sponsors = ''
-    for p in patrons.get_sponsors():
-        all_sponsors += f'<li><a href="{p["url"]}">{p["name"]}</a></li>'
     return render_template('sponsors.html',
                            page_title="Sponsors",
                            all_patrons=all_patrons,
-                           all_sponsors=all_sponsors,)
+                           all_sponsors=patrons.get_sponsors(),)
 
 
 

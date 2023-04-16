@@ -83,7 +83,7 @@ patrons = PatreonCache(3600, None)
     # We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
 if hr.horde_r:
     patrons.call_function()
-    pp = pprint.PrettyPrinter(depth=3)
-    pp.pprint(patrons.patrons)
+    # pp = pprint.PrettyPrinter(depth=3)
+    # pp.pprint(patrons.patrons)
     # pp.pprint(patrons.get_ids())
     
