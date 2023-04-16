@@ -21,13 +21,13 @@ class PatreonCache(PrimaryTimedFunction):
     def is_patron(self, user_id):
         return user_id in self.patrons
 
-    def get_patrons(self, min_entitlement = 0, exact_entitlement = None):
+    def get_patrons(self, min_entitlement = 0, max_entitlement = 1000, exact_entitlement = None):
         matching_patrons = {}
         for pid in self.patrons:
             if exact_entitlement is not None:
                 if self.patrons[pid]["entitlement_amount"] == exact_entitlement:
                     matching_patrons[pid] = self.patrons[pid]
-            elif self.patrons[pid]["entitlement_amount"] >= min_entitlement:
+            elif self.patrons[pid]["entitlement_amount"] >= min_entitlement and self.patrons[pid]["entitlement_amount"] <= max_entitlement:
                 matching_patrons[pid] = self.patrons[pid]
         return(matching_patrons)
 
@@ -66,11 +66,24 @@ class PatreonCache(PrimaryTimedFunction):
             logger.warning(f"Found patron '{user_id}' with non-standard entitlement: {eamount}")
             return(0)
 
+    def get_sponsors(self):
+        sponsors = []
+        for p in self.get_sorted_patrons(min_entitlement = 100):
+            sponsors.append(
+                {
+                    "name": p.get("alias", p["name"]),
+                    "url": p.get("sponsor_link"),
+                }
+            )
+        return sponsors
+
+
+
 patrons = PatreonCache(3600, None)
     # We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
 if hr.horde_r:
     patrons.call_function()
-    # pp = pprint.PrettyPrinter(depth=3)
-    # pp.pprint(patrons.patrons)
+    pp = pprint.PrettyPrinter(depth=3)
+    pp.pprint(patrons.patrons)
     # pp.pprint(patrons.get_ids())
     

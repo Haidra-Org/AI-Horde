@@ -311,6 +311,8 @@ def store_patreon_members():
         user_id = int(user_id)
         if "alias" in note:
             member_dict["alias"] = note["alias"]
+        if "sponsor_link" in note:
+            member_dict["sponsor_link"] = note["sponsor_link"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
     hr.horde_r_set('patreon_cache', cached_patreons)
