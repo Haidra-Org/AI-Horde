@@ -1,5 +1,6 @@
 
 from datetime import datetime, timedelta
+from sqlalchemy import func
 
 from horde.logger import logger
 from horde.flask import db
@@ -52,15 +53,15 @@ def get_things_per_min(thing_type = "image"):
     things_per_min = round(total_things / hv.thing_divisors[thing_type],2)
     return(things_per_min)
 
-def get_model_avg(model):
-    return 1000000 #TODO
-    # TODO: Add the sum / coun calculation as part of the query
-    model_performances = db.session.query(ModelPerformance).filter_by(
+def get_model_avg(model_name):
+    model_performances_count = db.session.query(ModelPerformance).filter_by(
         model=model_name
-    ).order_by(
-        ModelPerformance.created.desc()
-    ).limit(10)
-    if model_performances.count() == 0:
+    ).count()
+    if model_performances_count == 0:
         return 0
-    avg = sum([m.performance for m in model_performances]) / model_performances.count()
+    avg = db.session.query(
+        func.avg(ModelPerformance.performance)
+    ).filter_by(
+        model=model_name
+    ).scalar()        
     return(round(avg,1))

@@ -238,7 +238,7 @@ def get_available_models():
 
             models_dict[model_name]['queued'] = 0
             models_dict[model_name]['eta'] = 0
-            models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
+            models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
 
         # We don't want to report on any random model name a client might request
@@ -260,7 +260,7 @@ def get_available_models():
             models_dict[model_name]['queued'] = 0
             models_dict[model_name]["type"] = model_type
             models_dict[model_name]['eta'] = 0
-            models_dict[model_name]['performance'] = stats.get_model_avg(model_name) #TODO: Currently returns 1000000
+            models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
         things_per_model = count_things_per_model(wp_class)
         # If we request a lite_dict, we only want worker count per model and a dict format
