@@ -3,7 +3,7 @@ import os
 import regex as re
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError,InvalidRequestError
 from sqlalchemy import literal
 from sqlalchemy import func, or_, and_
@@ -749,18 +749,47 @@ class WorkerSingle(Resource):
 class Users(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("page", required=False, default=1, type=int, help="Which page of results to return. Each page has 25 users.", location="args")
+    get_parser.add_argument("sort", required=False, default='kudos', type=str, help="How to sort the returned list", location="args")
 
     decorators = [limiter.limit("30/minute")]
-    @cache.cached(timeout=10)
+    # @cache.cached(timeout=10)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
     def get(self): # TODO - Should this be exposed?
         '''A List with the details and statistic of all registered users
         '''
-        return ([],200) #FIXME: Debat
-        all_users = db.session.query(User)
-        users_list = [user.get_details() for user in all_users]
-        return(users_list,200)
+        self.args = self.get_parser.parse_args()
+        return (self.retrieve_users_details(),200)
+
+    @logger.catch(reraise=True)
+    def retrieve_users_details(self):
+        sort=self.args.sort
+        page=self.args.page
+        # I don't have 250K users, so might as well return immediately.
+        # TODO: Adjust is I ever get more than 250K users >_<
+        if page > 10000:
+            return []
+        if not hr.horde_r:
+            return self.get_user_list(sort=sort, page=page)
+        cache_name = f'users_cache_{sort}_{page}'
+        cached_users = hr.horde_r_get(cache_name)
+        if cached_users is None:
+            logger.debug(f"No user cache found for sort: {sort} page:{page}")
+            users = self.get_user_list(sort=sort, page=page)
+            hr.horde_r_setex_json(cache_name, timedelta(seconds=300), users)
+            return users
+        return json.loads(cached_users)
+
+    def get_user_list(self, sort="kudos", page=1):
+        users_ret = []
+        if sort not in ["kudos", "age"]:
+            sort = "kudos"
+        if page < 1:
+            page = 1
+        for user in database.get_all_users(sort=sort,offset=(page-1)*25):
+            users_ret.append(user.get_details())
+        return users_ret
 
 
 class UserSingle(Resource):

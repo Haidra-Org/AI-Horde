@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.7.0
+
+* The user list is back! It now only returns 25 users at a time, but you can retrieve any page
+  It accepts sorting by kudos or by account age. Kudos is sorted descending. Account age sorted ascending.
+  
 # 4.6.8
 
 * Reduced kudos calculation for unapproved textgen models a bit.

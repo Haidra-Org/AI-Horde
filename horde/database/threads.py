@@ -97,7 +97,7 @@ def store_prioritized_wp_queue():
 
 @logger.catch(reraise=True)
 def store_worker_list():
-    '''Stores the retrieved worker details as json for 30 seconds horde-wide'''
+    '''Stores the retrieved worker details as json for 300 seconds horde-wide'''
     with HORDE.app_context():
         serialized_workers = []
         serialized_workers_privileged = []

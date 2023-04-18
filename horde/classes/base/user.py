@@ -449,7 +449,7 @@ class User(db.Model):
         if self.public_workers or details_privilege >= 1:
             workers_array = []
             for worker in self.workers:
-                workers_array.append(worker.id)
+                workers_array.append(str(worker.id))
             ret_dict["worker_ids"] = workers_array
             ret_dict['contact'] = self.contact
         if details_privilege >= 2:

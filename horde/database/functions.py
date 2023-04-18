@@ -846,3 +846,16 @@ def retrieve_regex_replacements(filter_type):
         if validate_regex(filter.regex)
     ]
     return all_filter_regex_dict
+
+def get_all_users(sort="kudos", offset=0):
+    if sort == "age":
+        user_order_by = User.created.asc()
+    else:
+        user_order_by = User.kudos.desc()
+    return db.session.query(
+        User
+    ).order_by(
+        user_order_by
+    ).offset(
+        offset
+    ).limit(25).all()
