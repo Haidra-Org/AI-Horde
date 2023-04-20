@@ -752,7 +752,7 @@ class Users(Resource):
     get_parser.add_argument("page", required=False, default=1, type=int, help="Which page of results to return. Each page has 25 users.", location="args")
     get_parser.add_argument("sort", required=False, default='kudos', type=str, help="How to sort the returned list", location="args")
 
-    decorators = [limiter.limit("30/minute")]
+    decorators = [limiter.limit("90/minute")]
     # @cache.cached(timeout=10)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Users List')
