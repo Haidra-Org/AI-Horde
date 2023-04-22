@@ -44,12 +44,12 @@ class ImageAsyncGenerate(GenerateTemplate):
             logger.error(self.args.params)
             return {"message": "Internal Server Error"},500
         ret_dict = {"id":self.wp.id}
-        if not database.wp_has_valid_workers(self.wp, self.workers) and not settings.mode_raid():
+        if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
     def get_size_too_big_message(self):
-        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Please confider reducing its size of the request.")
+        return("Warning: No available workers can fulfill this request. It will expire in 20 minutes unless a worker appears. Please confider reducing its size of the request or choosing a different model.")
 
     def validate(self):
         #logger.warning(datetime.utcnow())
@@ -115,9 +115,6 @@ class ImageAsyncGenerate(GenerateTemplate):
                 "First ensure it provides a proper name and contact details. "
                 "Then contact us on Discord to discuss the issue it's creating."
             )
-
-    def get_size_too_big_message(self):
-        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the size to 512x512")
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):

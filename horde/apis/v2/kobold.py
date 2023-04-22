@@ -34,7 +34,7 @@ class TextAsyncGenerate(GenerateTemplate):
             logger.error(self.args.params)
             return {"message": "Internal Server Error"},500
         ret_dict = {"id":self.wp.id}
-        if not database.wp_has_valid_workers(self.wp, self.workers) and not settings.mode_raid():
+        if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)
 
@@ -72,7 +72,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 )                
 
     def get_size_too_big_message(self):
-        return("Warning: No available workers can fulfill this request. It will expire in 10 minutes. Consider reducing the amount of tokens to generate.")
+        return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Consider reducing the amount of tokens to generate.")
 
 class TextAsyncStatus(Resource):
     get_parser = reqparse.RequestParser()
