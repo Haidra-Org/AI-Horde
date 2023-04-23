@@ -772,7 +772,7 @@ def wp_has_valid_workers(wp):
     worker_class = ImageWorker
     if wp.wp_type == "text":
         worker_class = TextWorker
-    elif wp.wp_type == "text":
+    elif wp.wp_type == "interrogation":
         worker_class = InterrogationWorker
     models_list = wp.get_model_names()
     worker_ids = wp.get_worker_ids()
