@@ -762,15 +762,6 @@ def get_request_avg(request_type = "image"):
 
 def wp_has_valid_workers(wp):
     # tic = time.time()
-    worker_found = False
-    for worker in get_active_workers_for_wp(wp):
-        if worker.can_generate(wp)[0]:
-            worker_found = True
-            break
-    # logger.debug(time.time() - tic)
-    return worker_found
-
-def get_active_workers_for_wp(wp):
     if wp.faulted:
         return []
     if wp.expiry < datetime.utcnow():
@@ -853,12 +844,22 @@ def get_active_workers_for_wp(wp):
             ),
         )
     elif wp.wp_type == "text":
-        pass #FIXME Add text filters
+        final_worker_list = final_worker_list.filter(
+            wp.max_length <= worker_class.max_length,
+            wp.max_context_length <= worker_class.max_context_length,
+            or_(
+                wp.slow_workers == True,
+                worker_class.speed >= 2,
+            ),
+        )
     elif wp.wp_type == "interrogation":
         pass # FIXME: Add interrogation filters
-    ret = final_worker_list.all()
-    # logger.debug(ret)
-    return ret
+    worker_found = False
+    for worker in final_worker_list.all():
+        if worker.can_generate(wp)[0]:
+            return True
+    # logger.debug(time.time() - tic)
+    return False
 
 
 

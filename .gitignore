@@ -131,6 +131,7 @@ dmypy.json
 
 db/*
 cliRequestsData.py
+cliRequestsData_Scribe.py
 *horde_generation*
 test_commands.txt
 SQL_statements.txt
