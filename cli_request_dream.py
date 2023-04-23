@@ -72,7 +72,7 @@ class RequestData(object):
 def load_request_data():
     request_data = RequestData()
     try:
-        import cliRequestsData as crd
+        import cliRequestsData_Dream as crd
         try:
             request_data.api_key = crd.api_key
         except AttributeError:
