@@ -50,11 +50,14 @@ First [Register an account](/register) which will generate for you an API key. S
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
 ##### Command Line
-1. Git clone [this repository](https://github.com/db0/Stable-Horde)
+1. Git clone [this repository](https://github.com/db0/AI-Horde-CLI)
 1. Make sure you have python3 installed
 1. Open a git bash (or just bash in linux)
 1. Download the cli requirements with `python -m pip install -r cli_requirements.txt --user`
-1. Run `./cli_requests.py` 
+1. Run the appropriate `cli_requests`
+   * `./cli_requests_dream.py` for Image Generation
+   * `./cli_requests_scribe.py` for Text Generation
+   * `./cli_requests_alchemy.py` for Image Alchemy
 
 You can use `./cli_requests.py -h` to see the command line arguments to use
 

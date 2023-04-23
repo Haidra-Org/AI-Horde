@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-04-23",
+            "newspiece": 
+                "The Command Line Interface for the AI Horde has now been extended to support Image Generation, Text Generation and Image Alchemy. "
+                "It has been split into three files and is not availablke in its own repository: "
+                "https://github.com/db0/AI-Horde-CLI",
+            "tags": ["cli"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-04-16",
             "newspiece": 
                 "The AI Horde has received its first patreon sponsorship "
