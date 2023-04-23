@@ -26,7 +26,7 @@ args = arg_parser.parse_args()
 
 class RequestData(object):
     def __init__(self):
-            self.client_agent = "cli_request.py:1.1.0:(discord)db0#1625"
+            self.client_agent = "cli_request_dream.py:1.0.0:(discord)db0#1625"
             self.api_key = "0000000000"
             self.filename = "horde_generation.png"
             self.imgen_params = {
@@ -40,7 +40,6 @@ class RequestData(object):
             }
             self.submit_dict = {
                 "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
-                "api_key": "0000000000",
                 "nsfw": False,
                 "censor_nsfw": False,
                 "trusted_workers": False,
@@ -72,39 +71,35 @@ class RequestData(object):
 def load_request_data():
     request_data = RequestData()
     try:
-        import cliRequestsData_Dream as crd
-        try:
-            request_data.api_key = crd.api_key
-        except AttributeError:
-            pass
-        try:
-            request_data.filename = crd.filename
-        except AttributeError:
-            pass
-        try:
-            for p in crd.imgen_params:
-                request_data.imgen_params[p] = crd.imgen_params[p]
-        except AttributeError:
-            pass
-        try:
-            for s in crd.submit_dict:
-                request_data.submit_dict[s] = crd.submit_dict[s]
-        except AttributeError:
-            pass
-        try:
-            request_data.source_image = crd.source_image
-        except AttributeError:
-            pass
-        try:
-            request_data.source_processing = crd.source_processing
-        except AttributeError:
-            pass
-        try:
-            request_data.source_mask = crd.source_mask
-        except AttributeError:
-            pass
-    except:
-        logger.warning("cliRequestData.py could not be loaded. Using defaults with anonymous account")
+        request_data.api_key = crd.api_key
+    except AttributeError:
+        pass
+    try:
+        request_data.filename = crd.filename
+    except AttributeError:
+        pass
+    try:
+        for p in crd.imgen_params:
+            request_data.imgen_params[p] = crd.imgen_params[p]
+    except AttributeError:
+        pass
+    try:
+        for s in crd.submit_dict:
+            request_data.submit_dict[s] = crd.submit_dict[s]
+    except AttributeError:
+        pass
+    try:
+        request_data.source_image = crd.source_image
+    except AttributeError:
+        pass
+    try:
+        request_data.source_processing = crd.source_processing
+    except AttributeError:
+        pass
+    try:
+        request_data.source_mask = crd.source_mask
+    except AttributeError:
+        pass
     if args.api_key: request_data.api_key = args.api_key 
     if args.filename: request_data.filename = args.filename 
     if args.amount: request_data.imgen_params["n"] = args.amount 
@@ -195,7 +190,7 @@ def generate():
             censored = ''
             if results[iter]["censored"]:
                 censored = " (censored)"
-            logger.info(f"Saved{censored} {final_filename}")
+            logger.generation(f"Saved{censored} {final_filename}")
     else:
         logger.error(submit_req.text)
 
@@ -203,10 +198,10 @@ set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
 
 try:
-    import cliRequestsData as crd
-    logger.info("Imported cliRequestsData")
+    import cliRequestsData_Dream as crd
+    logger.info("Imported cliRequestsData_Dream.py")
 except:
-    logger.warning("No cliRequestsData found, use default where no CLI args are set")
+    logger.warning("No cliRequestsData_Dream.py found, use default where no CLI args are set")
     class temp(object):
         def __init__(self):
             self.filename = "horde_generation.png"

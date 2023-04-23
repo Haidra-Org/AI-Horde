@@ -106,9 +106,7 @@ class TextWorker(Worker):
             if waiting_prompt.softprompt in self.get_softprompt_names():
                 matching_softprompt = True
         if not matching_softprompt:
-            logger.debug('bbbb')
             return [False, 'matching_softprompt']
-        logger.debug('aaa')
         return [True, None]
 
     def get_details(self, is_privileged = False):

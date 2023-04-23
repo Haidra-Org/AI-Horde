@@ -1,4 +1,4 @@
-filename = "horde_generation.png"
+filename = "horde_dream.webp"
 api_key = "0000000000"
 source_image = None
 # You can fill these in to avoid putting them as args all the time

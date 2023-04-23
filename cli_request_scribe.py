@@ -19,7 +19,7 @@ args = arg_parser.parse_args()
 
 class RequestData(object):
     def __init__(self):
-            self.client_agent = "cli_request_scribe.py:1.1.0:(discord)db0#1625"
+            self.client_agent = "cli_request_scribe.py:1.0.0:(discord)db0#1625"
             self.api_key = "0000000000"
             self.txtgen_params = {
                 "n": 1,
@@ -28,7 +28,6 @@ class RequestData(object):
             }
             self.submit_dict = {
                 "prompt": "a horde of cute kobolds furiously typing on typewriters",
-                "api_key": "0000000000",
                 "trusted_workers": False,
                 "models": [],
             }
@@ -41,23 +40,19 @@ class RequestData(object):
 def load_request_data():
     request_data = RequestData()
     try:
-        import cliRequestsData_Scribe as crd
-        try:
-            request_data.api_key = crd.api_key
-        except AttributeError:
-            pass
-        try:
-            for p in crd.txtgen_params:
-                request_data.txtgen_params[p] = crd.txtgen_params[p]
-        except AttributeError:
-            pass
-        try:
-            for s in crd.submit_dict:
-                request_data.submit_dict[s] = crd.submit_dict[s]
-        except AttributeError:
-            pass
-    except:
-        logger.warning("cliRequestData.py could not be loaded. Using defaults with anonymous account")
+        request_data.api_key = crd.api_key
+    except AttributeError:
+        pass
+    try:
+        for p in crd.txtgen_params:
+            request_data.txtgen_params[p] = crd.txtgen_params[p]
+    except AttributeError:
+        pass
+    try:
+        for s in crd.submit_dict:
+            request_data.submit_dict[s] = crd.submit_dict[s]
+    except AttributeError:
+        pass
     if args.api_key: request_data.api_key = args.api_key 
     if args.amount: request_data.txtgen_params["n"] = args.amount 
     if args.max_context_length: request_data.txtgen_params["max_context_length"] = args.max_context_length 
@@ -127,10 +122,10 @@ set_logger_verbosity(args.verbosity)
 quiesce_logger(args.quiet)
 
 try:
-    import cliRequestsData as crd
-    logger.info("Imported cliRequestsData")
+    import cliRequestsData_Scribe as crd
+    logger.info("Imported cliRequestsData_Scribe.py")
 except:
-    logger.warning("No cliRequestsData found, use default where no CLI args are set")
+    logger.warning("No cliRequestsData_Scribe.py found, use default where no CLI args are set")
     class temp(object):
         def __init__(self):
             self.txtgen_params = {
