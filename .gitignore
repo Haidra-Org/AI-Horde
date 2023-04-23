@@ -130,12 +130,6 @@ dmypy.json
 
 
 db/*
-cliRequestsData_Dream.py
-cliRequestsData_Scribe.py
-cliRequestsData_Alchemy.py
-*horde_generation*
-*horde_alchemy*
-*horde_dream*
 test_commands.txt
 SQL_statements.txt
 horde.log
