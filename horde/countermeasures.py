@@ -53,6 +53,7 @@ class CounterMeasures:
 		Else return true
 		This function is a bit obscured with env vars to prevent defeat
 		'''
+		return True # FIXME: Until I figure this out
 		if args.allow_all_ips or os.getenv("IP_CHECKER", "") == "":
 			return True
 		# If we don't have the cache up, it's always OK
