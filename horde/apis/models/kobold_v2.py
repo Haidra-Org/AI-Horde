@@ -31,7 +31,7 @@ class TextModels(v2.Models):
             'frmtrmblln': fields.Boolean(example=False,description="Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines in the output with one newline."),
             'frmtrmspch': fields.Boolean(example=False,description="Output formatting option. When enabled, removes #/@%}{+=~|\^<> from the output."),
             'frmttriminc': fields.Boolean(example=False,description="Output formatting option. When enabled, removes some characters from the end of the output such that the output doesn't end in the middle of a sentence. If the output is less than one sentence long, does nothing."),
-            'max_context_length': fields.Integer(min=80, max=2048, default=1024, description="Maximum number of tokens to send to the model."), 
+            'max_context_length': fields.Integer(min=80, default=1024, description="Maximum number of tokens to send to the model."), 
             'max_length': fields.Integer(min=16, max=512, default=80, description="Number of tokens to generate."), 
             'rep_pen': fields.Float(description="Base repetition penalty value.",min=1, max=3), 
             'rep_pen_range': fields.Integer(description="Repetition penalty range.", min=0, max=4096), 
