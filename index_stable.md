@@ -49,17 +49,6 @@ First [Register an account](/register) which will generate for you an API key. S
 
 <img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
 
-##### Command Line
-1. Git clone [this repository](https://github.com/db0/Stable-Horde)
-1. Make sure you have python3 installed
-1. Open a git bash (or just bash in linux)
-1. Download the cli requirements with `python -m pip install -r cli_requirements.txt --user`
-1. Run `./cli_requests.py` 
-
-You can use `./cli_requests.py -h` to see the command line arguments to use
-
-You can make a copy of `cliRequestData_template.py` into `cliRequestData.py` and edit it, to use common variables for your generations. Command line arguments will always take precedence over `cliRequestData.py` so you can use them to tweak your generations slightly.
-
 #### Text Generation
 
 The following tools provide an interface for Text Generation on the AI Horde
@@ -67,6 +56,10 @@ The following tools provide an interface for Text Generation on the AI Horde
 * [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
 * [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
 * [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
+
+### Command Line
+
+We provide a CLI tool for each type of AI Horde usage in [this repository](https://github.com/db0/AI-Horde-CLI)
 
 ### Tools
 

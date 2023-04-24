@@ -71,13 +71,6 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
             ),
         ),
         or_(
-            TextWaitingPrompt.nsfw == False,
-            and_(
-                TextWaitingPrompt.nsfw == True,
-                worker.nsfw == True,
-            ),
-        ),
-        or_(
             WPModels.model.in_(models_list),
             WPModels.id.is_(None),
         ),
@@ -189,20 +182,6 @@ def refresh_worker_performances_cache():
     except Exception as e:
         logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return avg_perf
-
-def wp_has_valid_workers(wp, limited_workers_ids = None):
-    if not limited_workers_ids: limited_workers_ids = []
-    # FIXME: Too heavy
-    # TODO: Redis cached
-    return True
-    worker_found = False
-    for worker in get_active_workers():
-        if len(limited_workers_ids) and worker not in wp.get_worker_ids():
-            continue
-        if worker.can_generate(wp)[0]:
-            worker_found = True
-            break
-    return worker_found
 
 def query_prioritized_text_wps():
     return query_prioritized_wps()

@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.8.0
+
+* `is_possible` is back! Now each request's status will report whether the current payload can be completed
+* cli_requests has moved to a new repository: https://github.com/db0/AI-Horde-CLI
+
+
 # 4.7.0
 
 * The user list is back! It now only returns 25 users at a time, but you can retrieve any page

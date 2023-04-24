@@ -105,7 +105,6 @@ class WaitingPrompt(db.Model):
         else:
             # We only allow whitelisting up to 5 worker IDs
             worker_ids = worker_ids[0:5]
-        logger.debug(worker_ids)
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
         for wid in worker_ids:
             worker_entry = WPAllowedWorkers(worker_id=wid,wp_id=self.id)
@@ -347,4 +346,4 @@ class WaitingPrompt(db.Model):
         db.session.commit()
     
     def get_worker_ids(self):
-        return [worker.id for worker in self.workers]
+        return [worker.worker_id for worker in self.workers]
