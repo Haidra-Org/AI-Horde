@@ -1,11 +1,12 @@
 import os
 import requests
+import ipaddress
 
 from horde.logger import logger
 from horde.argparser import args
 from horde.redis_ctrl import is_redis_up, get_ipaddr_db, get_ipaddr_suspicion_db, get_ipaddr_timeout_db
 from datetime import timedelta
-from horde.consts import WHITELISTED_SERVICE_IPS
+from horde.consts import WHITELISTED_SERVICE_IPS, WHITELISTED_VPN_IPS
 
 ip_r = None
 logger.init("IP Address Cache", status="Connecting")
@@ -44,7 +45,7 @@ class CounterMeasures:
 		is_safe = ip_r.get(ipaddr)
 		if is_safe is None:
 			return is_safe
-		return bool(is_safe)
+		return bool(int(is_safe))
 
 	@staticmethod
 	def is_ip_safe(ipaddr):
@@ -59,6 +60,8 @@ class CounterMeasures:
 			return True
 		safety_threshold=0.93
 		timeout=2.00
+		if CounterMeasures.is_whitelisted_vpn(ipaddr):
+			return True
 		is_safe = CounterMeasures.get_safe(ipaddr)
 		if is_safe is None:
 			try:
@@ -143,3 +146,8 @@ class CounterMeasures:
 			return
 		ip_t_r.delete(ipaddr)
 		ip_s_r.delete(ipaddr)
+
+	@staticmethod
+	def is_whitelisted_vpn(ipaddr):
+		for iprange in WHITELISTED_VPN_IPS:
+			ipaddress.ip_address(ipaddr) in ipaddress.ip_network(iprange)

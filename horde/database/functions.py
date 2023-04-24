@@ -763,7 +763,7 @@ def get_request_avg(request_type = "image"):
 def wp_has_valid_workers(wp):    
     cached_validity = hr.horde_r_get(f'wp_validity_{wp.id}')
     if cached_validity is not None:
-        return bool(cached_validity)
+        return bool(int(cached_validity))
     # tic = time.time()
     if wp.faulted:
         return []
