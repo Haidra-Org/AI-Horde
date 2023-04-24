@@ -150,4 +150,6 @@ class CounterMeasures:
 	@staticmethod
 	def is_whitelisted_vpn(ipaddr):
 		for iprange in WHITELISTED_VPN_IPS:
-			ipaddress.ip_address(ipaddr) in ipaddress.ip_network(iprange)
+			if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(iprange):
+				return True
+		return False

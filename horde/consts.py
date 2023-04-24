@@ -1,7 +1,7 @@
 HORDE_VERSION = "4.8.0"
 
 WHITELISTED_SERVICE_IPS = {
-    "212.227.227.178" # Turing Bot
+    "212.227.227.178", # Turing Bot
 }
 
 # And their extra kudos adjustments based on how expensive to process they are and/or how much extra horde resources they consume
@@ -25,6 +25,8 @@ KNOWN_UPSCALERS = [
 ]
 
 WHITELISTED_VPN_IPS = [
+    "212.227.227.178/32", # Turing Bot
+    "141.144.197.64/32",
     # Google
     "8.8.4.0/24",
     "8.8.8.0/24",
