@@ -760,7 +760,8 @@ def get_request_avg(request_type = "image"):
     perf_cache = float(perf_cache)
     return perf_cache
 
-def wp_has_valid_workers(wp):    
+def wp_has_valid_workers(wp):
+    return True
     cached_validity = hr.horde_r_get(f'wp_validity_{wp.id}')
     if cached_validity is not None:
         return bool(int(cached_validity))
@@ -862,7 +863,7 @@ def wp_has_valid_workers(wp):
         if worker.can_generate(wp)[0]:
             worker_found = True
     # logger.debug(time.time() - tic)
-    hr.horde_r_setex(f'wp_validity_{wp.id}', timedelta(seconds=20), int(worker_found))
+    hr.horde_r_setex(f'wp_validity_{wp.id}', timedelta(seconds=60), int(worker_found))
     return worker_found
 
 

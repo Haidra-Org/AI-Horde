@@ -773,7 +773,6 @@ class Users(Resource):
 
     @logger.catch(reraise=True)
     def retrieve_users_details(self):
-        return []
         sort=self.args.sort
         page=self.args.page
         # I don't have 250K users, so might as well return immediately.
@@ -828,7 +827,7 @@ class UserSingle(Resource):
                 details_privilege = 2
             elif admin == user:
                 details_privilege = 1
-        ret_dict = {}
+        return ret_dict
         return(user.get_details(details_privilege),200)
 
     parser = reqparse.RequestParser()
