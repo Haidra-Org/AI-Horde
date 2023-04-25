@@ -761,7 +761,7 @@ def get_request_avg(request_type = "image"):
     return perf_cache
 
 def wp_has_valid_workers(wp):
-    return True
+    return True # FIXME: Still too heavy on the amount of data retrieved
     cached_validity = hr.horde_r_get(f'wp_validity_{wp.id}')
     if cached_validity is not None:
         return bool(int(cached_validity))
@@ -865,14 +865,6 @@ def wp_has_valid_workers(wp):
     # logger.debug(time.time() - tic)
     hr.horde_r_setex(f'wp_validity_{wp.id}', timedelta(seconds=60), int(worker_found))
     return worker_found
-
-
-
-
-
-
-
-
 
 @logger.catch(reraise=True)
 def retrieve_prioritized_wp_queue(wp_type):

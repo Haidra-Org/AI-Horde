@@ -25,7 +25,7 @@ from horde.classes.base.team import Team
 from horde.classes.base.news import News
 from horde.classes.base.detection import Filter
 from horde.suspicions import Suspicions
-from horde.utils import is_profane, sanitize_string
+from horde.utils import is_profane, sanitize_string, hash_api_key
 from horde.countermeasures import CounterMeasures
 from horde import horde_redis as hr
 from horde.patreon import patrons
@@ -827,7 +827,6 @@ class UserSingle(Resource):
                 details_privilege = 2
             elif admin == user:
                 details_privilege = 1
-        return ret_dict
         return(user.get_details(details_privilege),200)
 
     parser = reqparse.RequestParser()
@@ -961,11 +960,20 @@ class FindUser(Resource):
         self.args = self.get_parser.parse_args()
         if not self.args.apikey:
             raise e.InvalidAPIKey('GET FindUser')
-        user = database.find_user_by_api_key(self.args.apikey)
-        if not user:
-            raise e.UserNotFound(self.args.apikey, 'api_key')
-        return(user.get_details(1),200)
-
+        cached_user = None
+        cache_name = f"cached_apikey_user_{hash_api_key(self.args.apikey)}"
+        if hr.horde_r:
+            cached_user = hr.horde_r_get(cache_name)
+        if cached_user:
+            user_details = json.loads(cached_user)
+        else:
+            user = database.find_user_by_api_key(self.args.apikey)
+            if not user:
+                raise e.UserNotFound(self.args.apikey, 'api_key')
+            user_details = user.get_details(1)
+            if hr.horde_r:
+                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
+        return(user_details,200)
 
 class Models(Resource):
     get_parser = reqparse.RequestParser()
