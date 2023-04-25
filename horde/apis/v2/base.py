@@ -773,6 +773,7 @@ class Users(Resource):
 
     @logger.catch(reraise=True)
     def retrieve_users_details(self):
+        return []
         sort=self.args.sort
         page=self.args.page
         # I don't have 250K users, so might as well return immediately.
@@ -808,7 +809,7 @@ class UserSingle(Resource):
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
-    @cache.cached(timeout=3)
+    @cache.cached(timeout=60)
     @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
