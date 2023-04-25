@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.sql import expression
 from horde.utils import get_db_uuid
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -27,6 +28,7 @@ class ProcessingGeneration(db.Model):
     cancelled = db.Column(db.Boolean, default=False, nullable=False)
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     fake = db.Column(db.Boolean, default=False, nullable=False)
+    censored = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
 
     wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
@@ -92,8 +94,9 @@ class ProcessingGeneration(db.Model):
             self.wp.record_usage(raw_things = self.wp.things, kudos = self.adjust_user_kudos(kudos))
             logger.info(f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}")
 
-    # To extend
     def adjust_user_kudos(self, kudos):
+        if self.censored:
+            return 0
         return kudos
 
     def abort(self):

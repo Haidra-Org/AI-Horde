@@ -51,6 +51,9 @@ class TextProcessingGeneration(ProcessingGeneration):
         if state == "faulted":
             self.wp.n += 1
             self.abort()
+        elif state == "censored":
+            self.censored = True
+            db.session.commit()
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         record_text_statistic(self)
         return(kudos)

@@ -2,7 +2,6 @@ import threading
 import requests
 import os
 import json
-from sqlalchemy.sql import expression
 
 from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
@@ -16,7 +15,6 @@ class ImageProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
         "polymorphic_identity": "image",
     }    
-    censored = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
     wp = db.relationship("ImageWaitingPrompt", back_populates="processing_gens")
     worker = db.relationship("ImageWorker", back_populates="processing_gens")
 
@@ -113,10 +111,4 @@ class ImageProcessingGeneration(ProcessingGeneration):
             f.write(json_object)
         upload_shared_metadata(filename)
         os.remove(filename)
-
-    def adjust_user_kudos(self, kudos):
-        if self.censored:
-            return 0
-        return kudos
-
         
