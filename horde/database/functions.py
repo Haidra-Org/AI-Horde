@@ -788,6 +788,7 @@ def wp_has_valid_workers(wp):
     ).join(
         User,
     ).filter(
+        worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300),
         or_(
             len(worker_ids) == 0,
             worker_class.id.in_(worker_ids),
