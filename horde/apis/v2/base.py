@@ -604,20 +604,30 @@ class WorkerSingle(Resource):
         Can retrieve the details of a worker even if inactive
         (A worker is considered inactive if it has not checked in for 5 minutes)
         '''
-        worker = database.find_worker_by_id(worker_id)
-        if not worker:
-            raise e.WorkerNotFound(worker_id)
+        cache_exists = True
         details_privilege = 0
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
             admin = database.find_user_by_api_key(self.args['apikey'])
-            if not admin:
-                raise e.InvalidAPIKey('admin worker details')
-            if not admin.moderator:
-                raise e.NotModerator(admin.get_unique_alias(), 'ModeratorWorkerDetails')
-            details_privilege = 2
-        worker_details = worker.get_details(details_privilege)
-        # logger.debug(worker_details)
+            if admin and admin.moderator:
+                details_privilege = 2
+        if not hr.horde_r:
+            cache_exists = False
+        if details_privilege == 2:
+            cached_worker = hr.horde_r_get(f"worker_cache_{worker_id}_privileged")
+        else:
+            cached_worker = hr.horde_r_get(f"worker_cache_{worker_id}")
+        if cache_exists and cached_worker:
+            worker_details = cached_worker
+        else:
+            worker = database.find_worker_by_id(worker_id)
+            if not worker:
+                raise e.WorkerNotFound(worker_id)
+            worker_details = worker.get_details(details_privilege)
+            if details_privilege > 0:
+                hr.horde_local_setex_to_json(f"worker_cache_{worker_id}_privileged", 300, worker_details)
+            else:
+                hr.horde_local_setex_to_json(f"worker_cache_{worker_id}", 300, worker_details)
         return worker_details,200
 
     put_parser = reqparse.RequestParser()
