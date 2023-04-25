@@ -613,21 +613,20 @@ class WorkerSingle(Resource):
                 details_privilege = 2
         if not hr.horde_r:
             cache_exists = False
-        if details_privilege == 2:
-            cached_worker = hr.horde_r_get(f"worker_cache_{worker_id}_privileged")
+        if details_privilege > 0:
+            cache_name = f"cached_worker_{worker_id}_privileged"
+            cached_worker = hr.horde_r_get()
         else:
-            cached_worker = hr.horde_r_get(f"worker_cache_{worker_id}")
+            cache_name = f"cached_worker_{worker_id}"
+        cached_worker = hr.horde_r_get(cache_name)
         if cache_exists and cached_worker:
-            worker_details = cached_worker
+            worker_details = json.loads(cached_worker)
         else:
             worker = database.find_worker_by_id(worker_id)
             if not worker:
                 raise e.WorkerNotFound(worker_id)
             worker_details = worker.get_details(details_privilege)
-            if details_privilege > 0:
-                hr.horde_local_setex_to_json(f"worker_cache_{worker_id}_privileged", 300, worker_details)
-            else:
-                hr.horde_local_setex_to_json(f"worker_cache_{worker_id}", 300, worker_details)
+            hr.horde_r_setex_json(cache_name, timedelta(seconds=300), worker_details)
         return worker_details,200
 
     put_parser = reqparse.RequestParser()
