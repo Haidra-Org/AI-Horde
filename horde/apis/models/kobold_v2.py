@@ -38,7 +38,7 @@ class TextModels(v2.Models):
             'rep_pen_slope': fields.Float(description="Repetition penalty slope.", min=0, max=10), 
             'singleline': fields.Boolean(example=False,description="Output formatting option. When enabled, removes everything after the first line of the output, including the newline."),
             'soft_prompt': fields.String(description="Soft prompt to use when generating. If set to the empty string or any other string containing no non-whitespace characters, uses no soft prompt."),
-            'temperature': fields.Float(description="Temperature value.", min=0, max=1.0), 
+            'temperature': fields.Float(description="Temperature value.", min=0, max=5.0), 
             'tfs': fields.Float(description="Tail free sampling value.", min=0.0, max=1.0), 
             'top_a': fields.Float(description="Top-a sampling value.", min=0.0, max=1.0), 
             'top_k': fields.Integer(description="Top-k sampling value.", min=0, max=100), 
