@@ -615,7 +615,7 @@ class WorkerSingle(Resource):
             cache_exists = False
         if details_privilege > 0:
             cache_name = f"cached_worker_{worker_id}_privileged"
-            cached_worker = hr.horde_r_get()
+            cached_worker = hr.horde_r_get(cache_name)
         else:
             cache_name = f"cached_worker_{worker_id}"
         cached_worker = hr.horde_r_get(cache_name)
