@@ -394,6 +394,8 @@ class JobPopTemplate(Resource):
             raise e.InvalidAPIKey('prompt pop')
         if self.user.flagged:
             raise e.WorkerMaintenance("Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn")
+        if self.user.is_anon():
+            raise e.AnonForbidden
         self.worker_name = sanitize_string(self.args['name'])
         self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
@@ -411,9 +413,11 @@ class JobPopTemplate(Resource):
             worker_count = self.user.count_workers()
             if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
                 raise e.WorkerInviteOnly(worker_count)
+            # Untrusted users can only have 3 workers
+            if not self.user.trusted and worker_count > 3:
+                raise e.TooManySameIPs(self.user.username)
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                # raise e.TooManySameIPs(self.user.username) # TODO: Renable when IP works
-                pass
+                raise e.TooManySameIPs(self.user.username)
             self.worker = self.worker_class(
                 user_id=self.user.id,
                 name=self.worker_name,
