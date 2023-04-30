@@ -222,9 +222,9 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.kudos = round(self.kudos * 1.2,2)
         if self.gen_payload.get('control_type') and not self.gen_payload.get('return_control_map', False):
             self.kudos = round(self.kudos * 3,2)
-        weights_count = count_parentheses(self.prompt)
-        # we increase the kudos cost per weight
-        self.kudos += weights_count
+        # weights_count = count_parentheses(self.prompt)
+        ## we increase the kudos cost per weight
+        # self.kudos += weights_count
         db.session.commit()
 
 
