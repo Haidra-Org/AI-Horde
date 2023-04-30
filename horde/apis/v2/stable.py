@@ -540,14 +540,14 @@ class Interrogate(Resource):
             user_limit = self.user.get_concurrency() * 10
             if i_count + len(self.forms) > user_limit:
                 raise e.TooManyPrompts(self.username, i_count + len(self.forms), user_limit)
-        if not self.user.trusted and not patrons.is_patron(self.user.id):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
-            # We allow unsafe IPs when being rate limited as they're only temporary
-            if self.safe_ip is None:
-                self.safe_ip = True
-            # We actually block unsafe IPs for now to combat CP
-            if not self.safe_ip:
-                raise e.NotTrusted
+        # if not self.user.trusted and not patrons.is_patron(self.user.id):
+        #     self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
+        #     # We allow unsafe IPs when being rate limited as they're only temporary
+        #     if self.safe_ip is None:
+        #         self.safe_ip = True
+        #     # We actually block unsafe IPs for now to combat CP
+        #     if not self.safe_ip:
+        #         raise e.NotTrusted
 
 
 class InterrogationStatus(Resource):
