@@ -9,7 +9,7 @@ Markdown~=3.4.1
 flask-dance[sqla]
 blinker
 python-dotenv
-loguru~=0.6.0
+loguru
 bleach~=5.0.1
 alt-profanity-check
 better_profanity

@@ -50,6 +50,7 @@ models = Models(api)
 parsers = Parsers()
 
 handle_bad_request = api.errorhandler(e.BadRequest)(e.handle_bad_requests)
+handle_forbidden = api.errorhandler(e.Forbidden)(e.handle_bad_requests)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
 handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
@@ -415,7 +416,10 @@ class JobPopTemplate(Resource):
                 raise e.WorkerInviteOnly(worker_count)
             # Untrusted users can only have 3 workers
             if not self.user.trusted and worker_count > 3:
-                raise e.TooManySameIPs(self.user.username)
+                raise e.Forbidden("To avoid abuse, untrusted users can only have up to 3 distinct workers.")
+            # Trusted users can have up to 20 workers by default unless overriden
+            if worker_count > 20 and worker_count > self.user.worker_invited:
+                raise e.Forbidden("To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust.")
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
             self.worker = self.worker_class(

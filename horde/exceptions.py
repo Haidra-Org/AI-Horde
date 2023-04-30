@@ -6,6 +6,11 @@ class BadRequest(wze.BadRequest):
         self.specific = message
         self.log = None
 
+class Forbidden(wze.Forbidden):
+    def __init__(self, message):
+        self.specific = message
+        self.log = None
+
 class MissingPrompt(wze.BadRequest):
     def __init__(self, username):
         self.specific = "You cannot specify an empty prompt."
