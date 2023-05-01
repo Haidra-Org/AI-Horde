@@ -13,6 +13,7 @@ from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile
 from horde.image import ensure_source_image_uploaded, calculate_image_tiles
 from horde.model_reference import model_reference
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
+from horde.classes.base import settings
 
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 
@@ -55,15 +56,15 @@ class ImageAsyncGenerate(GenerateTemplate):
         #logger.warning(datetime.utcnow())
         super().validate()
         #logger.warning(datetime.utcnow())
-        # Disabled for now
-        # if not self.user.trusted and not patrons.is_patron(self.user.id):
-        #     self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
-        #     # We allow unsafe IPs when being rate limited as they're only temporary
-        #     if self.safe_ip is None:
-        #         self.safe_ip = True
-        #     # We actually block unsafe IPs for now to combat CP
-        #     if not self.safe_ip:
-        #         raise e.NotTrusted
+        # During raids, we prevent VPNs
+        if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
+            # We allow unsafe IPs when being rate limited as they're only temporary
+            if self.safe_ip is None:
+                self.safe_ip = True
+            # We actually block unsafe IPs for now to combat CP
+            if not self.safe_ip:
+                raise e.NotTrusted
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if (
@@ -540,14 +541,14 @@ class Interrogate(Resource):
             user_limit = self.user.get_concurrency() * 10
             if i_count + len(self.forms) > user_limit:
                 raise e.TooManyPrompts(self.username, i_count + len(self.forms), user_limit)
-        # if not self.user.trusted and not patrons.is_patron(self.user.id):
-        #     self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
-        #     # We allow unsafe IPs when being rate limited as they're only temporary
-        #     if self.safe_ip is None:
-        #         self.safe_ip = True
-        #     # We actually block unsafe IPs for now to combat CP
-        #     if not self.safe_ip:
-        #         raise e.NotTrusted
+        if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
+            self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
+            # We allow unsafe IPs when being rate limited as they're only temporary
+            if self.safe_ip is None:
+                self.safe_ip = True
+            # We actually block unsafe IPs for now to combat CP
+            if not self.safe_ip:
+                raise e.NotTrusted
 
 
 class InterrogationStatus(Resource):
