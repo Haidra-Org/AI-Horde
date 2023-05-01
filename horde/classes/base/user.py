@@ -3,7 +3,7 @@ import os
 
 import dateutil.relativedelta
 from datetime import datetime
-from sqlalchemy import Enum
+from sqlalchemy import Enum, UniqueConstraint
 
 from horde.logger import logger
 from horde.flask import db
@@ -12,7 +12,7 @@ from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
-from horde.enums import UserRecordTypes
+from horde.enums import UserRecordTypes, UserRoles
 
 
 class UserStats(db.Model):
@@ -35,7 +35,7 @@ class UserSuspicions(db.Model):
 
 class UserRecords(db.Model):
     __tablename__ = "user_records"
-    # __table_args__ = (UniqueConstraint('user_id', 'record_type', 'record', name='user_records_user_id_record_type_record_key'),)
+    __table_args__ = (UniqueConstraint('user_id', 'record_type', 'record', name='user_records_user_id_record_type_record_key'),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="records")
@@ -43,6 +43,15 @@ class UserRecords(db.Model):
     record_type = db.Column(Enum(UserRecordTypes), nullable=False, index=True)
     record = db.Column(db.String(30), nullable=False)
     value = db.Column(db.Float, default=0, nullable=False)
+
+class UserRoles(db.Model):
+    __tablename__ = "user_roles"
+    __table_args__ = (UniqueConstraint('user_id', 'user_role', name='user_id_role'),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user = db.relationship("User", back_populates="roles")
+    user_role = db.Column(Enum(UserRoles), nullable=False, index=True)
+    value = db.Column(db.Boolean, default=False, nullable=False)
 
 class User(db.Model):
     __tablename__ = "users"
@@ -81,6 +90,7 @@ class User(db.Model):
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
+    roles = db.relationship("UserRoles", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
@@ -233,10 +243,18 @@ class User(db.Model):
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         '''
-        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious() and not self.is_anon():
-            self.modify_kudos(self.evaluating_kudos,"accumulated")
-            self.evaluating_kudos = 0
-            self.set_trusted(True)
+        if self.evaluating_kudos <= int(os.getenv("KUDOS_TRUST_THRESHOLD")):
+            return
+        if self.is_suspicious():
+            return
+        if self.is_anon():
+            return
+        # An account has to exist for at least 1 week to become trusted automatically
+        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+            return
+        self.modify_kudos(self.evaluating_kudos,"accumulated")
+        self.evaluating_kudos = 0
+        self.set_trusted(True)
 
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
