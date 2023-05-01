@@ -60,7 +60,6 @@ class User(db.Model):
     SAME_IP_WORKER_THRESHOLD = 3
 
     id = db.Column(db.Integer, primary_key=True) 
-    # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False, index=True)
     api_key = db.Column(db.String(100), unique=True, nullable=False, index=True)
@@ -78,6 +77,9 @@ class User(db.Model):
     worker_invited = db.Column(db.Integer, default=0, nullable=False)
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
+    moderator = db.Column(db.Boolean, default=False, nullable=False)
+    trusted = db.Column(db.Boolean, default=False, nullable=False)
+    flagged = db.Column(db.Boolean, default=False, nullable=False)
 
     workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
@@ -89,29 +91,29 @@ class User(db.Model):
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
 
-    @hybrid_property
-    def trusted(self) -> bool:
-        user_role = UserRoles.query.filter_by(
-            user_id=self.id, 
-            user_role=UserRoleTypes.TRUSTED
-        ).first()
-        return user_role is not None and user_role.value
+    # @hybrid_property
+    # def trusted(self) -> bool:
+    #     user_role = UserRoles.query.filter_by(
+    #         user_id=self.id, 
+    #         user_role=UserRoleTypes.TRUSTED
+    #     ).first()
+    #     return user_role is not None and user_role.value
 
-    @hybrid_property
-    def flagged(self) -> bool:
-        user_role = UserRoles.query.filter_by(
-            user_id=self.id, 
-            user_role=UserRoleTypes.FLAGGED
-        ).first()
-        return user_role is not None and user_role.value
+    # @hybrid_property
+    # def flagged(self) -> bool:
+    #     user_role = UserRoles.query.filter_by(
+    #         user_id=self.id, 
+    #         user_role=UserRoleTypes.FLAGGED
+    #     ).first()
+    #     return user_role is not None and user_role.value
 
-    @hybrid_property
-    def moderator(self) -> bool:
-        user_role = UserRoles.query.filter_by(
-            user_id=self.id, 
-            user_role=UserRoleTypes.MODERATOR
-        ).first()
-        return user_role is not None and user_role.value
+    # @hybrid_property
+    # def moderator(self) -> bool:
+    #     user_role = UserRoles.query.filter_by(
+    #         user_id=self.id, 
+    #         user_role=UserRoleTypes.MODERATOR
+    #     ).first()
+    #     return user_role is not None and user_role.value
 
     @hybrid_property
     def customizer(self) -> bool:
