@@ -180,6 +180,7 @@ class User(db.Model):
                 return 
         if user_role:
             return
+        logger.debug(user_role)
         if user_role.value is False:
             user_role.value = True
             db.session.commit()
