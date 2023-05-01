@@ -76,4 +76,16 @@ class ModelReference(PrimaryTimedFunction):
                 return False
         return True
 
+    def is_known_model(self, model_name):
+        return model_name in self.get_model_names()
+
+
+    def has_unknown_models(self, model_names):
+        if len(model_names) == 0:
+            return False
+        for model_name in model_names:
+            if not self.is_known_model(model_name):
+                return True
+        return False
+
 model_reference = ModelReference(3600, None)

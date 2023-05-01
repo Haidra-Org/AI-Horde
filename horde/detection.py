@@ -135,7 +135,8 @@ class PromptChecker:
         if args.disable_filters:
             return False
         # logger.debug([prompt, models])
-        if not any(m in model_reference.nsfw_models for m in models):
+        logger.debug(model_reference.has_unknown_models(models))
+        if not model_reference.has_unknown_models(models) and any(m in model_reference.nsfw_models for m in models):
             return False
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
