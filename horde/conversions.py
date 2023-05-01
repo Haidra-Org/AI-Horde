@@ -1,7 +1,6 @@
 import sys
 import os
 import json
-import tqdm
 from datetime import datetime
 
 from horde.database import functions as database
@@ -26,6 +25,7 @@ def convert_user_roles():
         )
         db.session.add(new_role)
         if i % 10 == 0:
+            logger.info(f"{i} trusted commited")
             db.session.commit()
     for i,u in enumerate(User.query.filter_by(flagged = True)):
         new_role = UserRoles(
@@ -35,6 +35,7 @@ def convert_user_roles():
         )
         db.session.add(new_role)
         if i % 10 == 0:
+            logger.info(f"{i} flagged commited")
             db.session.commit()
     for i,u in enumerate(User.query.filter_by(moderator = True)):
         new_role = UserRoles(
@@ -43,9 +44,8 @@ def convert_user_roles():
             value = True,
         )
         db.session.add(new_role)
-        if i % 10 == 0:
-            db.session.commit()
-    db.session.commit()
+        logger.info(f"{i} moderators commited")
+        db.session.commit()
     sys.exit()
     
 
