@@ -6,9 +6,10 @@ from datetime import datetime
 from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.user import User, UserRoles
+from horde.enums import UserRoleTypes
 
 def convert_user_roles():
-    for i,u in enumerate(User.query.filter_by(trusted = True)):
+    for i,u in enumerate(User.query.filter_by(trusted = True).all()):
         new_role = UserRoles(
             user_id = u.id,
             user_role = UserRoleTypes.TRUSTED,
@@ -18,7 +19,7 @@ def convert_user_roles():
         if i % 10 == 0:
             logger.info(f"{i} trusted commited")
             db.session.commit()
-    for i,u in enumerate(User.query.filter_by(flagged = True)):
+    for i,u in enumerate(User.query.filter_by(flagged = True).all()):
         new_role = UserRoles(
             user_id = u.id,
             user_role = UserRoleTypes.FLAGGED,
@@ -28,7 +29,7 @@ def convert_user_roles():
         if i % 10 == 0:
             logger.info(f"{i} flagged commited")
             db.session.commit()
-    for i,u in enumerate(User.query.filter_by(moderator = True)):
+    for i,u in enumerate(User.query.filter_by(moderator = True).all()):
         new_role = UserRoles(
             user_id = u.id,
             user_role = UserRoleTypes.MODERATOR,
