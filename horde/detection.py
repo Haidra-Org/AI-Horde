@@ -96,7 +96,7 @@ class PromptChecker:
             if self.regex[filter_id] != stored_filter:
                 self.compiled[filter_id] = re.compile(stored_filter, re.IGNORECASE)
                 self.regex[filter_id] = stored_filter
-                logger.debug(self.compiled[filter_id])
+                # logger.debug(self.compiled[filter_id])
             self.replacements = [
                 {
                     "regex": re.compile(f_entry["regex"], re.IGNORECASE),
