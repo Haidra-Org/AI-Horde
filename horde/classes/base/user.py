@@ -184,7 +184,7 @@ class User(db.Model):
                 user_role=role,
                 value=value
             )
-            db.session.add(user_role)
+            db.session.add(new_role)
             db.session.commit()
             return
         logger.debug(user_role)
