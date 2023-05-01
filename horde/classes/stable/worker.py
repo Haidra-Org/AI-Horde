@@ -136,10 +136,12 @@ class ImageWorker(Worker):
 
     def parse_models(self, unchecked_models):
         # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
-        del unchecked_models[200:]
+        del unchecked_models[300:]
         models = set()
         for model in unchecked_models:
             if model in model_reference.stable_diffusion_names:
+                models.add(model)
+            elif self.user.customizer:
                 models.add(model)
             else:
                 logger.debug(f"Rejecting unknown model '{model}' from {self.name} ({self.id})")

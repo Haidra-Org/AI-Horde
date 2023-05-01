@@ -45,13 +45,13 @@ class UserRecords(db.Model):
     record = db.Column(db.String(30), nullable=False)
     value = db.Column(db.Float, default=0, nullable=False)
 
-class UserRoles(db.Model):
+class UserRole(db.Model):
     __tablename__ = "user_roles"
     __table_args__ = (UniqueConstraint('user_id', 'user_role', name='user_id_role'),)
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     user = db.relationship("User", back_populates="roles")
-    user_role = db.Column(Enum(UserRoleTypes), nullable=False, index=True)
+    user_role = db.Column(Enum(UserRoleTypes), nullable=False)
     value = db.Column(db.Boolean, default=False, nullable=False)
 
 class User(db.Model):
@@ -77,6 +77,7 @@ class User(db.Model):
     worker_invited = db.Column(db.Integer, default=0, nullable=False)
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
+    # Delete once converted to UserRole
     # moderator = db.Column(db.Boolean, default=False, nullable=False)
     # trusted = db.Column(db.Boolean, default=False, nullable=False)
     # flagged = db.Column(db.Boolean, default=False, nullable=False)
@@ -85,7 +86,7 @@ class User(db.Model):
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
-    roles = db.relationship("UserRoles", back_populates="user", cascade="all, delete-orphan")
+    roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
@@ -93,15 +94,15 @@ class User(db.Model):
 
     @hybrid_property
     def trusted(self) -> bool:
-        user_role = UserRoles.query.filter_by(
+        user_role = UserRole.query.filter_by(
             user_id=self.id, 
             user_role=UserRoleTypes.TRUSTED
         ).first()
         return user_role is not None and user_role.value
-
+    
     @hybrid_property
     def flagged(self) -> bool:
-        user_role = UserRoles.query.filter_by(
+        user_role = UserRole.query.filter_by(
             user_id=self.id, 
             user_role=UserRoleTypes.FLAGGED
         ).first()
@@ -109,7 +110,7 @@ class User(db.Model):
 
     @hybrid_property
     def moderator(self) -> bool:
-        user_role = UserRoles.query.filter_by(
+        user_role = UserRole.query.filter_by(
             user_id=self.id, 
             user_role=UserRoleTypes.MODERATOR
         ).first()
@@ -117,7 +118,7 @@ class User(db.Model):
 
     @hybrid_property
     def customizer(self) -> bool:
-        user_role = UserRoles.query.filter_by(
+        user_role = UserRole.query.filter_by(
             user_id=self.id, 
             user_role=UserRoleTypes.CUSTOMIZER
         ).first()
@@ -168,12 +169,30 @@ class User(db.Model):
         db.session.commit()
         return("OK")
 
+    def set_user_role(self, role, value):
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=role,
+        ).first()
+        if value is False:
+            if not user_role:
+                return
+            else:
+                # No entry means false
+                db.session.delete(user_role)
+                db.session.commit()
+                return 
+        if user_role:
+            return
+        if user_role.value is False:
+            user_role.value = True
+            db.session.commit()
+
     def set_trusted(self,is_trusted):
         # Anonymous can never be trusted
         if self.is_anon():
             return
-        self.trusted = is_trusted
-        db.session.commit()
+        self.set_user_role(UserRoleTypes.TRUSTED, is_trusted)
         if self.trusted:
             for worker in self.workers:
                 worker.paused = False
@@ -182,17 +201,20 @@ class User(db.Model):
         # Anonymous can never be flagged
         if self.is_anon():
             return
-        self.flagged = is_flagged
-        db.session.commit()
+        self.set_user_role(UserRoleTypes.FLAGGED, is_flagged)
 
     def set_moderator(self,is_moderator):
         if self.is_anon():
             return
-        self.moderator = is_moderator
-        db.session.commit()
+        self.set_user_role(UserRoleTypes.MODERATOR, is_moderator)
         if self.moderator:
             logger.warning(f"{self.username} Set as moderator")
             self.set_trusted(True)
+
+    def set_customizer(self, is_customizer):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.CUSTOMIZER, is_customizer)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")

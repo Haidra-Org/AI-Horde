@@ -16,7 +16,7 @@ from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User, UserRoles, UserRecords
+from horde.classes.base.user import User, UserRecords
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
