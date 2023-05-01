@@ -30,6 +30,10 @@ with HORDE.app_context():
     # sys.exit()
     db.create_all()
 
+    if args.convert_flag == "roles":
+        from horde.conversions import convert_user_roles
+        convert_user_roles()
+
     if args.convert_flag == "SQL":
         from horde.conversions import convert_json_db
         convert_json_db()
