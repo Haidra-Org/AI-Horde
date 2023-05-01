@@ -25,8 +25,6 @@ if args.reload_all_caches:
     threads.store_prioritized_wp_queue()
     logger.info("store_worker_list()")
     threads.store_worker_list()
-    logger.info("store_available_models()")
-    threads.store_available_models()
     logger.info("store_totals()")
     threads.store_totals()
     logger.info("store_patreon_members()")
@@ -35,7 +33,8 @@ if args.reload_all_caches:
     threads.store_compiled_filter_regex()
     logger.info("store_compiled_filter_regex_replacements()")
     threads.store_compiled_filter_regex_replacements()
-
+    logger.info("store_available_models()")
+    threads.store_available_models()
 
 
 if args.check_prompts:
