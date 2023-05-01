@@ -207,6 +207,7 @@ class GenerateTemplate(Resource):
                         self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
                     raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
+            logger.debug('aaa')
             if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
                 # For NSFW models, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
