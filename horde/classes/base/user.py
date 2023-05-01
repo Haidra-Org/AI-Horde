@@ -178,7 +178,7 @@ class User(db.Model):
                 db.session.delete(user_role)
                 db.session.commit()
                 return 
-        if user_role:
+        if user_role is None:
             return
         logger.debug(user_role)
         if user_role.value is False:
