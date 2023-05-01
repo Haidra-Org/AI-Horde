@@ -48,7 +48,7 @@ class ModelReference(PrimaryTimedFunction):
 
     def get_model_baseline(self, model_name):
         model_details = self.reference.get(model_name, {})
-        return model_details.get("baseline")
+        return model_details.get("baseline", "stable diffusion 1")
 
     def get_model_csam_whitelist(self, model_name):
         model_details = self.reference.get(model_name, {})
@@ -79,13 +79,20 @@ class ModelReference(PrimaryTimedFunction):
     def is_known_model(self, model_name):
         return model_name in self.get_model_names()
 
-
     def has_unknown_models(self, model_names):
         if len(model_names) == 0:
             return False
-        for model_name in model_names:
-            if not self.is_known_model(model_name):
-                return True
+        if any(not self.is_known_model(m) for m in model_names):
+            return True
+        return False
+
+    def has_nsfw_models(self, model_names):
+        if len(model_names) == 0:
+            return False
+        if any(m in model_reference.nsfw_models for m in model_names):
+            return True
+        if self.has_unknown_models(model_names):
+            return True
         return False
 
 model_reference = ModelReference(3600, None)

@@ -135,8 +135,7 @@ class PromptChecker:
         if args.disable_filters:
             return False
         # logger.debug([prompt, models])
-        logger.debug(model_reference.has_unknown_models(models))
-        if not model_reference.has_unknown_models(models) and any(m in model_reference.nsfw_models for m in models):
+        if not model_reference.has_nsfw_models(models):
             return False
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
@@ -155,7 +154,7 @@ class PromptChecker:
 
     def nsfw_model_prompt_replace(self, prompt, models, already_replaced = False):
         # logger.debug([prompt, models])
-        if not any(m in model_reference.nsfw_models for m in models):
+        if not model_reference.has_nsfw_models(models):
             return False
         if not already_replaced:
             prompt = self.apply_replacement_filter(prompt)
