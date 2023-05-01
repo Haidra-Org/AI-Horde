@@ -251,6 +251,7 @@ class Models:
             "username": fields.String(description="When specified, will change the username. No profanity allowed!",min_length=3,max_length=100),
             "trusted": fields.Boolean(example=False,description="When set to true,the user and their servers will not be affected by suspicion"),
             "flagged": fields.Boolean(example=False,description="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance."),
+            "customizer": fields.Boolean(example=False,description="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference."),
             "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0"),
             "contact": fields.String(example="email@example.com", description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",min_length=5,max_length=500),
         })
@@ -266,6 +267,7 @@ class Models:
             "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
             "trusted": fields.Boolean(description="The user's new trusted status"),
             "flagged": fields.Boolean(description="The user's new flagged status"),
+            "customizer": fields.Boolean(description="The user's new customizer status"),
             "new_suspicion": fields.Integer(description="The user's new suspiciousness rating"),
             "contact": fields.String(example="email@example.com", description="The new contact details"),
         })
