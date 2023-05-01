@@ -3,18 +3,9 @@ import os
 import json
 from datetime import datetime
 
-from horde.database import functions as database
 from horde.logger import logger
 from horde.flask import db
-from horde.vars import thing_name, thing_divisor, raw_thing_name
-from horde import vars as hv
-from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.classes.base.user import User, UserRoles
-from horde.classes.base.team import Team, stats
-import horde.classes.base.stats as stats
-from horde.classes.stable.worker import ImageWorker
-from horde.utils import hash_api_key
-from horde.enums import UserRoleTypes
 
 def convert_user_roles():
     for i,u in enumerate(User.query.filter_by(trusted = True)):
