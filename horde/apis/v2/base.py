@@ -816,7 +816,6 @@ class UserSingle(Resource):
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
-    @cache.cached(timeout=60)
     @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
@@ -824,18 +823,30 @@ class UserSingle(Resource):
         '''
         if not user_id.isdigit():
             raise e.UserNotFound("Please use only the numerical part of the userID. E.g. the '1' in 'db0#1'")
-        user = database.find_user_by_id(user_id)
-        if not user:
-            raise e.UserNotFound(user_id)
-        details_privilege = 0
         self.args = self.get_parser.parse_args()
+        details_privilege = 0
         if self.args.apikey:
             admin = database.find_user_by_api_key(self.args['apikey'])
             if admin.moderator:
                 details_privilege = 2
             elif admin == user:
                 details_privilege = 1
-        return(user.get_details(details_privilege),200)
+        cached_user = None
+        cache_name = f"cached_user_id_{user_id}_privilege_{details_privilege}"
+        if hr.horde_r:
+            cached_user = hr.horde_r_get(cache_name)
+        if cached_user:
+            user_details = json.loads(cached_user)
+        else:
+            user = database.find_user_by_id(user_id)
+            if not user:
+                raise e.UserNotFound(user_id)
+            logger.debug(user.trusted)
+            user_details = user.get_details(details_privilege)
+            if hr.horde_r:
+                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
+        return user_details,200
+
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
