@@ -9,7 +9,7 @@ from horde.classes.base.user import User, UserRoles
 from horde.enums import UserRoleTypes
 
 def convert_user_roles():
-    logger.debug(User.query.filter_by(trusted = True).count())
+    logger.debug(User.query.filter(User.trusted == True).count())
     for i,u in enumerate(User.query.filter_by(trusted = True).all()):
         new_role = UserRoles(
             user_id = u.id,
