@@ -397,7 +397,7 @@ class Aesthetics(Resource):
                 "username": wp.user.get_unique_alias(),
                 "trusted": wp.user.trusted,
                 "account_age": (datetime.utcnow() - wp.user.created).total_seconds(),
-                "usage_requests": wp.user.usage_requests,
+                # "usage_requests": wp.user.usage_requests, # FIXME: Use UserRecords
                 "kudos": wp.user.kudos,
                 "kudos_accumulated": wp.user.compile_kudos_details().get("accumulated",0),
                 "ipaddr": request.remote_addr,

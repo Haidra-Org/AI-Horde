@@ -33,36 +33,10 @@ dance_return_to = '/'
 def index():
     with open(f'index_stable.md') as index_file:
         index = index_file.read()
-    top_contributor = database.get_top_contributor()
-    top_worker = database.get_top_worker()
     align_image = 0
     big_image = align_image
     while big_image == align_image:
         big_image = random.randint(1, 5)
-    if not top_contributor or not top_worker:
-        top_contributors = f'\n<img src="{img_url}/{big_image}.jpg" width="800" />'
-    else:
-        # We don't use the prefix char, so we just discard it
-        top_contrib_things = ConvertAmount(top_contributor.contributed_thing * thing_divisor)
-        top_contrib_fulfillments = ConvertAmount(top_contributor.contributed_fulfillments)
-        top_worker_things = ConvertAmount(top_worker.contributions * thing_divisor)
-        top_worker_fulfillments = ConvertAmount(top_worker.fulfilments)
-        top_contributors = f"""\n## Top Contributors
-These are the people and workers who have contributed most to this horde.
-### Users
-This is the person whose worker(s) have generated the most pixels for the horde.
-#### {top_contributor.get_unique_alias()}
-* {top_contrib_things.amount} {top_contrib_things.prefix + raw_thing_name} generated.
-* {top_contrib_fulfillments.amount}{top_contrib_fulfillments.char} requests fulfilled.
-### Workers
-This is the worker which has generated the most pixels for the horde.
-#### {top_worker.name}
-* {top_worker_things.amount} {top_worker_things.prefix + raw_thing_name} generated.
-* {top_worker_fulfillments.amount}{top_worker_fulfillments.char} request fulfillments.
-* {top_worker.get_human_readable_uptime()} uptime.
-
-<img src="{img_url}/{big_image}.jpg" width="800" />
-"""
     policies = """
 ## Policies
 
@@ -149,7 +123,7 @@ This is the worker which has generated the most pixels for the horde.
     {style}
     </head>
     """
-    return(head + markdown(findex + top_contributors + policies))
+    return(head + markdown(findex + policies))
 
 
 @HORDE.route('/sponsors')

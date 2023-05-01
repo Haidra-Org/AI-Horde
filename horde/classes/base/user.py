@@ -73,11 +73,6 @@ class User(db.Model):
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
-    #TODO: Delete next 4 columns once UserRecords populated
-    contributed_thing = db.Column(db.Float, default=0, nullable=False, index=True)
-    contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
-    usage_thing = db.Column(db.Float, default=0, nullable=False)
-    usage_requests = db.Column(db.Integer, default=0, nullable=False)
 
     worker_invited = db.Column(db.Integer, default=0, nullable=False)
     moderator = db.Column(db.Boolean, default=False, nullable=False)
@@ -417,20 +412,6 @@ class User(db.Model):
             kudos_details_dict[stat.action] = stat.value
         return kudos_details_dict
 
-    def compile_usage_details(self):
-        usage_dict = {  
-            thing_name: self.usage_thing,
-            "requests": self.usage_requests
-        }
-        return usage_dict
-
-    def compile_contribution_details(self):
-        usage_dict = {
-            thing_name: self.contributed_thing,
-            "fulfillments": self.contributed_fulfillments
-        }
-        return usage_dict
-
     def compile_records_details(self):
         records_dict = {}
         for r in self.records:
@@ -450,8 +431,8 @@ class User(db.Model):
             "id": self.id,
             "kudos": self.kudos,
             "kudos_details": self.compile_kudos_details(),
-            "usage": self.compile_usage_details(), # Obsolete in favor or records
-            "contributions": self.compile_contribution_details(), # Obsolete in favor or records
+            "usage": {}, # Obsolete in favor or records
+            "contributions": {}, # Obsolete in favor or records
             "records": self.compile_records_details(),
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,

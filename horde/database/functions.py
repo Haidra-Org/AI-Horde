@@ -16,7 +16,7 @@ from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User
+from horde.classes.base.user import User, UserRoles, UserRecords
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -28,13 +28,12 @@ from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.utils import hash_api_key, validate_regex
 from horde import horde_redis as hr
-from horde.database.classes import FakeWPRow, PrimaryTimedFunction
+from horde.database.classes import FakeWPRow
 from horde.enums import State
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
 from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
 from horde.model_reference import model_reference
-from horde.classes.base.settings import HordeSettings
 
 ALLOW_ANONYMOUS = True
 WORKER_CLASS_MAP = {
@@ -58,17 +57,21 @@ def shutdown(seconds):
         time.sleep(seconds)
 
 def get_top_contributor():
-    top_contribution = 0
     top_contributor = None
-    #TODO Exclude anon
-    top_contributor = db.session.query(User).order_by(
-        User.contributed_thing.desc()
+    top_contributor = db.session.query(
+        User
+    ).join(
+        UserRecords
+    ).filter(
+        UserRecords.record_type == 'CONTRIBUTION',
+        UserRecords.record == 'image',
+    ).order_by(
+        UserRecords.value.desc()
     ).first()
     return top_contributor
 
 def get_top_worker():
     top_worker = None
-    top_worker_contribution = 0
     top_worker = db.session.query(ImageWorker).order_by(
         ImageWorker.contributions.desc()
     ).first()
