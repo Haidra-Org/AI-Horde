@@ -171,7 +171,7 @@ class User(db.Model):
             user_role=role,
         ).first()
         if value is False:
-            if not user_role:
+            if user_role is None:
                 return
             else:
                 # No entry means false
@@ -179,6 +179,13 @@ class User(db.Model):
                 db.session.commit()
                 return 
         if user_role is None:
+            new_role = UserRole(
+                user_id=self.id, 
+                user_role=role,
+                value=value
+            )
+            db.session.add(user_role)
+            db.session.commit()
             return
         logger.debug(user_role)
         if user_role.value is False:
