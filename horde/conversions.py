@@ -18,29 +18,33 @@ from horde.utils import hash_api_key
 from horde.enums import UserRoleTypes
 
 def convert_user_roles():
-    for u in tqdm(User.query.filter_by(trusted = True)):
+    for i,u in enumerate(User.query.filter_by(trusted = True)):
         new_role = UserRoles(
             user_id = u.id,
             user_role = UserRoleTypes.TRUSTED,
             value = True,
         )
         db.session.add(new_role)
-    db.session.commit()
-    for u in tqdm(User.query.filter_by(flagged = True)):
+        if i % 10 == 0:
+            db.session.commit()
+    for i,u in enumerate(User.query.filter_by(flagged = True)):
         new_role = UserRoles(
             user_id = u.id,
             user_role = UserRoleTypes.FLAGGED,
             value = True,
         )
         db.session.add(new_role)
-    db.session.commit()
-    for u in tqdm(User.query.filter_by(moderator = True)):
+        if i % 10 == 0:
+            db.session.commit()
+    for i,u in enumerate(User.query.filter_by(moderator = True)):
         new_role = UserRoles(
             user_id = u.id,
             user_role = UserRoleTypes.MODERATOR,
             value = True,
         )
         db.session.add(new_role)
+        if i % 10 == 0:
+            db.session.commit()
     db.session.commit()
     sys.exit()
     
