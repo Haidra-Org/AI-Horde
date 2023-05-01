@@ -4,6 +4,7 @@ import os
 import dateutil.relativedelta
 from datetime import datetime
 from sqlalchemy import Enum, UniqueConstraint
+from sqlalchemy.ext.hybrid import hybrid_property
 
 from horde.logger import logger
 from horde.flask import db
@@ -12,7 +13,7 @@ from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
-from horde.enums import UserRecordTypes, UserRoles
+from horde.enums import UserRecordTypes, UserRoleTypes
 
 
 class UserStats(db.Model):
@@ -50,7 +51,7 @@ class UserRoles(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="roles")
-    user_role = db.Column(Enum(UserRoles), nullable=False, index=True)
+    user_role = db.Column(Enum(UserRoleTypes), nullable=False, index=True)
     value = db.Column(db.Boolean, default=False, nullable=False)
 
 class User(db.Model):
@@ -75,10 +76,7 @@ class User(db.Model):
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
 
     worker_invited = db.Column(db.Integer, default=0, nullable=False)
-    moderator = db.Column(db.Boolean, default=False, nullable=False)
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
-    trusted = db.Column(db.Boolean, default=False, nullable=False)
-    flagged = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
     workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
@@ -90,6 +88,38 @@ class User(db.Model):
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
+
+    @hybrid_property
+    def trusted(self) -> bool:
+        user_role = UserRoles.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.TRUSTED
+        ).first()
+        return user_role is not None and user_role.value
+
+    @hybrid_property
+    def flagged(self) -> bool:
+        user_role = UserRoles.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.FLAGGED
+        ).first()
+        return user_role is not None and user_role.value
+
+    @hybrid_property
+    def moderator(self) -> bool:
+        user_role = UserRoles.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.MODERATOR
+        ).first()
+        return user_role is not None and user_role.value
+
+    @hybrid_property
+    def customizer(self) -> bool:
+        user_role = UserRoles.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.CUSTOMIZER
+        ).first()
+        return user_role is not None and user_role.value
 
     def create(self):
         self.check_for_bad_actor()

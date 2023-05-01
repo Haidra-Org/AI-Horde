@@ -22,7 +22,7 @@ class UserRecordTypes(enum.Enum):
     FULFILLMENT = 3
     REQUEST = 4
 
-class UserRoles(enum.Enum):
+class UserRoleTypes(enum.Enum):
     MODERATOR = 0
     TRUSTED = 1
     FLAGGED = 3

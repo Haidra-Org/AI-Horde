@@ -1,2 +1,0 @@
-ALTER TABLE public.users DROP COLUMN contributed_thing, DROP COLUMN contributed_fulfillments, DROP COLUMN usage_thing, DROP COLUMN usage_requests;
-DROP INDEX IF EXISTS ix_users_contributed_thing;
