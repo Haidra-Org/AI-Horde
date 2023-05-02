@@ -837,14 +837,17 @@ class UserSingle(Resource):
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
             user_details = json.loads(cached_user)
+            user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(user_details["monthly_kudos"]["last_received"])
         else:
             user = database.find_user_by_id(user_id)
             if not user:
                 raise e.UserNotFound(user_id)
-            logger.debug(user.trusted)
             user_details = user.get_details(details_privilege)
             if hr.horde_r:
-                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
+                cached_details = user_details.copy()
+                if user_details["monthly_kudos"]["last_received"]:
+                    cached_details["monthly_kudos"]["last_received"] = cached_details["monthly_kudos"]["last_received"].isoformat()
+                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), cached_details)
         return user_details,200
 
 
