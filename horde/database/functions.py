@@ -434,7 +434,8 @@ def count_totals():
         )
     ).filter(
         ImageWaitingPrompt.n > 0,
-        ImageWaitingPrompt.faulted == False
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.active == True,
     ).group_by(
         ImageWaitingPrompt.id
     ).subquery('all_image_wp_counts')
@@ -456,7 +457,8 @@ def count_totals():
         )
     ).filter(
         TextWaitingPrompt.n > 0,
-        TextWaitingPrompt.faulted == False
+        TextWaitingPrompt.faulted == False,
+        TextWaitingPrompt.active == True,
     ).group_by(
         TextWaitingPrompt.id
     ).subquery('all_text_wp_counts')

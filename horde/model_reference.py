@@ -91,8 +91,8 @@ class ModelReference(PrimaryTimedFunction):
             return False
         if any(m in model_reference.nsfw_models for m in model_names):
             return True
-        if self.has_unknown_models(model_names):
-            return True
+        # if self.has_unknown_models(model_names):
+        #     return True
         return False
 
 model_reference = ModelReference(3600, None)
