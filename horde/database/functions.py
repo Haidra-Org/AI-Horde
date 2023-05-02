@@ -16,7 +16,7 @@ from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User
+from horde.classes.base.user import User, UserRecords
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -28,13 +28,12 @@ from horde.classes.base.detection import Filter
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.utils import hash_api_key, validate_regex
 from horde import horde_redis as hr
-from horde.database.classes import FakeWPRow, PrimaryTimedFunction
+from horde.database.classes import FakeWPRow
 from horde.enums import State
 from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 
 from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
 from horde.model_reference import model_reference
-from horde.classes.base.settings import HordeSettings
 
 ALLOW_ANONYMOUS = True
 WORKER_CLASS_MAP = {
@@ -58,17 +57,21 @@ def shutdown(seconds):
         time.sleep(seconds)
 
 def get_top_contributor():
-    top_contribution = 0
     top_contributor = None
-    #TODO Exclude anon
-    top_contributor = db.session.query(User).order_by(
-        User.contributed_thing.desc()
+    top_contributor = db.session.query(
+        User
+    ).join(
+        UserRecords
+    ).filter(
+        UserRecords.record_type == 'CONTRIBUTION',
+        UserRecords.record == 'image',
+    ).order_by(
+        UserRecords.value.desc()
     ).first()
     return top_contributor
 
 def get_top_worker():
     top_worker = None
-    top_worker_contribution = 0
     top_worker = db.session.query(ImageWorker).order_by(
         ImageWorker.contributions.desc()
     ).first()
@@ -237,6 +240,7 @@ def get_available_models():
             models_dict[model_name]["type"] = model_type
 
             models_dict[model_name]['queued'] = 0
+            models_dict[model_name]['jobs'] = 0
             models_dict[model_name]['eta'] = 0
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
@@ -258,11 +262,12 @@ def get_available_models():
             models_dict[model_name]["name"] = model_name
             models_dict[model_name]["count"] = 0
             models_dict[model_name]['queued'] = 0
+            models_dict[model_name]['jobs'] = 0
             models_dict[model_name]["type"] = model_type
             models_dict[model_name]['eta'] = 0
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
-        things_per_model = count_things_per_model(wp_class)
+        things_per_model, jobs_per_model = count_things_per_model(wp_class)
         # If we request a lite_dict, we only want worker count per model and a dict format
         for model_name in things_per_model:
             # This shouldn't happen, but I'm checking anyway
@@ -270,6 +275,7 @@ def get_available_models():
                 # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
                 continue
             models_dict[model_name]['queued'] = things_per_model[model_name]
+            models_dict[model_name]['jobs'] = jobs_per_model[model_name]
             total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
             # We don't want a division by zero when there's no workers for this model.
             if total_performance_on_model > 0:
@@ -493,6 +499,7 @@ def get_organized_wps_by_model(wp_class):
     all_wps = db.session.query(
         wp_class
     ).filter(
+        wp_class.active == True,
         wp_class.faulted == False,
         wp_class.n >= 1,
     ).all() # TODO this can likely be improved
@@ -508,14 +515,16 @@ def get_organized_wps_by_model(wp_class):
 
 def count_things_per_model(wp_class):
     things_per_model = {}
+    jobs_per_model = {}
     org = get_organized_wps_by_model(wp_class)
     for model in org:
         for wp in org[model]:
             current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
             if current_wp_queue > 0:
                 things_per_model[model] = things_per_model.get(model,0) + wp.things
+                jobs_per_model[model] = jobs_per_model.get(model,0) + current_wp_queue
         things_per_model[model] = round(things_per_model.get(model,0),2)
-    return(things_per_model)
+    return things_per_model,jobs_per_model
 
 
 def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 

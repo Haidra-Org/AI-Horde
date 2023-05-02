@@ -816,7 +816,6 @@ class UserSingle(Resource):
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
-    @cache.cached(timeout=60)
     @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
@@ -824,18 +823,30 @@ class UserSingle(Resource):
         '''
         if not user_id.isdigit():
             raise e.UserNotFound("Please use only the numerical part of the userID. E.g. the '1' in 'db0#1'")
-        user = database.find_user_by_id(user_id)
-        if not user:
-            raise e.UserNotFound(user_id)
-        details_privilege = 0
         self.args = self.get_parser.parse_args()
+        details_privilege = 0
         if self.args.apikey:
             admin = database.find_user_by_api_key(self.args['apikey'])
             if admin.moderator:
                 details_privilege = 2
             elif admin == user:
                 details_privilege = 1
-        return(user.get_details(details_privilege),200)
+        cached_user = None
+        cache_name = f"cached_user_id_{user_id}_privilege_{details_privilege}"
+        if hr.horde_r:
+            cached_user = hr.horde_r_get(cache_name)
+        if cached_user:
+            user_details = json.loads(cached_user)
+        else:
+            user = database.find_user_by_id(user_id)
+            if not user:
+                raise e.UserNotFound(user_id)
+            logger.debug(user.trusted)
+            user_details = user.get_details(details_privilege)
+            if hr.horde_r:
+                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
+        return user_details,200
+
 
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
@@ -850,6 +861,7 @@ class UserSingle(Resource):
     parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
     parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
     parser.add_argument("flagged", type=bool, required=False, help="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance.", location="json")
+    parser.add_argument("customizer", type=bool, required=False, help="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
@@ -913,6 +925,11 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_flagged(self.args.flagged)
             ret_dict["flagged"] = user.flagged
+        if self.args.customizer is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_customizer(self.args.customizer)
+            ret_dict["customizer"] = user.customizer
         if self.args.reset_suspicion is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')

@@ -3,7 +3,8 @@ import os
 
 import dateutil.relativedelta
 from datetime import datetime
-from sqlalchemy import Enum
+from sqlalchemy import Enum, UniqueConstraint
+from sqlalchemy.ext.hybrid import hybrid_property
 
 from horde.logger import logger
 from horde.flask import db
@@ -12,7 +13,7 @@ from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
-from horde.enums import UserRecordTypes
+from horde.enums import UserRecordTypes, UserRoleTypes
 
 
 class UserStats(db.Model):
@@ -35,7 +36,7 @@ class UserSuspicions(db.Model):
 
 class UserRecords(db.Model):
     __tablename__ = "user_records"
-    # __table_args__ = (UniqueConstraint('user_id', 'record_type', 'record', name='user_records_user_id_record_type_record_key'),)
+    __table_args__ = (UniqueConstraint('user_id', 'record_type', 'record', name='user_records_user_id_record_type_record_key'),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="records")
@@ -44,13 +45,21 @@ class UserRecords(db.Model):
     record = db.Column(db.String(30), nullable=False)
     value = db.Column(db.Float, default=0, nullable=False)
 
+class UserRole(db.Model):
+    __tablename__ = "user_roles"
+    __table_args__ = (UniqueConstraint('user_id', 'user_role', name='user_id_role'),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user = db.relationship("User", back_populates="roles")
+    user_role = db.Column(Enum(UserRoleTypes), nullable=False)
+    value = db.Column(db.Boolean, default=False, nullable=False)
+
 class User(db.Model):
     __tablename__ = "users"
     SUSPICION_THRESHOLD = 5
     SAME_IP_WORKER_THRESHOLD = 3
 
     id = db.Column(db.Integer, primary_key=True) 
-    # id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Then move to this
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False, index=True)
     api_key = db.Column(db.String(100), unique=True, nullable=False, index=True)
@@ -64,27 +73,52 @@ class User(db.Model):
     monthly_kudos_last_received = db.Column(db.DateTime, default=None)
     evaluating_kudos = db.Column(db.Integer, default=0, nullable=False)
     usage_multiplier = db.Column(db.Float, default=1.0, nullable=False)
-    #TODO: Delete next 4 columns once UserRecords populated
-    contributed_thing = db.Column(db.Float, default=0, nullable=False, index=True)
-    contributed_fulfillments = db.Column(db.Integer, default=0, nullable=False)
-    usage_thing = db.Column(db.Float, default=0, nullable=False)
-    usage_requests = db.Column(db.Integer, default=0, nullable=False)
 
     worker_invited = db.Column(db.Integer, default=0, nullable=False)
-    moderator = db.Column(db.Boolean, default=False, nullable=False)
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
-    trusted = db.Column(db.Boolean, default=False, nullable=False)
-    flagged = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
     workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
+    roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
+
+    @hybrid_property
+    def trusted(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.TRUSTED
+        ).first()
+        return user_role is not None and user_role.value
+    
+    @hybrid_property
+    def flagged(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.FLAGGED
+        ).first()
+        return user_role is not None and user_role.value
+
+    @hybrid_property
+    def moderator(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.MODERATOR
+        ).first()
+        return user_role is not None and user_role.value
+
+    @hybrid_property
+    def customizer(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.CUSTOMIZER
+        ).first()
+        return user_role is not None and user_role.value
 
     def create(self):
         self.check_for_bad_actor()
@@ -131,12 +165,38 @@ class User(db.Model):
         db.session.commit()
         return("OK")
 
+    def set_user_role(self, role, value):
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=role,
+        ).first()
+        if value is False:
+            if user_role is None:
+                return
+            else:
+                # No entry means false
+                db.session.delete(user_role)
+                db.session.commit()
+                return 
+        if user_role is None:
+            new_role = UserRole(
+                user_id=self.id, 
+                user_role=role,
+                value=value
+            )
+            db.session.add(new_role)
+            db.session.commit()
+            return
+        logger.debug(user_role)
+        if user_role.value is False:
+            user_role.value = True
+            db.session.commit()
+
     def set_trusted(self,is_trusted):
         # Anonymous can never be trusted
         if self.is_anon():
             return
-        self.trusted = is_trusted
-        db.session.commit()
+        self.set_user_role(UserRoleTypes.TRUSTED, is_trusted)
         if self.trusted:
             for worker in self.workers:
                 worker.paused = False
@@ -145,17 +205,20 @@ class User(db.Model):
         # Anonymous can never be flagged
         if self.is_anon():
             return
-        self.flagged = is_flagged
-        db.session.commit()
+        self.set_user_role(UserRoleTypes.FLAGGED, is_flagged)
 
     def set_moderator(self,is_moderator):
         if self.is_anon():
             return
-        self.moderator = is_moderator
-        db.session.commit()
+        self.set_user_role(UserRoleTypes.MODERATOR, is_moderator)
         if self.moderator:
             logger.warning(f"{self.username} Set as moderator")
             self.set_trusted(True)
+
+    def set_customizer(self, is_customizer):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.CUSTOMIZER, is_customizer)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
@@ -233,10 +296,18 @@ class User(db.Model):
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         '''
-        if self.evaluating_kudos >= int(os.getenv("KUDOS_TRUST_THRESHOLD")) and not self.is_suspicious() and not self.is_anon():
-            self.modify_kudos(self.evaluating_kudos,"accumulated")
-            self.evaluating_kudos = 0
-            self.set_trusted(True)
+        if self.evaluating_kudos <= int(os.getenv("KUDOS_TRUST_THRESHOLD")):
+            return
+        if self.is_suspicious():
+            return
+        if self.is_anon():
+            return
+        # An account has to exist for at least 1 week to become trusted automatically
+        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+            return
+        self.modify_kudos(self.evaluating_kudos,"accumulated")
+        self.evaluating_kudos = 0
+        self.set_trusted(True)
 
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
@@ -399,20 +470,6 @@ class User(db.Model):
             kudos_details_dict[stat.action] = stat.value
         return kudos_details_dict
 
-    def compile_usage_details(self):
-        usage_dict = {  
-            thing_name: self.usage_thing,
-            "requests": self.usage_requests
-        }
-        return usage_dict
-
-    def compile_contribution_details(self):
-        usage_dict = {
-            thing_name: self.contributed_thing,
-            "fulfillments": self.contributed_fulfillments
-        }
-        return usage_dict
-
     def compile_records_details(self):
         records_dict = {}
         for r in self.records:
@@ -432,8 +489,8 @@ class User(db.Model):
             "id": self.id,
             "kudos": self.kudos,
             "kudos_details": self.compile_kudos_details(),
-            "usage": self.compile_usage_details(), # Obsolete in favor or records
-            "contributions": self.compile_contribution_details(), # Obsolete in favor or records
+            "usage": {}, # Obsolete in favor or records
+            "contributions": {}, # Obsolete in favor or records
             "records": self.compile_records_details(),
             "concurrency": self.concurrency,
             "worker_invited": self.worker_invited,

@@ -36,7 +36,7 @@ class ConvertAmount:
         self.digits = count_digits(amount)
         self.decimals = decimals
         if self.digits < 4:
-            self.amount = amount
+            self.amount = round(amount, self.decimals)
             self.prefix = ''
             self.char = ''
         elif self.digits < 7:

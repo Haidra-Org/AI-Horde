@@ -1,5 +1,15 @@
 # Changelog
 
+# 4.9.0
+
+* Refactored user objects so that we can specify an open-ended amount of roles, without having to add a new column for each
+* Added new `customizer` role which allows someone to serve unknown Stable Diffusion models. They will be considered to be using SD 1.5 baseline
+* Increased threshold for trusting users. Becoming trusted also requires at least a week of wait-time.
+* Re-activated limit on workers per IP. Trusted users can bypass it.
+* Untrusted users now can have only 3 workers. Trusted workers by default can go up to 20.
+* Models endpoing now shows queued jobs per model
+* Disabled VPN for workers unless they're trusted or patreons
+
 # 4.8.0
 
 * `is_possible` is back! Now each request's status will report whether the current payload can be completed

@@ -3,17 +3,44 @@ import os
 import json
 from datetime import datetime
 
-from horde.database import functions as database
 from horde.logger import logger
 from horde.flask import db
-from horde.vars import thing_name, thing_divisor, raw_thing_name
-from horde import vars as hv
-from horde.suspicions import Suspicions, SUSPICION_LOGS
-from horde.classes.base.user import User
-from horde.classes.base.team import Team, stats
-import horde.classes.base.stats as stats
-from horde.classes.stable.worker import ImageWorker
-from horde.utils import hash_api_key
+from horde.classes.base.user import User, UserRole
+from horde.enums import UserRoleTypes
+
+def convert_user_roles():
+    logger.debug(User.query.filter(User.trusted == True).count())
+    for i,u in enumerate(User.query.filter_by(trusted = True).all()):
+        new_role = UserRole(
+            user_id = u.id,
+            user_role = UserRoleTypes.TRUSTED,
+            value = True,
+        )
+        db.session.add(new_role)
+        if i % 10 == 0:
+            logger.info(f"{i} trusted commited")
+            db.session.commit()
+    for i,u in enumerate(User.query.filter_by(flagged = True).all()):
+        new_role = UserRole(
+            user_id = u.id,
+            user_role = UserRoleTypes.FLAGGED,
+            value = True,
+        )
+        db.session.add(new_role)
+        if i % 10 == 0:
+            logger.info(f"{i} flagged commited")
+            db.session.commit()
+    for i,u in enumerate(User.query.filter_by(moderator = True).all()):
+        new_role = UserRole(
+            user_id = u.id,
+            user_role = UserRoleTypes.MODERATOR,
+            value = True,
+        )
+        db.session.add(new_role)
+        logger.info(f"{i} moderators commited")
+        db.session.commit()
+    sys.exit()
+    
 
 def convert_json_db():
     convert_json("db/users.json", convert_user)
