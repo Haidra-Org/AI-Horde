@@ -122,6 +122,11 @@ class TextWorker(Worker):
         for model in unchecked_models:
             # # We allow custom models from trusted users
             # if model in model_reference.text_model_names or self.user.trusted:
+            usermodel = model.split("::")
+            if len(usermodel) == 2:
+                user_alias = usermodel[1]
+                if self.user.get_unique_alias() != user_alias:
+                    raise e.BadRequest(f"This model can only be hosted by {user_alias}")
             models.add(model)
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
