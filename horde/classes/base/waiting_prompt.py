@@ -129,7 +129,6 @@ class WaitingPrompt(db.Model):
         db.session.commit()
 
     def get_model_names(self):
-        # Could also do this based on self.models, but no need
         return [m.model for m in self.models]
 
     # These are typically horde-specific so they will be defined in the specific class for this horde type

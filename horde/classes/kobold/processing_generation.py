@@ -27,11 +27,11 @@ class TextProcessingGeneration(ProcessingGeneration):
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker
         # If a worker serves an unknown model, they only get 1 kudos, unless they're trusted in which case they get 20
-        if self.model not in model_reference.text_model_names:
+        if not model_reference.is_known_text_model(self.model):
             if not self.worker.user.trusted:
                 return 1
             # Trusted users with an unknown model gain 1 per token requested, as we don't know their parameters amount
-            return self.wp.max_length * 0.15
+            return self.wp.max_length * 0.12
         return round(self.wp.max_length * model_reference.get_text_model_multiplier(self.model) / 21, 2)
 
 

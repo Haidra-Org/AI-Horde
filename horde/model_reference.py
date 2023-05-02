@@ -43,8 +43,11 @@ class ModelReference(PrimaryTimedFunction):
         except Exception as err:
             logger.error(f"Error when downloading known models list: {err}")
 
-    def get_model_names(self):
+    def get_image_model_names(self):
         return set(self.reference.keys())
+
+    def get_text_model_names(self):
+        return set(self.text_reference.keys())
 
     def get_model_baseline(self, model_name):
         model_details = self.reference.get(model_name, {})
@@ -56,6 +59,9 @@ class ModelReference(PrimaryTimedFunction):
 
     def get_text_model_multiplier(self, model_name):
         # To avoid doing this calculations all the time
+        usermodel = model_name.split("::")
+        if len(usermodel) == 2:
+            model_name = usermodel[0]
         if not self.text_reference.get(model_name):
             return 1
         return int(self.text_reference[model_name]["parameters"]) / 1000000000
@@ -76,13 +82,20 @@ class ModelReference(PrimaryTimedFunction):
                 return False
         return True
 
-    def is_known_model(self, model_name):
-        return model_name in self.get_model_names()
+    def is_known_image_model(self, model_name):
+        return model_name in self.get_image_model_names()
+
+    def is_known_text_model(self, model_name):
+        # If it's a named model, we check if we can find it without the username
+        usermodel = model_name.split("::")
+        if len(usermodel) == 2:
+            model_name = usermodel[0]
+        return model_name in self.get_text_model_names()
 
     def has_unknown_models(self, model_names):
         if len(model_names) == 0:
             return False
-        if any(not self.is_known_model(m) for m in model_names):
+        if any(not self.is_known_image_model(m) for m in model_names):
             return True
         return False
 
