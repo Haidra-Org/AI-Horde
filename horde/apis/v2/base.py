@@ -837,7 +837,8 @@ class UserSingle(Resource):
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
             user_details = json.loads(cached_user)
-            user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(user_details["monthly_kudos"]["last_received"])
+            if type(user_details["monthly_kudos"]["last_received"]) == str:
+                user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(user_details["monthly_kudos"]["last_received"])
         else:
             user = database.find_user_by_id(user_id)
             if not user:
