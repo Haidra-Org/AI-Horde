@@ -573,7 +573,7 @@ class User(db.Model):
         if details_privilege >= 2:
             mk_dict = {
                 "amount": self.calculate_monthly_kudos(),
-                "last_received": self.monthly_kudos_last_received
+                "last_received": str(self.monthly_kudos_last_received)
             }
             ret_dict["evaluating_kudos"] = self.evaluating_kudos
             ret_dict["monthly_kudos"] = mk_dict
