@@ -240,6 +240,7 @@ def get_available_models():
             models_dict[model_name]["type"] = model_type
 
             models_dict[model_name]['queued'] = 0
+            models_dict[model_name]['jobs'] = 0
             models_dict[model_name]['eta'] = 0
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
@@ -261,11 +262,12 @@ def get_available_models():
             models_dict[model_name]["name"] = model_name
             models_dict[model_name]["count"] = 0
             models_dict[model_name]['queued'] = 0
+            models_dict[model_name]['jobs'] = 0
             models_dict[model_name]["type"] = model_type
             models_dict[model_name]['eta'] = 0
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
-        things_per_model = count_things_per_model(wp_class)
+        things_per_model, jobs_per_model = count_things_per_model(wp_class)
         # If we request a lite_dict, we only want worker count per model and a dict format
         for model_name in things_per_model:
             # This shouldn't happen, but I'm checking anyway
@@ -273,6 +275,7 @@ def get_available_models():
                 # logger.debug(f"Tried to match non-existent wp model {model_name} to worker models. Skipping.")
                 continue
             models_dict[model_name]['queued'] = things_per_model[model_name]
+            models_dict[model_name]['jobs'] = jobs_per_model[model_name]
             total_performance_on_model = models_dict[model_name]['count'] * models_dict[model_name]['performance']
             # We don't want a division by zero when there's no workers for this model.
             if total_performance_on_model > 0:
@@ -496,6 +499,7 @@ def get_organized_wps_by_model(wp_class):
     all_wps = db.session.query(
         wp_class
     ).filter(
+        wp_class.active == True,
         wp_class.faulted == False,
         wp_class.n >= 1,
     ).all() # TODO this can likely be improved
@@ -511,14 +515,16 @@ def get_organized_wps_by_model(wp_class):
 
 def count_things_per_model(wp_class):
     things_per_model = {}
+    jobs_per_model = {}
     org = get_organized_wps_by_model(wp_class)
     for model in org:
         for wp in org[model]:
             current_wp_queue = wp.n + wp.count_processing_gens()["processing"]
             if current_wp_queue > 0:
                 things_per_model[model] = things_per_model.get(model,0) + wp.things
+                jobs_per_model[model] = jobs_per_model.get(model,0) + current_wp_queue
         things_per_model[model] = round(things_per_model.get(model,0),2)
-    return(things_per_model)
+    return things_per_model,jobs_per_model
 
 
 def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 
