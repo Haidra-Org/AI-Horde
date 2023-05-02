@@ -58,6 +58,8 @@ class TextAsyncGenerate(GenerateTemplate):
             if len(self.models) == 0:
                 required_kudos = 20 * self.wp.n
             else:
+                # We find the highest multiplier to avoid someone gaming the system by requesting
+                # a small model along with a big model.
                 highest_multiplier = 0
                 for model in self.models:
                     model_multiplier = model_reference.get_text_model_multiplier(model)
