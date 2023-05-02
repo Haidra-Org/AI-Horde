@@ -1,5 +1,14 @@
 # Changelog
 
+# 4.10.0
+
+* Weights now do not cost kudos (preparation for comfy switch)
+* Allows text models to be named by appending the horde `::user#id` at the end. 
+  A worker can only offer such a model when the worker's owner matches the name in the model name.
+  This will allow test models to be served in a way that someone cannot poison the data.
+* Cached user GET.
+
+
 # 4.9.0
 
 * Refactored user objects so that we can specify an open-ended amount of roles, without having to add a new column for each
