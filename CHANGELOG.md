@@ -7,6 +7,8 @@
 * Increased threshold for trusting users. Becoming trusted also requires at least a week of wait-time.
 * Re-activated limit on workers per IP. Trusted users can bypass it.
 * Untrusted users now can have only 3 workers. Trusted workers by default can go up to 20.
+* Models endpoing now shows queued jobs per model
+* Disabled VPN for workers unless they're trusted or patreons
 
 # 4.8.0
 
