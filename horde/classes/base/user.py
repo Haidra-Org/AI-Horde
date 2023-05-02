@@ -3,7 +3,7 @@ import os
 
 import dateutil.relativedelta
 from datetime import datetime
-from sqlalchemy import Enum, UniqueConstraint
+from sqlalchemy import Enum, UniqueConstraint,exists, and_
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from horde.logger import logger
@@ -88,6 +88,18 @@ class User(db.Model):
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
 
+    ## TODO: Figure out how to make the below work
+    # def get_role_expr(cls, role):
+    #     subquery = db.session.query(UserRole.user_id
+    #         ).filter(
+    #             UserRole.user_role == UserRoleTypes.MODERATOR,
+    #             UserRole.value == True,
+    #             UserRole.user_id == cls.id
+    #         ).correlate(
+    #             cls
+    #         ).as_scalar()
+    #     return cls.id == subquery
+
     @hybrid_property
     def trusted(self) -> bool:
         user_role = UserRole.query.filter_by(
@@ -95,7 +107,19 @@ class User(db.Model):
             user_role=UserRoleTypes.TRUSTED
         ).first()
         return user_role is not None and user_role.value
-    
+
+    @trusted.expression
+    def trusted(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.TRUSTED,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
+
     @hybrid_property
     def flagged(self) -> bool:
         user_role = UserRole.query.filter_by(
@@ -103,6 +127,19 @@ class User(db.Model):
             user_role=UserRoleTypes.FLAGGED
         ).first()
         return user_role is not None and user_role.value
+
+
+    @flagged.expression
+    def flagged(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.FLAGGED,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
 
     @hybrid_property
     def moderator(self) -> bool:
@@ -112,6 +149,18 @@ class User(db.Model):
         ).first()
         return user_role is not None and user_role.value
 
+    @moderator.expression
+    def moderator(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.MODERATOR,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
+
     @hybrid_property
     def customizer(self) -> bool:
         user_role = UserRole.query.filter_by(
@@ -119,6 +168,18 @@ class User(db.Model):
             user_role=UserRoleTypes.CUSTOMIZER
         ).first()
         return user_role is not None and user_role.value
+
+    @customizer.expression
+    def customizer(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.CUSTOMIZER,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
 
     def create(self):
         self.check_for_bad_actor()
