@@ -121,7 +121,7 @@ class Models:
             'name': fields.String(description="The Name of the Worker"),
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
             'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
-            'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=50)),
+            'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=255)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
             'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=10),

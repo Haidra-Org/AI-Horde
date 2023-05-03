@@ -53,7 +53,7 @@ class WorkerModel(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"Worker", back_populates="models")
-    model = db.Column(db.String(50))  # TODO model should be a foreign key to a model table
+    model = db.Column(db.String(255))  # TODO model should be a foreign key to a model table
 
 class WorkerTemplate(db.Model):
     __tablename__ = "workers"
