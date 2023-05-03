@@ -3,17 +3,21 @@ import os
 
 import dateutil.relativedelta
 from datetime import datetime
-from sqlalchemy import Enum, UniqueConstraint,exists, and_
+from sqlalchemy import Enum, UniqueConstraint
 from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.dialects.postgresql import UUID
 
 from horde.logger import logger
-from horde.flask import db
+from horde.flask import db, SQLITE_MODE
 from horde.vars import thing_name, text_thing_divisor, text_thing_name
 from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
 from horde.enums import UserRecordTypes, UserRoleTypes
+from horde.utils import get_db_uuid
+
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 
 class UserStats(db.Model):
@@ -53,6 +57,13 @@ class UserRole(db.Model):
     user = db.relationship("User", back_populates="roles")
     user_role = db.Column(Enum(UserRoleTypes), nullable=False)
     value = db.Column(db.Boolean, default=False, nullable=False)
+
+class UserGenKey(db.Model):
+    __tablename__ = "user_genkeys"
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user = db.relationship("User", back_populates="genkeys")
+    waiting_prompts = db.relationship("WaitingPrompt", back_populates="genkey", passive_deletes=True, cascade="all, delete-orphan")
 
 class User(db.Model):
     __tablename__ = "users"

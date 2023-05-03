@@ -8,7 +8,7 @@ from sqlalchemy import JSON, func, or_
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
-from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
+from horde.utils import is_profane, get_db_uuid, get_expiry_date
 
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -82,6 +82,8 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
+    genkey_id = db.Column(uuid_column_type(), db.ForeignKey("user_genkeys.id", ondelete="CASCADE"), nullable=True)
+    genkey = db.relationship("UserGenKey", back_populates="waiting_prompts")
 
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
