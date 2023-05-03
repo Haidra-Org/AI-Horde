@@ -63,6 +63,9 @@ class UserGenKey(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     user = db.relationship("User", back_populates="genkeys")
+    kudos = db.Column(db.BigInteger, default=0, nullable=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    expiry = db.Column(db.DateTime, index=True)
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="genkey", passive_deletes=True, cascade="all, delete-orphan")
 
 class User(db.Model):
@@ -91,6 +94,7 @@ class User(db.Model):
 
     workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
+    genkeys = db.relationship(f"UserGenKey", back_populates="user", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
     roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
