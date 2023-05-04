@@ -526,7 +526,7 @@ class User(db.Model):
         for worker in self.workers:
             if worker.ipaddr == ipaddr:
                 ipcount += 1
-        if self.user.trusted:
+        if self.trusted:
             if ipcount > self.SAME_IP_TRUSTED_WORKER_THRESHOLD and ipcount > self.worker_invited:
                 return(True)
         elif ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
