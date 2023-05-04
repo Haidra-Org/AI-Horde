@@ -181,6 +181,26 @@ class User(db.Model):
             ).as_scalar()
         return cls.id == subquery
 
+    @hybrid_property
+    def vpn(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.VPN
+        ).first()
+        return user_role is not None and user_role.value
+
+    @vpn.expression
+    def vpn(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.VPN,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
+
     def create(self):
         self.check_for_bad_actor()
         logger.debug(self.api_key)
@@ -280,6 +300,11 @@ class User(db.Model):
         if self.is_anon():
             return
         self.set_user_role(UserRoleTypes.CUSTOMIZER, is_customizer)
+
+    def set_vpn(self, is_vpn):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.VPN, is_vpn)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")

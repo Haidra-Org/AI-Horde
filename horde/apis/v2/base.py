@@ -432,7 +432,7 @@ class JobPopTemplate(Resource):
 
     def check_ip(self):
         self.safe_ip = True
-        if not self.user.trusted and not patrons.is_patron(self.user.id):
+        if not self.user.trusted and not self.user.vpn and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
             if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)
@@ -866,6 +866,7 @@ class UserSingle(Resource):
     parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
     parser.add_argument("flagged", type=bool, required=False, help="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance.", location="json")
     parser.add_argument("customizer", type=bool, required=False, help="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference.", location="json")
+    parser.add_argument("vpn", type=bool, required=False, help="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
@@ -934,6 +935,11 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_customizer(self.args.customizer)
             ret_dict["customizer"] = user.customizer
+        if self.args.vpn is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_vpn(self.args.vpn)
+            ret_dict["vpn"] = user.vpn
         if self.args.reset_suspicion is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
