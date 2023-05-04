@@ -58,6 +58,7 @@ class User(db.Model):
     __tablename__ = "users"
     SUSPICION_THRESHOLD = 5
     SAME_IP_WORKER_THRESHOLD = 3
+    SAME_IP_TRUSTED_WORKER_THRESHOLD = 20
 
     id = db.Column(db.Integer, primary_key=True) 
     username = db.Column(db.String(50), unique=False, nullable=False)
@@ -525,7 +526,10 @@ class User(db.Model):
         for worker in self.workers:
             if worker.ipaddr == ipaddr:
                 ipcount += 1
-        if ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
+        if self.user.trusted:
+            if ipcount > self.SAME_IP_TRUSTED_WORKER_THRESHOLD and ipcount > self.worker_invited:
+                return(True)
+        elif ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
             return(True)
         return(False)
 
