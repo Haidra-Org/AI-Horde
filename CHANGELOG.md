@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.11.2
+
+* Increased stipend for moderators
+* Fixed bug when retrieving an uncached user with monthly kudos
+
 # 4.11.0
 
 * Added new `vpn` role which allows someone to run a worker behind a VPN without being trusted.

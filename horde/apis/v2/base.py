@@ -846,6 +846,8 @@ class UserSingle(Resource):
             user_details = user.get_details(details_privilege)
             if hr.horde_r:
                 cached_details = user_details.copy()
+                if "monthly_kudos" in cached_details:
+                    cached_details["monthly_kudos"] = cached_details["monthly_kudos"].copy()
                 if user_details.get("monthly_kudos",{}).get("last_received"):
                     cached_details["monthly_kudos"]["last_received"] = cached_details["monthly_kudos"]["last_received"].isoformat()
                 hr.horde_r_setex_json(cache_name, timedelta(seconds=300), cached_details)
