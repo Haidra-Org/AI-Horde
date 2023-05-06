@@ -193,7 +193,7 @@ class ImageAsyncStatus(Resource):
         self.args = self.get_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
+            raise e.RequestNotFound(id,request_type="Image Waiting Prompt",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -215,7 +215,7 @@ class ImageAsyncStatus(Resource):
         self.args = self.delete_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
+            raise e.RequestNotFound(id,request_type="Image Waiting Prompt",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -250,7 +250,7 @@ class ImageAsyncCheck(Resource):
         self.args = self.get_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
+            raise e.RequestNotFound(id,request_type="Image Waiting Prompt",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
         lite_status = wp.get_lite_status(
             request_avg=database.get_request_avg("image"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -368,7 +368,7 @@ class Aesthetics(Resource):
         self.args = self.post_parser.parse_args()
         wp = database.get_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id,client_agent=self.args["Client-Agent"])
+            raise e.RequestNotFound(id,request_type="Image Waiting Prompt",client_agent=self.args["Client-Agent"])
         if not wp.is_completed():
             raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!")
         if not wp.shared:
