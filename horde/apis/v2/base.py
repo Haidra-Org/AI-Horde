@@ -1673,7 +1673,10 @@ class SharedKeySingle(Resource):
         if not self.args.expiry and not self.args.kudos and not self.arg.name:
             raise e.NoValidActions("No shared key modification selected!")
         if self.args.expiry is not None:
-            sharedkey.expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
+            if self.args.expiry == -1:
+                sharedkey.expiry = None
+            else:
+                sharedkey.expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
         if self.args.kudos is not None:
             sharedkey.kudos = self.args.kudos
         if self.args.name is not None:
