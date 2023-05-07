@@ -1593,7 +1593,8 @@ class SharedKey(Resource):
     put_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
     put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     put_parser.add_argument("kudos", min=1, type=int, required=True, default=1000, help="The amount of kudos limit available to this key", location="json")
-    put_parser.add_argument("expiry", min=1, type=int, required=True, default=30, help="The amount of days which this key will stay active.", location="json")
+    put_parser.add_argument("expiry", min=1, type=int, required=False, default=None, help="The amount of days which this key will stay active.", location="json")
+    put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(put_parser)
@@ -1611,10 +1612,14 @@ class SharedKey(Resource):
             raise e.InvalidAPIKey("get sharedkey")
         if user.count_sharedkeys() > user.max_sharedkeys():
             raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
+        expiry = None
+        if self.args.expiry:
+            expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
         new_key = UserSharedKey(
             user_id = user.id,
             kudos = self.args.kudos,
-            expiry = datetime.utcnow() + timedelta(days=self.args.expiry),
+            expiry = expiry,
+            name = self.args.name,
         )
         db.session.add(new_key)
         db.session.commit()
@@ -1643,6 +1648,7 @@ class SharedKeySingle(Resource):
     patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     patch_parser.add_argument("kudos", min=1, type=int, required=False, help="The amount of kudos limit available to this key", location="json")
     patch_parser.add_argument("expiry", min=1, type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
+    patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
 
     @api.expect(patch_parser)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
@@ -1662,12 +1668,14 @@ class SharedKeySingle(Resource):
             raise e.InvalidAPIKey("patch sharedkey")
         if sharedkey.user_id != user.id:
             raise e.Forbidden(f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.")
-        if not self.args.expiry and not self.args.kudos:
+        if not self.args.expiry and not self.args.kudos and not self.arg.name:
             raise e.NoValidActions("No shared key modification selected!")
         if self.args.expiry:
             sharedkey.expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
         if self.args.kudos:
             sharedkey.kudos = self.args.kudos
+        if self.args.name:
+            sharedkey.name = self.args.name
         db.session.commit()
         return sharedkey.get_details(),200
 

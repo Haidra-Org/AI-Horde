@@ -66,6 +66,7 @@ class UserSharedKey(db.Model):
     kudos = db.Column(db.BigInteger, default=0, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     expiry = db.Column(db.DateTime, index=True)
+    name = db.Column(db.String(255), nullable=True)
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="sharedkey", passive_deletes=True, cascade="all, delete-orphan")
 
 
