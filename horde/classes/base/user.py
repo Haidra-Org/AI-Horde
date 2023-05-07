@@ -63,7 +63,7 @@ class UserSharedKey(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     user = db.relationship("User", back_populates="sharedkeys")
-    kudos = db.Column(db.BigInteger, default=0, nullable=False)
+    kudos = db.Column(db.BigInteger, default=5000, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     expiry = db.Column(db.DateTime, index=True)
     name = db.Column(db.String(255), nullable=True)

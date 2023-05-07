@@ -1607,9 +1607,11 @@ class SharedKey(Resource):
         '''Create a new SharedKey for this user
         '''
         self.args = self.put_parser.parse_args()
-        user = database.find_user_by_api_key(self.args.apikey)
+        user: User = database.find_user_by_api_key(self.args.apikey)
         if not user:
             raise e.InvalidAPIKey("get sharedkey")
+        if user.is_anon():
+            raise e.AnonForbidden
         if user.count_sharedkeys() > user.max_sharedkeys():
             raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
         expiry = None
