@@ -186,7 +186,7 @@ class Models:
 
         self.input_model_sharedkey = api.model('SharedKeyInput', {
             "kudos": fields.Integer(min=-1, max=50000000, default=5000, required=False, description="The Kudos limit assigned to this key. If -1, then anyone with this key can use an unlimited amount of kudos from this account."),
-            "expiry": fields.Integer(min=0, default=None, example=None, required=False, description="The amount of days after which this key will expire."),
+            "expiry": fields.Integer(min=0, default=None, example=30, required=False, description="The amount of days after which this key will expire."),
             "name": fields.String(min_length=3, max_length=255, required=False, description="A descriptive name for this key"),
         })
 
