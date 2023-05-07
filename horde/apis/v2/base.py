@@ -1593,7 +1593,7 @@ class SharedKey(Resource):
     put_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
     put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
     put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key", location="json")
-    put_parser.add_argument("expiry", type=int, required=False, default=None, help="The amount of days which this key will stay active.", location="json")
+    put_parser.add_argument("expiry", type=int, required=False, default=-1, help="The amount of days which this key will stay active.", location="json")
     put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
@@ -1615,7 +1615,7 @@ class SharedKey(Resource):
         if user.count_sharedkeys() > user.max_sharedkeys():
             raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
         expiry = None
-        if self.args.expiry:
+        if self.args.expiry and self.args.expiry != -1:
             expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
         new_key = UserSharedKey(
             user_id = user.id,
