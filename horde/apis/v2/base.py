@@ -1618,7 +1618,6 @@ class SharedKey(Resource):
             raise e.InvalidAPIKey("get sharedkey")
         if user.is_anon():
             raise e.AnonForbidden
-        logger.debug([user.count_sharedkeys(),user.max_sharedkeys()])
         if user.count_sharedkeys() > user.max_sharedkeys():
             raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
         expiry = None
@@ -1649,7 +1648,7 @@ class SharedKeySingle(Resource):
         self.args = self.get_parser.parse_args()
         sharedkey = database.find_sharedkey(sharedkey_id)
         if not sharedkey:
-            raise e.InvalidAPIKey("Shared Key Not Found.", keytype="Shared")
+            raise e.InvalidAPIKey("get sharedkey", keytype="Shared")
         return sharedkey.get_details(),200
 
     patch_parser = reqparse.RequestParser()
