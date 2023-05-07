@@ -635,6 +635,11 @@ class User(db.Model):
                 workers_array.append(str(worker.id))
             ret_dict["worker_ids"] = workers_array
             ret_dict['contact'] = self.contact
+        if details_privilege >= 1:
+            sharedkeys_array = []
+            for sk in self.sharedkeys:
+                sharedkeys_array.append(str(sk.id))
+            ret_dict["sharedkey_ids"] = sharedkeys_array
         if details_privilege >= 2:
             mk_dict = {
                 "amount": self.calculate_monthly_kudos(),
