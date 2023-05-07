@@ -1592,12 +1592,12 @@ class SharedKey(Resource):
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
     put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    put_parser.add_argument("kudos", min=1, type=int, required=True, default=1000, help="The amount of kudos limit available to this key", location="json")
-    put_parser.add_argument("expiry", min=1, type=int, required=False, default=None, help="The amount of days which this key will stay active.", location="json")
+    put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key", location="json")
+    put_parser.add_argument("expiry", type=int, required=False, default=None, help="The amount of days which this key will stay active.", location="json")
     put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
-    @api.expect(put_parser)
+    @api.expect(put_parser, models.input_model_sharedkey)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='SharedKey Details', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -1646,11 +1646,11 @@ class SharedKeySingle(Resource):
     patch_parser = reqparse.RequestParser()
     patch_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
     patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    patch_parser.add_argument("kudos", min=1, type=int, required=False, help="The amount of kudos limit available to this key", location="json")
-    patch_parser.add_argument("expiry", min=1, type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
+    patch_parser.add_argument("kudos", type=int, required=False, help="The amount of kudos limit available to this key", location="json")
+    patch_parser.add_argument("expiry", type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
     patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
 
-    @api.expect(patch_parser)
+    @api.expect(patch_parser, models.input_model_sharedkey)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -1670,11 +1670,11 @@ class SharedKeySingle(Resource):
             raise e.Forbidden(f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.")
         if not self.args.expiry and not self.args.kudos and not self.arg.name:
             raise e.NoValidActions("No shared key modification selected!")
-        if self.args.expiry:
+        if self.args.expiry is not None:
             sharedkey.expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
-        if self.args.kudos:
+        if self.args.kudos is not None:
             sharedkey.kudos = self.args.kudos
-        if self.args.name:
+        if self.args.name is not None:
             sharedkey.name = self.args.name
         db.session.commit()
         return sharedkey.get_details(),200
