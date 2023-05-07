@@ -183,6 +183,14 @@ class Models:
             "awarded": fields.Float(default=0,description="The amount of Kudos this user has been awarded from things like rating images."),
         })
 
+
+        self.response_model_sharedkey_details = api.model('SharedKeyDetails', {
+            "id": fields.String(description="The SharedKey ID"),
+            "username": fields.String(description="The owning user's unique Username. It is a combination of their chosen alias plus their ID."),
+            "kudos": fields.Integer(description="The Kudos limit assigned to this key"),
+            "expiry": fields.DateTime(dt_format='rfc822',description="The date at which this API key will expire."),
+        })
+
         #TODO: Obsolete
         self.response_model_contrib_details = api.model('ContributionsDetails', {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),

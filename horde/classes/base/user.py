@@ -58,15 +58,27 @@ class UserRole(db.Model):
     user_role = db.Column(Enum(UserRoleTypes), nullable=False)
     value = db.Column(db.Boolean, default=False, nullable=False)
 
-class UserGenKey(db.Model):
-    __tablename__ = "user_genkeys"
+class UserSharedKey(db.Model):
+    __tablename__ = "user_sharedkeys"
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    user = db.relationship("User", back_populates="genkeys")
+    user = db.relationship("User", back_populates="sharedkeys")
     kudos = db.Column(db.BigInteger, default=0, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     expiry = db.Column(db.DateTime, index=True)
-    waiting_prompts = db.relationship("WaitingPrompt", back_populates="genkey", passive_deletes=True, cascade="all, delete-orphan")
+    waiting_prompts = db.relationship("WaitingPrompt", back_populates="sharedkey", passive_deletes=True, cascade="all, delete-orphan")
+
+
+    @logger.catch(reraise=True)
+    def get_details(self):
+        ret_dict = {
+            "username": self.user.get_unique_alias(),
+            "id": self.id,
+            "kudos": self.kudos,
+            "expiry": self.expiry,
+        }
+        return ret_dict
+
 
 class User(db.Model):
     __tablename__ = "users"
@@ -95,7 +107,7 @@ class User(db.Model):
 
     workers = db.relationship(f"Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship(f"Team", back_populates="owner", cascade="all, delete-orphan")
-    genkeys = db.relationship(f"UserGenKey", back_populates="user", cascade="all, delete-orphan")
+    sharedkeys = db.relationship(f"UserSharedKey", back_populates="user", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
     roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
@@ -525,6 +537,14 @@ class User(db.Model):
 
     def count_workers(self):
         return(len(self.workers))
+
+    def count_sharedkeys(self):
+        return(len(self.sharedkeys))
+
+    def max_sharedkeys(self):
+        if self.trusted:
+            return 10
+        return 3
 
     def is_suspicious(self): 
         if self.trusted:
