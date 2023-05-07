@@ -1612,6 +1612,7 @@ class SharedKey(Resource):
             raise e.InvalidAPIKey("get sharedkey")
         if user.is_anon():
             raise e.AnonForbidden
+        logger.debug([user.count_sharedkeys(),user.max_sharedkeys()])
         if user.count_sharedkeys() > user.max_sharedkeys():
             raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
         expiry = None
