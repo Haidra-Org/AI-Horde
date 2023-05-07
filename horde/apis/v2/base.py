@@ -1013,7 +1013,10 @@ class FindUser(Resource):
                 raise e.UserNotFound(self.args.apikey, 'api_key')
             user_details = user.get_details(1)
             if sharedkey:
-                user_details["username"] = user_details["username"] + " (Shared Key)"
+                skname = ''
+                if sharedkey.name is not None:
+                    skname = f": {sharedkey.name}"
+                user_details["username"] = user_details["username"] + f" (Shared Key{skname})"
             if hr.horde_r:
                 hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
         return(user_details,200)
