@@ -186,10 +186,10 @@ class InvalidJobID(wze.NotFound):
         self.log = f"Worker attempted to provide job for {job_id} but it did not exist"
 
 class RequestNotFound(wze.NotFound):
-    def __init__(self, req_id, request_type = 'Waiting Prompt', client_agent='unknown'):
+    def __init__(self, req_id, request_type = 'Waiting Prompt', client_agent='unknown', ipaddr='unknown'):
         self.specific = f"{request_type} with ID '{req_id}' not found."
         if request_type != "Interrogation": #FIXME: Figure out why there's so many
-            self.log = f"Status of {request_type} with ID '{req_id}' does not exist. Client agent: {client_agent}"
+            self.log = f"Status of {request_type} with ID '{req_id}' does not exist. Client agent: {client_agent}@{ipaddr}"
         else:
             self.log = None
 

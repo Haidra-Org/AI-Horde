@@ -72,6 +72,7 @@ class User(db.Model):
     __tablename__ = "users"
     SUSPICION_THRESHOLD = 5
     SAME_IP_WORKER_THRESHOLD = 3
+    SAME_IP_TRUSTED_WORKER_THRESHOLD = 20
 
     id = db.Column(db.Integer, primary_key=True) 
     username = db.Column(db.String(50), unique=False, nullable=False)
@@ -196,6 +197,26 @@ class User(db.Model):
             ).as_scalar()
         return cls.id == subquery
 
+    @hybrid_property
+    def vpn(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.VPN
+        ).first()
+        return user_role is not None and user_role.value
+
+    @vpn.expression
+    def vpn(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.VPN,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
+
     def create(self):
         self.check_for_bad_actor()
         logger.debug(self.api_key)
@@ -295,6 +316,11 @@ class User(db.Model):
         if self.is_anon():
             return
         self.set_user_role(UserRoleTypes.CUSTOMIZER, is_customizer)
+
+    def set_vpn(self, is_vpn):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.VPN, is_vpn)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
@@ -418,7 +444,7 @@ class User(db.Model):
     def calculate_monthly_kudos(self):
         base_amount = self.monthly_kudos
         if self.moderator:
-            base_amount += 100000
+            base_amount += 300000
         base_amount += patrons.get_monthly_kudos(self.id)
         return(base_amount)
 
@@ -515,7 +541,10 @@ class User(db.Model):
         for worker in self.workers:
             if worker.ipaddr == ipaddr:
                 ipcount += 1
-        if ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
+        if self.trusted:
+            if ipcount > self.SAME_IP_TRUSTED_WORKER_THRESHOLD and ipcount > self.worker_invited:
+                return(True)
+        elif ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
             return(True)
         return(False)
 

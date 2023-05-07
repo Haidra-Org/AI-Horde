@@ -27,4 +27,5 @@ class UserRoleTypes(enum.Enum):
     TRUSTED = 1
     FLAGGED = 3
     CUSTOMIZER = 4
+    VPN = 5
 

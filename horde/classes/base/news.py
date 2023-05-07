@@ -4,6 +4,16 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-05",
+            "newspiece": 
+                "You can now run an AI Horde worker inside a docker container."
+                "http://ghcr.io/db0/ai-horde-worker:main"
+                "Our README [contains information on how to configure it](https://github.com/db0/AI-Horde-Worker/blob/main/README.md#docker)."
+                "All kudos to [Gus Puffy#8887](https://github.com/guspuffygit)",
+            "tags": ["docker", "dreamer"],
+            "importance": "Workers",
+        },
+        {
             "date_published": "2023-04-23",
             "newspiece": 
                 "The Command Line Interface for the AI Horde has now been extended to support Image Generation, Text Generation and Image Alchemy."
