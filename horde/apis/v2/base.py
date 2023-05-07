@@ -1006,12 +1006,14 @@ class FindUser(Resource):
         else:
             user = database.find_user_by_sharedkey(self.args.apikey)
             sharedkey = True
+            privilege = 0
             if not user:
                 user = database.find_user_by_api_key(self.args.apikey)
                 sharedkey = False
+                privilege = 1
             if not user:
                 raise e.UserNotFound(self.args.apikey, 'api_key')
-            user_details = user.get_details(1)
+            user_details = user.get_details(privilege)
             if sharedkey:
                 sk = database.find_sharedkey(self.args.apikey)
                 skname = ''
