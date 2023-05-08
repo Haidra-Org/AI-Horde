@@ -153,7 +153,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.KudosUpfront(
                 required_kudos, 
                 self.username, 
-                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfil this reques ({required_kudos})."
+                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfill this reques ({required_kudos})."
             )
         needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
         if needs_kudos:
