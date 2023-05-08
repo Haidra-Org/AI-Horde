@@ -1,6 +1,7 @@
 import uuid
+import json
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy import JSON, func, or_
@@ -13,6 +14,7 @@ from horde.utils import is_profane, get_db_uuid, get_expiry_date
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde import horde_redis as hr
 
 procgen_classes = {
     "template": ProcessingGeneration,
@@ -70,6 +72,7 @@ class WaitingPrompt(db.Model):
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
     slow_workers = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    worker_blacklist = db.Column(db.Boolean, default=False, nullable=False, index=True)
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -347,6 +350,27 @@ class WaitingPrompt(db.Model):
         '''
         self.job_ttl = 150
         db.session.commit()
-    
+
+    def refresh_worker_cache(self):
+        worker_ids = [worker.worker_id for worker in self.workers]
+        worker_string_ids = [str(worker.worker_id) for worker in self.workers]
+        try:
+            hr.horde_r_setex(f'wp_{self.id}_worker_cache', timedelta(minutes=20), json.dumps(worker_string_ids))
+        except Exception as err:
+            logger.debug(f"Error when trying to set workers cache: {err}. Retrieving from DB.")
+        return worker_ids
+
     def get_worker_ids(self):
-        return [worker.worker_id for worker in self.workers]
+        if hr.horde_r is None:
+            return [worker.worker_id for worker in self.workers]
+        worker_cache = hr.horde_r_get(f'wp_{self.id}_worker_cache')
+        if not worker_cache:
+            return self.refresh_worker_cache()
+        try:
+            models_ret = json.loads(worker_cache)
+        except TypeError as e:
+            logger.error(f"Worker cache could not be loaded: {worker_cache}")
+            return self.refresh_worker_cache()
+        if models_ret is None:
+            return self.refresh_worker_cache()
+        return [uuid.UUID(wid) for wid in worker_cache]

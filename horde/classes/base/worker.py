@@ -1,4 +1,3 @@
-import uuid
 import json
 
 from sqlalchemy import func
@@ -547,8 +546,12 @@ class Worker(WorkerTemplate):
         if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
             return [False, 'blacklist']
         # Skips working prompts which require a specific worker from a list, and our ID is not in that list
-        if len(waiting_prompt.workers) and self.id not in [wref.worker_id for wref in waiting_prompt.workers]:
-            return [False, 'worker_id']
+        if waiting_prompt.worker_blacklist:
+            if len(waiting_prompt.workers) and self.id in waiting_prompt.get_worker_ids():
+                return [False, 'worker_id']
+        else:
+            if len(waiting_prompt.workers) and self.id not in waiting_prompt.get_worker_ids():
+                return [False, 'worker_id']
         #logger.warning(datetime.utcnow())
 
         # my_model_names = self.get_model_names()
