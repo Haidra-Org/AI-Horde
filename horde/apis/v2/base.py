@@ -501,7 +501,7 @@ class TransferKudos(Resource):
     parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
-    decorators = [limiter.limit("3/second", key_func = get_request_path)]
+    decorators = [limiter.limit("1/second", key_func = get_request_path)]
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
     @api.response(400, 'Validation Error', models.response_model_error)
