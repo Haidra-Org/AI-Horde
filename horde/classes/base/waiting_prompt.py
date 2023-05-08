@@ -367,14 +367,10 @@ class WaitingPrompt(db.Model):
         if not worker_cache:
             return self.refresh_worker_cache()
         try:
-            models_ret = json.loads(worker_cache)
+            worker_cache = json.loads(worker_cache)
         except TypeError as e:
             logger.error(f"Worker cache could not be loaded: {worker_cache}")
             return self.refresh_worker_cache()
-        if models_ret is None:
+        if worker_cache is None:
             return self.refresh_worker_cache()
-        logger.debug([wid for wid in worker_cache])
-        for wid in worker_cache:
-            logger.debug(wid)
-            logger.debug(uuid.UUID(wid))
         return [uuid.UUID(wid) for wid in worker_cache]
