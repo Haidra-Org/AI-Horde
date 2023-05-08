@@ -373,4 +373,5 @@ class WaitingPrompt(db.Model):
             return self.refresh_worker_cache()
         if models_ret is None:
             return self.refresh_worker_cache()
+        logger.debug(worker_cache)
         return [uuid.UUID(wid) for wid in worker_cache]
