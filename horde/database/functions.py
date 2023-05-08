@@ -354,13 +354,13 @@ def transfer_kudos(source_user, dest_user, amount):
         return([0,'Not enough kudos.'])
     hr.horde_r_setex(f'kudos_transfer_{source_user.id}-{dest_user.id}', timedelta(seconds=60), int(True))
     transfer_log = KudosTransferLog.query.filter_by(
-        source_id = source_user.id
-        dest_id = dest_user.id
+        source_id = source_user.id,
+        dest_id = dest_user.id,
     ).first()
     if not transfer_log:
         transfer_log = KudosTransferLog(
-            source_id = source_user.id
-            dest_id = dest_user.id
+            source_id = source_user.id,
+            dest_id = dest_user.id,
         )
         db.session.add(transfer_log)
     transfer_log.kudos += amount
