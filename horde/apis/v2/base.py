@@ -147,16 +147,14 @@ class GenerateTemplate(Resource):
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
             if self.args.apikey:
-                shared_key = database.find_sharedkey(self.args.apikey)
-                if shared_key:
-                    is_valid, error_msg = shared_key.is_valid()
+                self.sharedkey = database.find_sharedkey(self.args.apikey)
+                if self.sharedkey:
+                    is_valid, error_msg = self.sharedkey.is_valid()
                     if not is_valid:
                         raise e.Forbidden(error_msg)
-                    self.user = shared_key.user
-                    self.sharedkey = True
+                    self.user = self.sharedkey.user
                 if not self.user:
                     self.user = database.find_user_by_api_key(self.args.apikey)
-                    self.sharedkey = False
             #logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey('generation')

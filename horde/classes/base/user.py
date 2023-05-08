@@ -85,8 +85,6 @@ class UserSharedKey(db.Model):
         if self.kudos == 0:
             return
         if self.kudos != -1:      
-            if kudos > self.kudos:
-                kudos = self.kudos
             self.kudos = round(self.kudos - kudos, 2)
         self.utilized = round(self.utilized + kudos, 2)
         logger.debug(f"Utilized {kudos} from shared key {self.id}. {self.kudos} remaining.")
@@ -94,9 +92,9 @@ class UserSharedKey(db.Model):
 
     def is_valid(self):
         if self.kudos == 0:
-            return False,"This key has run out of kudos"
+            return False,"This shared key has run out of kudos."
         if self.expiry is not None and self.expiry < datetime.utcnow():
-            return False,"This key has expired"
+            return False,"This shared key has expired"
         else:
             return True, None
 
