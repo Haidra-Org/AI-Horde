@@ -24,3 +24,4 @@ boto3
 regex
 unidecode
 git+https://github.com/Patreon/patreon-python.git
+torch
