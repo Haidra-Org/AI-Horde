@@ -147,7 +147,16 @@ class GenerateTemplate(Resource):
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
             if self.args.apikey:
-                self.user = database.find_user_by_api_key(self.args['apikey'])
+                shared_key = database.find_sharedkey(self.args.apikey)
+                if shared_key:
+                    is_valid, error_msg = shared_key.is_valid()
+                    if not is_valid:
+                        raise e.Forbidden(error_msg)
+                    self.user = shared_key.user
+                    self.sharedkey = True
+                if not self.user:
+                    self.user = database.find_user_by_api_key(self.args.apikey)
+                    self.sharedkey = False
             #logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey('generation')
@@ -244,6 +253,7 @@ class GenerateTemplate(Resource):
             censor_nsfw = self.args.censor_nsfw,
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
+            sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -493,6 +503,7 @@ class TransferKudos(Resource):
     parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
+    decorators = [limiter.limit("3/second", key_func = get_request_path)]
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
     @api.response(400, 'Validation Error', models.response_model_error)

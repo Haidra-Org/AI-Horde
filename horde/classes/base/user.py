@@ -67,8 +67,8 @@ class UserSharedKey(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     expiry = db.Column(db.DateTime, index=True)
     name = db.Column(db.String(255), nullable=True)
+    utilized = db.Column(db.BigInteger, default=0, nullable=False)
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="sharedkey", passive_deletes=True, cascade="all, delete-orphan")
-
 
     @logger.catch(reraise=True)
     def get_details(self):
@@ -80,6 +80,24 @@ class UserSharedKey(db.Model):
         }
         return ret_dict
 
+    def consume_kudos(self, kudos):
+        if self.kudos == 0:
+            return
+        if self.kudos != -1:      
+            if kudos > self.kudos:
+                kudos = self.kudos
+            self.kudos = round(self.kudos - kudos, 2)
+        self.utilized = round(self.utilized + kudos, 2)
+        logger.debug(f"Utilized {kudos} from shared key {self.id}. {self.kudos} remaining.")
+        db.session.commit()
+
+    def is_valid(self):
+        if self.kudos == 0:
+            return False,"This key has run out of kudos"
+        if self.expiry < datetime.utcnow():
+            return False,"This key has expired"
+        else:
+            return True, None
 
 class User(db.Model):
     __tablename__ = "users"

@@ -298,6 +298,8 @@ class WaitingPrompt(db.Model):
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
+        if self.sharedkey_id is not None:
+            self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()

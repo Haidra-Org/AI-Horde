@@ -51,6 +51,7 @@ class TextAsyncGenerate(GenerateTemplate):
             ipaddr = self.user_ip,
             safe_ip=True,
             client_agent=self.args["Client-Agent"],
+            sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
         _, total_threads = database.count_active_workers("text")
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
