@@ -363,6 +363,7 @@ def transfer_kudos(source_user, dest_user, amount):
             dest_id = dest_user.id,
         )
         db.session.add(transfer_log)
+    logger.debug([transfer_log,transfer_log.kudos])
     transfer_log.kudos += amount
     db.session.commit()
     source_user.modify_kudos(-amount, 'gifted')
