@@ -23,7 +23,7 @@ class ImageWorker(Worker):
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
-        if kwargs.get("max_pixels", 512 * 512) > 2048 * 2048:
+        if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072:
             if not self.user.trusted:
                 self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
@@ -40,7 +40,7 @@ class ImageWorker(Worker):
         logger.trace(f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
-        return 50
+        return 50 + (len(self.get_model_names()) * 2)
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
