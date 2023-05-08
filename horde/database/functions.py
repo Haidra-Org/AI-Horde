@@ -353,21 +353,13 @@ def transfer_kudos(source_user, dest_user, amount):
     if amount > source_user.kudos - source_user.get_min_kudos():
         return([0,'Not enough kudos.'])
     hr.horde_r_setex(f'kudos_transfer_{source_user.id}-{dest_user.id}', timedelta(seconds=60), 1)
-    transfer_log = KudosTransferLog.query.filter_by(
+    transfer_log = KudosTransferLog(
         source_id = source_user.id,
         dest_id = dest_user.id,
-    ).first()
-    if not transfer_log:
-        transfer_log = KudosTransferLog(
-            source_id = source_user.id,
-            dest_id = dest_user.id,
-            kudos = amount,
-        )
-        db.session.add(transfer_log)
-        db.session.commit()
-    else:
-        transfer_log.kudos += amount
-        db.session.commit()
+        kudos = amount,
+    )
+    db.session.add(transfer_log)
+    db.session.commit()
     source_user.modify_kudos(-amount, 'gifted')
     dest_user.modify_kudos(amount, 'received')
     logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")

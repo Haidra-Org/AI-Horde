@@ -60,7 +60,8 @@ class UserRole(db.Model):
 
 class KudosTransferLog(db.Model):
     __tablename__ = "kudos_transfers"
-    __table_args__ = (UniqueConstraint('source_id', 'dest_id', name='source_dest'),)
+    # Decided to add one row per
+    # __table_args__ = (UniqueConstraint('source_id', 'dest_id', name='source_dest'),)
     id = db.Column(db.Integer, primary_key=True)
     source_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     dest_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
