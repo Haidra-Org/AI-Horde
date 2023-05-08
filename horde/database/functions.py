@@ -16,7 +16,7 @@ from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User, UserRecords, UserSharedKey
+from horde.classes.base.user import User, UserRecords, UserSharedKey, KudosTransferLog
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -353,6 +353,18 @@ def transfer_kudos(source_user, dest_user, amount):
     if amount > source_user.kudos - source_user.get_min_kudos():
         return([0,'Not enough kudos.'])
     hr.horde_r_setex(f'kudos_transfer_{source_user.id}-{dest_user.id}', timedelta(seconds=60), int(True))
+    transfer_log = KudosTransferLog.query.filter_by(
+        source_id = source_user.id
+        dest_id = dest_user.id
+    ).first()
+    if not transfer_log:
+        transfer_log = KudosTransferLog(
+            source_id = source_user.id
+            dest_id = dest_user.id
+        )
+        db.session.add(transfer_log)
+    transfer_log.kudos += amount
+    db.session.commit()
     source_user.modify_kudos(-amount, 'gifted')
     dest_user.modify_kudos(amount, 'received')
     logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
