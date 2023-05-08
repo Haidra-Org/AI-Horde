@@ -4,6 +4,14 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-09",
+            "newspiece": 
+                "A new feature appeared on the Horde. "
+                "You can now create [API keys you can share with others](https://dbzer0.com/blog/key-sharing/) to use your own priority.",
+            "tags": ["apikey", "shared key"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-05-05",
             "newspiece": 
                 "You can now run an AI Horde worker inside a docker container."

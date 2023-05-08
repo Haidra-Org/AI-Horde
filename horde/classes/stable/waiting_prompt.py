@@ -208,6 +208,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         kudos += horde_tax
         if not self.slow_workers:
             kudos = kudos * 1.2
+        if self.worker_blacklist:
+            kudos = kudos * 1.1
         super().record_usage(raw_things, kudos, usage_type)
 
     # We can calculate the kudos in advance as they model doesn't affect them
