@@ -77,6 +77,7 @@ class UserSharedKey(db.Model):
             "id": self.id,
             "kudos": self.kudos,
             "expiry": self.expiry,
+            "utilized": self.utilized,
         }
         return ret_dict
 

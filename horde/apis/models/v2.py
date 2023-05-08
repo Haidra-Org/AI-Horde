@@ -195,6 +195,7 @@ class Models:
             "username": fields.String(description="The owning user's unique Username. It is a combination of their chosen alias plus their ID."),
             "kudos": fields.Integer(description="The Kudos limit assigned to this key"),
             "expiry": fields.DateTime(dt_format='rfc822',description="The date at which this API key will expire."),
+            "utilized": fields.Integer(description="How mych kudos has been utilized via this shared key until now."),
         })
 
         #TODO: Obsolete
