@@ -1,0 +1,1 @@
+ALTER TABLE waiting_prompts ADD COLUMN sharedkey_id UUID;

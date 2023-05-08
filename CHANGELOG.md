@@ -1,5 +1,24 @@
 # Changelog
 
+# 4.12.0
+
+**Added Shared Keys**. Now each user can generate a number of shared keys which they can give to others to use.
+When using a shared key to generate, the request pretend act as if it was that user. 
+
+However shared keys cannot be used for any other purpose than generating, so they cannot be abused. They are thus meant to be a lower-security option for sharing one's priority, without having to transfer kudos all the time.
+
+Shared keys can be created with an optional limited amount of kudos to use, and/or an expiry date. 
+Regardless of what the shared key kudos limit is, the request will use the full kudos priority of its owner.
+
+New Endpoints:
+
+* /v2/sharedkeys PUT
+* /v2/sharedkeys GET/PATCH/DELETE
+
+Check api documentation for payloads required.
+
+* Shortened limiter for kudos transfers to avoid abuse
+
 # 4.11.2
 
 * Increased stipend for moderators
