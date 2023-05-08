@@ -54,7 +54,17 @@ class TextAsyncGenerate(GenerateTemplate):
             sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
         _, total_threads = database.count_active_workers("text")
-        required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
+        highest_multiplier = 0
+        if len(self.models) == 0:
+            required_kudos = 20 * self.wp.n
+        else:
+            # We find the highest multiplier to avoid someone gaming the system by requesting
+            # a small model along with a big model.
+            for model in self.models:
+                model_multiplier = model_reference.get_text_model_multiplier(model)
+                if model_multiplier > highest_multiplier:
+                    highest_multiplier = model_multiplier
+            required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
         if self.sharedkey and required_kudos > self.sharedkey.kudos:
             raise e.KudosUpfront(
                 required_kudos, 
@@ -63,16 +73,6 @@ class TextAsyncGenerate(GenerateTemplate):
             )
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
         if needs_kudos:
-            if len(self.models) == 0:
-                required_kudos = 20 * self.wp.n
-            else:
-                # We find the highest multiplier to avoid someone gaming the system by requesting
-                # a small model along with a big model.
-                highest_multiplier = 0
-                for model in self.models:
-                    model_multiplier = model_reference.get_text_model_multiplier(model)
-                    if model_multiplier > highest_multiplier:
-                        highest_multiplier = model_multiplier
             if required_kudos > self.user.kudos:
                 raise e.KudosUpfront(
                     required_kudos, 
