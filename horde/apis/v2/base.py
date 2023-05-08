@@ -100,7 +100,12 @@ locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 # Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
     # logger.info(dir(request))
-    return(f"{request.remote_addr}@{request.method}@{request.path}")
+    return f"{request.remote_addr}@{request.method}@{request.path}"
+
+def get_request_api_key():
+    apikey = hash_api_key(request.headers.get("apikey", 0000000000))
+    return f"{apikey}@{request.method}@{request.path}"
+
 
 def check_for_mod(api_key, operation, whitelisted_users = None):
     mod = database.find_user_by_api_key(api_key)
@@ -501,7 +506,7 @@ class TransferKudos(Resource):
     parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
-    decorators = [limiter.limit("1/second", key_func = get_request_path)]
+    decorators = [limiter.limit("1/second", key_func = get_request_api_key)]
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
     @api.response(400, 'Validation Error', models.response_model_error)
