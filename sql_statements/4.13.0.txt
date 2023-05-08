@@ -1,0 +1,1 @@
+ALTER TABLE waiting_prompts ADD COLUMN worker_blacklist bool default false not null;
