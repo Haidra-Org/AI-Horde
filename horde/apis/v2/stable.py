@@ -145,11 +145,18 @@ class ImageAsyncGenerate(GenerateTemplate):
             r2=self.args.r2,
             shared=shared,
             client_agent=self.args["Client-Agent"],
+            sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
         _, total_threads = database.count_active_workers("image")
+        required_kudos = self.wp.kudos * self.wp.n
+        if self.sharedkey and required_kudos > self.sharedkey.kudos:
+            raise e.KudosUpfront(
+                required_kudos, 
+                self.username, 
+                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfill this reques ({required_kudos})."
+            )
         needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
         if needs_kudos:
-            required_kudos = self.wp.kudos * self.wp.n
             if required_kudos > self.user.kudos:
                 raise e.KudosUpfront(
                     required_kudos, 

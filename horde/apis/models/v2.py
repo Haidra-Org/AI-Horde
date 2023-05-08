@@ -183,6 +183,21 @@ class Models:
             "awarded": fields.Float(default=0,description="The amount of Kudos this user has been awarded from things like rating images."),
         })
 
+
+        self.input_model_sharedkey = api.model('SharedKeyInput', {
+            "kudos": fields.Integer(min=-1, max=50000000, default=5000, required=False, description="The Kudos limit assigned to this key. If -1, then anyone with this key can use an unlimited amount of kudos from this account."),
+            "expiry": fields.Integer(min=-1, default=-1, example=30, required=False, description="The amount of days after which this key will expire. If -1, this key will not expire"),
+            "name": fields.String(min_length=3, max_length=255, required=False, example="Mutual Aid", description="A descriptive name for this key"),
+        })
+
+        self.response_model_sharedkey_details = api.model('SharedKeyDetails', {
+            "id": fields.String(description="The SharedKey ID"),
+            "username": fields.String(description="The owning user's unique Username. It is a combination of their chosen alias plus their ID."),
+            "kudos": fields.Integer(description="The Kudos limit assigned to this key"),
+            "expiry": fields.DateTime(dt_format='rfc822',description="The date at which this API key will expire."),
+            "utilized": fields.Integer(description="How mych kudos has been utilized via this shared key until now."),
+        })
+
         #TODO: Obsolete
         self.response_model_contrib_details = api.model('ContributionsDetails', {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
@@ -227,7 +242,8 @@ class Models:
             "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
             "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
-            "worker_ids": fields.List(fields.String(description="Privileged or public when the user has explicitly allows it to be public.")),
+            "worker_ids": fields.List(fields.String(description="Privileged or public when the user has explicitly allows it to be public.", example="00000000-0000-0000-0000-000000000000")),
+            "sharedkey_ids": fields.List(fields.String(description="(Privileged) The list of shared key IDs created by this user.", example="00000000-0000-0000-0000-000000000000")),
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
             "flagged": fields.Boolean(example=False,description="This user has been flagged for suspicious activity."),

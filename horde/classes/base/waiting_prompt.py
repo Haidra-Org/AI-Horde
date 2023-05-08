@@ -8,7 +8,7 @@ from sqlalchemy import JSON, func, or_
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
-from horde.utils import is_profane, get_db_uuid, get_expiry_date, get_db_uuid
+from horde.utils import is_profane, get_db_uuid, get_expiry_date
 
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -82,6 +82,8 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
+    sharedkey_id = db.Column(uuid_column_type(), db.ForeignKey("user_sharedkeys.id", ondelete="CASCADE"), nullable=True)
+    sharedkey = db.relationship("UserSharedKey", back_populates="waiting_prompts")
 
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
@@ -296,6 +298,8 @@ class WaitingPrompt(db.Model):
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
+        if self.sharedkey_id is not None:
+            self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()

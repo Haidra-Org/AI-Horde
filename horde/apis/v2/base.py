@@ -17,7 +17,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.argparser import args
 from horde import exceptions as e
-from horde.classes.base.user import User
+from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker
 import horde.classes.base.stats as stats
@@ -147,7 +147,14 @@ class GenerateTemplate(Resource):
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
             if self.args.apikey:
-                self.user = database.find_user_by_api_key(self.args['apikey'])
+                self.sharedkey = database.find_sharedkey(self.args.apikey)
+                if self.sharedkey:
+                    is_valid, error_msg = self.sharedkey.is_valid()
+                    if not is_valid:
+                        raise e.Forbidden(error_msg)
+                    self.user = self.sharedkey.user
+                if not self.user:
+                    self.user = database.find_user_by_api_key(self.args.apikey)
             #logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey('generation')
@@ -244,6 +251,7 @@ class GenerateTemplate(Resource):
             censor_nsfw = self.args.censor_nsfw,
             trusted_workers = self.args.trusted_workers,
             ipaddr = self.user_ip,
+            sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
     
     # We split this into its own function, so that it may be overriden and extended
@@ -493,6 +501,7 @@ class TransferKudos(Resource):
     parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
     parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
 
+    decorators = [limiter.limit("3/second", key_func = get_request_path)]
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
     @api.response(400, 'Validation Error', models.response_model_error)
@@ -1004,10 +1013,22 @@ class FindUser(Resource):
         if cached_user:
             user_details = json.loads(cached_user)
         else:
-            user = database.find_user_by_api_key(self.args.apikey)
+            user = database.find_user_by_sharedkey(self.args.apikey)
+            sharedkey = True
+            privilege = 0
+            if not user:
+                user = database.find_user_by_api_key(self.args.apikey)
+                sharedkey = False
+                privilege = 1
             if not user:
                 raise e.UserNotFound(self.args.apikey, 'api_key')
-            user_details = user.get_details(1)
+            user_details = user.get_details(privilege)
+            if sharedkey:
+                sk = database.find_sharedkey(self.args.apikey)
+                skname = ''
+                if sk.name is not None:
+                    skname = f": {sk.name}"
+                user_details["username"] = user_details["username"] + f" (Shared Key{skname})"
             if hr.horde_r:
                 hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
         return(user_details,200)
@@ -1580,4 +1601,124 @@ class Heartbeat(Resource):
             'message': 'OK',
             'version': HORDE_VERSION,
         },200
-        
+
+
+class SharedKey(Resource):
+    put_parser = reqparse.RequestParser()
+    put_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
+    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key", location="json")
+    put_parser.add_argument("expiry", type=int, required=False, default=-1, help="The amount of days which this key will stay active.", location="json")
+    put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
+
+    decorators = [limiter.limit("5/minute", key_func = get_request_path)]
+    @api.expect(put_parser, models.input_model_sharedkey)
+    @api.marshal_with(models.response_model_sharedkey_details, code=200, description='SharedKey Details', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Shared Key Not Found', models.response_model_error)
+    def put(self):
+        '''Create a new SharedKey for this user
+        '''
+        self.args = self.put_parser.parse_args()
+        user: User = database.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.InvalidAPIKey("get sharedkey")
+        if user.is_anon():
+            raise e.AnonForbidden
+        if user.count_sharedkeys() > user.max_sharedkeys():
+            raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
+        expiry = None
+        if self.args.expiry and self.args.expiry != -1:
+            expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
+        new_key = UserSharedKey(
+            user_id = user.id,
+            kudos = self.args.kudos,
+            expiry = expiry,
+            name = self.args.name,
+        )
+        db.session.add(new_key)
+        db.session.commit()
+        return new_key.get_details(),200
+
+
+class SharedKeySingle(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @cache.cached(timeout=60)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
+    @api.response(404, 'Shared Key Not Found', models.response_model_error)
+    def get(self, sharedkey_id=''):
+        '''Get details about an existing Shared Key for this user
+        '''
+        self.args = self.get_parser.parse_args()
+        sharedkey = database.find_sharedkey(sharedkey_id)
+        if not sharedkey:
+            raise e.InvalidAPIKey("get sharedkey", keytype="Shared")
+        return sharedkey.get_details(),200
+
+    patch_parser = reqparse.RequestParser()
+    patch_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
+    patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    patch_parser.add_argument("kudos", type=int, required=False, help="The amount of kudos limit available to this key", location="json")
+    patch_parser.add_argument("expiry", type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
+    patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
+
+    @api.expect(patch_parser, models.input_model_sharedkey)
+    @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    @api.response(404, 'Shared Key Not Found', models.response_model_error)
+    def patch(self, sharedkey_id=''):
+        '''Modify an existing Shared Key
+        '''
+        self.args = self.patch_parser.parse_args()
+        sharedkey = database.find_sharedkey(sharedkey_id)
+        if not sharedkey:
+            raise e.InvalidAPIKey("Shared Key Not Found.", keytype="Shared")
+        user = database.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.InvalidAPIKey("patch sharedkey")
+        if sharedkey.user_id != user.id:
+            raise e.Forbidden(f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.")
+        if not self.args.expiry and not self.args.kudos and not self.arg.name:
+            raise e.NoValidActions("No shared key modification selected!")
+        if self.args.expiry is not None:
+            if self.args.expiry == -1:
+                sharedkey.expiry = None
+            else:
+                sharedkey.expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
+        if self.args.kudos is not None:
+            sharedkey.kudos = self.args.kudos
+        if self.args.name is not None:
+            sharedkey.name = self.args.name
+        db.session.commit()
+        return sharedkey.get_details(),200
+
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @api.expect(delete_parser)
+    @api.marshal_with(models.response_model_simple_response, code=200, description='Shared Key Deleted')
+    @api.response(404, 'Shared Key Not Found', models.response_model_error)
+    def delete(self, sharedkey_id=''):
+        '''Delete an existing SharedKey for this user
+        '''
+        self.args = self.delete_parser.parse_args()
+        sharedkey = database.find_sharedkey(sharedkey_id)
+        if not sharedkey:
+            raise e.InvalidAPIKey("Shared Key Not Found.", keytype="Shared")
+        user = database.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.InvalidAPIKey("delete sharedkey")
+        if sharedkey.user_id != user.id:
+            raise e.Forbidden(f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.")
+        db.session.delete(sharedkey)
+        db.session.commit()
+        return {"message": "OK"},200
+

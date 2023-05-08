@@ -16,7 +16,7 @@ from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User, UserRecords
+from horde.classes.base.user import User, UserRecords, UserSharedKey
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -174,6 +174,38 @@ def find_user_by_api_key(api_key):
         return(None)
     user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
     return user
+
+def find_user_by_sharedkey(shared_key):
+    try:
+        sharedkey_uuid = uuid.UUID(shared_key)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID sharedkey_id sent: '{shared_key}'.")
+        return None        
+    if SQLITE_MODE:
+        sharedkey_uuid = str(sharedkey_uuid)
+    user = db.session.query(
+        User
+    ).join(
+        UserSharedKey
+    ).filter(
+        UserSharedKey.id == shared_key
+    ).first()
+    return user
+
+def find_sharedkey(shared_key):
+    try:
+        sharedkey_uuid = uuid.UUID(shared_key)
+    except ValueError as e: 
+        logger.debug(f"Non-UUID sharedkey_id sent: '{shared_key}'.")
+        return None        
+    if SQLITE_MODE:
+        sharedkey_uuid = str(sharedkey_uuid)
+    sharedkey = db.session.query(
+        UserSharedKey
+    ).filter(
+        UserSharedKey.id == shared_key
+    ).first()
+    return sharedkey
 
 def find_worker_by_name(worker_name, worker_class=ImageWorker):
     worker = db.session.query(worker_class).filter_by(name=worker_name).first()
