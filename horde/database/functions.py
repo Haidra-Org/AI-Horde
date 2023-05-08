@@ -16,7 +16,7 @@ from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User, UserRecords, UserSharedKey
+from horde.classes.base.user import User, UserRecords, UserSharedKey, KudosTransferLog
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -338,7 +338,7 @@ def retrieve_available_models(model_type=None,min_count=None,max_count=None):
 
 def transfer_kudos(source_user, dest_user, amount):
     reverse_transfer = hr.horde_r_get(f'kudos_transfer_{dest_user.id}-{source_user.id}')
-    if bool(int(reverse_transfer)):
+    if reverse_transfer:
         return([0,'This user transferred kudos to you very recently. Please wait at least 1 minute.'])
     if source_user.is_suspicious():
         return([0,'Something went wrong when sending kudos. Please contact the mods.'])
@@ -352,7 +352,14 @@ def transfer_kudos(source_user, dest_user, amount):
         return([0,'Nice try...'])
     if amount > source_user.kudos - source_user.get_min_kudos():
         return([0,'Not enough kudos.'])
-    hr.horde_r_setex(f'kudos_transfer_{source_user.id}-{dest_user.id}', timedelta(seconds=60), int(True))
+    hr.horde_r_setex(f'kudos_transfer_{source_user.id}-{dest_user.id}', timedelta(seconds=60), 1)
+    transfer_log = KudosTransferLog(
+        source_id = source_user.id,
+        dest_id = dest_user.id,
+        kudos = amount,
+    )
+    db.session.add(transfer_log)
+    db.session.commit()
     source_user.modify_kudos(-amount, 'gifted')
     dest_user.modify_kudos(amount, 'received')
     logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")

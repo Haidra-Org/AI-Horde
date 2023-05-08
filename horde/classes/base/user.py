@@ -58,6 +58,16 @@ class UserRole(db.Model):
     user_role = db.Column(Enum(UserRoleTypes), nullable=False)
     value = db.Column(db.Boolean, default=False, nullable=False)
 
+class KudosTransferLog(db.Model):
+    __tablename__ = "kudos_transfers"
+    # Decided to add one row per
+    # __table_args__ = (UniqueConstraint('source_id', 'dest_id', name='source_dest'),)
+    id = db.Column(db.Integer, primary_key=True)
+    source_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    dest_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kudos = db.Column(db.BigInteger, default=0, nullable=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
 class UserSharedKey(db.Model):
     __tablename__ = "user_sharedkeys"
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)

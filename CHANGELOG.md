@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.12.1
+
+* Limited kudos transfers to 1/sec to prevent race condition abuse
+* Added KudosTransferLog ORM class to help me catch abusers.
+
 # 4.12.0
 
 **Added Shared Keys**. Now each user can generate a number of shared keys which they can give to others to use.
