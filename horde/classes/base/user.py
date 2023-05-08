@@ -96,6 +96,8 @@ class UserSharedKey(db.Model):
             return
         if self.kudos != -1:      
             self.kudos = round(self.kudos - kudos, 2)
+            if self.kudos < 0:
+                self.kudos = 0
         self.utilized = round(self.utilized + kudos, 2)
         logger.debug(f"Utilized {kudos} from shared key {self.id}. {self.kudos} remaining.")
         db.session.commit()

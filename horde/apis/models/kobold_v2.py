@@ -75,6 +75,7 @@ class TextModels(v2.Models):
             'trusted_workers': fields.Boolean(default=False,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'slow_workers': fields.Boolean(default=True,description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
             'workers': fields.List(fields.String(description="Specify up to 5 workers which are allowed to service this request")),
+            'worker_blacklist': fields.Boolean(default=False,required=False,description="If true, the worker list will be treated as a blacklist instead of a whitelist."),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsKobold', self.response_model_contrib_details, {

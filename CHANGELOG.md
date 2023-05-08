@@ -1,5 +1,14 @@
 # Changelog
 
+# 4.13.0
+
+* Can now specify that the worker array in your generation request should act as a worker blacklist, instead of a whitelist.
+
+   When doing so, the generation consumes 10% more kudos as it causes suboptimal use of Horde resources.
+
+* Prevented shared key kudos going negative
+* Allow PATCH calls from UIs
+
 # 4.12.1
 
 * Limited kudos transfers to 1/sec to prevent race condition abuse

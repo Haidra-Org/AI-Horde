@@ -247,14 +247,15 @@ class GenerateTemplate(Resource):
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
-            self.workers,
-            self.models,
+            worker_ids = self.workers,
+            models = self.models,
             prompt = self.args["prompt"],
             user_id = self.user.id,
             params = self.params,
             nsfw = self.args.nsfw,
             censor_nsfw = self.args.censor_nsfw,
             trusted_workers = self.args.trusted_workers,
+            worker_blacklist = self.args.worker_blacklist,
             ipaddr = self.user_ip,
             sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
