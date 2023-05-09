@@ -24,4 +24,4 @@ boto3
 regex
 unidecode
 git+https://github.com/Patreon/patreon-python.git
-torch
+torch --index-url https://download.pytorch.org/whl/cpu
