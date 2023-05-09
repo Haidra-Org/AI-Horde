@@ -214,8 +214,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             kudos = kudos * 1.1
         return kudos
 
-    def record_usage(self, raw_things, kudos, usage_type = "image"):
-        super().record_usage(raw_things, kudos, usage_type)
+    def record_usage(self, **kwargs):
+        super().record_usage(**kwargs)
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self):
