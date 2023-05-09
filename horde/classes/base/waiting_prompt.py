@@ -135,7 +135,7 @@ class WaitingPrompt(db.Model):
         # and rewarding requests which bundle multiple jobs into the same payload
         # Instead of splitting them into multiples.
         horde_tax = 2
-        self.record_usage(0,horde_tax,self.wp_type)
+        self.record_usage(0, horde_tax, self.wp_type)
         logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
 
