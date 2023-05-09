@@ -33,7 +33,14 @@ class TextAsyncGenerate(GenerateTemplate):
             logger.error(self.args)
             logger.error(self.args.params)
             return {"message": "Internal Server Error"},500
-        ret_dict = {"id":self.wp.id}
+        if self.args.dry_run:
+            ret_dict = {"kudos":self.kudos}
+            self.wp.delete()
+            return ret_dict, 200
+        ret_dict = {
+            "id":self.wp.id,
+            "kudos":self.kudos,
+        }
         if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict['message'] = self.get_size_too_big_message()
         return(ret_dict, 202)

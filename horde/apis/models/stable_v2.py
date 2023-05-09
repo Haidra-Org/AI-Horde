@@ -117,6 +117,7 @@ class ImageModels(v2.Models):
             'r2': fields.Boolean(default=True, description="If True, the image will be sent via cloudflare r2 download link"),
             'shared': fields.Boolean(default=False, description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True."),
             'replacement_filter': fields.Boolean(default=True,description="If enabled, suspicious prompts are sanitized through a string replacement filter instead."),
+            'dry_run': fields.Boolean(default=False,description="When false, the endpoint will simply return the cost of the request in kudos and exit."),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),

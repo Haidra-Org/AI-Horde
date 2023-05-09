@@ -191,7 +191,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([s,n])
         return n
 
-    def record_usage(self, raw_things, kudos, usage_type = "image"):
+    def calculate_extra_kudos_burn(self, kudos):
         '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
         img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
         Also extra cost when upscaling
@@ -212,7 +212,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             kudos = kudos * 1.2
         if self.worker_blacklist:
             kudos = kudos * 1.1
-        super().record_usage(raw_things, kudos, usage_type)
+        return kudos
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self, params):
@@ -250,6 +250,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             logger.warning(f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}")
 
         db.session.commit()
+        return self.kudos
 
 
     def require_upfront_kudos(self, counted_totals, total_threads):

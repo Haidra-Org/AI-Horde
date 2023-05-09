@@ -142,6 +142,9 @@ class GenerateTemplate(Resource):
         #logger.warning(datetime.utcnow())
         self.initiate_waiting_prompt()
         #logger.warning(datetime.utcnow())
+        self.kudos = self.wp.extrapolate_dry_run_kudos()
+        if self.args.dry_run:
+            return
         self.activate_waiting_prompt()
         #logger.warning(datetime.utcnow())
 

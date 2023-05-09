@@ -302,17 +302,34 @@ class WaitingPrompt(db.Model):
         ret_dict = self.get_status(lite=True, **kwargs)
         return(ret_dict)
 
+    # This should be overriden by each extending class
+    def calculate_kudos(self):
+        '''Returns the expected kudos a worker will receive for this request'''
+        # Dummy ammount
+        return 10
+
+    def calculate_extra_kudos_burn(self, kudos):
+        '''Extend this function to add extra kudos burn for the particular use
+        Which represents the cost of each job to the horde infrastructure
+        '''
+        return kudos
+
     def record_usage(self, raw_things, kudos, usage_type):
         '''Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
+        kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()
 
+    def extrapolate_dry_run_kudos(self):
+        kudos = self.calculate_kudos()
+        return self.calculate_extra_kudos_burn(kudos)
+    
     def log_faulted_prompt(self):
         '''Extendable function to log why a request was aborted'''
         logger.warning(f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
