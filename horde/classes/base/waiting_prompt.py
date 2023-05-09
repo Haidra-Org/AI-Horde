@@ -328,7 +328,7 @@ class WaitingPrompt(db.Model):
 
     def extrapolate_dry_run_kudos(self):
         kudos = self.calculate_kudos()
-        return self.calculate_extra_kudos_burn(kudos)
+        return self.calculate_extra_kudos_burn(kudos) * self.n
     
     def log_faulted_prompt(self):
         '''Extendable function to log why a request was aborted'''

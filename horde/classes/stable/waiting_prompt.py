@@ -77,7 +77,6 @@ class ImageWaitingPrompt(WaitingPrompt):
         self.things = self.width * self.height * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / hv.thing_divisors["image"],2)
         self.prepare_job_payload(self.params)
-        self.calculate_kudos(self.params)
         self.set_job_ttl()
         # Commit will happen in prepare_job_payload()
 
@@ -174,6 +173,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         prompt_type = "txt2img"
         if self.source_image:
             prompt_type = self.source_processing
+        self.calculate_kudos()
         logger.info(
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): "
             f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
@@ -215,7 +215,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         return kudos
 
     # We can calculate the kudos in advance as they model doesn't affect them
-    def calculate_kudos(self, params):
+    def calculate_kudos(self):
 
         #
         # Legacy calculation
@@ -240,7 +240,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         #        
         kudos_model = KudosModel()
         try:
-            self.kudos = kudos_model.calculate_kudos(params)
+            self.kudos = kudos_model.calculate_kudos(self.params)
         except Exception as e:
             logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
             self.kudos = legacy_kudos_cost

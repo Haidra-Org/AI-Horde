@@ -81,10 +81,12 @@ class TextWaitingPrompt(WaitingPrompt):
             return (True,max_tokens)
         return (False,max_tokens)
 
-    def calculate_kudos(self, model_name = None):
+    def calculate_kudos(self):
         # Slimmed down version of procgen.get_gen_kudos()
         # As we don't know the worker's trusted status.
         # It exists here in order to allow us to calculate dry_runs
-        if not model_reference.is_known_text_model(self.model):
+        if len(self.models) > 0:
+            model_name = self.models[0]
+        if not model_reference.is_known_text_model(model_name):
             return self.wp.max_length * 0.12
-        return round(self.wp.max_length * model_reference.get_text_model_multiplier(self.model) / 21, 2)    
+        return round(self.wp.max_length * model_reference.get_text_model_multiplier(model_name) / 21, 2)    
