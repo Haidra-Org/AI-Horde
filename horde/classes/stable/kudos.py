@@ -92,8 +92,8 @@ class KudosModel:
         "txt2img",
     ]
 
-    _instance = None
-    """Static singleton instance"""
+    _model = None
+    """Static singleton instance to copy from, preventing having to load from disk each time."""
 
     model =  None
     """Instance copy - use this"""
@@ -108,12 +108,10 @@ class KudosModel:
         KudosModel.KNOWN_CONTROL_TYPES.sort()
         KudosModel.KNOWN_SOURCE_PROCESSING.sort()
 
-        if cls._instance:
-            return cls._instance
-        cls._instance = super().__new__(cls)
-
-        cls.model = cls.load_model(cls)
-        return cls._instance
+        if not cls._model:
+            cls._model = cls.load_model(cls)
+        
+        return super().__new__(cls)
 
     def __init__(self):
         self.model = KudosModel.copy_model()                
@@ -205,22 +203,23 @@ class KudosModel:
         )
 
     def load_model(self, model_filename: str | None = None):
-        if self.model:
-            return self.model
-
-        if not model_filename:
+        """Load the target model, or the default model if none is specified. 
+        If `self.model` is defined, it will be returned instead. """
+        if not model_filename and not self.model:
             model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v20-66.ckpt").resolve())
             logger.warning(f"Loading default kudos model {model_filename}")
 
+        if self.model:
+            return self.model
+        
         with open(model_filename, "rb") as infile:
-            self.model = pickle.load(infile)
+            model = pickle.load(infile)
 
-        return self.model
+        return model
 
     @classmethod 
-    def copy_model(cls):
-        KudosModel.load_model(cls)
-        return copy.deepcopy(cls.model)
+    def copy_model(cls):        
+        return copy.deepcopy(cls._model)
 
     # Pass in a horde payload, get back a predicted time in seconds
     def payload_to_time(self, payload):    
