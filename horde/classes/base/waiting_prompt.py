@@ -135,7 +135,12 @@ class WaitingPrompt(db.Model):
         # and rewarding requests which bundle multiple jobs into the same payload
         # Instead of splitting them into multiples.
         horde_tax = 2
-        self.record_usage(0, horde_tax, self.wp_type)
+        self.record_usage(
+            raw_things = 0, 
+            kudos = horde_tax, 
+            usage_type = self.wp_type, 
+            avoid_burn = True
+        )
         logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
 
@@ -314,12 +319,13 @@ class WaitingPrompt(db.Model):
         '''
         return kudos
 
-    def record_usage(self, raw_things, kudos, usage_type):
+    def record_usage(self, raw_things, kudos, usage_type, avoid_burn = False):
         '''Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
-        kudos = self.calculate_extra_kudos_burn(kudos)
+        if not avoid_burn:
+            kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
