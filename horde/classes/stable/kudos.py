@@ -202,7 +202,7 @@ class KudosModel:
             dim=1,
         )
 
-    def load_model(self, model_filename: str | None = None):
+    def load_model(self, model_filename):
         """Load the target model, or the default model if none is specified. 
         If `self.model` is defined, it will be returned instead. """
         if not model_filename and not self.model:
