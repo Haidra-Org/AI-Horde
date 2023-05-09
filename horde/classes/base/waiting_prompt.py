@@ -326,6 +326,7 @@ class WaitingPrompt(db.Model):
         '''
         if not avoid_burn:
             kudos = self.calculate_extra_kudos_burn(kudos)
+        logger.debug(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
