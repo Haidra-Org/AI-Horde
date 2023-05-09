@@ -131,6 +131,12 @@ class WaitingPrompt(db.Model):
             self.extra_priority = round(self.user.kudos / 100) 
         else:    
             self.extra_priority = self.user.kudos
+        # This is an extra cost for the operation as a whole, to represent the infrastructure costs
+        # and rewarding requests which bundle multiple jobs into the same payload
+        # Instead of splitting them into multiples.
+        horde_tax = 2
+        self.record_usage(0,horde_tax,self.wp_type)
+        logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
 
     def get_model_names(self):
