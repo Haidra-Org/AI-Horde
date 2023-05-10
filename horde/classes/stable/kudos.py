@@ -177,20 +177,20 @@ class KudosModel:
                 payload["steps"] / 100, # Name doesn't match worker side (ddim_steps vs steps)
                 payload["cfg_scale"] / 30,
                 payload.get("denoising_strength", 1.0) if payload.get("source_image", False) else 1.0,
-                payload.get("control_strength", payload.get("denoising_strength", 1.0)) if payload.get("source_image", False) else 1.0,
+                payload.get("control_strength", payload.get("denoising_strength", 1.0)) if (payload.get("source_image", False) and payload.get("control_type", None)) else 1.0,
                 1.0 if payload["karras"] else 0.0,
                 1.0 if payload.get("hires_fix", False) else 0.0,
                 1.0 if payload.get("source_image", False) else 0.0,
                 1.0 if payload.get("source_mask", False) else 0.0,
             ],
         )
-        logger.debug(data)
         data_samplers.append(
             payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
         )
         data_control_types.append(payload.get("control_type", "None"))
         data_source_processing_types.append(payload.get("source_processing", "txt2img"))
         data_post_processors = payload.get("post_processing", [])[:]
+        logger.debug(data)
 
         _data_floats = torch.tensor(data).float()
         _data_samplers = cls.one_hot_encode(data_samplers, KudosModel.KNOWN_SAMPLERS)
