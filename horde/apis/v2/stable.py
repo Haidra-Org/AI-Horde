@@ -179,7 +179,7 @@ class ImageAsyncGenerate(GenerateTemplate):
     def extrapolate_dry_run_kudos(self):
         source_processing = self.args.source_processing
         if not self.args.source_image:
-            source_processing = "text2img"
+            source_processing = "txt2img"
         self.wp.source_processing = source_processing
         return super().extrapolate_dry_run_kudos()
 
