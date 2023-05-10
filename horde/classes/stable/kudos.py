@@ -120,7 +120,7 @@ class KudosModel:
 
     # Payload to kudos    
     def calculate_kudos(self, payload, basis_adjustment=1, basis_scale=1):
-        logger.debug(payload)
+        # logger.debug(payload)
         # basis_adjustment is a critical value in tuning this function.
         if not self.model:
             raise Exception("No kudos model loaded")
@@ -204,7 +204,7 @@ class KudosModel:
         data_control_types.append(payload.get("control_type", "None"))
         data_source_processing_types.append(payload.get("source_processing", "txt2img"))
         data_post_processors = payload.get("post_processing", [])[:]
-        logger.debug([data,data_control_types,data_source_processing_types,data_post_processors])
+        # logger.debug([data,data_control_types,data_source_processing_types,data_post_processors])
 
         _data_floats = torch.tensor(data).float()
         _data_samplers = cls.one_hot_encode(data_samplers, KudosModel.KNOWN_SAMPLERS)
