@@ -176,8 +176,8 @@ class KudosModel:
                 payload["width"] / 1024,
                 payload["steps"] / 100, # Name doesn't match worker side (ddim_steps vs steps)
                 payload["cfg_scale"] / 30,
-                payload.get("denoising_strength", 1.0),
-                payload.get("control_strength", payload.get("denoising_strength", 1.0)),
+                payload.get("denoising_strength", 1.0) if payload.get("source_image", False) else 1.0,
+                payload.get("control_strength", payload.get("denoising_strength", 1.0)) if payload.get("source_image", False) else 1.0,
                 1.0 if payload["karras"] else 0.0,
                 1.0 if payload.get("hires_fix", False) else 0.0,
                 1.0 if payload.get("source_image", False) else 0.0,
