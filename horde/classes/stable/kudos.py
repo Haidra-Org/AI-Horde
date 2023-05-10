@@ -184,6 +184,7 @@ class KudosModel:
                 1.0 if payload.get("source_mask", False) else 0.0,
             ],
         )
+        logger.debug(data)
         data_samplers.append(
             payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
         )
