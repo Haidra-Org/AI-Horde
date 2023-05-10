@@ -207,7 +207,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             horde_tax = 1
         if kudos < 10:
             horde_tax -= 1
-        logger.debug(horde_tax)
+        logger.debug(self.shared)
         kudos += horde_tax
         if not self.slow_workers:
             kudos = kudos * 1.2

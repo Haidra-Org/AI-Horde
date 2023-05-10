@@ -156,6 +156,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             sharedkey_id = self.args.apikey if self.sharedkey else None,
         )
         _, total_threads = database.count_active_workers("image")
+        logger.debug(self.wp.shared)
         required_kudos = self.wp.kudos * self.wp.n
         if self.sharedkey and required_kudos > self.sharedkey.kudos:
             raise e.KudosUpfront(
