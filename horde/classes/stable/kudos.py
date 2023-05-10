@@ -120,6 +120,7 @@ class KudosModel:
 
     # Payload to kudos    
     def calculate_kudos(self, payload, basis_adjustment=2.5, basis_scale=1):
+        logger.debug(payload)
         # basis_adjustment is a critical value in tuning this function.
         if not self.model:
             raise Exception("No kudos model loaded")

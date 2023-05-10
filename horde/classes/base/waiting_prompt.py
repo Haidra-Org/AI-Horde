@@ -141,7 +141,7 @@ class WaitingPrompt(db.Model):
             usage_type = self.wp_type, 
             avoid_burn = True
         )
-        logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
+        # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
 
     def get_model_names(self):
@@ -326,7 +326,6 @@ class WaitingPrompt(db.Model):
         '''
         if not avoid_burn:
             kudos = self.calculate_extra_kudos_burn(kudos)
-        logger.debug(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
