@@ -207,13 +207,12 @@ class ImageWaitingPrompt(WaitingPrompt):
             horde_tax = 1
         if kudos < 10:
             horde_tax -= 1
-        logger.debug(self.shared)
+        horde_tax = 1 # FIXME: hlky meltdown disabled sharing
         kudos += horde_tax
         if not self.slow_workers:
             kudos = kudos * 1.2
         if self.worker_blacklist:
             kudos = kudos * 1.1
-        logger.debug(kudos)
         return kudos
 
     def record_usage(self, **kwargs):
