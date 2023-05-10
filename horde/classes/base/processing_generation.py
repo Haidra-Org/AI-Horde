@@ -79,7 +79,7 @@ class ProcessingGeneration(db.Model):
         self.cancelled = True
         self.record(things_per_sec,kudos)
         db.session.commit()
-        return(kudos)
+        return(kudos * self.worker.get_bridge_kudos_multiplier())
     
     def record(self, things_per_sec, kudos):
         cancel_txt = ""

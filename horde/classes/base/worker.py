@@ -273,11 +273,16 @@ class WorkerTemplate(db.Model):
         # We reurn the converted amount as well in case we need it
         return(converted)
 
+    def get_bridge_kudos_multiplier(self):
+        '''To override in case we want to adjust the worker reward based on their bridge version'''
+        return 1
+
     @logger.catch(reraise=True)
     def record_contribution(self, raw_things, kudos, things_per_sec):
         '''We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         '''
+        kudos = kudos * self.get_bridge_kudos_multiplier()
         self.user.record_contributions(raw_things = raw_things, kudos = kudos, contrib_type = self.wtype)
         self.modify_kudos(kudos,'generated')
         converted_amount = self.convert_contribution(raw_things)
@@ -586,4 +591,3 @@ class Worker(WorkerTemplate):
         for model in self.models:
             db.session.delete(model)
         super().delete()
-
