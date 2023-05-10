@@ -243,7 +243,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         #        
         kudos_model = KudosModel()
         try:
-            self.kudos = kudos_model.calculate_kudos(self.params)
+            model_params = self.params.copy()
+            # That's normally not in the params
+            model_params["source_processing"] = self.source_processing
+            self.kudos = kudos_model.calculate_kudos(model_params)
         except Exception as e:
             logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
             self.kudos = legacy_kudos_cost
