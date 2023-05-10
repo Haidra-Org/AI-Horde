@@ -190,7 +190,7 @@ class KudosModel:
         data_control_types.append(payload.get("control_type", "None"))
         data_source_processing_types.append(payload.get("source_processing", "txt2img"))
         data_post_processors = payload.get("post_processing", [])[:]
-        logger.debug(data)
+        logger.debug([data,data_control_types,data_source_processing_types,data_post_processors])
 
         _data_floats = torch.tensor(data).float()
         _data_samplers = cls.one_hot_encode(data_samplers, KudosModel.KNOWN_SAMPLERS)
