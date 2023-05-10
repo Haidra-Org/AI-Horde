@@ -174,15 +174,14 @@ class KudosModel:
         denoising_strength = 1.0
         control_strength = 1.0
 
-        if payload.get("source_image", None):
-            denoising_strength = payload.get("denoising_strength", 1.0)
-        
         has_source_image = bool(payload.get("source_image", None))
         has_control_type = bool(payload.get("control_type", None))
 
-        if has_source_image and has_control_type:
-            control_strength = payload.get("control_strength", payload.get("denoising_strength", 1.0))
-            denoising_strength = 1.0
+        if has_source_image:
+            denoising_strength = payload.get("denoising_strength", 1.0)        
+            if has_control_type:
+                control_strength = payload.get("control_strength", payload.get("denoising_strength", 1.0))
+                denoising_strength = 1.0
 
         data.append(
             [
