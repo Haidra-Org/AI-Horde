@@ -170,20 +170,35 @@ class KudosModel:
         data_control_types = []
         data_source_processing_types = []
         data_post_processors = []
+
+        denoising_strength = 1.0
+        control_strength = 1.0
+
+        if payload.get("source_image", None):
+            denoising_strength = payload.get("denoising_strength", 1.0)
+        
+        has_source_image = bool(payload.get("source_image", None))
+        has_control_type = bool(payload.get("control_type", None))
+
+        if has_source_image and has_control_type:
+            control_strength = payload.get("control_strength", payload.get("denoising_strength", 1.0))
+            denoising_strength = 1.0
+
         data.append(
             [
                 payload["height"] / 1024,
                 payload["width"] / 1024,
                 payload["steps"] / 100, # Name doesn't match worker side (ddim_steps vs steps)
                 payload["cfg_scale"] / 30,
-                payload.get("denoising_strength", 1.0) if payload.get("source_image", False) else 1.0,
-                payload.get("control_strength", payload.get("denoising_strength", 1.0)) if (payload.get("source_image", False) and payload.get("control_type", None)) else 1.0,
+                denoising_strength,
+                control_strength,
                 1.0 if payload["karras"] else 0.0,
                 1.0 if payload.get("hires_fix", False) else 0.0,
                 1.0 if payload.get("source_image", False) else 0.0,
                 1.0 if payload.get("source_mask", False) else 0.0,
             ],
-        )
+        )        
+            
         data_samplers.append(
             payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
         )
