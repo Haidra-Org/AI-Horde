@@ -35,7 +35,6 @@ class TextAsyncGenerate(GenerateTemplate):
             return {"message": "Internal Server Error"},500
         if self.args.dry_run:
             ret_dict = {"kudos":self.kudos}
-            self.wp.delete()
             return ret_dict, 200
         ret_dict = {
             "id":self.wp.id,

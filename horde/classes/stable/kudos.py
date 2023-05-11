@@ -252,25 +252,25 @@ class KudosModel:
 if __name__ == "__main__":
 
     if len(sys.argv) != 2:
-        print("Syntax: kudos.py <model_filename>")
+        logger.message("Syntax: kudos.py <model_filename>")
 
     kudos_model = KudosModel(sys.argv[1])
 
-    print(f"Kudos basis is {kudos_model.KUDOS_BASIS}")
-    print(f"Time basis is {kudos_model.time_basis} seconds")
+    logger.message(f"Kudos basis is {kudos_model.KUDOS_BASIS}")
+    logger.message(f"Time basis is {kudos_model.time_basis} seconds")
 
     # Test the basis job
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD)
-    print(f"The basis job worth {job_kudos} kudos, " f"expected {KudosModel.KUDOS_BASIS} kudos")
+    logger.message(f"The basis job worth {job_kudos} kudos, " f"expected {KudosModel.KUDOS_BASIS} kudos")
 
     # Test fixed kudos basis adjustment
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5)
-    print(f"Adjusting a job by +5 worth {job_kudos}, " f"expected {KudosModel.KUDOS_BASIS+5} kudos")
+    logger.message(f"Adjusting a job by +5 worth {job_kudos}, " f"expected {KudosModel.KUDOS_BASIS+5} kudos")
 
     # Test fixed kudos basis adjustment and percentage scaling
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5, 1.25)
-    print(f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos")
+    logger.message(f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos")
 else:    
     kudos_model = KudosModel()
-    logger.warning(f"Kudos basis is {KudosModel.KUDOS_BASIS}")
-    logger.warning(f"Kudos time basis is {KudosModel.time_basis} seconds")
+    # logger.info(f"Kudos basis is {KudosModel.KUDOS_BASIS}")
+    # logger.info(f"Kudos time basis is {KudosModel.time_basis} seconds")

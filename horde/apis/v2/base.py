@@ -149,6 +149,7 @@ class GenerateTemplate(Resource):
         #logger.warning(datetime.utcnow())
         if self.args.dry_run:
             self.kudos = self.extrapolate_dry_run_kudos()
+            self.wp.delete()
             return
         self.activate_waiting_prompt()
         # We use the wp.kudos to avoid calling the model twice.
@@ -160,7 +161,7 @@ class GenerateTemplate(Resource):
         kudos = self.wp.extrapolate_dry_run_kudos()
         params_hash = self.get_hashed_params_dict()
         hr.horde_r_setex(f"payload_kudos_{params_hash}", timedelta(days=2), kudos)
-        return 
+        return kudos
 
     # Override if extra payload information needs to be sent
     def get_hashed_params_dict(self):
