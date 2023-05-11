@@ -45,7 +45,7 @@ class TextWaitingPrompt(WaitingPrompt):
         super().activate()
         logger.info(f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
 
-    def calculate_extra_kudos_burn(self, kudos):
+    def calculate_extra_kudos_burn(self, kudos, avoid_burn = False):
         # This represents the cost of using the resources of the horde
         return kudos + 1
 
