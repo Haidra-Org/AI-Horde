@@ -60,7 +60,7 @@ class WorkerTemplate(db.Model):
         "polymorphic_identity": "worker_template",
         "polymorphic_on": "worker_type",
     }    
-    suspicion_threshold = 3
+    suspicion_threshold = 5
     # Every how many seconds does this worker get a kudos reward
     uptime_reward_threshold = 600
     default_maintenance_msg = "This worker has been put into maintenance mode by its owner"
@@ -158,6 +158,7 @@ class WorkerTemplate(db.Model):
         if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
             return
         new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(reason))
+        db.session.add(new_suspicion)
         self.user.report_suspicion(amount, reason, formats)
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
@@ -172,7 +173,7 @@ class WorkerTemplate(db.Model):
         db.session.commit()   
 
     def get_suspicion(self):
-        return(len(self.suspicions))
+        return len(self.suspicions)
 
     def is_suspicious(self):
         # Trusted users are never suspicious
