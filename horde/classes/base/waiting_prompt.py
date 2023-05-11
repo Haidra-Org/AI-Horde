@@ -136,7 +136,7 @@ class WaitingPrompt(db.Model):
         # This is an extra cost for the operation as a whole, to represent the infrastructure costs
         # and rewarding requests which bundle multiple jobs into the same payload
         # Instead of splitting them into multiples.
-        horde_tax = 2
+        horde_tax = 1
         self.record_usage(
             raw_things = 0, 
             kudos = horde_tax, 
