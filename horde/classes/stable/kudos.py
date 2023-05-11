@@ -222,7 +222,7 @@ class KudosModel:
         """Load the target model, or the default model if none is specified. 
         If `self.model` is defined, it will be returned instead. """
         if not model_filename and not self.model:
-            model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v20-66.ckpt").resolve())
+            model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v21-206.ckpt").resolve())
             logger.warning(f"Loading default kudos model {model_filename}")
 
         if self.model:
