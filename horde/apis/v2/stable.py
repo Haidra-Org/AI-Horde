@@ -174,8 +174,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             # else:
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
-
-    # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):
         source_processing = self.args.source_processing
         if not self.args.source_image:
@@ -184,6 +182,19 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.wp.source_mask = self.args.source_mask
         self.wp.source_processing = source_processing
         return super().extrapolate_dry_run_kudos()
+
+    def get_hashed_params_dict(self):
+        gen_payload = self.params.copy()
+        ## IMPORTANT: When adjusting this, also adjust ImageWaitingPrompt.calculate_kudos()
+        gen_payload["source_processing"] = self.args.source_processing
+        if not self.args.source_image:
+            gen_payload["source_processing"] = "txt2img"
+        gen_payload["source_image"] = True if self.args.source_image else False
+        gen_payload["source_mask"] = True if self.args.source_mask else False        
+        params_hash = hash_dictionary(gen_payload)
+        logger.debug([params_hash,gen_payload])
+        return params_hash
+
 
     def activate_waiting_prompt(self):
         self.source_image = None

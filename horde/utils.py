@@ -5,6 +5,7 @@ import hashlib
 import os
 import random
 import regex as re
+import json
 from datetime import datetime
 import dateutil.relativedelta
 from profanity_check  import predict
@@ -74,6 +75,16 @@ def hash_api_key(unhashed_api_key):
     hashed_key = hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
     # logger.warning([os.getenv("secret_key", "s0m3s3cr3t"), hashed_key,unhashed_api_key])
     return hashed_key
+
+
+def hash_dictionary(dictionary):
+    # Convert the dictionary to a JSON string
+    json_string = json.dumps(dictionary, sort_keys=True)
+    # Create a hash object
+    hash_object = hashlib.sha256(json_string.encode())
+    # Get the hexadecimal representation of the hash
+    hash_hex = hash_object.hexdigest()
+    return hash_hex
 
 def get_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)

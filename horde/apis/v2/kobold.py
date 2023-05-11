@@ -91,6 +91,16 @@ class TextAsyncGenerate(GenerateTemplate):
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Consider reducing the amount of tokens to generate.")
 
+
+    def get_hashed_params_dict(self):
+        gen_payload = self.params.copy()
+        ## IMPORTANT: When adjusting this, also adjust TextWaitingPrompt.calculate_kudos()
+        # We need to also use the model list into our hash, as our kudos calculation is based on whichever model is first
+        gen_payload["models"] = self.args.models
+        params_hash = hash_dictionary(gen_payload)
+        logger.debug([params_hash,gen_payload])
+        return params_hash
+
 class TextAsyncStatus(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")

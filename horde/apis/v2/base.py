@@ -25,7 +25,7 @@ from horde.classes.base.team import Team
 from horde.classes.base.news import News
 from horde.classes.base.detection import Filter
 from horde.suspicions import Suspicions
-from horde.utils import is_profane, sanitize_string, hash_api_key
+from horde.utils import is_profane, sanitize_string, hash_api_key, hash_dictionary
 from horde.countermeasures import CounterMeasures
 from horde import horde_redis as hr
 from horde.patreon import patrons
@@ -131,6 +131,11 @@ class GenerateTemplate(Resource):
         self.models = []
         if self.args.models:
             self.models = self.args.models.copy()
+        params_hash = self.get_hashed_params_dict()
+        cached_payload_kudos_calc = hr.horde_r_get(f"payload_kudos_{params_hash}")
+        if cached_payload_kudos_calc:
+            self.kudos = float(cached_payload_kudos_calc)
+            return 
         self.workers = []
         if self.args.workers:
             self.workers = self.args.workers
@@ -152,7 +157,21 @@ class GenerateTemplate(Resource):
 
     # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):
-        return self.wp.extrapolate_dry_run_kudos()
+        kudos = self.wp.extrapolate_dry_run_kudos()
+        params_hash = self.get_hashed_params_dict()
+        hr.horde_r_setex(f"payload_kudos_{params_hash}", timedelta(days=2), kudos)
+        return 
+
+    # Override if extra payload information needs to be sent
+    def get_hashed_params_dict(self):
+        '''We create a simulacra dictionary of the WP payload to cache in redis with the expected kudos cache
+        This avoids us having to create a WP object just to get the parameters dict.
+        This is needed because some parameters are injected into the dict for the model, during runtime.
+        So we need the logic of each GenerateTemplate class to be able to override this class to adjust the params dict accordingly.
+        '''
+        gen_payload = self.params.copy()
+        params_hash = hash_dictionary(gen_payload)
+        return params_hash
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):
