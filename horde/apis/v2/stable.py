@@ -191,7 +191,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         gen_payload["source_image"] = True if self.args.source_image else False
         gen_payload["source_mask"] = True if self.args.source_mask else False        
         params_hash = hash_dictionary(gen_payload)
-        logger.debug([params_hash,gen_payload])
         return params_hash
 
 

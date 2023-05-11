@@ -174,8 +174,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             prompt_type = self.source_processing
         self.calculate_kudos()
         logger.info(
-            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): "
-            f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
+            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}) ({self.client_agent}): "
+            f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs. "
         )
 
 
