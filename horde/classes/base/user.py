@@ -261,10 +261,8 @@ class User(db.Model):
 
     def create(self):
         self.check_for_bad_actor()
-        logger.debug(self.api_key)
         db.session.add(self)
         db.session.commit()
-        logger.debug(self.api_key)
         logger.info(f"New User Created {self.get_unique_alias()}")
         
 

@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.14.0
+
+* Enabled NN-model based kudos-calculation
+* Re-enabled automatically putting workers as paused when suspicion gets too high
+* Added `dry_run` payload to `/async` endpoints. When specified, instead of generating, it will return the expected kudos cost.
+
 # 4.13.0
 
 * Can now specify that the worker array in your generation request should act as a worker blacklist, instead of a whitelist.

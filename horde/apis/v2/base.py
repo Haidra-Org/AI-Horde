@@ -142,8 +142,17 @@ class GenerateTemplate(Resource):
         #logger.warning(datetime.utcnow())
         self.initiate_waiting_prompt()
         #logger.warning(datetime.utcnow())
+        if self.args.dry_run:
+            self.kudos = self.extrapolate_dry_run_kudos()
+            return
         self.activate_waiting_prompt()
+        # We use the wp.kudos to avoid calling the model twice.
+        self.kudos = self.wp.kudos
         #logger.warning(datetime.utcnow())
+
+    # Extend if extra payload information needs to be sent
+    def extrapolate_dry_run_kudos(self):
+        return self.wp.extrapolate_dry_run_kudos()
 
     # We split this into its own function, so that it may be overriden and extended
     def validate(self):

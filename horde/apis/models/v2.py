@@ -13,6 +13,7 @@ class Parsers:
         self.generate_parser.add_argument("worker_blacklist", type=bool, required=False, default=False, help="If true, the worker list will be treated as a blacklist instead of a whitelist.", location="json")
         self.generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
         self.generate_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
+        self.generate_parser.add_argument("dry_run", type=bool, default=False, required=False, help="When false, the endpoint will simply return the cost of the request in kudos and exit.", location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
@@ -72,6 +73,7 @@ class Models:
         })
         self.response_model_async = api.model('RequestAsync', {
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
+            'kudos': fields.Integer(description="The expected kudos consumption for this request."),
             'message': fields.String(default=None,description="Any extra information from the horde about this request"),
         })
         self.response_model_generation_payload = api.model('ModelPayload', {

@@ -4,6 +4,21 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-11",
+            "newspiece": 
+                "With the upcoming deployment of the [hordelib](https://pypi.org/project/hordelib/)-based worker"
+                "[Jug](https://github.com/jug-dev/) has looked into creating a more efficient model to determine generation kudos"
+                "Instead of reusing the numbers I hallucinated one day."
+                "He used what we know best and we trained an explicit model to calculate kudos, based on the performance of his own GPU on the comfy branch"
+                "This new calculation should be much more accurate in terms of things like controlnet and resolution impact."
+                "The good news is that the new comfy branch this seems to reduce kudos costs for high resolutions accross the board."
+                ""
+                "Note: Due to the current worker (based on nataili) being slightly lower quality at the benefit of speed, and thus getting a boost due to the new kudos model."
+                "We have implemented a 25% reduction for its rewards to bring it up to line with its actual performance.",
+            "tags": ["kudos", "dreamer", "Jug"],
+            "importance": "Workers",
+        },
+        {
             "date_published": "2023-05-09",
             "newspiece": 
                 "A new feature appeared on the Horde. "

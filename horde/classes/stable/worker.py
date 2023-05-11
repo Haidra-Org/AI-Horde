@@ -3,7 +3,7 @@ from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
-from horde.bridge_reference import check_bridge_capability, check_sampler_capability
+from horde.bridge_reference import check_bridge_capability, check_sampler_capability, parse_bridge_agent
 from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
@@ -148,3 +148,11 @@ class ImageWorker(Worker):
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models
+
+    def get_bridge_kudos_multiplier(self):
+        bridge_name, bridge_version = parse_bridge_agent(self.bridge_agent)
+        # Non-hordelib workers gets their kudos rewards reduced by 25% 
+        # to incentivize switching to the latest version
+        if bridge_name != "AI Horde Worker" or bridge_version < 22:
+            return 0.75
+        return 1

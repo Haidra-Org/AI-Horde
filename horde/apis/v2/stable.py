@@ -44,10 +44,17 @@ class ImageAsyncGenerate(GenerateTemplate):
             logger.error(self.args)
             logger.error(self.args.params)
             return {"message": "Internal Server Error"},500
-        ret_dict = {"id":self.wp.id}
+        if self.args.dry_run:
+            ret_dict = {"kudos":self.kudos}
+            self.wp.delete()
+            return ret_dict, 200
+        ret_dict = {
+            "id":self.wp.id,
+            "kudos":self.kudos,
+        }
         if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict['message'] = self.get_size_too_big_message()
-        return(ret_dict, 202)
+        return ret_dict, 202
 
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 20 minutes unless a worker appears. Please confider reducing its size of the request or choosing a different model.")
@@ -167,6 +174,16 @@ class ImageAsyncGenerate(GenerateTemplate):
             # else:
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
+
+    # Extend if extra payload information needs to be sent
+    def extrapolate_dry_run_kudos(self):
+        source_processing = self.args.source_processing
+        if not self.args.source_image:
+            source_processing = "txt2img"
+        self.wp.source_image = self.args.source_image
+        self.wp.source_mask = self.args.source_mask
+        self.wp.source_processing = source_processing
+        return super().extrapolate_dry_run_kudos()
 
     def activate_waiting_prompt(self):
         self.source_image = None

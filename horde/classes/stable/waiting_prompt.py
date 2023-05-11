@@ -10,6 +10,8 @@ from horde.r2 import generate_procgen_upload_url, download_source_image, downloa
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
 from horde.consts import KNOWN_POST_PROCESSORS
+from horde.classes.stable.kudos import KudosModel
+
 
 class ImageWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
@@ -24,7 +26,6 @@ class ImageWaitingPrompt(WaitingPrompt):
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
     seed = db.Column(db.BigInteger, default=None)
     seed_variation = db.Column(db.Integer, default=None)
-    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     r2 = db.Column(db.Boolean, default=False, nullable=False, index=True, server_default=expression.literal(False))
     shared = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
     processing_gens = db.relationship("ImageProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
@@ -75,7 +76,6 @@ class ImageWaitingPrompt(WaitingPrompt):
         self.things = self.width * self.height * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / hv.thing_divisors["image"],2)
         self.prepare_job_payload(self.params)
-        self.calculate_kudos()
         self.set_job_ttl()
         # Commit will happen in prepare_job_payload()
 
@@ -172,6 +172,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         prompt_type = "txt2img"
         if self.source_image:
             prompt_type = self.source_processing
+        self.calculate_kudos()
         logger.info(
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}): "
             f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs"
@@ -189,7 +190,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([s,n])
         return n
 
-    def record_usage(self, raw_things, kudos, usage_type = "image"):
+    def calculate_extra_kudos_burn(self, kudos):
         '''I have to extend this function for the stable cost, to add an extra cost when it's an img2img
         img2img burns more kudos than it generates, due to the extra bandwidth costs to the horde.
         Also extra cost when upscaling
@@ -205,29 +206,59 @@ class ImageWaitingPrompt(WaitingPrompt):
             horde_tax = 1
         if kudos < 10:
             horde_tax -= 1
+        horde_tax = 1 # FIXME: hlky meltdown disabled sharing
         kudos += horde_tax
         if not self.slow_workers:
             kudos = kudos * 1.2
         if self.worker_blacklist:
             kudos = kudos * 1.1
-        super().record_usage(raw_things, kudos, usage_type)
+        return kudos
+
+    def record_usage(self, **kwargs):
+        super().record_usage(**kwargs)
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self):
+
+        #
+        # Legacy calculation
+        #
+        legacy_kudos_cost = 0
         result = pow((self.params.get('width', 512) * self.params.get('height', 512)) - (64*64), 1.75) / pow((1024*1024) - (64*64), 1.75)
         # We need to calculate the steps, without affecting the actual steps requested
         # because some samplers are effectively doubling their steps
         steps = self.get_accurate_steps()
-        self.kudos = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
+        legacy_kudos_cost = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
-            self.kudos = round(self.kudos * 1.2,2)
+            legacy_kudos_cost = round(legacy_kudos_cost * 1.2,2)
         if self.gen_payload.get('control_type') and not self.gen_payload.get('return_control_map', False):
-            self.kudos = round(self.kudos * 3,2)
-        # weights_count = count_parentheses(self.prompt)
+            legacy_kudos_cost= round(legacy_kudos_cost * 3,2)
+        weights_count = count_parentheses(self.prompt)
         ## we increase the kudos cost per weight
-        # self.kudos += weights_count
+        legacy_kudos_cost += weights_count
+        
+        #
+        # Model based calculation
+        #        
+        kudos_model = KudosModel()
+        try:
+            model_params = self.params.copy()
+            # That's normally not in the params
+            model_params["source_processing"] = self.source_processing
+            model_params["source_image"] = True if self.source_image else False
+            model_params["source_mask"] = True if self.source_mask else False
+            self.kudos = kudos_model.calculate_kudos(model_params)
+        except Exception as e:
+            logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
+            self.kudos = legacy_kudos_cost
+        logger.info(f"Old Kudos {legacy_kudos_cost} / New Kudos {self.kudos} for {self.id}")
+        kudos_difference = abs(legacy_kudos_cost - self.kudos) 
+        if kudos_difference > (legacy_kudos_cost * 0.5):
+            logger.warning(f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}")
+
         db.session.commit()
+        return self.kudos
 
 
     def require_upfront_kudos(self, counted_totals, total_threads):

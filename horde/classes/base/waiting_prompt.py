@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy import JSON, func, or_
+from sqlalchemy.sql import expression
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -76,6 +77,7 @@ class WaitingPrompt(db.Model):
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
+    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False, index=True)
     # This stores the original amount of jobs requested
@@ -131,6 +133,17 @@ class WaitingPrompt(db.Model):
             self.extra_priority = round(self.user.kudos / 100) 
         else:    
             self.extra_priority = self.user.kudos
+        # This is an extra cost for the operation as a whole, to represent the infrastructure costs
+        # and rewarding requests which bundle multiple jobs into the same payload
+        # Instead of splitting them into multiples.
+        horde_tax = 1
+        self.record_usage(
+            raw_things = 0, 
+            kudos = horde_tax, 
+            usage_type = self.wp_type, 
+            avoid_burn = True
+        )
+        # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
 
     def get_model_names(self):
@@ -296,17 +309,35 @@ class WaitingPrompt(db.Model):
         ret_dict = self.get_status(lite=True, **kwargs)
         return(ret_dict)
 
-    def record_usage(self, raw_things, kudos, usage_type):
+    # This should be overriden by each extending class
+    def calculate_kudos(self):
+        '''Returns the expected kudos a worker will receive for this request'''
+        # Dummy ammount
+        return 10
+
+    def calculate_extra_kudos_burn(self, kudos):
+        '''Extend this function to add extra kudos burn for the particular use
+        Which represents the cost of each job to the horde infrastructure
+        '''
+        return kudos
+
+    def record_usage(self, raw_things, kudos, usage_type, avoid_burn = False):
         '''Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
         '''
+        if not avoid_burn:
+            kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos)
         self.user.record_usage(raw_things, kudos, usage_type)
         self.consumed_kudos = round(self.consumed_kudos + kudos,2)
         self.refresh()
 
+    def extrapolate_dry_run_kudos(self):
+        kudos = self.calculate_kudos()
+        return self.calculate_extra_kudos_burn(kudos) * self.n
+    
     def log_faulted_prompt(self):
         '''Extendable function to log why a request was aborted'''
         logger.warning(f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")

@@ -6,6 +6,7 @@ from horde.flask import db
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.bridge_reference import check_bridge_capability
+from horde.model_reference import model_reference
 
 class TextWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
@@ -44,11 +45,9 @@ class TextWaitingPrompt(WaitingPrompt):
         super().activate()
         logger.info(f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
 
-    def record_text_usage(self, raw_things, kudos):
+    def calculate_extra_kudos_burn(self, kudos):
         # This represents the cost of using the resources of the horde
-        horde_tax = 1
-        kudos += horde_tax
-        super().record_text_usage(raw_things, kudos)
+        return kudos + 1
 
     def log_faulted_prompt(self):
         source_processing = 'txt2img'
@@ -60,7 +59,7 @@ class TextWaitingPrompt(WaitingPrompt):
         ret_dict = super().get_status(**kwargs)
         return ret_dict
 
-    def record_usage(self, raw_things, kudos, usage_type = "text"):
+    def record_usage(self, raw_things, kudos, usage_type = "text", avoid_burn = False):
         '''I need to extend this to point it to record_text_usage()
         '''
         super().record_usage(raw_things, kudos, usage_type)
@@ -81,3 +80,14 @@ class TextWaitingPrompt(WaitingPrompt):
         if self.max_length > max_tokens:
             return (True,max_tokens)
         return (False,max_tokens)
+
+    def calculate_kudos(self):
+        # Slimmed down version of procgen.get_gen_kudos()
+        # As we don't know the worker's trusted status.
+        # It exists here in order to allow us to calculate dry_runs
+        if len(self.models) > 0:
+            model_name = self.models[0].model
+        if not model_reference.is_known_text_model(model_name):
+            return self.wp.max_length * 0.12
+        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) / 21, 2)    
+        return self.kudos
