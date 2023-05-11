@@ -215,6 +215,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         return kudos
 
     def record_usage(self, **kwargs):
+        kwargs["usage_type"] = "image"
         super().record_usage(**kwargs)
 
     # We can calculate the kudos in advance as they model doesn't affect them
