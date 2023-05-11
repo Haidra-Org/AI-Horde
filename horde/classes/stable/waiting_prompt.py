@@ -26,7 +26,6 @@ class ImageWaitingPrompt(WaitingPrompt):
     censor_nsfw = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
     seed = db.Column(db.BigInteger, default=None)
     seed_variation = db.Column(db.Integer, default=None)
-    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     r2 = db.Column(db.Boolean, default=False, nullable=False, index=True, server_default=expression.literal(False))
     shared = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
     processing_gens = db.relationship("ImageProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")

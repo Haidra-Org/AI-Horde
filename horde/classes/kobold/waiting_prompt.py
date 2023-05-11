@@ -89,4 +89,5 @@ class TextWaitingPrompt(WaitingPrompt):
             model_name = self.models[0]
         if not model_reference.is_known_text_model(model_name):
             return self.wp.max_length * 0.12
-        return round(self.wp.max_length * model_reference.get_text_model_multiplier(model_name) / 21, 2)    
+        self.kudos = round(self.wp.max_length * model_reference.get_text_model_multiplier(model_name) / 21, 2)    
+        return self.kudos

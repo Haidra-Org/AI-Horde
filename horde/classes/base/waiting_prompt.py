@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy import JSON, func, or_
+from sqlalchemy.sql import expression
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
@@ -76,6 +77,7 @@ class WaitingPrompt(db.Model):
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
+    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False, index=True)
     # This stores the original amount of jobs requested
