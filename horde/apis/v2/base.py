@@ -133,7 +133,7 @@ class GenerateTemplate(Resource):
             self.models = self.args.models.copy()
         params_hash = self.get_hashed_params_dict()
         cached_payload_kudos_calc = hr.horde_r_get(f"payload_kudos_{params_hash}")
-        if cached_payload_kudos_calc:
+        if cached_payload_kudos_calc and self.args.dry_run:
             self.kudos = float(cached_payload_kudos_calc)
             return 
         self.workers = []
