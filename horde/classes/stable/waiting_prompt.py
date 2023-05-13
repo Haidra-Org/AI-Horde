@@ -254,10 +254,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         except Exception as e:
             logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
             self.kudos = legacy_kudos_cost
-        logger.info(f"Old Kudos {legacy_kudos_cost} / New Kudos {self.kudos} for {self.id}")
+        logger.debug(f"Old Kudos {legacy_kudos_cost} / New Kudos {self.kudos} for {self.id}")
         kudos_difference = abs(legacy_kudos_cost - self.kudos) 
         if kudos_difference > (legacy_kudos_cost * 0.5):
-            logger.warning(f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}")
+            logger.debug(f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}")
 
         db.session.commit()
         return self.kudos
