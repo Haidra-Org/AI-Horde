@@ -153,6 +153,6 @@ class ImageWorker(Worker):
         bridge_name, bridge_version = parse_bridge_agent(self.bridge_agent)
         # Non-hordelib workers gets their kudos rewards reduced by 25% 
         # to incentivize switching to the latest version
-        if bridge_name != "AI Horde Worker" or bridge_version < 22:
+        if bridge_name != "AI Horde Worker" or bridge_version < 21:
             return 0.75
         return 1
