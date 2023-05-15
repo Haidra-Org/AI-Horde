@@ -571,7 +571,8 @@ class AwardKudos(Resource):
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
-        '''Award Kudos to registed user
+        '''Awards Kudos to registed user. 
+        This API can only be used through privileged access.
         '''
         self.args = self.parser.parse_args()
         user = database.find_user_by_api_key(self.args['apikey'])
