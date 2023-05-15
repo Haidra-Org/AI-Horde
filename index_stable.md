@@ -83,6 +83,7 @@ We provide a CLI tool for each type of AI Horde usage in [this repository](https
         * [Unreal Engine Plugin](https://github.com/Mystfit/Unreal-StableDiffusionTools)
         * [Automatic 1111 Web UI](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)
         * [Blender Plugin](https://github.com/benrugg/AI-Render)
+        * [Photoshop Plugin](https://github.com/grizbil/Auto-Photoshop-StableDiffusion-Plugin)
         * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
     * Other
         * [npm SDK](https://www.npmjs.com/package/@zeldafan0225/ai_horde)

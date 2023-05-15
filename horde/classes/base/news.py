@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-15",
+            "newspiece": 
+                "The AI Horde has finally moved to the [hordelib](https://pypi.org/project/hordelib/) library. "
+                "Which is powered by the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) inference backend. "
+                "[Read the Devlog](https://dbzer0.com/blog/the-ai-horde-worker-moves-to-a-completely-new-inference-backend/)!",
+            "tags": ["devlog", "backend", "Jug", "Tazlin", "dreamer", "alchemist"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-05-11",
             "newspiece": 
                 "With the upcoming deployment of the [hordelib](https://pypi.org/project/hordelib/)-based worker"
