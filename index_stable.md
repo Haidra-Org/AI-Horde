@@ -1,8 +1,8 @@
 # AI Horde
 
-<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/db0/AI-Horde) of [Image generation workers](https://github.com/db0/AI-Horde-Worker) and [text generation workers](https://github.com/KoboldAI/KoboldAI-Client). If you like this service, consider [joining the horde yourself](https://github.com/db0/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
+<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/Haidra-Org/AI-Horde) of [Image generation workers](https://github.com/Haidra-Org/AI-Horde-Worker) and [text generation workers](https://github.com/KoboldAI/KoboldAI-Client). If you like this service, consider [joining the horde yourself](https://github.com/Haidra-Org/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
 
-For more information, check [the FAQ](https://github.com/db0/AI-Horde/blob/main/FAQ.md). Finally you can also follow the [main developer's blog](https://dbzer0.com)
+For more information, check [the FAQ](https://github.com/Haidra-Org/AI-Horde/blob/main/FAQ.md). Finally you can also follow the [main developer's blog](https://dbzer0.com)
 
 ## Latest [News](/api/v2/status/news)
 
@@ -47,7 +47,7 @@ First [Register an account](/register) which will generate for you an API key. S
 * There are also mobile apps:
     * [Stable Horde Flutter](https://ppiqr.app.link/download) (iOS + Android app)
 
-<img src="https://raw.githubusercontent.com/db0/Stable-Horde-Client/main/screenshot.png" width="500" />
+<img src="https://raw.githubusercontent.com/Haidra-Org/Lucid-Creations/main/screenshot.png" width="500" />
 
 #### Text Generation
 
@@ -59,17 +59,17 @@ The following tools provide an interface for Text Generation on the AI Horde
 
 ### Command Line
 
-We provide a CLI tool for each type of AI Horde usage in [this repository](https://github.com/db0/AI-Horde-CLI)
+We provide a CLI tool for each type of AI Horde usage in [this repository](https://github.com/Haidra-Org/AI-Horde-CLI)
 
 ### Tools
 
 * We have created some official tools with which to integrate into the Stable Horde
-    * [Godot Engine plugin](https://github.com/db0/Stable-Horde-Client-Addon) to integrate Stable Horde image generation into your games.
+    * [Godot Engine plugin](https://github.com/Haidra-Org/AI-Horde-Godot-Addon) to integrate Stable Horde image generation into your games.
     * [Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord) which you [can add to your own server](https://discord.com/api/oauth2/authorize?client_id=1019572037360025650&permissions=8192&scope=bot) to be able to generate via the Stable Horde for free, and allow your users to transfer kudos between them.
-    * [Mastodon Bots](https://github.com/db0/mastodon-stable-horde-generate) which you can use directly via Activity Pub to generate images.
+    * [Mastodon Bots](https://github.com/Haidra-Org/mastodon-ai-horde-generate) which you can use directly via Activity Pub to generate images.
         * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
         * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
-    * [Reddit Bot](https://github.com/db0/reddit-stable-horde-generate) which you can use [directly via reddit](https://www.reddit.com/user/StableHorde/comments/znhtaw/faq/) to generate images.
+    * [Reddit Bot](https://github.com/Haidra-Org/reddit-stable-horde-generate) which you can use [directly via reddit](https://www.reddit.com/user/StableHorde/comments/znhtaw/faq/) to generate images.
 
 * The community has made the following
     * Bots
@@ -111,6 +111,7 @@ If you are developing a paid or ad-based integration with the Stable Horde, we r
 These are the people who made this software possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
+* [Haidra](https://github.com/haidra-org) - The amazing developer community helping to maintain and improve the AI Horde ecosystem.
 * [Sponsors](/sponsors) - See our complete sponsor list including our patreon supporters
 
 And of course, everyone contributing their SD to the horde!

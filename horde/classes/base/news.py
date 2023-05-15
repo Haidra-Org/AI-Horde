@@ -4,7 +4,7 @@ class News:
 
     HORDE_NEWS = [
         {
-            "date_published": "2023-05-15",
+            "date_published": "2023-05-14",
             "newspiece": 
                 "The AI Horde has finally moved to the [hordelib](https://pypi.org/project/hordelib/) library. "
                 "Which is powered by the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) inference backend. "
