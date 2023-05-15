@@ -79,7 +79,7 @@ We provide a CLI tool for each type of AI Horde usage in [this repository](https
         * [AI Horde Bot](https://github.com/JamDon2/ai-horde-bot) (Discord, Obsolete)
     * Plugins
         * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
-        * [Krita Plugin](https://github.com/blueturtleai/krita-stable-diffusion)
+        * [Krita Plugin](https://github.com/dunkeroni/krita-stable-horde)
         * [Unreal Engine Plugin](https://github.com/Mystfit/Unreal-StableDiffusionTools)
         * [Automatic 1111 Web UI](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)
         * [Blender Plugin](https://github.com/benrugg/AI-Render)
