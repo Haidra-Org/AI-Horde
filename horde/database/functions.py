@@ -775,6 +775,14 @@ def get_all_wps():
         ImageWaitingPrompt.expiry > datetime.utcnow(),
     ).all()    
 
+def get_all_active_wps():
+    return db.session.query(ImageWaitingPrompt).filter(
+        ImageWaitingPrompt.active == True,
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.n > 0,
+        ImageWaitingPrompt.expiry > datetime.utcnow(),
+    ).all()    
+
 #TODO: Convert below three functions into a general "cached db request" (or something) class
 # Which I can reuse to cache the results of other requests
 def retrieve_worker_performances(worker_type = ImageWorker):

@@ -358,10 +358,13 @@ class WaitingPrompt(db.Model):
 
     def abort_for_maintenance(self):
         '''sets all waiting requests to 0, so that all clients pick them up once the client gen is completed'''
-        if self.is_completed():
-            return
-        self.n = 0
-        db.session.commit()
+        try:
+            if self.is_completed():
+                return
+            self.n = 0
+            db.session.commit()
+        except Exception as err:
+            logger.warning(f"Error when aborting WP. Skipping: {err}")
 
     def refresh(self):
         self.expiry = get_expiry_date()

@@ -1192,7 +1192,7 @@ class HordeModes(Resource):
             cfg.maintenance = self.args.maintenance
             if cfg.maintenance:
                 logger.critical(f"Horde entered maintenance mode")
-                for wp in database.get_all_wps():
+                for wp in database.get_all_active_wps():
                     wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = cfg.maintenance
         #TODO: Replace this with a node-offline call
