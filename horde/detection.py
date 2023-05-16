@@ -183,7 +183,7 @@ class PromptChecker:
             return False
         # logger.debug([prompt, models])
         if "###" in prompt:
-            prompt, negprompt = prompt.split("###", 1)
+            prompt, _ = prompt.split("###", 1)
         prompt = self.normalize_prompt(prompt)
         trigger_match = self.csam_triggers.search(prompt)
         if trigger_match:

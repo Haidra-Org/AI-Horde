@@ -320,6 +320,11 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.job_ttl = 260
         elif self.width * self.height >= 512*512:
             self.job_ttl = 150
+        # When too many steps are involved, we increase the expiry time
+        if self.get_accurate_steps() >= 200:
+            self.job_ttl = self.job_ttl * 3
+        elif self.get_accurate_steps() >= 100:
+            self.job_ttl = self.job_ttl * 2
         # CN is 3 times slower
         if self.gen_payload.get('control_type'):
             self.job_ttl = self.job_ttl * 3
