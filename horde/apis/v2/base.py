@@ -685,7 +685,7 @@ class WorkerSingle(Resource):
             if not worker:
                 raise e.WorkerNotFound(worker_id)
             worker_details = worker.get_details(details_privilege)
-            hr.horde_r_setex_json(cache_name, timedelta(seconds=300), worker_details)
+            hr.horde_r_setex_json(cache_name, timedelta(seconds=30), worker_details)
         return worker_details,200
 
     put_parser = reqparse.RequestParser()
@@ -901,7 +901,7 @@ class UserSingle(Resource):
                     cached_details["monthly_kudos"] = cached_details["monthly_kudos"].copy()
                 if user_details.get("monthly_kudos",{}).get("last_received"):
                     cached_details["monthly_kudos"]["last_received"] = cached_details["monthly_kudos"]["last_received"].isoformat()
-                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), cached_details)
+                hr.horde_r_setex_json(cache_name, timedelta(seconds=30), cached_details)
         return user_details,200
 
 
