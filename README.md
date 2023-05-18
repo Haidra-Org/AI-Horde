@@ -1,7 +1,7 @@
 # AI Horde
 
-A giant crowdsourced distributed cluster for AI Models. This software can support both Image and Text generation.
-It allows people without a powerful GPU to use Stable Diffusion or Text generation models like GPT/OPT by relying on spare/idle resources provided by the community.
+A massive crowdsourced distributed inference cluster for AI Models. This software can support both Image and Text generation.
+It allows people without a powerful GPU to use Stable Diffusion or Large Language Models like Pygmalion/Llama by relying on spare/idle resources provided by the community.
 It also allows non-python clients, such as games and apps, to use AI-provided generations.
 
 For more questions, check the [FAQ](FAQ.md)
@@ -25,6 +25,14 @@ If you want, you can also create a pseudonymous account, without logging in with
 If you do not want to login even with a pseudonymous account, you can use this service anonymously by using '0000000000' as your API key. However your usage and contributions will be not be tracked. Be aware that if this service gets too overloaded, anonymous mode might be turned off!
 
 The point of registering is to track your usage and your contributions. The more you contribute to the Horde, the more priority you have. [Read about this here](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/)
+
+## REST API
+
+We provide a fully open REST API for all Generative AI functions we support. 
+
+[Complete Documentation](https://aihorde.net/api).
+
+![](api_screenshot.png)
 
 # Community
 

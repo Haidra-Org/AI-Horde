@@ -4,7 +4,7 @@
 
 This is a very big subject which will be later be expanded in a devlog. But putting it simply:
 
-* As a requestor, you send a prompt to the horde which adds it into a "first in/first out" queue, prioritizing it according to the amount of Kudos you have. If the request has multiple generations required, it is split into multiple jobs by the horde.
+* As a requestor, you send a prompt to the horde which adds it into a smart "first in/first out" queue, prioritizing it according to the amount of Kudos you have. If the request has multiple generations required, it is split into multiple jobs by the horde.
 * Any joined workers periodically check-in to the horde and request a job to do. The horde sends them the first available request they can fulfil, by order of kudos-priority, respecting the worker's wishes for specific workers who have priority.
 * The worker generates the job's prompt and submits it back to the horde
 * Once all the component jobs of a request have been submitted, the horde marks the request as "Done"
@@ -31,7 +31,7 @@ People want to contribute to the horde for many reasons
 
 ### Can workers spy on my prompts or generations?
 
-Technically, yes. While the worker software and the bridge code is not set to allow it, ultimately the software resides at someone else's computer and is open source. As such, anyone with the know-how can modify their own code to not just see all prompts passing through, but even save all results they generate. 
+*Technically*, yes. While the worker software and the bridge code is not set to allow it, ultimately the software resides at someone else's computer and is open source. As such, anyone with the know-how can modify their own code to not just see all prompts passing through, but even save all results they generate. 
 
 However workers do not have any identifying information about individual requestors as they cannot see their ID or IP.
 
@@ -98,9 +98,21 @@ We use Kudos to support good behaviour in the community. As such we have ways to
 
 ### Can I transfer my Kudos?
 
-Yes. See the `/transfer` endpoint on each horde.
+**Yes!** Check the `api/v2/transfer` endpoint.
 
-Remember however that the Kudos is merely a prioritization mechanism, **not a currency**. The Hordes are under no obligation to maintain Kudos totals and we may change them to ensure better operation of the horde. **If you exchange anything for Kudos, you do so at your own risk** and we are in no obligation to protect your amount! Kudos has no inherent value.
+Remember however that the Kudos is merely a prioritization mechanism, **not a currency**. The AI Horde are under no obligation to maintain Kudos totals or current rate of return, and we may tweak them to ensure more optimal operation of the system. 
+
+### Can I sell my kudos? 
+
+**NO!** Kudos is inherently valueless and we do not allow anyone exchanging kudos for money. Bypassing this requirement is an existential threat to the AI Horde. Please do not attempt to do this under the table. **If you exchange money for Kudos and we discover it, we might zero out your account and whoever you bought it from!**
+
+### Is Kudos a cryptocurrency?
+
+**No!** Kudos is completely centralized and involved no blockchain tech whatsoever. The AI Horde is explicitly hostile to blockchain technologies and we will never integrate with any of them. Likewise, there is no way to convert kudos to anything other than favours benefiting the improvement of the AI Horde.
+
+### Can I exchange kudos for cryptocurrencies?
+
+**No!** Same rules and reasoning applies as for selling kudos, see above.
 
 ## Not Safe for Work?
 
@@ -112,11 +124,15 @@ Yes, but you might have a smaller a pool of workers to fulfil your request, whic
 
 ### Do you censor generations?
 
-The horde itself cannot, but each individual worker might have its own censorship guidelines. And each requestor can voluntarily opt-in to accidental NSFW censorship.
+Horde-wide, we censor only one type of generation: [CSAM](https://en.wikipedia.org/wiki/Child_sexual_abuse_material) Images. We have two mechanisms to achieve this, one is a regex replacement filter during initial API request. The other is the anti-CSAM AI running on each worker. See more detailed answers below.
 
-## Why are some of my images just black?
+Other than this one instance, the horde does not censor text generations at all, or images which do not appear to be CSAM.
 
-Those generations have been NSFW-censored by the worker generating them. If you've specified your request as SFW, individual SFW workers who fulfil it might have the NSFW censorship model active, which will return just this black image. To avoid such images, turn on NSFW, or ensure your prompt is not too close to the edge of SFW/NSFW.
+However each individual worker might have its own censorship guidelines. And each requestor can voluntarily opt-in to accidental NSFW censorship.
+
+## Why are some of my images just black with white text?
+
+Those generations have been NSFW-censored by the worker generating them. If you've specified your request as SFW, individual SFW workers who fulfil it might have the NSFW censorship model active, which will return just this black image. To avoid such images, turn on NSFW, or ensure your prompt is not too close to the edge of SFW/NSFW. If the image mentions censor due to the anti-CSAM filter, this cannot be turned off.
 
 ## Why are some of my images are still censored even though I'm requesting NSFW?
 
@@ -126,11 +142,26 @@ This means your censored images triggered one such worker's censorlist. You can 
 
 If you feel a worker is using the censorlist maliciously, or improperly, please contact us with the content of your prompt and the worker name, and we'll address it.
 
+## Can you explain how the Anti-CSAM regex filter works?
+
+When an image request first comes into the AI Horde, it is passed through a private regex filter looking for combination of two contexts: "Underage" context and "Lewd" Context. An example of an underage context might be "child" and an example of a lewd context might be "without clothes".
+
+If none, or one of these contexts is detected in a prompt, then the prompt is allowed to pass through unaffected. For example "child in the playground" is ok. "Without clothes in the bathroom" is also OK.
+
+If however both of these terms are present in the same prompt, this will trigger the regex protection. This has two modes of operation:
+
+If the `replacement_filter` is `true` in your API payload and the prompt is less than 1000 chars, each triggering term will be automatically replaced by an "adult" version of those terms. For example "school" will be replaced by "university". This attempts to point the inference to try and generate safe content.
+
+If however `replacement_filter` is `false` or your prompt is above 1000 chars, then the request is automatically blocked instead, and you get an IP timeout for a couple of minutes. This IP timeout increases further, every time you get caught by the regex filter. This is to prevent people deliberately trying to out the filter to reverse engineer loopholes.
+
+## Can you explain how the Anti-CSAM AI works?
+
+We have written [a detailed devlog about this](https://dbzer0.com/blog/ai-powered-anti-csam-filter-for-stable-diffusion/)
+
 ### Where can I read more of NSFW controls?
 
 * [The NSFW Question](https://www.patreon.com/posts/nsfw-question-72771484)
 * [Blacklists](https://www.patreon.com/posts/72890784)
-
 
 ## Horde?
 
@@ -140,13 +171,9 @@ If you feel a worker is using the censorlist maliciously, or improperly, please 
 
 This project started as a way to consolidate resources for the KoboldAI Client. As we needed a name for it, I came up with something thematic for the concept of "Kobolds". "A Horde of Kobolds". When I started doing image generation as well, I kept the "Horde" part.
 
-The AI Horde is the underlying technology. We separate each type of code according to the type of generations they provide
+### Can you explain the terminology around the AI Horde?
 
-There are two hordes at the moment
-   * [Stable Horde](https://stablehorde.net): Stable Diffusion Image Generation
-   * [KoboldAI Horde](https://koboldai.net): KoboldAI text generation
-
-But more Hordes for other purposes are possible.
+We have [a dedicated wiki page](https://github.com/Haidra-Org/AI-Horde/wiki/Terminology) where you can look a lot of the cross-referenced terms commonly mentioned in the context of the AI Horde
 
 ### Does the horde spy on my prompts and generations?
 
@@ -184,3 +211,7 @@ Finally a lot of these services do not provide free REST APIs, so if you need to
 Of course! This software is FOSS and you are welcome to use, modify and share, so long as you respect the AGPL3 license.
 
 If you set up your own horde of course, you will need to also maintain your own workers, as hordes do not share workers with each other.
+
+### Can I built paid services integration into the AI Horde?
+
+Yes, with some restrictions. Due to the voluntary nature of the AI Horde, you **must** give back to the AI horde at least as much as you take out to make a profit. Please see the detailed explanation [in this devlog](https://dbzer0.com/blog/what-about-paid-services-on-top-of-the-ai-horde/)
