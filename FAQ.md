@@ -61,35 +61,26 @@ Another big subject. This one actually [has a devlog about it](https://dbzer0.co
 
 Connect a worker to the horde, that is all! You will generate kudos for each request you fulfil, relevant to its difficulty, and you will also generate kudos every 10 minutes your worker stays online.
 
-### How is image Kudos cost calculated?
+### How is image Kudos consumption calculated?
 
 The Kudos cost reflects the amount of processing required to generate the image.
 
-* The general idea is for a 50 step 512x512 image to cost 10 Kudos, 1024x1024 - 60 Kudos and 2048x2048 - 600 Kudos.
-   * There is an exponential relationship between image size and kudos cost.
-* Step count is taken into consideration too. Some samplers use a different amount of steps than specified by user. For example, sampler 'k_dpm_adaptive' always uses 50 steps.
-   * There is a linear relationship between step count and kudos cost.
-   * If img2img is active, steps get multiplied by denoising strength. So img2img with 10% denoising will have ten times less steps than 100% denoising.
-* Each applied post-processor increases the cost by 20%. 
-   * The increase is multiplicative, so using two post-processors will increase the cost by 44%, not 40%.
-* ControlNet usage increases the cost by the factor of 3.
-* Each weight used increases the Kudos cost by 1. Weight example: (forest:1.1). 
-   * Weight like (((this))) still counts as one weight.
-* If source image is used (img2img, ControlNet), cost is increased by 50%.
-* Some post-processors add additional costs at this point:
-   * RealESRGAN_x4plus (upscaler): adds 30% to the calculated cost
-   * CodeFormers (improves faces): add 30% to the calculated cost
-* There is an additional cost of 3 Kudos for using Horde resources. You can reduce it by 2 Kudos by enabling sharing with LAION. This tax is lowered by 1 Kudos if image costs less than 10 Kudos.
+As each payload on the horde can have too many variables which affect its speed, we have trained a neural network which takes as input a request payload, and calculates how much kudos it would require, based on how much faster or slower it would generate compared to a baseline of 10 kudos for a 50 step 512x512 image. The baseline costs 10 kudos. So  if a payload is expected to take double that time, it will be valued as 20 kudos.
 
-You can take a closer look at the kudos calculation [here](https://github.com/db0/AI-Horde/blob/main/horde/classes/stable/waiting_prompt.py).
+The AI Horde API provides a `dry_run` payload key. When set to true, it will return the kudos cost for an image, without actually requesting a generation.
 
-If you're looking to implement kudos calculation into **your own code**, check out [this ES6 module](https://github.com/db0/AI-Horde/blob/main/kudos/kudos_standalone.js).
-You can find example implementation [here](https://github.com/db0/AI-Horde/blob/main/kudos/example.js) and [here](https://github.com/db0/AI-Horde/blob/main/kudos/example.html).
+On top of that there is what's known as the "horde tax" which represents the extra costs to the infrastructure for each request. These kudos are not received by the worker but are rather "burnt" forever.
+
+* There is a 1 kudos tax per request. This is applied even if the request it cancelled, faulted or aborted.
+* There is a 1 kudos tax per job in a request. 
+* When requesting only fast workers, there's an added +20% kudos burn.
+* When requesting a worker blacklist, there's an added +10% kudos burn.
 
 ### I don't have a powerful GPU. How can I get Kudos?
 
 We use Kudos to support good behaviour in the community. As such we have ways to receive Kudos outside of generating images for others (although that's the best way)
 
+* If you have at least 2GB VRAM, you can run an alchemist, which is used to interrogate or post-process images.
 * Rate some images. Almost all clients should have a way to rate images while waiting which will provide kudos per rating, and you can also rate the images you just generated for a kudos refund! [Artbot has a very easy rating page](https://tinybots.net/artbot/rate)
 * Fulfill a bounty from our discord bounties forum
 * Subscribe to [the patreon supporting the development of the AI Horde](https://www.patreon.com/db0).
