@@ -629,13 +629,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
                 ImageWaitingPrompt.r2 == False,
             ),
         ),
-        or_(
-            check_bridge_capability("lora", worker.bridge_agent),
-            and_(
-                not check_bridge_capability("lora", worker.bridge_agent),
-                func.jsonb_not_exists(ImageWaitingPrompt.params, 'loras'),
-            ),
-        ),
+        # or_(
+        #     check_bridge_capability("lora", worker.bridge_agent),
+        #     and_(
+        #         not check_bridge_capability("lora", worker.bridge_agent),
+        #         func.jsonb_not_exists(ImageWaitingPrompt.params, 'loras'),
+        #     ),
+        # ),
         or_(
             worker.speed >= 500000, # 0.5 MPS/s
             ImageWaitingPrompt.slow_workers == True,
