@@ -643,7 +643,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(ImageWaitingPrompt.user_id.in_(priority_user_ids))
-    logger.debug(final_wp_list)
+    # logger.debug(final_wp_list)
     final_wp_list = final_wp_list.order_by(
         ImageWaitingPrompt.extra_priority.desc(), 
         ImageWaitingPrompt.created.asc()
