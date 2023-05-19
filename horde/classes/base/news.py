@@ -15,14 +15,14 @@ class News:
         {
             "date_published": "2023-05-11",
             "newspiece": 
-                "With the upcoming deployment of the [hordelib](https://pypi.org/project/hordelib/)-based worker"
-                "[Jug](https://github.com/jug-dev/) has looked into creating a more efficient model to determine generation kudos"
-                "instead of reusing the numbers I hallucinated one day."
-                "He used what we know best and we trained an explicit model to calculate kudos, based on the performance of his own GPU on the comfy branch"
-                "This new calculation should be much more accurate in terms of things like controlnet and resolution impact."
-                "The good news is that the new comfy branch this seems to reduce kudos costs for high resolutions accross the board."
-                "Note: Due to the current worker (based on nataili) being slightly lower quality at the benefit of speed, and thus getting a boost due to the new kudos model"
-                "We have implemented a 25% reduction for its rewards to bring it up to line with its actual performance.",
+                "With the upcoming deployment of the [hordelib](https://pypi.org/project/hordelib/)-based worker. "
+                "[Jug](https://github.com/jug-dev/) has looked into creating a more efficient model to determine generation kudos "
+                "instead of reusing the numbers I hallucinated one day. "
+                "He used what we know best and we trained an explicit model to calculate kudos, based on the performance of his own GPU on the comfy branch "
+                "This new calculation should be much more accurate in terms of things like controlnet and resolution impact. "
+                "The good news is that the new comfy branch this seems to reduce kudos costs for high resolutions accross the board. "
+                "Note: Due to the current worker (based on nataili) being slightly lower quality at the benefit of speed, and thus getting a boost due to the new kudos model, "
+                "we have implemented a 25% reduction for its rewards to bring it up to line with its actual performance.",
             "tags": ["kudos", "dreamer", "Jug"],
             "importance": "Workers",
         },
@@ -37,9 +37,9 @@ class News:
         {
             "date_published": "2023-05-05",
             "newspiece": 
-                "You can now run an AI Horde worker inside a docker container."
-                "http://ghcr.io/db0/ai-horde-worker:main"
-                "Our README [contains information on how to configure it](https://github.com/db0/AI-Horde-Worker/blob/main/README.md#docker)."
+                "You can now run an AI Horde worker inside a docker container. "
+                "http://ghcr.io/db0/ai-horde-worker:main "
+                "Our README [contains information on how to configure it](https://github.com/db0/AI-Horde-Worker/blob/main/README.md#docker) "
                 "All kudos to [Gus Puffy#8887](https://github.com/guspuffygit)",
             "tags": ["docker", "dreamer"],
             "importance": "Workers",
@@ -47,7 +47,7 @@ class News:
         {
             "date_published": "2023-04-23",
             "newspiece": 
-                "The Command Line Interface for the AI Horde has now been extended to support Image Generation, Text Generation and Image Alchemy."
+                "The Command Line Interface for the AI Horde has now been extended to support Image Generation, Text Generation and Image Alchemy. "
                 "It has been split into three files and is now available in its own repository: "
                 "https://github.com/db0/AI-Horde-CLI",
             "tags": ["cli"],
