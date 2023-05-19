@@ -40,7 +40,7 @@ class ImageModels(v2.Models):
             'shared': fields.Boolean(description="If True, These images have been shared with LAION."),
         })
         self.input_model_loras = api.model('ModelPayloadLorasStable', {
-            'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name of the LoRa", unique=True), 
+            'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name of the LoRa", unique=True, min_length = 1, max_length = 255), 
             'model': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the SD model."), 
             'clip': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the clip model."), 
         })
