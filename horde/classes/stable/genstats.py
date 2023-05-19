@@ -20,6 +20,13 @@ class ImageGenerationStatisticCN(db.Model):
     imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="controlnet")
     control_type = db.Column(db.String(40), nullable=False)
 
+class ImageGenerationStatisticLora(db.Model):
+    __tablename__ = "image_gen_stats_loras"
+    id = db.Column(db.Integer, primary_key=True)
+    imgstat_id = db.Column(db.Integer, db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"), nullable=False)
+    imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="loras")
+    lora = db.Column(db.String(255), nullable=False)
+
 
 class ImageGenerationStatistic(db.Model):
     __tablename__ = "image_gen_stats"
@@ -44,6 +51,7 @@ class ImageGenerationStatistic(db.Model):
     bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     post_processors = db.relationship("ImageGenerationStatisticPP", back_populates="imgstat", cascade="all, delete-orphan")
     controlnet = db.relationship("ImageGenerationStatisticCN", back_populates="imgstat", cascade="all, delete-orphan")
+    loras = db.relationship("ImageGenerationStatisticLora", back_populates="imgstat", cascade="all, delete-orphan")
 
 
 def record_image_statistic(procgen):
@@ -88,6 +96,12 @@ def record_image_statistic(procgen):
     if procgen.wp.params.get("control_type", None):
         new_cn_entry = ImageGenerationStatisticCN(imgstat_id=statistic.id,control_type=procgen.wp.params["control_type"])
         db.session.add(new_cn_entry)
+        db.session.commit()
+    loras = procgen.wp.params.get("loras",[])
+    if len(loras) > 0:
+        for lora in loras:
+            new_lora_entry = ImageGenerationStatisticLora(imgstat_id=statistic.id,loras=lora["name"])
+            db.session.add(new_lora_entry)
         db.session.commit()
 
 def compile_imagegen_stats_totals():

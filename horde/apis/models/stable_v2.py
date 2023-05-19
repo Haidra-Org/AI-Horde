@@ -39,12 +39,16 @@ class ImageModels(v2.Models):
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
             'shared': fields.Boolean(description="If True, These images have been shared with LAION."),
         })
+        self.input_model_loras = api.model('ModelPayloadLorasStable', {
+            'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name of the LoRa", unique=True), 
+            'model': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the SD model."), 
+            'clip': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the clip model."), 
+        })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver", "k_dpmpp_sde", "DDIM"]), 
-            'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Obsolete Toggles used in the SD Webui. To be removed. Do not modify unless you know what you're doing."), 
-            'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
+            'cfg_scale': fields.Float(required=False,default=7.5, min=0, max=100, multiple=0.5), 
             'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
-            'seed': fields.String(required=False,description="The seed to use to generate this request"),
+            'seed': fields.String(required=False, example="The little seed that could", description="The seed to use to generate this request. You can pass text as well as numbers."),
             'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
             'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
@@ -57,6 +61,7 @@ class ImageModels(v2.Models):
             'image_is_control': fields.Boolean(default=False,description="Set to True if the image submitted is a pre-generated control map for ControlNet use"),
             'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet map returned instead of a generated image"),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
+            'loras': fields.List(fields.Nested(self.input_model_loras)),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
