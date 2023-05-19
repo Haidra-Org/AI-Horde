@@ -633,7 +633,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             check_bridge_capability("lora", worker.bridge_agent),
             and_(
                 not check_bridge_capability("lora", worker.bridge_agent),
-                func.jsonb_exists(ImageWaitingPrompt.params, 'loras'),
+                func.jsonb_not_exists(ImageWaitingPrompt.params, 'loras'),
             ),
         ),
         or_(
