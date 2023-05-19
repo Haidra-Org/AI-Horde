@@ -155,6 +155,7 @@ class Models:
             'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
             'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
             'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
+            'lora': fields.Boolean(default=None,description="If True, this worker supports and allows lora requests."),
             "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
             "max_context_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
             "tokens_generated": fields.Float(description="How many tokens this worker has generated until now"),
