@@ -134,6 +134,7 @@ class ImageWorker(Worker):
         ret_dict["painting"] = allow_painting
         ret_dict["post-processing"] = self.allow_post_processing        
         ret_dict["controlnet"] = self.allow_controlnet        
+        ret_dict["lora"] = self.allow_lora
         return ret_dict
 
     def parse_models(self, unchecked_models):

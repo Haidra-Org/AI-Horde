@@ -1,0 +1,1 @@
+ALTER TABLE workers ADD COLUMN allow_lora BOOLEAN default false not null;
