@@ -333,6 +333,7 @@ class ImageJobPop(JobPopTemplate):
             allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
             allow_post_processing = self.args.allow_post_processing,
             allow_controlnet = self.args.allow_controlnet,
+            allow_lora = self.args.allow_lora,
             priority_usernames = self.priority_usernames,
         )
 

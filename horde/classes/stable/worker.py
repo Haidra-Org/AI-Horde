@@ -19,6 +19,7 @@ class ImageWorker(Worker):
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
     allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
+    allow_lora = db.Column(db.Boolean, default=False, nullable=False)
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
@@ -31,6 +32,7 @@ class ImageWorker(Worker):
         self.allow_painting = kwargs.get('allow_painting', True)
         self.allow_post_processing = kwargs.get('allow_post_processing', True)
         self.allow_controlnet = kwargs.get('allow_controlnet', False)
+        self.allow_lora = kwargs.get('allow_lora', False)
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])
         paused_string = ''

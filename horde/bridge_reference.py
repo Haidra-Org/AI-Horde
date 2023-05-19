@@ -2,6 +2,7 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
+        22: {"lora"},
         21: {"RealESRGAN_x2plus"},
         19: {"NMKD_Siax", "4x_AnimeSharp"},
         18: {"strip_background", "return_control_map", "RealESRGAN_x4plus_anime_6B"},
@@ -43,10 +44,11 @@ BRIDGE_CAPABILITIES = {
 
 BRIDGE_SAMPLERS = {
     "AI Horde Worker": {
-        17: {
-            "karras": {},
-            "no karras": {"DDIM"}
-        },
+        # DDIM not working in hordelib
+        # 17: {
+        #     "karras": {},
+        #     "no karras": {"DDIM"}
+        # },
         12: {
             "karras": {"k_dpmpp_sde"},
             "no karras": {}
