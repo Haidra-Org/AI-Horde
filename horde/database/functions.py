@@ -916,6 +916,13 @@ def wp_has_valid_workers(wp):
                 wp.slow_workers == True,
                 worker_class.speed >= 500000,
             ),
+            or_(
+                not_(wp.params.has_key('loras')),
+                and_(
+                    worker_class.allow_lora == True,
+                    wp.params.has_key('loras'),
+                ),
+            ),
         )
     elif wp.wp_type == "text":
         final_worker_list = final_worker_list.filter(
