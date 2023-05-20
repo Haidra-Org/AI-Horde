@@ -759,7 +759,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     available_samplers = get_supported_samplers(worker.bridge_agent, karras=False)
     available_karras_samplers = get_supported_samplers(worker.bridge_agent, karras=True)
     # TODO: Add the rest of the bridge_version checks.
-    skipped_samplers = open_wp_list.filter(
+    skipped_bv = open_wp_list.filter(
         or_(
             and_(
                 ImageWaitingPrompt.params['sampler_name'].astext.not_in(available_samplers),
@@ -779,8 +779,8 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ),
         ),
     ).count()
-    if skipped_samplers > 0:
-        ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    if skipped_bv > 0:
+        ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_bv
     # TODO: Will need some sql function to be able to calculate this one demand
     # skipped_kudos = open_wp_list.filter(
     # ).count()
