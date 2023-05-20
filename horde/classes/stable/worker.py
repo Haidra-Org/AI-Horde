@@ -65,9 +65,6 @@ class ImageWorker(Worker):
             self.bridge_agent, 
             waiting_prompt.gen_payload.get('karras', False)
         ):
-            logger.debug(self.bridge_agent)
-            logger.debug(waiting_prompt.gen_payload.get('sampler_name', 'k_euler_a'))
-            logger.debug(waiting_prompt.gen_payload.get('karras', False))
             return [False, 'bridge_version']
         #logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get('post_processing', [])) >= 1 and not check_bridge_capability("post-processing", self.bridge_agent):
