@@ -325,7 +325,6 @@ class ImageJobPop(JobPopTemplate):
                 db_post_ret['kudos'] = post_ret["kudos"]
             if 'blacklist' in post_ret:
                 db_post_ret['blacklist'] = post_ret["blacklist"]
-            db_post_ret["img2img"] = 1
             post_ret = db_post_ret
         logger.debug(db_post_ret)
         return post_ret,retcode
