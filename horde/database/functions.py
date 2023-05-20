@@ -582,12 +582,17 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     ).options(
         noload(ImageWaitingPrompt.processing_gens)
     ).outerjoin(
-        WPModels
+        WPModels,
+        WPAllowedWorkers,
     ).filter(
         ImageWaitingPrompt.n > 0,
         or_(
             WPModels.model.in_(models_list),
             WPModels.id.is_(None),
+        ),
+        or_(
+            WPAllowedWorkers.id.is_(None),
+            WPAllowedWorkers.worker_id == worker.id,
         ),
         ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
         ImageWaitingPrompt.active == True,
