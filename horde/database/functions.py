@@ -741,8 +741,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ImageWaitingPrompt.params.has_key('post-processing'),
             ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
         ).count()
-        logger.debug(
-            skipped_wps = open_wp_list.filter(
+        logger.debug(open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('post-processing'),
             ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
             )
