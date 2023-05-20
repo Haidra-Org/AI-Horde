@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, and_, not_, Boolean, Integer
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import noload, joinedload, load_only
 
-from horde.classes.base.waiting_prompt import WPModels
+from horde.classes.base.waiting_prompt import WPModels, WPAllowedWorkers
 from horde.classes.base.worker import WorkerModel
 from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
@@ -660,7 +660,8 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     ).options(
         noload(ImageWaitingPrompt.processing_gens)
     ).outerjoin(
-        WPModels
+        WPModels,
+        WPAllowedWorkers,
     ).filter(
         ImageWaitingPrompt.n > 0,
         ImageWaitingPrompt.active == True,
@@ -675,6 +676,14 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     ).count()
     if skipped_models > 0:
         ret_dict["models"] = skipped_models
+    skipped_workers = open_wp_list.filter(
+        and_(
+            WPAllowedWorkers.id != None,
+            WPAllowedWorkers.id != worker.id,
+        ),
+    ).count()
+    if skipped_workers > 0:
+        ret_dict["worker_id"] = skipped_workers
     max_pixels = open_wp_list.filter(
         ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels,
     ).count()
@@ -736,22 +745,15 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             else:
                 ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     # TODO: Figure this out. 
-    # Can't figure out how to check to do something like any(pp not in available_pp for pp in params['post-processing']]
-    else:
-        available_pp = list(get_supported_pp(worker.bridge_agent))
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key('post-processing'),
-            func.jsonb_array_elements_text(ImageWaitingPrompt.params['post-processing']).not_in(available_pp),
-        ).count()
-        logger.debug(open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key('post-processing'),
-            func.jsonb_array_elements_text(ImageWaitingPrompt.params['post-processing']).not_in(available_pp),
-            )
-        )
-        logger.debug(skipped_wps)
-        logger.debug(available_pp)
-        if skipped_wps > 0:
-            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    # Can't figure out how to check to do something like any(pp not in available_pp for pp in params['post-processing'])
+    # else:
+    #     available_pp = list(get_supported_pp(worker.bridge_agent))
+    #     skipped_wps = open_wp_list.filter(
+    #         ImageWaitingPrompt.params.has_key('post-processing'),
+    #         ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
+    #     ).count()
+    #     if skipped_wps > 0:
+    #         ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     if worker.allow_controlnet == False or not check_bridge_capability("controlnet", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('control_type'),

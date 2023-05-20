@@ -72,11 +72,9 @@ class ImageWorker(Worker):
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability(pp, self.bridge_agent):
                 return [False, 'bridge_version']
-        #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, 'img2img']
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
-        #logger.warning(datetime.utcnow())
         if not waiting_prompt.source_image and (self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]):
             return [False, 'models']
         if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
@@ -92,10 +90,8 @@ class ImageWorker(Worker):
             return [False, 'bridge_version']
         if waiting_prompt.params.get('clip_skip', 1) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
             return [False, 'bridge_version']
-        #logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
             return [False, 'painting']
-        #logger.warning(datetime.utcnow())
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, 'unsafe_ip']
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
