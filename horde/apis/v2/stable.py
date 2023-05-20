@@ -321,10 +321,10 @@ class ImageJobPop(JobPopTemplate):
                 self.models,
                 self.blacklist,
             )
-            if 'kudos' in post_ret["skipped"]:
-                db_skipped['kudos'] = post_ret["kudos"]
-            if 'blacklist' in post_ret["skipped"]:
-                db_skipped['blacklist'] = post_ret["blacklist"]
+            if 'kudos' in post_ret.get("skipped",{}):
+                db_skipped['kudos'] = post_ret["skipped"]["kudos"]
+            if 'blacklist' in post_ret.get("skipped",{}):
+                db_skipped['blacklist'] = post_ret["skipped"]["blacklist"]
             post_ret["skipped"] = db_skipped
         return post_ret,retcode
     
