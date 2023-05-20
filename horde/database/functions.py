@@ -674,7 +674,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     if skipped_models > 0:
         ret_dict["skipped_models"] = skipped_models
     max_pixels = open_wp_list.filter(
-        ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
+        ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels,
     ).count()
     # Count skipped max pixels
     if max_pixels > 0:
@@ -688,6 +688,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ret_dict["img2img"] = skipped_wps
         elif check_bridge_capability("img2img", worker.bridge_agent):
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+            logger.debug("bridge_version")
     # Count skipped inpainting
     if worker.allow_painting == False or not check_bridge_capability("inpainting", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
@@ -697,6 +698,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ret_dict["painting"] = skipped_wps
         elif check_bridge_capability("inpainting", worker.bridge_agent):
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+            logger.debug("bridge_version")
     # Count skipped unsafe ips
     if worker.allow_unsafe_ipaddr == False:
         ret_dict["unsafe_ip"] = open_wp_list.filter(
@@ -727,6 +729,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ret_dict["post-processing"] = skipped_wps
         elif check_bridge_capability("post-processing", worker.bridge_agent):
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + 1
+            logger.debug("bridge_version")
     if worker.allow_controlnet == False and check_bridge_capability("controlnet", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('control_type'),
@@ -735,6 +738,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ret_dict["controlnet"] = skipped_wps
         elif check_bridge_capability("controlnet", worker.bridge_agent):
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + 1
+            logger.debug("bridge_version")
     # Count skipped request for fast workers
     if worker.speed >= 500000: # 0.5 MPS/s
         ret_dict["performance"] = open_wp_list.filter(
@@ -762,6 +766,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     ).count()
     if skipped_samplers > 0:
         ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+        logger.debug("bridge_version")
     # TODO: Will need some sql function to be able to calculate this one demand
     # skipped_kudos = open_wp_list.filter(
     # ).count()
