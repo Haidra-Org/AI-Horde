@@ -169,6 +169,6 @@ def get_supported_pp(bridge_agent):
             for capability in BRIDGE_CAPABILITIES[bridge_name][iter]:
                 if capability in KNOWN_POST_PROCESSORS:
                     logger.debug(capability)
-                    available_pp.update(capability)
+                    available_pp.add(capability)
     logger.debug(available_pp)
     return available_pp
