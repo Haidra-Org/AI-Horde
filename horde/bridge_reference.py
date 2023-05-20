@@ -45,10 +45,10 @@ BRIDGE_CAPABILITIES = {
 BRIDGE_SAMPLERS = {
     "AI Horde Worker": {
         # DDIM not working in hordelib
-        # 17: {
-        #     "karras": {},
-        #     "no karras": {"DDIM"}
-        # },
+        17: {
+            "karras": {},
+            "no karras": {"DDIM"}
+        },
         12: {
             "karras": {"k_dpmpp_sde"},
             "no karras": {}
