@@ -44,7 +44,6 @@ BRIDGE_CAPABILITIES = {
 
 BRIDGE_SAMPLERS = {
     "AI Horde Worker": {
-        # DDIM not working in hordelib
         17: {
             "karras": {},
             "no karras": {"DDIM"}
@@ -155,4 +154,4 @@ def get_supported_samplers(bridge_agent, karras=True):
     return available_samplers
 
 def check_sampler_capability(sampler, bridge_agent, karras=True):
-    return sampler in get_supported_samplers(bridge_agent, karras=True)
+    return sampler in get_supported_samplers(bridge_agent, karras)
