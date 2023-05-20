@@ -595,46 +595,47 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ImageWaitingPrompt.expiry > datetime.utcnow(),
         or_(
             ImageWaitingPrompt.source_image == None,
-            and_(
-                ImageWaitingPrompt.source_image != None,
-                worker.allow_img2img == True,
-            ),
-            
+            worker.allow_img2img == True,
+        ),
+        or_(
+            ImageWaitingPrompt.source_processing.not_in(["inpainting", "outpainting"]),
+            worker.allow_painting == True,
         ),
         or_(
             ImageWaitingPrompt.safe_ip == True,
-            and_(
-                ImageWaitingPrompt.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
+            worker.allow_unsafe_ipaddr == True,
         ),
         or_(
             ImageWaitingPrompt.nsfw == False,
-            and_(
-                ImageWaitingPrompt.nsfw == True,
-                worker.nsfw == True,
-            ),
+            worker.nsfw == True,
         ),
         or_(
             worker.maintenance == False,
-            and_(
-                worker.maintenance == True,
-                ImageWaitingPrompt.user_id == worker.user_id,
-            ),
+            ImageWaitingPrompt.user_id == worker.user_id,
         ),
         or_(
-            worker.bridge_version >= 8,
-            and_(
-                worker.bridge_version < 8,
-                ImageWaitingPrompt.r2 == False,
-            ),
+            check_bridge_capability("r2", worker.bridge_agent),
+            ImageWaitingPrompt.r2 == False,
         ),
         or_(
             not_(ImageWaitingPrompt.params.has_key('loras')),
             and_(
                 worker.allow_lora == True,
                 check_bridge_capability("lora", worker.bridge_agent),
-                ImageWaitingPrompt.params.has_key('loras'),
+            ),
+        ),
+        or_(
+            not_(ImageWaitingPrompt.params.has_key('post-processing')),
+            and_(
+                worker.allow_post_processing == True,
+                check_bridge_capability("post-processing", worker.bridge_agent),
+            ),
+        ),
+        or_(
+            not_(ImageWaitingPrompt.params.has_key('control_type')),
+            and_(
+                worker.allow_controlnet == True,
+                check_bridge_capability("controlnet", worker.bridge_agent),
             ),
         ),
         or_(
@@ -648,7 +649,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     final_wp_list = final_wp_list.order_by(
         ImageWaitingPrompt.extra_priority.desc(), 
         ImageWaitingPrompt.created.asc()
-    ).limit(50)
+    ).limit(25)
     return final_wp_list.all()
 
 def count_skipped_image_wp(worker, models_list = None, blacklist = None, priority_user_ids=None):
@@ -763,8 +764,6 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ret_dict["untrusted"] = skipped_wps
     available_samplers = get_supported_samplers(worker.bridge_agent, karras=False)
     available_karras_samplers = get_supported_samplers(worker.bridge_agent, karras=True)
-    logger.debug(available_samplers)
-    logger.debug(available_karras_samplers)
     # TODO: Add the rest of the bridge_version checks.
     skipped_samplers = open_wp_list.filter(
         or_(
