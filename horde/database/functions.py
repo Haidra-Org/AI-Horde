@@ -797,16 +797,12 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
                 ImageWaitingPrompt.params['hires_fix'].astext.cast(Boolean).is_(True)
             ),
             and_(
-                not check_bridge_capability("hires_fix", worker.bridge_agent),
-                ImageWaitingPrompt.params['hires_fix'].astext.cast(Integer) > 1
-            ),
-            and_(
                 not check_bridge_capability("return_control_map", worker.bridge_agent),
-                ImageWaitingPrompt.params['return_control_map'].astext.cast(Integer) > 1
+                ImageWaitingPrompt.params['return_control_map'].astext.cast(Boolean).is_(True)
             ),
             and_(
                 not check_bridge_capability("tiling", worker.bridge_agent),
-                ImageWaitingPrompt.params['tiling'].astext.cast(Integer) > 1
+                ImageWaitingPrompt.params['tiling'].astext.cast(Boolean).is_(True)
             ),
         ),
     ).count()
