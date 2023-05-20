@@ -630,11 +630,11 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             ),
         ),
         or_(
-            not_(func.has_key(ImageWaitingPrompt.params, 'loras')),
+            not_(ImageWaitingPrompt.params.has_key('loras')),
             and_(
                 worker.allow_lora == True,
                 check_bridge_capability("lora", worker.bridge_agent),
-                func.has_key(ImageWaitingPrompt.params, 'loras'),
+                ImageWaitingPrompt.params.has_key('loras'),
             ),
         ),
         or_(
