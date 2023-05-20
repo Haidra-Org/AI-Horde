@@ -682,6 +682,13 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             WPAllowedWorkers.worker_id != worker.id,
         ),
     ).count()
+    logger.debug(skipped_workers)
+    logger.debug(open_wp_list.filter(
+        and_(
+            WPAllowedWorkers.id != None,
+            WPAllowedWorkers.worker_id != worker.id,
+        ),
+    ))
     if skipped_workers > 0:
         ret_dict["worker_id"] = skipped_workers
     max_pixels = open_wp_list.filter(
