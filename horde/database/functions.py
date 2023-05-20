@@ -30,7 +30,7 @@ from horde.utils import hash_api_key, validate_regex
 from horde import horde_redis as hr
 from horde.database.classes import FakeWPRow
 from horde.enums import State
-from horde.bridge_reference import check_bridge_capability, get_supported_samplers
+from horde.bridge_reference import check_bridge_capability, get_supported_samplers, get_supported_pp
 
 from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
 from horde.model_reference import model_reference
@@ -653,6 +653,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     return final_wp_list.all()
 
 def count_skipped_image_wp(worker, models_list = None, blacklist = None, priority_user_ids=None):
+    ## Massively costly approach, doing 1 new query per count. Not sure about it.
     ret_dict = {}
     open_wp_list = db.session.query(
         ImageWaitingPrompt
@@ -719,7 +720,6 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('loras'),
         ).count()
-        logger.debug(skipped_wps)
         if skipped_wps > 0:
             if worker.allow_lora == False:
                 ret_dict["lora"] = skipped_wps
@@ -735,6 +735,14 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
                 ret_dict["post-processing"] = skipped_wps
             else:
                 ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    else:
+        available_pp = get_supported_pp(worker.bridge_agent)
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.params.has_key('post-processing'),
+            ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
+        ).count()
+        if skipped_wps > 0:
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     if worker.allow_controlnet == False or not check_bridge_capability("controlnet", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('control_type'),
@@ -775,8 +783,16 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
                 ImageWaitingPrompt.params['hires_fix'].astext.cast(Boolean).is_(True)
             ),
             and_(
-                not check_bridge_capability("clip_skip", worker.bridge_agent),
+                not check_bridge_capability("hires_fix", worker.bridge_agent),
                 ImageWaitingPrompt.params['hires_fix'].astext.cast(Integer) > 1
+            ),
+            and_(
+                not check_bridge_capability("return_control_map", worker.bridge_agent),
+                ImageWaitingPrompt.params['return_control_map'].astext.cast(Integer) > 1
+            ),
+            and_(
+                not check_bridge_capability("tiling", worker.bridge_agent),
+                ImageWaitingPrompt.params['tiling'].astext.cast(Integer) > 1
             ),
         ),
     ).count()

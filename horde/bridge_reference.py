@@ -1,4 +1,5 @@
 from horde.logger import logger
+from horde.consts import KNOWN_POST_PROCESSORS
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
@@ -10,7 +11,7 @@ BRIDGE_CAPABILITIES = {
         15: {"controlnet"},
         14: {"r2_source"},
         13: {"hires_fix", "clip_skip"},
-        11: {"tiling"},
+        # 11: {"tiling"},
         9: {"CodeFormers"},
         8: {"r2"},
         7: {"post-processing", "GFPGAN", "RealESRGAN_x4plus"},
@@ -155,3 +156,17 @@ def get_supported_samplers(bridge_agent, karras=True):
 
 def check_sampler_capability(sampler, bridge_agent, karras=True):
     return sampler in get_supported_samplers(bridge_agent, karras)
+
+def get_supported_pp(bridge_agent):
+    bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
+    if bridge_name not in BRIDGE_SAMPLERS:
+        # When it's an unknown worker agent we treat it like AI Horde Worker
+        bridge_name = "AI Horde Worker"
+        bridge_version = 22
+    available_pp = set()
+    for iter in range(bridge_version + 1):
+        if iter in BRIDGE_CAPABILITIES[bridge_name]:
+            for capability in BRIDGE_CAPABILITIES[bridge_name][iter]:
+                if capability in KNOWN_POST_PROCESSORS:
+                    available_pp.update(capability)
+    return available_pp
