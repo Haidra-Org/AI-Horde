@@ -3,7 +3,7 @@ import time
 import uuid
 import json
 from datetime import datetime, timedelta
-from sqlalchemy import func, or_, and_, not_
+from sqlalchemy import func, or_, and_, not_, Boolean
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import noload, joinedload, load_only
 
@@ -750,11 +750,11 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
         or_(
             and_(
                 ImageWaitingPrompt.params['sampler_name'].astext.in_(available_samplers),
-                ImageWaitingPrompt.params['karras'] == False
+                ImageWaitingPrompt.params['karras'].astext.cast(Boolean).is_(False)
             ),
             and_(
                 ImageWaitingPrompt.params['sampler_name'].astext.in_(available_karras_samplers),
-                ImageWaitingPrompt.params['karras'] == True
+                ImageWaitingPrompt.params['karras'].astext.cast(Boolean).is_(True)
             ),
         ),
     ).count()
