@@ -719,6 +719,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('loras'),
         ).count()
+        logger.debug(skipped_wps)
         if skipped_wps > 0:
             if worker.allow_lora == False:
                 ret_dict["lora"] = skipped_wps
