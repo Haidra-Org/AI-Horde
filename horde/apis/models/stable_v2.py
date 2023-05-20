@@ -21,6 +21,7 @@ class ImageParsers(v2.Parsers):
         self.job_pop_parser.add_argument("allow_unsafe_ipaddr", type=bool, required=False, default=True, help="If True, this worker will pick up img2img requests coming from clients with an unsafe IP.", location="json")
         self.job_pop_parser.add_argument("allow_post_processing", type=bool, required=False, default=True, help="If True, this worker will pick up requests requesting post-processing.", location="json")
         self.job_pop_parser.add_argument("allow_controlnet", type=bool, required=False, default=False, help="If True, this worker will pick up requests requesting ControlNet.", location="json")
+        self.job_pop_parser.add_argument("allow_lora", type=bool, required=False, default=False, help="If True, this worker will pick up requests requesting LoRas.", location="json")
         self.job_submit_parser.add_argument("seed", type=int, required=True, help="The seed of the generation", location="json")
         self.job_submit_parser.add_argument("censored", type=bool, required=False, default=False, help="If true, this image has been censored by the safety filter.", location="json")
 
@@ -39,12 +40,16 @@ class ImageModels(v2.Models):
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
             'shared': fields.Boolean(description="If True, These images have been shared with LAION."),
         })
+        self.input_model_loras = api.model('ModelPayloadLorasStable', {
+            'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name of the LoRa", unique=True, min_length = 1, max_length = 255), 
+            'model': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the SD model."), 
+            'clip': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the clip model."), 
+        })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver", "k_dpmpp_sde", "DDIM"]), 
-            'toggles': fields.List(fields.Integer,required=False, example=[1,4], description="Obsolete Toggles used in the SD Webui. To be removed. Do not modify unless you know what you're doing."), 
-            'cfg_scale': fields.Float(required=False,default=5.0, min=-40, max=30, multiple=0.5), 
+            'cfg_scale': fields.Float(required=False,default=7.5, min=0, max=100, multiple=0.5), 
             'denoising_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
-            'seed': fields.String(required=False,description="The seed to use to generate this request"),
+            'seed': fields.String(required=False, example="The little seed that could", description="The seed to use to generate this request. You can pass text as well as numbers."),
             'height': fields.Integer(required=False, default=512, description="The height of the image to generate", min=64, max=3072, multiple=64), 
             'width': fields.Integer(required=False, default=512, description="The width of the image to generate", min=64, max=3072, multiple=64), 
             'seed_variation': fields.Integer(required=False, example=1, min = 1, max=1000, description="If passed with multiple n, the provided seed will be incremented every time by this value"),
@@ -57,6 +62,7 @@ class ImageModels(v2.Models):
             'image_is_control': fields.Boolean(default=False,description="Set to True if the image submitted is a pre-generated control map for ControlNet use"),
             'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet map returned instead of a generated image"),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
+            'loras': fields.List(fields.Nested(self.input_model_loras)),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
@@ -74,7 +80,8 @@ class ImageModels(v2.Models):
             'img2img': fields.Integer(description="How many waiting requests were skipped because they requested img2img"),
             'painting': fields.Integer(description="How many waiting requests were skipped because they requested inpainting/outpainting"),
             'post-processing': fields.Integer(description="How many waiting requests were skipped because they requested post-processing"),
-            'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
+            'lora': fields.Integer(description="How many waiting requests were skipped because they requested loras"),
+            'controlnet': fields.Integer(description="How many waiting requests were skipped because they requested a controlnet"),
         })
         self.response_model_job_pop = api.model('GenerationPayloadStable', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
@@ -94,13 +101,12 @@ class ImageModels(v2.Models):
             'allow_unsafe_ipaddr': fields.Boolean(default=True,description="If True, this worker will pick up img2img requests coming from clients with an unsafe IP."),
             'allow_post_processing': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting post-processing."),
             'allow_controlnet': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting ControlNet."),
+            'allow_lora': fields.Boolean(default=True,description="If True, this worker will pick up requests requesting LoRas."),
         })
         self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
             'seed': fields.Integer(required=True, description="The seed for this generation"), 
             'censored': fields.Boolean(required=False, default=False,description="If True, this resulting image has been censored"),
         })
-
-
         self.input_model_request_generation = api.model('GenerationInputStable', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image", min_length = 1),
             'params': fields.Nested(self.input_model_generation_payload, skip_none=True),

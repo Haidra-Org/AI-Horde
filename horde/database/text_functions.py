@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import noload, joinedload, load_only
 
-from horde.classes.base.waiting_prompt import WPModels
+from horde.classes.base.waiting_prompt import WPModels, WPAllowedWorkers
 from horde.classes.base.worker import WorkerModel
 from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
@@ -47,10 +47,10 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
     ).options(
         noload(TextWaitingPrompt.processing_gens)
     ).outerjoin(
-        WPModels
+        WPModels,
+        WPAllowedWorkers,
     ).filter(
         TextWaitingPrompt.n > 0,
-        
         TextWaitingPrompt.max_length <= worker.max_length,
         TextWaitingPrompt.max_context_length <= worker.max_context_length,
         TextWaitingPrompt.active == True,
@@ -58,25 +58,27 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         TextWaitingPrompt.expiry > datetime.utcnow(),
         or_(
             TextWaitingPrompt.safe_ip == True,
-            and_(
-                TextWaitingPrompt.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
+            worker.allow_unsafe_ipaddr == True,
         ),
         or_(
             TextWaitingPrompt.nsfw == False,
-            and_(
-                TextWaitingPrompt.nsfw == True,
-                worker.nsfw == True,
-            ),
+            worker.nsfw == True,
         ),
         or_(
             WPModels.model.in_(models_list),
             WPModels.id.is_(None),
         ),
         or_(
+            WPAllowedWorkers.id.is_(None),
+            WPAllowedWorkers.worker_id == worker.id,
+        ),
+        or_(
             worker.speed >= 2, # 2 tokens/s
             TextWaitingPrompt.slow_workers == True,
+        ),
+        or_(
+            worker.maintenance == False,
+            TextWaitingPrompt.user_id == worker.user_id,
         ),
     )
     if priority_user_ids:

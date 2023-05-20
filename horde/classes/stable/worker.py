@@ -19,6 +19,7 @@ class ImageWorker(Worker):
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
     allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
+    allow_lora = db.Column(db.Boolean, default=False, nullable=False)
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
@@ -31,6 +32,7 @@ class ImageWorker(Worker):
         self.allow_painting = kwargs.get('allow_painting', True)
         self.allow_post_processing = kwargs.get('allow_post_processing', True)
         self.allow_controlnet = kwargs.get('allow_controlnet', False)
+        self.allow_lora = kwargs.get('allow_lora', False)
         if len(self.get_model_names()) == 0:
             self.set_models(['stable_diffusion'])
         paused_string = ''
@@ -70,11 +72,9 @@ class ImageWorker(Worker):
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get('post_processing', []) and not check_bridge_capability(pp, self.bridge_agent):
                 return [False, 'bridge_version']
-        #logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, 'img2img']
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
-        #logger.warning(datetime.utcnow())
         if not waiting_prompt.source_image and (self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]):
             return [False, 'models']
         if waiting_prompt.params.get('tiling') and not check_bridge_capability("tiling", self.bridge_agent):
@@ -90,10 +90,8 @@ class ImageWorker(Worker):
             return [False, 'bridge_version']
         if waiting_prompt.params.get('clip_skip', 1) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
             return [False, 'bridge_version']
-        #logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
             return [False, 'painting']
-        #logger.warning(datetime.utcnow())
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, 'unsafe_ip']
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
@@ -132,6 +130,7 @@ class ImageWorker(Worker):
         ret_dict["painting"] = allow_painting
         ret_dict["post-processing"] = self.allow_post_processing        
         ret_dict["controlnet"] = self.allow_controlnet        
+        ret_dict["lora"] = self.allow_lora
         return ret_dict
 
     def parse_models(self, unchecked_models):

@@ -314,7 +314,20 @@ class ImageJobPop(JobPopTemplate):
         self.blacklist = []
         if self.args.blacklist:
             self.blacklist = self.args.blacklist
-        return super().post()
+        post_ret, retcode = super().post()
+        if post_ret["id"] == None:
+            db_skipped = database.count_skipped_image_wp(
+                self.worker,
+                self.models,
+                self.blacklist,
+            )
+            if 'kudos' in post_ret.get("skipped",{}):
+                db_skipped['kudos'] = post_ret["skipped"]["kudos"]
+            if 'blacklist' in post_ret.get("skipped",{}):
+                db_skipped['blacklist'] = post_ret["skipped"]["blacklist"]
+            post_ret["skipped"] = db_skipped
+        return post_ret,retcode
+    
 
     def check_in(self):
         self.worker.check_in(
@@ -333,6 +346,7 @@ class ImageJobPop(JobPopTemplate):
             allow_unsafe_ipaddr = self.args.allow_unsafe_ipaddr,
             allow_post_processing = self.args.allow_post_processing,
             allow_controlnet = self.args.allow_controlnet,
+            allow_lora = self.args.allow_lora,
             priority_usernames = self.priority_usernames,
         )
 
