@@ -573,8 +573,6 @@ def count_things_per_model(wp_class):
 
 def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None): 
     # This is just the top 100 - Adjusted method to send ImageWorker object. Filters to add.
-    # TODO: Filter by (ImageWorker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
-    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ ImageWorker.user.trusted == False
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
     final_wp_list = db.session.query(
@@ -586,6 +584,10 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         WPAllowedWorkers,
     ).filter(
         ImageWaitingPrompt.n > 0,
+        ImageWaitingPrompt.active == True,
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.expiry > datetime.utcnow(),
+        ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
         or_(
             WPModels.model.in_(models_list),
             WPModels.id.is_(None),
@@ -594,10 +596,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             WPAllowedWorkers.id.is_(None),
             WPAllowedWorkers.worker_id == worker.id,
         ),
-        ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
-        ImageWaitingPrompt.active == True,
-        ImageWaitingPrompt.faulted == False,
-        ImageWaitingPrompt.expiry > datetime.utcnow(),
         or_(
             ImageWaitingPrompt.source_image == None,
             worker.allow_img2img == True,
