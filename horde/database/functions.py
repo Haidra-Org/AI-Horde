@@ -679,7 +679,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     skipped_workers = open_wp_list.filter(
         and_(
             WPAllowedWorkers.id != None,
-            WPAllowedWorkers.id != worker.id,
+            WPAllowedWorkers.worker_id != worker.id,
         ),
     ).count()
     if skipped_workers > 0:
