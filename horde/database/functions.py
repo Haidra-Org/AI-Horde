@@ -735,15 +735,17 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
                 ret_dict["post-processing"] = skipped_wps
             else:
                 ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
-    else:
+    # TODO: Figure this out. 
+    # Can't figure out how to check to do something like any(pp not in available_pp for pp in params['post-processing']]
+    # else:
         available_pp = list(get_supported_pp(worker.bridge_agent))
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('post-processing'),
-            ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
+            func.jsonb_array_elements_text(ImageWaitingPrompt.params['post-processing']).not_in(available_pp),
         ).count()
         logger.debug(open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('post-processing'),
-            ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
+            func.jsonb_array_elements_text(ImageWaitingPrompt.params['post-processing']).not_in(available_pp),
             )
         )
         logger.debug(skipped_wps)
