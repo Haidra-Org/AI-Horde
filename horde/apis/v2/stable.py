@@ -321,12 +321,13 @@ class ImageJobPop(JobPopTemplate):
                 self.models,
                 self.blacklist,
             )
-            if ['kudos'] in post_ret:
+            if 'kudos' in post_ret:
                 db_post_ret['kudos'] = post_ret["kudos"]
-            if ['blacklist'] in post_ret:
+            if 'blacklist' in post_ret:
                 db_post_ret['blacklist'] = post_ret["blacklist"]
-            if ['worker_id'] in post_ret:
+            if 'worker_id' in post_ret:
                 db_post_ret['worker_id'] = post_ret["worker_id"]
+            post_ret = db_post_ret
         return post_ret,retcode
     
 
