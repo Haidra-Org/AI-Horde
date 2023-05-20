@@ -672,10 +672,8 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             WPModels.id != None,
         ),
     ).count()
-    logger.debug(skipped_models)
-    logger.debug(models_list)
     if skipped_models > 0:
-        ret_dict["skipped_models"] = skipped_models
+        ret_dict["models"] = skipped_models
     max_pixels = open_wp_list.filter(
         ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels,
     ).count()
