@@ -316,17 +316,16 @@ class ImageJobPop(JobPopTemplate):
             self.blacklist = self.args.blacklist
         post_ret, retcode = super().post()
         if post_ret["id"] == None:
-            db_post_ret = database.count_skipped_image_wp(
+            db_skipped = database.count_skipped_image_wp(
                 self.worker,
                 self.models,
                 self.blacklist,
             )
-            if 'kudos' in post_ret:
-                db_post_ret['kudos'] = post_ret["kudos"]
-            if 'blacklist' in post_ret:
-                db_post_ret['blacklist'] = post_ret["blacklist"]
-            post_ret = db_post_ret
-        logger.debug(db_post_ret)
+            if 'kudos' in post_ret["skipped"]:
+                db_skipped['kudos'] = post_ret["kudos"]
+            if 'blacklist' in post_ret["skipped"]:
+                db_skipped['blacklist'] = post_ret["blacklist"]
+            post_ret["skipped"] = db_skipped
         return post_ret,retcode
     
 
