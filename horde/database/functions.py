@@ -741,7 +741,14 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             ImageWaitingPrompt.params.has_key('post-processing'),
             ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
         ).count()
+        logger.debug(
+            skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.params.has_key('post-processing'),
+            ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
+            )
+        )
         logger.debug(skipped_wps)
+        logger.debug(available_pp)
         if skipped_wps > 0:
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     if worker.allow_controlnet == False or not check_bridge_capability("controlnet", worker.bridge_agent):
