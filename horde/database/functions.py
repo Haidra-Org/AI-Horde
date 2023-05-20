@@ -714,11 +714,10 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
         ).count()
         if worker.allow_img2img == False:
             ret_dict["lora"] = skipped_wps
+            logger.debug("lora")
         elif check_bridge_capability("lora", worker.bridge_agent):
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
-    logger.debug(open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key('loras'),
-        ))
+            logger.debug("bridge_version")
     # Count skipped PP
     if worker.allow_post_processing == False and check_bridge_capability("post-processing", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
