@@ -743,8 +743,8 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
         ret_dict["untrusted"] = open_wp_list.filter(
             ImageWaitingPrompt.trusted_workers == True,
         ).count()
-    available_samplers = get_supported_samplers(worker.bridge_agent, karras=False)
-    available_karras_samplers = get_supported_samplers(worker.bridge_agent, karras=True)
+    available_samplers = list(get_supported_samplers(worker.bridge_agent, karras=False))
+    available_karras_samplers = list(get_supported_samplers(worker.bridge_agent, karras=True))
     # TODO: Add the rest of the bridge_version checks.
     skipped_samplers = open_wp_list.filter(
         or_(
