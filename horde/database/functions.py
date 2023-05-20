@@ -3,7 +3,7 @@ import time
 import uuid
 import json
 from datetime import datetime, timedelta
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, not_
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import noload, joinedload, load_only
 
@@ -630,11 +630,11 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             ),
         ),
         or_(
-            not func.jsonb_exists(ImageWaitingPrompt.params, 'loras'),
+            not_(func.has_key(ImageWaitingPrompt.params, 'loras')),
             and_(
                 worker.allow_lora == True,
                 check_bridge_capability("lora", worker.bridge_agent),
-                func.jsonb_exists(ImageWaitingPrompt.params, 'loras'),
+                func.has_key(ImageWaitingPrompt.params, 'loras'),
             ),
         ),
         or_(
