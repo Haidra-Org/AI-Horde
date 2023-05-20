@@ -321,7 +321,7 @@ class ImageJobPop(JobPopTemplate):
                 self.models,
                 self.blacklist,
             )
-        logger.debug(post_ret)
+            logger.debug(post_ret)
         return post_ret,retcode
     
 

@@ -770,7 +770,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     # 'worker_id': ,
     # 'blacklist': ,
     # 'kudos': skipped_kudos, # Not Implemented: See skipped_kudos TODO.
-    return 
+    return ret_dict
 
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
     # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
