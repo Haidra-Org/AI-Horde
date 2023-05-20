@@ -137,11 +137,12 @@ def check_bridge_capability(capability, bridge_agent):
     # logger.debug([total_capabilities, capability, capability in total_capabilities])
     return capability in total_capabilities
 
-def check_sampler_capability(sampler, bridge_agent, karras=True):
+def get_supported_samplers(bridge_agent, karras=True):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
     if bridge_name not in BRIDGE_SAMPLERS:
-        # When it's an unknown worker agent, we let it through.
-        return True
+        # When it's an unknown worker agent we treat it like AI Horde Worker
+        bridge_name = "AI Horde Worker"
+        bridge_version = 22
     available_samplers = set()
     for iter in range(bridge_version + 1):
         if iter in BRIDGE_SAMPLERS[bridge_name]:
@@ -151,4 +152,7 @@ def check_sampler_capability(sampler, bridge_agent, karras=True):
             if not karras:
                 available_samplers.update(BRIDGE_SAMPLERS[bridge_name][iter]["no karras"])
     # logger.debug([available_samplers, sampler, sampler in available_samplers])
-    return sampler in available_samplers
+    return available_samplers
+
+def check_sampler_capability(sampler, bridge_agent, karras=True):
+    return sampler in get_supported_samplers(bridge_agent, karras=True)

@@ -80,7 +80,8 @@ class ImageModels(v2.Models):
             'img2img': fields.Integer(description="How many waiting requests were skipped because they requested img2img"),
             'painting': fields.Integer(description="How many waiting requests were skipped because they requested inpainting/outpainting"),
             'post-processing': fields.Integer(description="How many waiting requests were skipped because they requested post-processing"),
-            'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
+            'lora': fields.Integer(description="How many waiting requests were skipped because they requested loras"),
+            'controlnet': fields.Integer(description="How many waiting requests were skipped because they requested a controlnet"),
         })
         self.response_model_job_pop = api.model('GenerationPayloadStable', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),

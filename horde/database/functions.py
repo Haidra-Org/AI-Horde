@@ -30,7 +30,7 @@ from horde.utils import hash_api_key, validate_regex
 from horde import horde_redis as hr
 from horde.database.classes import FakeWPRow
 from horde.enums import State
-from horde.bridge_reference import check_bridge_capability, check_sampler_capability
+from horde.bridge_reference import check_bridge_capability, get_supported_samplers
 
 from horde.classes.base.team import find_team_by_id, find_team_by_name, get_all_teams
 from horde.model_reference import model_reference
@@ -651,6 +651,124 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     ).limit(50)
     return final_wp_list.all()
 
+def count_skipped_image_wp(worker, models_list = None, blacklist = None, priority_user_ids=None):
+    ret_dict = {}
+    open_wp_list = db.session.query(
+        ImageWaitingPrompt
+    ).options(
+        noload(ImageWaitingPrompt.processing_gens)
+    ).outerjoin(
+        WPModels
+    ).filter(
+        ImageWaitingPrompt.n > 0,
+        ImageWaitingPrompt.active == True,
+        ImageWaitingPrompt.faulted == False,
+        ImageWaitingPrompt.expiry > datetime.utcnow(),
+    )
+    skipped_models = open_wp_list.filter(
+        and_(
+            WPModels.model.not_in(models_list),
+            WPModels.id != None,
+        ),
+    ).count()
+    if skipped_models > 0:
+        ret_dict["skipped_models"] = skipped_models
+    max_pixels = open_wp_list.filter(
+        ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
+    ).count()
+    # Count skipped max pixels
+    if max_pixels > 0:
+        ret_dict["max_pixels"] = max_pixels
+    # Count skipped img2img
+    if worker.allow_img2img == False or not check_bridge_capability("img2img", worker.bridge_agent):
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.source_image != None,
+        ).count()
+        if worker.allow_img2img == False:
+            ret_dict["img2img"] = skipped_wps
+        elif check_bridge_capability("img2img", worker.bridge_agent):
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    # Count skipped inpainting
+    if worker.allow_painting == False or not check_bridge_capability("inpainting", worker.bridge_agent):
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.source_processing.in_(["inpainting", "outpainting"]),
+        ).count()
+        if worker.allow_painting == False:
+            ret_dict["painting"] = skipped_wps
+        elif check_bridge_capability("inpainting", worker.bridge_agent):
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    # Count skipped unsafe ips
+    if worker.allow_unsafe_ipaddr == False:
+        ret_dict["unsafe_ip"] = open_wp_list.filter(
+            ImageWaitingPrompt.safe_ip == False,
+        ).count()
+    # Count skipped nsfw
+    if worker.nsfw == False:
+        ret_dict["nsfw"] = open_wp_list.filter(
+            ImageWaitingPrompt.nsfw == True,
+        ).count()
+    # Count skipped lora
+    if worker.allow_lora == False and check_bridge_capability("lora", worker.bridge_agent):
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.params.has_key('loras'),
+        ).count()
+        if worker.allow_img2img == False:
+            ret_dict["lora"] = skipped_wps
+        elif check_bridge_capability("lora", worker.bridge_agent):
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    # Count skipped PP
+    if worker.allow_post_processing == False and check_bridge_capability("post-processing", worker.bridge_agent):
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.params.has_key('post-processing'),
+        ).count()
+        if worker.allow_post_processing == False:
+            ret_dict["post-processing"] = skipped_wps
+        elif check_bridge_capability("post-processing", worker.bridge_agent):
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + 1
+    if worker.allow_controlnet == False and check_bridge_capability("controlnet", worker.bridge_agent):
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.params.has_key('control_type'),
+        ).count()
+        if worker.allow_controlnet == False:
+            ret_dict["controlnet"] = skipped_wps
+        elif check_bridge_capability("controlnet", worker.bridge_agent):
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + 1
+    # Count skipped request for fast workers
+    if worker.speed >= 500000: # 0.5 MPS/s
+        ret_dict["performance"] = open_wp_list.filter(
+            ImageWaitingPrompt.slow_workers == True,
+        ).count()
+    # Count skipped WPs requiring trusted workers
+    if worker.user.trusted == False:
+        ret_dict["untrusted"] = open_wp_list.filter(
+            ImageWaitingPrompt.trusted_workers == True,
+        ).count()
+    available_samplers = get_supported_samplers(worker.bridge_agent, karras=False)
+    available_karras_samplers = get_supported_samplers(worker.bridge_agent, karras=True)
+    # TODO: Add the rest of the bridge_version checks.
+    skipped_samplers = open_wp_list.filter(
+        or_(
+            and_(
+                ImageWaitingPrompt.params['sampler_name'].in_(available_samplers),
+                ImageWaitingPrompt.params['karras'] == False
+            ),
+            and_(
+                ImageWaitingPrompt.params['sampler_name'].in_(available_karras_samplers),
+                ImageWaitingPrompt.params['karras'] == True
+            ),
+        ),
+    ).count()
+    if skipped_samplers > 0:
+        ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    # TODO: Will need some sql function to be able to calculate this one demand
+    # skipped_kudos = open_wp_list.filter(
+    # ).count()
+    # TODO: Implement the below counts
+    # 'worker_id': ,
+    # 'blacklist': ,
+    # 'kudos': skipped_kudos, # Not Implemented: See skipped_kudos TODO.
+    return 
+
 def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user_ids = None, excluded_forms = None): 
     # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
     if forms_list == None:
@@ -920,6 +1038,7 @@ def wp_has_valid_workers(wp):
                 'loras' not in wp.params,
                 and_(
                     worker_class.allow_lora == True,
+                    #TODO: Create an sql function I can call to check the worker bridge capabilities
                     'loras' in wp.params,
                 ),
             ),

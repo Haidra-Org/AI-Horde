@@ -89,6 +89,7 @@ class Models:
             'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
             'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides.", min=0),
             'bridge_version': fields.Integer(example=0,description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).", min=0),
+            'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
