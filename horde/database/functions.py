@@ -917,10 +917,10 @@ def wp_has_valid_workers(wp):
                 worker_class.speed >= 500000,
             ),
             or_(
-                not_(wp.params.has_key('loras')),
+                'loras' not in wp.params,
                 and_(
                     worker_class.allow_lora == True,
-                    wp.params.has_key('loras'),
+                    'loras' in wp.params,
                 ),
             ),
         )
