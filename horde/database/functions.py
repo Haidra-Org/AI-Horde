@@ -736,7 +736,7 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
             else:
                 ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     else:
-        available_pp = get_supported_pp(worker.bridge_agent)
+        available_pp = list(get_supported_pp(worker.bridge_agent))
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key('post-processing'),
             ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
