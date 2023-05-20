@@ -100,7 +100,7 @@ def record_image_statistic(procgen):
     loras = procgen.wp.params.get("loras",[])
     if len(loras) > 0:
         for lora in loras:
-            new_lora_entry = ImageGenerationStatisticLora(imgstat_id=statistic.id,loras=lora["name"])
+            new_lora_entry = ImageGenerationStatisticLora(imgstat_id=statistic.id,lora=lora["name"])
             db.session.add(new_lora_entry)
         db.session.commit()
 
