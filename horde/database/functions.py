@@ -769,11 +769,11 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     skipped_samplers = open_wp_list.filter(
         or_(
             and_(
-                ImageWaitingPrompt.params['sampler_name'].astext.in_(available_samplers),
+                ImageWaitingPrompt.params['sampler_name'].astext.not_in(available_samplers),
                 ImageWaitingPrompt.params['karras'].astext.cast(Boolean).is_(False)
             ),
             and_(
-                ImageWaitingPrompt.params['sampler_name'].astext.in_(available_karras_samplers),
+                ImageWaitingPrompt.params['sampler_name'].astext.not_in(available_karras_samplers),
                 ImageWaitingPrompt.params['karras'].astext.cast(Boolean).is_(True)
             ),
         ),
