@@ -37,7 +37,7 @@ class CounterMeasures:
 	@staticmethod
 	def set_safe(ipaddr, is_safe):
 		'''Stores the safety of the IP in redis temporarily'''
-		ip_r.setex(ipaddr, timedelta(hours=48), int(is_safe))
+		ip_r.setex(ipaddr, timedelta(hours=6), int(is_safe))
 		return is_safe
 
 	@staticmethod
