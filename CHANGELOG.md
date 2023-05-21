@@ -1,5 +1,14 @@
 # Changelog
 
+# 4.15.1
+
+* Removed "soft_prompt" from the payload to Scribes as it's sent elsewhere.
+
+# 4.15.0
+
+* Added support for LoRas in payloads for SD
+* Improved retrieval filtering
+
 # 4.14.0
 
 * Enabled NN-model based kudos-calculation
