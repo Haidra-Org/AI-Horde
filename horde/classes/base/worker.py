@@ -155,7 +155,7 @@ class WorkerTemplate(db.Model):
     def report_suspicion(self, amount = 1, reason = Suspicions.WORKER_PROFANITY, formats = None):
         if not formats: formats = []
         # Unreasonable Fast can be added multiple times and it increases suspicion each time
-        if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
+        if reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED] and int(reason) in self.get_suspicion_reasons():
             return
         new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)
@@ -166,6 +166,9 @@ class WorkerTemplate(db.Model):
         if self.is_suspicious():
             self.paused = True
         db.session.commit()
+
+    def get_suspicion_reasons(self):
+        return set([s.suspicion_id for s in self.suspicions])
 
     def reset_suspicion(self):
         '''Clears the worker's suspicion and resets their reasons'''
@@ -236,9 +239,8 @@ class WorkerTemplate(db.Model):
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
         self.prioritized_users = kwargs.get('prioritized_users', [])
-        if not kwargs.get("safe_ip", True):
-            if not self.user.trusted:
-                self.report_suspicion(reason = Suspicions.UNSAFE_IP)
+        if not kwargs.get("safe_ip", True) and not self.user.trusted:
+            self.report_suspicion(reason = Suspicions.UNSAFE_IP)
         if not self.is_stale() and not self.paused and not self.maintenance:
             self.uptime += (datetime.utcnow() - self.last_check_in).total_seconds()
             # Every 10 minutes of uptime gets 100 kudos rewarded

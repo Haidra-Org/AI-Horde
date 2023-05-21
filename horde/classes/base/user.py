@@ -542,7 +542,7 @@ class User(db.Model):
         # Anon is never considered suspicious
         if self.is_anon():
             return
-        if int(reason) in self.suspicions and reason not in [Suspicions.UNREASONABLY_FAST,Suspicions.TOO_MANY_JOBS_ABORTED]:
+        if reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED] and int(reason) in self.get_suspicion_reasons():
             return
         new_suspicion = UserSuspicions(user_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)
@@ -550,6 +550,9 @@ class User(db.Model):
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason}")
+
+    def get_suspicion_reasons(self):
+        return set([s.suspicion_id for s in self.suspicions])
 
     def reset_suspicion(self):
         '''Clears the user's suspicion and resets their reasons'''
