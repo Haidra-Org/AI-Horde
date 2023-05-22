@@ -252,6 +252,7 @@ class Models:
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
             "flagged": fields.Boolean(example=False,description="This user has been flagged for suspicious activity."),
+            "vpn": fields.Boolean(example=False,description="(Privileged) This user has been given the VPN role."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),

@@ -665,6 +665,7 @@ class User(db.Model):
                 workers_array.append(str(worker.id))
             ret_dict["worker_ids"] = workers_array
             ret_dict['contact'] = self.contact
+            ret_dict['vpn'] = self.vpn
         if details_privilege >= 1:
             sharedkeys_array = []
             for sk in self.sharedkeys:
