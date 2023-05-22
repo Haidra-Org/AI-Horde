@@ -4,6 +4,14 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-22",
+            "newspiece": 
+                "A new AI Horde integration has been created. A Telegram bot by the name of [Imaginarium](https://t.me/ImaginariumAIbot). "
+                "Here's the new [Discord integration channel](https://discordapp.com/channels/781145214752129095/1109825249933000714)",
+            "tags": ["bot", "telegram"],
+            "importance": "Integration",
+        },
+        {
             "date_published": "2023-05-14",
             "newspiece": 
                 "The AI Horde has finally moved to the [hordelib](https://pypi.org/project/hordelib/) library. "
