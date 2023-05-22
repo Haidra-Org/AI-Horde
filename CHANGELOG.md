@@ -1,5 +1,12 @@
 # Changelog
 
+# 4.15.2
+
+* Prevents more than 5 loras per image
+* display VPN role
+* Allows scribes to send empty string as results
+* Using VPN shouldn't keep increasing a user's suspicion endlessly.
+
 # 4.15.1
 
 * Removed "soft_prompt" from the payload to Scribes as it's sent elsewhere.
