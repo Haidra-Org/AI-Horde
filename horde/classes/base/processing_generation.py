@@ -117,7 +117,7 @@ class ProcessingGeneration(db.Model):
         # return(database.convert_things_to_kudos(self.wp.things, seed = self.seed, model_name = self.model))
 
     def is_completed(self):
-        if self.generation:
+        if self.generation is not None:
             return(True)
         return(False)
 

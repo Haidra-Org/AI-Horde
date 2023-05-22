@@ -19,7 +19,7 @@ class TextModels(v2.Models):
         super().__init__(api)
 
         self.response_model_generation_result = api.inherit('GenerationKobold', self.response_model_generation_result, {
-            'text': fields.String(title="Generated Text", description="The generated text."),
+            'text': fields.String(title="Generated Text", description="The generated text.", min_length = 0),
             'seed': fields.Integer(title="Generation Seed", description="The seed which generated this text", default=0),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusKobold', self.response_model_wp_status_lite, {
