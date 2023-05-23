@@ -48,6 +48,11 @@ class PatreonCache(PrimaryTimedFunction):
         if not self.is_patron(user_id):
             return 0
         eamount = int(self.patrons[user_id]["entitlement_amount"] )
+        # Yearly amounts with discounts
+        # 10 per month
+        if eamount == 108:
+            return(50000)
+        # Monthly amounts
         if eamount == 100:
             return(300000)
         if eamount == 50:
