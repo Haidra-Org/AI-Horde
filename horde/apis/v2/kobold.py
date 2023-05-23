@@ -193,6 +193,7 @@ class TextJobPop(JobPopTemplate):
             self.worker,
             self.models,
             priority_user_ids = priority_user_ids,
+            page = self.wp_page,
         )        
 
         return sorted_wps

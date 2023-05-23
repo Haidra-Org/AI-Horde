@@ -371,7 +371,7 @@ class JobPopTemplate(Resource):
         #     priority_user = database.find_user_by_username(priority_username)
         #     if priority_user:
         #        self.priority_users.append(priority_user)
-
+        self.wp_page = 0
         wp_list = self.get_sorted_wp(self.priority_user_ids)
         for wp in wp_list:
             self.prioritized_wp.append(wp)
@@ -380,28 +380,32 @@ class JobPopTemplate(Resource):
             if wp.id not in [wp.id for wp in self.prioritized_wp]:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
-        for wp in self.prioritized_wp:
-            check_gen = self.worker.can_generate(wp)
-            if not check_gen[0]:
-                skipped_reason = check_gen[1]
-                # We don't report on secret skipped reasons
-                # as they're typically countermeasures to raids
-                if skipped_reason != "secret":
-                    self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
-                #logger.warning(datetime.utcnow())
-                continue
-            # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
-            # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
-            # time.sleep(random.uniform(0, 1))
-            wp.refresh()
-            if not wp.needs_gen():  # this says if < 1
-                continue
-            worker_ret = self.start_worker(wp)
-            # logger.debug(worker_ret)
-            if worker_ret is None:
-                continue
-            # logger.debug(worker_ret)
-            return worker_ret, 200
+        while len(self.prioritized_wp) > 0:
+            for wp in self.prioritized_wp:
+                check_gen = self.worker.can_generate(wp)
+                if not check_gen[0]:
+                    skipped_reason = check_gen[1]
+                    # We don't report on secret skipped reasons
+                    # as they're typically countermeasures to raids
+                    if skipped_reason != "secret":
+                        self.skipped[skipped_reason] = self.skipped.get(skipped_reason,0) + 1
+                    #logger.warning(datetime.utcnow())
+                    continue
+                # There is a chance that by the time we finished all the checks, another worker picked up the WP. 
+                # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
+                # time.sleep(random.uniform(0, 1))
+                wp.refresh()
+                if not wp.needs_gen():  # this says if < 1
+                    continue
+                worker_ret = self.start_worker(wp)
+                # logger.debug(worker_ret)
+                if worker_ret is None:
+                    continue
+                # logger.debug(worker_ret)
+                return worker_ret, 200
+            self.wp_page += 1
+            self.prioritized_wp = self.get_sorted_wp()
+            logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
@@ -410,7 +414,11 @@ class JobPopTemplate(Resource):
 
     def get_sorted_wp(self,priority_user_ids=None):
         '''Extendable class to retrieve the sorted WP list for this worker'''
-        return database.get_sorted_wp_filtered_to_worker(self.worker,priority_user_ids=priority_user_ids)
+        return database.get_sorted_wp_filtered_to_worker(
+            self.worker,
+            priority_user_ids=priority_user_ids,
+            page=self.wp_page
+        )
 
     # Making it into its own function to allow extension
     def start_worker(self, wp):

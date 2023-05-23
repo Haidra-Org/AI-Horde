@@ -359,6 +359,7 @@ class ImageJobPop(JobPopTemplate):
             self.models,
             self.blacklist,
             priority_user_ids = priority_user_ids,
+            page = self.wp_page
         )
         return sorted_wps
 
