@@ -37,7 +37,6 @@ def convert_things_to_kudos(things, **kwargs):
 
 def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_user_ids=None, page=0): 
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
-    # TODO: Ensure the procgen table is NOT retrieved along with WPs (because it contains images)
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1 
     # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
     # TODO: Filter by Worker not in WP.tricked_worker

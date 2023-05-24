@@ -5,7 +5,7 @@ from datetime import datetime
 from .base import *
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
-from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.stable.interrogation import Interrogation
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.countermeasures import CounterMeasures
 from horde.logger import logger

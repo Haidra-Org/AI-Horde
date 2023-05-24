@@ -463,11 +463,13 @@ class User(db.Model):
             self.monthly_kudos = 0
         db.session.commit()
 
-    def receive_monthly_kudos(self):
+    def receive_monthly_kudos(self, force=False):
         kudos_amount = self.calculate_monthly_kudos()
         if kudos_amount == 0:
             return
-        if self.monthly_kudos_last_received:
+        if force:
+            has_month_passed = True
+        elif self.monthly_kudos_last_received:
             has_month_passed = datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
         else:
             # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time

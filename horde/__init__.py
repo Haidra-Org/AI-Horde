@@ -67,5 +67,15 @@ HORDE.register_blueprint(github_blueprint, url_prefix="/github")
 # )
 # HORDE.register_blueprint(patreon_blueprint, url_prefix="/patreon")
 
+    
+if args.force_patreon:
+    from horde.ops import force_patreon_kudos
+    logger.info(f"focing kudos on user_id: {args.force_patreon}")
+    force_patreon_kudos(args.force_patreon)
+    import sys
+    sys.exit()
+
+
 if args.test:
     import horde.sandbox
+
