@@ -44,6 +44,7 @@ class ImageModels(v2.Models):
             'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name of the LoRa", unique=True, min_length = 1, max_length = 255), 
             'model': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the SD model."), 
             'clip': fields.Float(required=False, default=1.0, min=0.0, max=1.0, description="The strength of the LoRa to apply to the clip model."), 
+            'inject_trigger': fields.String(required=False, min_length = 1, max_length = 30, description="If set, will try to discover a trigger for this LoRa which matches or is similar to this string and inject it into the prompt. I 'any' is specified it will be pick the first trigger."), 
         })
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver", "k_dpmpp_sde", "DDIM"]), 

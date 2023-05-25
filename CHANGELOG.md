@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.15.3
+
+Support lora's `inject_trigger`
+
 # 4.15.2
 
 * Prevents more than 5 loras per image
