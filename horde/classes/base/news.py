@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-25",
+            "newspiece": 
+                "I wanted to point out a very cool voice-2-text-2-voice AI Horde integration: [ProtoReplicant](https://github.com/OpenReplicant/ProtoReplicant). "
+                "It converts your voice into text which it then sends to an LLM model, and finally converts the resulting text into voice and plays it back."
+                "Here's the new [Discord integration channel](https://discordapp.com/channels/781145214752129095/1111189841120596008)",
+            "tags": ["UI", "voice", "llm"],
+            "importance": "Integration",
+        },
+        {
             "date_published": "2023-05-22",
             "newspiece": 
                 "A new AI Horde integration has been created. A Telegram bot by the name of [Imaginarium](https://t.me/ImaginariumAIbot). "
