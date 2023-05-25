@@ -63,7 +63,7 @@ class ImageModels(v2.Models):
             'image_is_control': fields.Boolean(default=False,description="Set to True if the image submitted is a pre-generated control map for ControlNet use"),
             'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet map returned instead of a generated image"),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
-            'loras': fields.List(fields.Nested(self.input_model_loras)),
+            'loras': fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),
