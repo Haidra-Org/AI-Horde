@@ -1,5 +1,13 @@
 # Changelog
 
+# 4.15.5
+
+Fixed worker blacklist
+
+# 4.15.4
+
+Avoid null inject_trigger in loras
+
 # 4.15.3
 
 Support lora's `inject_trigger`

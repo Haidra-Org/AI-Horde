@@ -593,7 +593,14 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ),
         or_(
             WPAllowedWorkers.id.is_(None),
-            WPAllowedWorkers.worker_id == worker.id,
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(False),
+                WPAllowedWorkers.worker_id == worker.id,
+            ),
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(True),
+                WPAllowedWorkers.worker_id != worker.id,
+            ),
         ),
         or_(
             ImageWaitingPrompt.source_image == None,
@@ -645,6 +652,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             ImageWaitingPrompt.slow_workers == True,
         ),
     )
+    # logger.debug(final_wp_list)
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(ImageWaitingPrompt.user_id.in_(priority_user_ids))
     # logger.debug(final_wp_list)
@@ -679,10 +687,17 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
     if skipped_models > 0:
         ret_dict["models"] = skipped_models
     skipped_workers = open_wp_list.filter(
-        and_(
+        or_(
             WPAllowedWorkers.id != None,
-            WPAllowedWorkers.worker_id != worker.id,
-        ),
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(False),
+                WPAllowedWorkers.worker_id != worker.id,
+            ),
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(True),
+                WPAllowedWorkers.worker_id == worker.id,
+            ),
+        )
     ).count()
     if skipped_workers > 0:
         ret_dict["worker_id"] = skipped_workers
@@ -1025,7 +1040,14 @@ def wp_has_valid_workers(wp):
         worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300),
         or_(
             len(worker_ids) == 0,
-            worker_class.id.in_(worker_ids),
+            and_(
+                wp.worker_blacklist is False,
+                worker_class.id.in_(worker_ids),
+            ),
+            and_(
+                wp.worker_blacklist is True,
+                worker_class.id.not_in(worker_ids),
+            )
         ),
         or_(
             len(models_list) == 0,

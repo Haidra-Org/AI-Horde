@@ -70,7 +70,14 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         ),
         or_(
             WPAllowedWorkers.id.is_(None),
-            WPAllowedWorkers.worker_id == worker.id,
+            and_(
+                TextWaitingPrompt.worker_blacklist.is_(False),
+                WPAllowedWorkers.worker_id == worker.id,
+            ),
+            and_(
+                TextWaitingPrompt.worker_blacklist.is_(True),
+                WPAllowedWorkers.worker_id != worker.id,
+            ),
         ),
         or_(
             worker.speed >= 2, # 2 tokens/s
