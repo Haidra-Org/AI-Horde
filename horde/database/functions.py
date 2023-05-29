@@ -847,17 +847,11 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list = None, priority_user
         Interrogation.image_tiles <= worker.max_power,
         or_(
             Interrogation.safe_ip == True,
-            and_(
-                Interrogation.safe_ip == False,
-                worker.allow_unsafe_ipaddr == True,
-            ),
+            worker.allow_unsafe_ipaddr == True,
         ),
         or_(
             worker.maintenance == False,
-            and_(
-                worker.maintenance == True,
-                Interrogation.user_id == worker.user_id,
-            ),
+            Interrogation.user_id == worker.user_id,
         ),
         or_(
             worker.speed < 10, # 10 seconds per form
