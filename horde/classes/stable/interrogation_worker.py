@@ -104,3 +104,9 @@ class InterrogationWorker(WorkerTemplate):
         else:
             ret_str = f'No requests fulfilled yet'
         return(ret_str)
+
+
+    def get_details(self, details_privilege = 0):
+        ret_dict = super().get_details(details_privilege)
+        ret_dict["forms"] = self.get_form_names()
+        return ret_dict
