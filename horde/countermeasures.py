@@ -80,7 +80,7 @@ class CounterMeasures:
 					is_safe = CounterMeasures.set_safe(ipaddr,True)
 				else:
 					is_safe = CounterMeasures.set_safe(ipaddr,True) # True until I can improve my load
-					logger.error(f"An error occured while validating IP. Return Code: {result.text}")
+					logger.error(f"An error occurred while validating IP. Return Code: {result.text}")
 			else:
 				probability = float(result.content)
 				is_safe = CounterMeasures.set_safe(ipaddr, probability < safety_threshold)
