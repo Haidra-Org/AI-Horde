@@ -43,9 +43,9 @@ First [Register an account](/register) which will generate for you an API key. S
     * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [Art Bot](https://tinybots.net/artbot)
     * [AAAI UI](https://artificial-art.eu/)
-    * [Diffusion UI](https://diffusionui.com/b/stable_horde) (Broken)
 * There are also mobile apps:
-    * [Stable Horde Flutter](https://ppiqr.app.link/download) (iOS + Android app)
+    * AI Painter ([iOS](https://apps.apple.com/hk/app/%E6%A9%9F%E7%95%AB%E5%B8%AB-%E5%B0%88%E6%A5%AD%E7%9A%84ai%E7%B9%AA%E7%95%ABapp/id1644645946) + [Android](https://play.google.com/store/apps/details?id=wkygame.ai.all.in.one))
+    * [aislingeach](https://github.com/amiantos/aislingeach) (iOS)
 
 <img src="https://raw.githubusercontent.com/Haidra-Org/Lucid-Creations/main/screenshot.png" width="500" />
 
@@ -76,7 +76,7 @@ We provide a CLI tool for each type of AI Horde usage in [this repository](https
         * [CraiyonArt Bot](https://t.me/CraiyonArtBot) (Telegram)
         * [WriterBot](https://harrisonvanderbyl.github.io/WriterBot/) (Discord)
         * [Turing Bot](https://github.com/MrlolDev/turing-bot) (Discord)
-        * [AI Horde Bot](https://github.com/JamDon2/ai-horde-bot) (Discord, Obsolete)
+        * [Imaginarium](https://t.me/ImaginariumAIbot) (Telegram)
     * Plugins
         * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
         * [Krita Plugin](https://github.com/dunkeroni/krita-stable-horde)
@@ -87,6 +87,8 @@ We provide a CLI tool for each type of AI Horde usage in [this repository](https
         * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
     * Other
         * [npm SDK](https://www.npmjs.com/package/@zeldafan0225/ai_horde)
+
+You can see many more integrations and links to their communities in our discord server!
 
 ## REST API
 

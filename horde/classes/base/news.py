@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-05-30",
+            "newspiece": 
+                "Early support for LoRa has been added to the AI Horde with a few workers providing it. "
+                "UIs are still adding it, with [Lucid Creations](https://dbzer0.itch.io/lucid-creations/devlog/537949/1170-loras), ArtBot and the Krita plugin already supporting it."
+                "Try it out and let us know how it works for you.",
+            "tags": ["UI", "lora", "text2img"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-05-25",
             "newspiece": 
                 "I wanted to point out a very cool voice-2-text-2-voice AI Horde integration: [ProtoReplicant](https://github.com/OpenReplicant/ProtoReplicant). "
