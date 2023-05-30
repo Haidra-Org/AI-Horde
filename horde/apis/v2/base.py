@@ -888,7 +888,7 @@ class UserSingle(Resource):
             admin = database.find_user_by_api_key(self.args['apikey'])
             if admin.moderator:
                 details_privilege = 2
-            elif admin == user:
+            elif admin.id == user_id:
                 details_privilege = 1
         cached_user = None
         cache_name = f"cached_user_id_{user_id}_privilege_{details_privilege}"

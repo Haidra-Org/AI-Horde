@@ -116,4 +116,4 @@ These are the people who made this software possible.
 * [Haidra](https://github.com/haidra-org) - The amazing developer community helping to maintain and improve the AI Horde ecosystem.
 * [Sponsors](/sponsors) - See our complete sponsor list including our patreon supporters
 
-And of course, everyone contributing their SD to the horde!
+And of course, everyone contributing their GPU processing to the AI Horde!
