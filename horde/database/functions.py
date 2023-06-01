@@ -780,9 +780,9 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
         else:
             ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     # Count skipped request for fast workers
-    if worker.speed >= 500000: # 0.5 MPS/s
+    if worker.speed <= 500000: # 0.5 MPS/s
         skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.slow_workers == True,
+            ImageWaitingPrompt.slow_workers == False,
         ).count()
         if skipped_wps > 0:
             ret_dict["performance"] = skipped_wps
