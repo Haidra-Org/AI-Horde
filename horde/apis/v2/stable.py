@@ -71,6 +71,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             # We actually block unsafe IPs for now to combat CP
             if not self.safe_ip:
                 raise e.NotTrusted
+        if self.params.get("special") and not self.user.special:
+            raise e.BadRequest("Only special users can send a special field.")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if (

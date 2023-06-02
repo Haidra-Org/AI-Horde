@@ -46,6 +46,10 @@ class ImageModels(v2.Models):
             'clip': fields.Float(required=False, default=1.0, min=0.0, max=5.0, description="The strength of the LoRa to apply to the clip model."), 
             'inject_trigger': fields.String(required=False, min_length = 1, max_length = 30, description="If set, will try to discover a trigger for this LoRa which matches or is similar to this string and inject it into the prompt. I 'any' is specified it will be pick the first trigger."), 
         })
+
+        self.input_model_special_payload = api.model('ModelSpecialPayloadStable', {
+            "*": fields.Wildcard(fields.Raw)
+        })        
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
             'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver", "k_dpmpp_sde", "DDIM"]), 
             'cfg_scale': fields.Float(required=False,default=7.5, min=0, max=100, multiple=0.5), 
@@ -64,6 +68,7 @@ class ImageModels(v2.Models):
             'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet map returned instead of a generated image"),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
             'loras': fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
+            'special': fields.Nested(self.input_model_special_payload, skip_none=True),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
             'prompt': fields.String(description="The prompt which will be sent to Stable Diffusion to generate an image"),

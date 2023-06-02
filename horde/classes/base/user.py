@@ -259,6 +259,26 @@ class User(db.Model):
             ).as_scalar()
         return cls.id == subquery
 
+    @hybrid_property
+    def special(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.SPECIAL
+        ).first()
+        return user_role is not None and user_role.value
+
+    @special.expression
+    def special(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.SPECIAL,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
+
     def create(self):
         self.check_for_bad_actor()
         db.session.add(self)
@@ -361,6 +381,11 @@ class User(db.Model):
         if self.is_anon():
             return
         self.set_user_role(UserRoleTypes.VPN, is_vpn)
+
+    def set_special(self, is_special):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.SPECIAL, is_special)
 
     def get_unique_alias(self):
         return(f"{self.username}#{self.id}")
@@ -668,6 +693,7 @@ class User(db.Model):
             ret_dict["worker_ids"] = workers_array
             ret_dict['contact'] = self.contact
             ret_dict['vpn'] = self.vpn
+            ret_dict['special'] = self.special
         if details_privilege >= 1:
             sharedkeys_array = []
             for sk in self.sharedkeys:
