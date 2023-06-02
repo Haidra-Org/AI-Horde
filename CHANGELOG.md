@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.15.6
+
+* Added 1 kudos extra per lora
+* Added 30 kudos extra uptime reward for serving loras
+
 # 4.15.5
 
 Fixed worker blacklist

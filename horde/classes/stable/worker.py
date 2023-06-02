@@ -42,7 +42,10 @@ class ImageWorker(Worker):
         logger.trace(f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels")
 
     def calculate_uptime_reward(self):
-        return 50 + (len(self.get_model_names()) * 2)
+        baseline = 50 + (len(self.get_model_names()) * 2)
+        if self.allow_lora:
+            baseline += 30
+        return baseline
 
     def can_generate(self, waiting_prompt):
         can_generate = super().can_generate(waiting_prompt)
