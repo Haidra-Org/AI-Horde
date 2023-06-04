@@ -292,9 +292,7 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]['workers'] = []
 
         # We don't want to report on any random model name a client might request
-        if filter_model_name and len(available_worker_models) > 0:
-            continue
-        elif filter_model_name:
+        if filter_model_name:
             known_models = [filter_model_name]
         else:
             known_models = list(model_reference.stable_diffusion_names)
