@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.15.7
+
+Support for special models and users
+
 # 4.15.6
 
 * Added 1 kudos extra per lora

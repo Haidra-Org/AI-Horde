@@ -71,8 +71,18 @@ class ImageAsyncGenerate(GenerateTemplate):
             # We actually block unsafe IPs for now to combat CP
             if not self.safe_ip:
                 raise e.NotTrusted
-        if self.params.get("special") and not self.user.special:
+        if not self.user.special and self.params.get("special"):
             raise e.BadRequest("Only special users can send a special field.")
+        for model in self.args.models:
+            if "horde_special" in model:
+                if not self.user.special:
+                    raise e.BadRequest("Only special users can request a special model.")
+                usermodel = model.split("::")
+                if len(usermodel) == 1:
+                    raise e.BadRequest("Special models must always include the username, in the form of 'horde_special::user#id'")
+                user_alias = usermodel[1]
+                if self.user.get_unique_alias() != user_alias:
+                    raise e.BadRequest(f"This model can only be requested by {user_alias}")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if (

@@ -141,7 +141,13 @@ class ImageWorker(Worker):
         del unchecked_models[300:]
         models = set()
         for model in unchecked_models:
-            if model in model_reference.stable_diffusion_names:
+            usermodel = model.split("::")
+            if self.user.special and len(usermodel) == 2:
+                user_alias = usermodel[1]
+                if self.user.get_unique_alias() != user_alias:
+                    raise e.BadRequest(f"This model can only be hosted by {user_alias}")
+                models.add(model)
+            elif model in model_reference.stable_diffusion_names:
                 models.add(model)
             elif self.user.customizer:
                 models.add(model)
