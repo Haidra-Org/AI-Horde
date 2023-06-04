@@ -248,9 +248,9 @@ def worker_exists(worker_id):
 def get_available_models(filter_model_name: str = None):
     models_dict = {}
     available_worker_models = None
-    for model_type, worker_class, wp_class in [
-        ("image", ImageWorker, ImageWaitingPrompt), 
-        ("text", TextWorker, TextWaitingPrompt),
+    for model_type, worker_class, wp_class, procgen_class in [
+        ("image", ImageWorker, ImageWaitingPrompt, ImageProcessingGeneration), 
+        ("text", TextWorker, TextWaitingPrompt, TextProcessingGeneration),
     ]:
         # To avoid abuse, when looking for filtered model names, we are searching only in known models and specials
         if (
@@ -291,7 +291,6 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
 
-        # We don't want to report on any random model name a client might request
         if filter_model_name:
             known_models = [filter_model_name]
         else:
@@ -316,7 +315,10 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]['eta'] = 0
             models_dict[model_name]['performance'] = stats.get_model_avg(model_name)
             models_dict[model_name]['workers'] = []
-        things_per_model, jobs_per_model = count_things_per_model(wp_class)
+        if filter_model_name:
+            things_per_model, jobs_per_model = count_things_for_specific_model(wp_class,procgen_class,filter_model_name)
+        else:
+            things_per_model, jobs_per_model = count_things_per_model(wp_class)
         # If we request a lite_dict, we only want worker count per model and a dict format
         for model_name in things_per_model:
             # This shouldn't happen, but I'm checking anyway
@@ -587,6 +589,46 @@ def count_things_per_model(wp_class):
                 jobs_per_model[model] = jobs_per_model.get(model,0) + current_wp_queue
         things_per_model[model] = round(things_per_model.get(model,0),2)
     return things_per_model,jobs_per_model
+
+def count_things_for_specific_model(wp_class, procgen_class, model_name):
+    things = {model_name:0}
+    jobs = {model_name:0}
+    all_wps_query = db.session.query(
+        wp_class.id.label("wp_id"),
+        wp_class.n,
+        wp_class.things,
+        procgen_class.id.label("procgen_id")
+    ).join(
+        WPModels,
+    ).outerjoin(
+        procgen_class,
+    ).filter(
+        wp_class.active == True,
+        wp_class.faulted == False,
+        wp_class.n >= 0,
+        WPModels.model == model_name,
+        or_(
+            procgen_class.id == None,
+            and_(
+                procgen_class.generation == None,
+                procgen_class.cancelled == False,
+                procgen_class.faulted == False,
+            ),
+        )
+    )
+    all_wps = all_wps_query.all()
+    seen_wps = set()
+    for wp in all_wps:
+        current_wp_queue = 0
+        if wp.wp_id not in seen_wps:
+            current_wp_queue = wp.n
+            seen_wps.add(wp.wp_id)
+        if wp.procgen_id:
+            current_wp_queue += 1
+        things[model_name] += wp.things * current_wp_queue
+        jobs[model_name] += current_wp_queue
+    things[model_name] = round(things[model_name],2)
+    return things,jobs
 
 
 def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = None, priority_user_ids=None, page=0): 
