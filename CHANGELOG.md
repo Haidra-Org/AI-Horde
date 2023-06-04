@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.15.8
+
+* Allow seeing individual model stats
+
 # 4.15.7
 
 Support for special models and users

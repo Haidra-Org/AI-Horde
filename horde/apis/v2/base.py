@@ -1113,6 +1113,22 @@ class Models(Resource):
         return (models_ret,200)
 
 
+class ModelSingle(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=1)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_active_model, code=200, description='Lists specific model stats')
+    def get(self, model_name="stable_diffusion"):
+        '''Returns a the statistics of a specific model in this horde
+        '''
+        self.args = self.get_parser.parse_args()
+        models_ret = database.get_available_models(model_name)
+        return (models_ret,200)
+
+
 class HordeLoad(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")

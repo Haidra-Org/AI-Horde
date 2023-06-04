@@ -245,12 +245,24 @@ def worker_exists(worker_id):
         wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
     return wc
 
-def get_available_models():
+def get_available_models(filter_model_name: str = None):
     models_dict = {}
+    available_worker_models = None
     for model_type, worker_class, wp_class in [
         ("image", ImageWorker, ImageWaitingPrompt), 
         ("text", TextWorker, TextWaitingPrompt),
     ]:
+        # To avoid abuse, when looking for filtered model names, we are searching only in known models and specials
+        if (
+            filter_model_name and 
+            filter_model_name not in model_reference.stable_diffusion_names and 
+            filter_model_name not in model_reference.text_model_names and 
+            'horde_special' not in filter_model_name
+        ):
+            continue
+        # If we're doing a filter, and we've already found the model type, we don't want to look in other worker versions
+        if filter_model_name and available_worker_models and len(available_worker_models) > 0:
+            continue
         available_worker_models = db.session.query(
             WorkerModel.model,
             func.count(WorkerModel.model).label('total_models'), # TODO: This needs to be multiplied by this worker's threads
@@ -259,7 +271,12 @@ def get_available_models():
             worker_class,
         ).filter(
             worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-        ).group_by(WorkerModel.model).all()
+        )
+        if filter_model_name:
+            available_worker_models = available_worker_models.filter(
+                WorkerModel.model == filter_model_name
+            )
+        available_worker_models = available_worker_models.group_by(WorkerModel.model).all()
         # logger.debug(available_worker_models)
         for model_row in available_worker_models:
             model_name = model_row.model
@@ -275,7 +292,12 @@ def get_available_models():
             models_dict[model_name]['workers'] = []
 
         # We don't want to report on any random model name a client might request
-        known_models = list(model_reference.stable_diffusion_names)
+        if filter_model_name and len(available_worker_models) > 0:
+            continue
+        elif filter_model_name:
+            known_models = [filter_model_name]
+        else:
+            known_models = list(model_reference.stable_diffusion_names)
         ophan_models = db.session.query(
             WPModels.model,
         ).join(
