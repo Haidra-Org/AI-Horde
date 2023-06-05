@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-06-01",
+            "newspiece": 
+                "LoRas support has now been merged into the main worker branch! "
+                "All kudos to [Jug](https://github.com/jug-dev/) and [Tazlin](https://github.com/tazlin/) for their invaluable efforts! "
+                "Read the [devlog](https://dbzer0.com/blog/the-ai-horde-now-seamlessly-provides-all-civitai-loras/)",
+            "tags": ["devlog", "lora", "text2img"],
+            "importance": "Workers",
+        },
+        {
             "date_published": "2023-05-30",
             "newspiece": 
                 "Early support for LoRa has been added to the AI Horde with a few workers providing it. "
