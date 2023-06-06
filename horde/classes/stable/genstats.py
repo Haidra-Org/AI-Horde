@@ -55,6 +55,9 @@ class ImageGenerationStatistic(db.Model):
 
 
 def record_image_statistic(procgen):
+    # We don't record stats for special models
+    if "horde_special" in procgen.model:
+        return
     state = ImageGenState.OK
     if procgen.censored: 
         state = ImageGenState.CENSORED

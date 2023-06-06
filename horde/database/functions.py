@@ -280,6 +280,9 @@ def get_available_models(filter_model_name: str = None):
         # logger.debug(available_worker_models)
         for model_row in available_worker_models:
             model_name = model_row.model
+            # We don't want to publicly display special models
+            if not filter_model_name and "horde_special" in model_name:
+                continue
             models_dict[model_name] = {}
             models_dict[model_name]["name"] = model_name
             models_dict[model_name]["count"] = model_row.total_models
@@ -572,6 +575,8 @@ def get_organized_wps_by_model(wp_class):
         # This will inflate the overall expected times, but it shouldn't be by much.
         # I don't see a way to do this calculation more accurately though
         for model in wp.get_model_names():
+            if "horde_special" in model:
+                continue
             if model not in org:
                 org[model] = []
             org[model].append(wp)

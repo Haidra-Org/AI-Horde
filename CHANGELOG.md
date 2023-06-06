@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.15.9
+
+* Hide special models from general list
+* Don't record special model stats
+
 # 4.15.8
 
 * Allow seeing individual model stats
