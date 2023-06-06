@@ -16,6 +16,7 @@ arg_parser.add_argument('--check_prompts', action="store_true", help="If set, wi
 arg_parser.add_argument('--new_patreons', action="store_true", help="If set, will reload the patreon db and run the monthly awards")
 arg_parser.add_argument('--disable_filters', action="store_true", help="Testing filter work")
 arg_parser.add_argument('--force_patreon', action='store', required=False, type=int, help="Provide a patreon username to force to kudos push patreon rewards")
+arg_parser.add_argument('--prevent_date_change', action='store_true', required=False, type=int, help="If true will prevent changing the reward date when forcing patreon rewards.")
 arg_parser.add_argument('--test', action="store_true", help="Test")
 arg_parser.add_argument('--color', default=False, action="store_true", help="Enabled colorized logs")
 args = arg_parser.parse_args()

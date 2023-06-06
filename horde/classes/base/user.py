@@ -488,7 +488,7 @@ class User(db.Model):
             self.monthly_kudos = 0
         db.session.commit()
 
-    def receive_monthly_kudos(self, force=False):
+    def receive_monthly_kudos(self, force=False, prevent_date_change = False):
         kudos_amount = self.calculate_monthly_kudos()
         if kudos_amount == 0:
             return
@@ -503,7 +503,7 @@ class User(db.Model):
             # Not committing as it'll happen in modify_kudos() anyway
             if not self.monthly_kudos_last_received:
                 self.monthly_kudos_last_received = datetime.utcnow() + dateutil.relativedelta.relativedelta(months=+1)
-            else:
+            elif not prevent_date_change:
                 self.monthly_kudos_last_received = self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos")
