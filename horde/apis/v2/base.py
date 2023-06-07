@@ -1722,6 +1722,7 @@ class SharedKeySingle(Resource):
     @cache.cached(timeout=60)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(404, 'Shared Key Not Found', models.response_model_error)
     def get(self, sharedkey_id=''):
         '''Get details about an existing Shared Key for this user
