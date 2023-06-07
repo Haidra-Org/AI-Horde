@@ -1126,7 +1126,11 @@ class ModelSingle(Resource):
         '''
         self.args = self.get_parser.parse_args()
         models_ret = database.get_available_models(model_name)
-        return (models_ret,200)
+        if len(models_ret) > 1:
+            logger.warning("More than one model returned for model_name: " + model_name)
+
+        return_value = models_ret[0]
+        return (return_value,200)
 
 
 class HordeLoad(Resource):
