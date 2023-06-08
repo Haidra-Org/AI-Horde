@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.15.10
+
+* Cancelled requests will now always report done, even if procgens are still waiting
+
 # 4.15.9
 
 * Hide special models from general list

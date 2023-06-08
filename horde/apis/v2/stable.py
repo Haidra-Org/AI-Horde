@@ -274,6 +274,7 @@ class ImageAsyncStatus(Resource):
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway
         wp.n = 0
+        wp.jobs = wp_status["finished"]
         db.session.commit()
         return(wp_status, 200)
 
