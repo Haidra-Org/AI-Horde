@@ -16,32 +16,35 @@ class ModelReference(PrimaryTimedFunction):
         '''Retrieves to nataili and text model reference and stores in it a var'''
         # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
         # We don't want to report on any random model name a client might request
-        try:
-            self.reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
-            diffusers = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
-            self.reference.update(diffusers)
-            # logger.debug(self.reference)
-            self.stable_diffusion_names = set()
-            for model in self.reference:
-                if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512"}:
-                    self.stable_diffusion_names.add(model)
-                    if self.reference[model].get("nsfw"):
+        for iter in range(10):
+            try:
+                self.reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
+                diffusers = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
+                self.reference.update(diffusers)
+                # logger.debug(self.reference)
+                self.stable_diffusion_names = set()
+                for model in self.reference:
+                    if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512"}:
+                        self.stable_diffusion_names.add(model)
+                        if self.reference[model].get("nsfw"):
+                            self.nsfw_models.add(model)
+                        if self.reference[model].get("type") == "controlnet":
+                            self.controlnet_models.add(model)
+                break
+            except Exception as e:
+                logger.error(f"Error when downloading nataili models list: {e}")
+        for iter in range(10):
+            try:
+                self.text_reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json", timeout=2).json()
+                # logger.debug(self.reference)
+                self.text_model_names = set()
+                for model in self.text_reference:
+                    self.text_model_names.add(model)
+                    if self.text_reference[model].get("nsfw"):
                         self.nsfw_models.add(model)
-                    if self.reference[model].get("type") == "controlnet":
-                        self.controlnet_models.add(model)
-        except Exception as e:
-            logger.error(f"Error when downloading nataili models list: {e}")
-        try:
-            self.text_reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json", timeout=2).json()
-            # logger.debug(self.reference)
-            self.text_model_names = set()
-            for model in self.text_reference:
-                self.text_model_names.add(model)
-                if self.text_reference[model].get("nsfw"):
-                    self.nsfw_models.add(model)
-
-        except Exception as err:
-            logger.error(f"Error when downloading known models list: {err}")
+                break
+            except Exception as err:
+                logger.error(f"Error when downloading known models list: {err}")
 
     def get_image_model_names(self):
         return set(self.reference.keys())
