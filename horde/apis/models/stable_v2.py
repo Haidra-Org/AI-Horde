@@ -6,7 +6,7 @@ from horde.consts import KNOWN_POST_PROCESSORS
 class ImageParsers(v2.Parsers):
     def __init__(self):
         super().__init__()
-        self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image.", location="json")
+        self.generate_parser.add_argument("censor_nsfw", type=bool, default=True, required=False, help="If the request is SFW, and the worker accidentally generates NSFW, it will send back a censored image.", location="json")
         self.generate_parser.add_argument("source_image", type=str, required=False, help="The Base64-encoded webp to use for img2img", location="json")
         self.generate_parser.add_argument("source_processing", type=str, default="img2img", required=False, help="If source_image is provided, specifies how to process it.", location="json")
         self.generate_parser.add_argument("source_mask", type=str, required=False, help="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel", location="json")
@@ -119,7 +119,7 @@ class ImageModels(v2.Models):
             'nsfw': fields.Boolean(default=False,description="Set to true if this request is NSFW. This will skip workers which censor images."),
             'trusted_workers': fields.Boolean(default=False,description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!"),
             'slow_workers': fields.Boolean(default=True,description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
-            'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentaly generates NSFW, it will send back a censored image."),
+            'censor_nsfw': fields.Boolean(default=False,description="If the request is SFW, and the worker accidentally generates NSFW, it will send back a censored image."),
             'workers': fields.List(fields.String(description="Specify up to 5 workers which are allowed to service this request.")),
             'worker_blacklist': fields.Boolean(default=False,required=False,description="If true, the worker list will be treated as a blacklist instead of a whitelist."),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request")),
