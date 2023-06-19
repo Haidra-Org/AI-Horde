@@ -121,7 +121,7 @@ class UserSharedKey(db.Model):
         image_pixels: int = None, 
         image_steps: int = None,
         text_tokens: int = None,
-    ) -> tuple[bool, str | None]:
+    ):
         """Checks if the job is within the limits of the shared key
 
         Args:
