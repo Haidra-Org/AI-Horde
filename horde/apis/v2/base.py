@@ -542,10 +542,10 @@ class JobSubmitTemplate(Resource):
 
 class TransferKudos(Resource):
     parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key", location='headers')
-    parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
-    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer", location="json")
+    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key.", location='headers')
+    parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos.", location="json")
+    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to transfer.", location="json")
 
     decorators = [
         limiter.limit("1/second", key_func = get_request_api_key),
@@ -572,9 +572,9 @@ class TransferKudos(Resource):
 
 class AwardKudos(Resource):
     parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key", location='headers')
-    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos", location="json")
-    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to award", location="json")
+    parser.add_argument("apikey", type=str, required=True, help="The sending user's API key.", location='headers')
+    parser.add_argument("username", type=str, required=True, help="The user ID which will receive the kudos.", location="json")
+    parser.add_argument("amount", type=int, required=False, default=100, help="The amount of kudos to award.", location="json")
 
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_award, code=200, description='Kudos Awarded')
@@ -606,9 +606,9 @@ class AwardKudos(Resource):
 class Workers(Resource):
 
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="A Moderator API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    get_parser.add_argument("type", required=False, default=None, type=str, help="Filter the workers by type (image, text or interrogation)", location="args")
+    get_parser.add_argument("apikey", type=str, required=False, help="A Moderator API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    get_parser.add_argument("type", required=False, default=None, type=str, help="Filter the workers by type (image, text or interrogation).", location="args")
 
     @api.expect(get_parser)
     @logger.catch(reraise=True)
@@ -657,8 +657,8 @@ class Workers(Resource):
 class WorkerSingle(Resource):
 
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @api.expect(get_parser)
     # @cache.cached(timeout=10)
@@ -697,10 +697,10 @@ class WorkerSingle(Resource):
         return worker_details,200
 
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key", location='headers')
-    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    put_parser.add_argument("apikey", type=str, required=True, help="The Moderator or Owner API key.", location='headers')
+    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
     put_parser.add_argument("maintenance", type=bool, required=False, help="Set to true to put this worker into maintenance.", location="json")
-    put_parser.add_argument("maintenance_msg", type=str, required=False, help="if maintenance is True, You can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed", location="json")
+    put_parser.add_argument("maintenance_msg", type=str, required=False, help="if maintenance is True, You can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed.", location="json")
     put_parser.add_argument("paused", type=bool, required=False, help="Set to true to pause this worker.", location="json")
     put_parser.add_argument("info", type=str, required=False, help="You can optionally provide a server note which will be seen in the server details. No profanity allowed!", location="json")
     put_parser.add_argument("name", type=str, required=False, help="When this is set, it will change the worker's name. No profanity allowed!", location="json")
@@ -785,8 +785,8 @@ class WorkerSingle(Resource):
         return(ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key.", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
 
     @api.expect(delete_parser)
@@ -824,9 +824,9 @@ class WorkerSingle(Resource):
 
 class Users(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
     get_parser.add_argument("page", required=False, default=1, type=int, help="Which page of results to return. Each page has 25 users.", location="args")
-    get_parser.add_argument("sort", required=False, default='kudos', type=str, help="How to sort the returned list", location="args")
+    get_parser.add_argument("sort", required=False, default='kudos', type=str, help="How to sort the returned list.", location="args")
 
     decorators = [limiter.limit("90/minute")]
     # @cache.cached(timeout=10)
@@ -870,8 +870,8 @@ class Users(Resource):
 
 class UserSingle(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="The Admin, Mod or Owner API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin, Mod or Owner API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
@@ -914,21 +914,21 @@ class UserSingle(Resource):
 
 
     parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location='headers')
-    parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative)", location="json")
-    parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have", location="json")
-    parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption", location="json")
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API .", location='headers')
+    parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    parser.add_argument("kudos", type=int, required=False, help="The amount of kudos to modify (can be negative).", location="json")
+    parser.add_argument("concurrency", type=int, required=False, help="The amount of concurrent request this user can have.", location="json")
+    parser.add_argument("usage_multiplier", type=float, required=False, help="The amount by which to multiply the users kudos consumption.", location="json")
     parser.add_argument("worker_invited", type=int, required=False, help="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode.", location="json")
-    parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator", location="json")
-    parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs", location="json")
+    parser.add_argument("moderator", type=bool, required=False, help="Set to true to Make this user a horde moderator.", location="json")
+    parser.add_argument("public_workers", type=bool, required=False, help="Set to true to Make this user a display their worker IDs.", location="json")
     parser.add_argument("username", type=str, required=False, help="When specified, will change the username. No profanity allowed!", location="json")
     parser.add_argument("monthly_kudos", type=int, required=False, help="When specified, will start assigning the user monthly kudos, starting now!", location="json")
-    parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion", location="json")
+    parser.add_argument("trusted", type=bool, required=False, help="When set to true,the user and their servers will not be affected by suspicion.", location="json")
     parser.add_argument("flagged", type=bool, required=False, help="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance.", location="json")
     parser.add_argument("customizer", type=bool, required=False, help="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference.", location="json")
     parser.add_argument("vpn", type=bool, required=False, help="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.", location="json")
-    parser.add_argument("special", type=bool, required=False, help="When set to true, the user will be marked as special", location="json")
+    parser.add_argument("special", type=bool, required=False, help="When set to true, the user will be marked as special.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
@@ -1048,8 +1048,8 @@ class UserSingle(Resource):
 class FindUser(Resource):
 
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="User API key we're looking for", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("apikey", type=str, required=False, help="User API key we're looking for.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='Worker Details', skip_none=True)
@@ -1091,11 +1091,11 @@ class FindUser(Resource):
 
 class Models(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
     # TODO: Remove the default "image" once all UIs have updated
-    get_parser.add_argument("type", required=False, default="image", type=str, help="Filter the models by type (image or text)", location="args")
-    get_parser.add_argument("min_count", required=False, default=None, type=int, help="Filter only models that have at least this amount of threads serving", location="args")
-    get_parser.add_argument("max_count", required=False, default=None, type=int, help="Filter the models that have at most this amount of threads serving", location="args")
+    get_parser.add_argument("type", required=False, default="image", type=str, help="Filter the models by type (image or text).", location="args")
+    get_parser.add_argument("min_count", required=False, default=None, type=int, help="Filter only models that have at least this amount of threads serving.", location="args")
+    get_parser.add_argument("max_count", required=False, default=None, type=int, help="Filter the models that have at most this amount of threads serving.", location="args")
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=2, query_string=True)
@@ -1115,14 +1115,14 @@ class Models(Resource):
 
 class ModelSingle(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=1)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_active_model, code=200, description='Lists specific model stats')
     def get(self, model_name="stable_diffusion"):
-        '''Returns a the statistics of a specific model in this horde
+        '''Returns all the statistics of a specific model in this horde
         '''
         self.args = self.get_parser.parse_args()
         models_ret = database.get_available_models(model_name)
@@ -1131,7 +1131,7 @@ class ModelSingle(Resource):
 
 class HordeLoad(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=2)
@@ -1151,7 +1151,7 @@ class HordeLoad(Resource):
 
 class HordeNews(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=300)
@@ -1167,7 +1167,7 @@ class HordeNews(Resource):
 
 class HordeModes(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key", location='headers')
+    get_parser.add_argument("apikey", type=str, required=False, help="The Admin or Owner API key.", location='headers')
 
     @api.expect(get_parser)
     @cache.cached(timeout=50)
@@ -1195,11 +1195,11 @@ class HordeModes(Resource):
         return(ret_dict,200)
 
     parser = reqparse.RequestParser()
-    parser.add_argument("apikey", type=str, required=True, help="The Admin API key", location="headers")
-    parser.add_argument("maintenance", type=bool, required=False, help="Start or stop maintenance mode", location="json")
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API key.", location="headers")
+    parser.add_argument("maintenance", type=bool, required=False, help="Start or stop maintenance mode.", location="json")
     # parser.add_argument("shutdown", type=int, required=False, help="Initiate a graceful shutdown of the horde in this amount of seconds. Will put horde in maintenance if not already set.", location="json")
-    parser.add_argument("invite_only", type=bool, required=False, help="Start or stop worker invite-only mode", location="json")
-    parser.add_argument("raid", type=bool, required=False, help="Start or stop raid mode", location="json")
+    parser.add_argument("invite_only", type=bool, required=False, help="Start or stop worker invite-only mode.", location="json")
+    parser.add_argument("raid", type=bool, required=False, help="Start or stop raid mode.", location="json")
 
     decorators = [limiter.limit("30/minute")]
     @api.expect(parser)
@@ -1252,7 +1252,7 @@ class HordeModes(Resource):
 
 class Teams(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     # decorators = [limiter.limit("20/minute")]
     @logger.catch(reraise=True)
@@ -1269,8 +1269,8 @@ class Teams(Resource):
         return(teams_ret,200)
 
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location='headers')
-    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    post_parser.add_argument("apikey", type=str, required=True, help="A User API key.", location='headers')
+    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
     post_parser.add_argument("name", type=str, required=True, location="json")
     post_parser.add_argument("info", type=str, required=False, location="json")
 
@@ -1322,8 +1322,8 @@ class Teams(Resource):
 class TeamSingle(Resource):
 
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @api.expect(get_parser)
     @cache.cached(timeout=3)
@@ -1348,8 +1348,8 @@ class TeamSingle(Resource):
         return(team.get_details(details_privilege),200)
 
     patch_parser = reqparse.RequestParser()
-    patch_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Creator API key", location='headers')
-    patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    patch_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Creator API key.", location='headers')
+    patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
     patch_parser.add_argument("name", type=str, required=False, location="json")
     patch_parser.add_argument("info", type=str, required=False, location="json")
 
@@ -1394,8 +1394,8 @@ class TeamSingle(Resource):
         return(ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    delete_parser.add_argument("apikey", type=str, required=False, help="The Moderator or Owner API key.", location='headers')
 
 
     @api.expect(delete_parser)
@@ -1428,8 +1428,8 @@ class TeamSingle(Resource):
 
 class OperationsIP(Resource):
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
     delete_parser.add_argument("ipaddr", type=str, required=True, location="json")
 
     @api.expect(delete_parser, models.input_model_delete_ip_timeout, validate=True)
@@ -1448,10 +1448,10 @@ class OperationsIP(Resource):
 
 class Filters(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    get_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="args")
-    get_parser.add_argument("contains", type=str, default=None, required=False, help="Only return filter containing this word", location="args")
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    get_parser.add_argument("filter_type", type=int, required=False, help="The filter type.", location="args")
+    get_parser.add_argument("contains", type=str, default=None, required=False, help="Only return filter containing this word.", location="args")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(get_parser)
@@ -1477,12 +1477,12 @@ class Filters(Resource):
         return([f.get_details() for f in filters.all()],200)
 
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    put_parser.add_argument("regex", type=str, required=True, help="The filter regex", location="json")
-    put_parser.add_argument("filter_type", type=int, required=True, help="The filter type", location="json")
-    put_parser.add_argument("description", type=str, required=False, help="Optional description about this filter", location="json")
-    put_parser.add_argument("replacement", type=str, default='', required=False, help="Replacement string to use for this regex", location="json")
+    put_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    put_parser.add_argument("regex", type=str, required=True, help="The filter regex.", location="json")
+    put_parser.add_argument("filter_type", type=int, required=True, help="The filter type.", location="json")
+    put_parser.add_argument("description", type=str, required=False, help="Optional description about this filter.", location="json")
+    put_parser.add_argument("replacement", type=str, default='', required=False, help="Replacement string to use for this regex.", location="json")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(put_parser,models.input_model_filter_put, validate=True)
@@ -1510,10 +1510,10 @@ class Filters(Resource):
         return(new_filter.get_details(),200)
 
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    post_parser.add_argument("prompt", type=str, required=True, help="The prompt to check", location="json")
-    post_parser.add_argument("filter_type", type=int, default=None, required=False, help="Only check if it matches a specific type", location="json")
+    post_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    post_parser.add_argument("prompt", type=str, required=True, help="The prompt to check.", location="json")
+    post_parser.add_argument("filter_type", type=int, default=None, required=False, help="Only check if it matches a specific type.", location="json")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(post_parser)
@@ -1538,9 +1538,9 @@ class Filters(Resource):
 
 class FilterRegex(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    get_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="args")
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    get_parser.add_argument("filter_type", type=int, required=False, help="The filter type.", location="args")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(get_parser)
@@ -1573,8 +1573,8 @@ class FilterRegex(Resource):
 
 class FilterSingle(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     # decorators = [limiter.limit("20/minute")]
     @cache.cached(timeout=10)
@@ -1601,12 +1601,12 @@ class FilterSingle(Resource):
         return(filter.get_details(),200)
 
     patch_parser = reqparse.RequestParser()
-    patch_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    patch_parser.add_argument("regex", type=str, required=False, help="The filter regex", location="json")
-    patch_parser.add_argument("filter_type", type=int, required=False, help="The filter type", location="json")
-    patch_parser.add_argument("description", type=str, required=False, help="Optional description about this filter", location="json")
-    patch_parser.add_argument("replacement", type=str, default='', required=False, help="Replacement string to use for this regex", location="json")
+    patch_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    patch_parser.add_argument("regex", type=str, required=False, help="The filter regex.", location="json")
+    patch_parser.add_argument("filter_type", type=int, required=False, help="The filter type.", location="json")
+    patch_parser.add_argument("description", type=str, required=False, help="Optional description about this filter.", location="json")
+    patch_parser.add_argument("replacement", type=str, default='', required=False, help="Replacement string to use for this regex.", location="json")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(patch_parser,models.input_model_filter_patch, validate=True)
@@ -1638,8 +1638,8 @@ class FilterSingle(Resource):
         return(filter.get_details(),200)
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key", location='headers')
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(delete_parser)
@@ -1662,7 +1662,7 @@ class FilterSingle(Resource):
 
 class Heartbeat(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     decorators = [limiter.exempt]
     @api.expect(get_parser)
@@ -1677,11 +1677,11 @@ class Heartbeat(Resource):
 
 class SharedKey(Resource):
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
-    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key", location="json")
+    put_parser.add_argument("apikey", type=str, required=True, help="User API key.", location='headers')
+    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key.", location="json")
     put_parser.add_argument("expiry", type=int, required=False, default=-1, help="The amount of days which this key will stay active.", location="json")
-    put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
+    put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key.", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(put_parser, models.input_model_sharedkey)
@@ -1717,7 +1717,7 @@ class SharedKey(Resource):
 
 class SharedKeySingle(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @cache.cached(timeout=60)
     @api.expect(get_parser)
@@ -1733,11 +1733,11 @@ class SharedKeySingle(Resource):
         return sharedkey.get_details(),200
 
     patch_parser = reqparse.RequestParser()
-    patch_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
+    patch_parser.add_argument("apikey", type=str, required=True, help="User API key.", location='headers')
     patch_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-    patch_parser.add_argument("kudos", type=int, required=False, help="The amount of kudos limit available to this key", location="json")
+    patch_parser.add_argument("kudos", type=int, required=False, help="The amount of kudos limit available to this key.", location="json")
     patch_parser.add_argument("expiry", type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
-    patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
+    patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key.", location="json")
 
     @api.expect(patch_parser, models.input_model_sharedkey)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
@@ -1772,8 +1772,8 @@ class SharedKeySingle(Resource):
         return sharedkey.get_details(),200
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument("apikey", type=str, required=True, help="User API key", location='headers')
-    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
+    delete_parser.add_argument("apikey", type=str, required=True, help="User API key.", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @api.expect(delete_parser)
     @api.marshal_with(models.response_model_simple_response, code=200, description='Shared Key Deleted')
@@ -1793,4 +1793,3 @@ class SharedKeySingle(Resource):
         db.session.delete(sharedkey)
         db.session.commit()
         return {"message": "OK"},200
-
