@@ -1682,6 +1682,8 @@ class SharedKey(Resource):
     put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key", location="json")
     put_parser.add_argument("expiry", type=int, required=False, default=-1, help="The amount of days which this key will stay active.", location="json")
     put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
+    put_parser.add_argument("max_image_pixels", type=int, required=False, default=-1, help="The maximum number of pixels this key can generate per job.", location="json")
+    put_parser.add_argument("max_image_steps", type=int, required=False, default=-1, help="The maximum number of steps this key can generate per job.", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(put_parser, models.input_model_sharedkey)
@@ -1704,11 +1706,14 @@ class SharedKey(Resource):
         expiry = None
         if self.args.expiry and self.args.expiry != -1:
             expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
+
         new_key = UserSharedKey(
             user_id = user.id,
             kudos = self.args.kudos,
             expiry = expiry,
             name = self.args.name,
+            max_image_pixels = self.args.max_image_pixels,
+            max_image_steps = self.args.max_image_steps,
         )
         db.session.add(new_key)
         db.session.commit()
@@ -1738,6 +1743,8 @@ class SharedKeySingle(Resource):
     patch_parser.add_argument("kudos", type=int, required=False, help="The amount of kudos limit available to this key", location="json")
     patch_parser.add_argument("expiry", type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
     patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key", location="json")
+    patch_parser.add_argument("max_image_pixels", type=int, required=False, help="The maximum number of pixels this key can generate per job.", location="json")
+    patch_parser.add_argument("max_image_steps", type=int, required=False, help="The maximum number of steps this key can generate per job.", location="json")
 
     @api.expect(patch_parser, models.input_model_sharedkey)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
@@ -1768,6 +1775,12 @@ class SharedKeySingle(Resource):
             sharedkey.kudos = self.args.kudos
         if self.args.name is not None:
             sharedkey.name = self.args.name
+
+        if self.args.max_image_pixels is not None:
+            sharedkey.max_image_pixels = self.args.max_image_pixels
+        if self.args.max_image_steps is not None:
+            sharedkey.max_image_steps = self.args.max_image_steps
+        
         db.session.commit()
         return sharedkey.get_details(),200
 

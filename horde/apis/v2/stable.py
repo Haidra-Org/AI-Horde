@@ -137,6 +137,14 @@ class ImageAsyncGenerate(GenerateTemplate):
                 "First ensure it provides a proper name and contact details. "
                 "Then contact us on Discord to discuss the issue it's creating."
             )
+        if self.sharedkey:
+            requested_total_pixels = self.args.params["height"] * self.args.params["width"] * self.params["n"]
+            requested_steps = self.args.params["steps"]
+
+            is_in_limit, fail_message = self.sharedkey.is_job_within_limits(image_pixels = requested_total_pixels, image_steps = requested_steps)
+            if not is_in_limit:
+                raise e.BadRequest(fail_message)
+        
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
