@@ -100,6 +100,16 @@ class TextAsyncGenerate(GenerateTemplate):
         logger.debug([params_hash,gen_payload])
         return params_hash
 
+
+    def validate(self):
+        super().validate()
+        if self.sharedkey:
+            is_in_limit, fail_message = self.sharedkey.is_job_within_limits(
+                text_tokens = self.args.params["max_length"], 
+            )
+            if not is_in_limit:
+                raise e.BadRequest(fail_message)
+            
 class TextAsyncStatus(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")

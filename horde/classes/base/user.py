@@ -81,6 +81,7 @@ class UserSharedKey(db.Model):
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="sharedkey", passive_deletes=True, cascade="all, delete-orphan")
     max_image_pixels = db.Column(db.Integer, default=-1, nullable=False)
     max_image_steps = db.Column(db.Integer, default=-1, nullable=False)
+    max_text_tokens = db.Column(db.Integer, default=-1, nullable=False)
 
     @logger.catch(reraise=True)
     def get_details(self):
@@ -91,7 +92,8 @@ class UserSharedKey(db.Model):
             "expiry": self.expiry,
             "utilized": self.utilized,
             "max_image_pixels": self.max_image_pixels,
-            "max_image_steps": self.max_image_steps
+            "max_image_steps": self.max_image_steps,
+            "max_text_tokens": self.max_text_tokens,
         }
         return ret_dict
 
@@ -117,13 +119,15 @@ class UserSharedKey(db.Model):
     def is_job_within_limits(self, 
         *, 
         image_pixels: int = None, 
-        image_steps: int = None
+        image_steps: int = None,
+        text_tokens: int = None,
     ) -> tuple[bool, str | None]:
         """Checks if the job is within the limits of the shared key
 
         Args:
             image_pixels (int, optional): The number of requested pixels. Defaults to None.
             image_steps (int, optional): The number of requested steps. Defaults to None.
+            text_tokens (int, optional): The number of requested tokens. Defaults to None.
 
         Returns:
             tuple[bool, str | None]: Whether the job is within the limits and a message if it is not
@@ -138,6 +142,10 @@ class UserSharedKey(db.Model):
         if self.max_image_steps != -1:    
             if image_steps > self.max_image_steps:
                 return False, f"This shared key is limited to {self.max_image_steps} steps per job. You requested {image_steps} steps."
+
+        if self.max_text_tokens != -1:    
+            if text_tokens > self.max_text_tokens:
+                return False, f"This shared key is limited to {self.max_text_tokens} tokens per job. You requested {text_tokens} steps."
 
         return True, None
 
