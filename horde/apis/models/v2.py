@@ -4,12 +4,12 @@ from flask_restx import fields, reqparse
 class Parsers:
     def __init__(self):
         self.generate_parser = reqparse.RequestParser()
-        self.generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
+        self.generate_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user.", location='headers')
         self.generate_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version", location="headers")
-        self.generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from", location="json")
-        self.generate_parser.add_argument("params", type=dict, required=False, help="Extra generate params to send to the worker", location="json")
+        self.generate_parser.add_argument("prompt", type=str, required=True, help="The prompt to generate from.", location="json")
+        self.generate_parser.add_argument("params", type=dict, required=False, help="Extra generate params to send to the worker.", location="json")
         self.generate_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
-        self.generate_parser.add_argument("workers", type=list, required=False, help="If specified, only the worker with this ID will be able to generate this prompt", location="json")
+        self.generate_parser.add_argument("workers", type=list, required=False, help="If specified, only the worker with this ID will be able to generate this prompt.", location="json")
         self.generate_parser.add_argument("worker_blacklist", type=bool, required=False, default=False, help="If true, the worker list will be treated as a blacklist instead of a whitelist.", location="json")
         self.generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
         self.generate_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
@@ -17,36 +17,36 @@ class Parsers:
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
-        self.job_pop_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user", location='headers')
-        self.job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions", location="json")
-        self.job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker", location="json")
-        self.job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content", location="json")
-        self.job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker", location="json")
-        self.job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent", location="json")
+        self.job_pop_parser.add_argument("apikey", type=str, required=True, help="The API Key corresponding to a registered user.", location='headers')
+        self.job_pop_parser.add_argument("name", type=str, required=True, help="The worker's unique name, to track contributions.", location="json")
+        self.job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker.", location="json")
+        self.job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content.", location="json")
+        self.job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker.", location="json")
+        self.job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent.", location="json")
         self.job_pop_parser.add_argument("bridge_agent", type=str, required=False, default="unknown:0:unknown", location="json")
-        self.job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde", location="json")
+        self.job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde.", location="json")
         self.job_pop_parser.add_argument("require_upfront_kudos", type=bool, required=False, default=False, help="If True, this worker will only pick up requests where the owner has the required kudos to consume already available.", location="json")
 
         self.job_submit_parser = reqparse.RequestParser()
-        self.job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key", location='headers')
-        self.job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid", location="json")
-        self.job_submit_parser.add_argument("generation", type=str, required=True, help="The generated output", location="json")
+        self.job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key.", location='headers')
+        self.job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid.", location="json")
+        self.job_submit_parser.add_argument("generation", type=str, required=True, help="The generated output.", location="json")
         self.job_submit_parser.add_argument("state", type=str, required=False, default='ok', help="The state of this returned generation.", location="json")
 
 
 class Models:
     def __init__(self,api):
         self.response_model_wp_status_lite = api.model('RequestStatusCheck', {
-            'finished': fields.Integer(description="The amount of finished jobs in this request"),
-            'processing': fields.Integer(description="The amount of still processing jobs in this request"),
-            'restarted': fields.Integer(description="The amount of jobs that timed out and had to be restarted or were reported as failed by a worker"),
-            'waiting': fields.Integer(description="The amount of jobs waiting to be picked up by a worker"),
+            'finished': fields.Integer(description="The amount of finished jobs in this request."),
+            'processing': fields.Integer(description="The amount of still processing jobs in this request."),
+            'restarted': fields.Integer(description="The amount of jobs that timed out and had to be restarted or were reported as failed by a worker."),
+            'waiting': fields.Integer(description="The amount of jobs waiting to be picked up by a worker."),
             'done': fields.Boolean(description="True when all jobs in this request are done. Else False."),
             'faulted': fields.Boolean(default=False,description="True when this request caused an internal server error and could not be completed."),
-            'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all jobs in this request"),
+            'wait_time': fields.Integer(description="The expected amount to wait (in seconds) to generate all jobs in this request."),
             'queue_position': fields.Integer(description="The position in the requests queue. This position is determined by relative Kudos amounts."),
             "kudos": fields.Float(description="The amount of total Kudos this request has consumed until now."),
-            "is_possible": fields.Boolean(default=True,description="If False, this request will not be able to be completed with the pool of workers currently available"),
+            "is_possible": fields.Boolean(default=True,description="If False, this request will not be able to be completed with the pool of workers currently available."),
         })
         self.response_model_worker_details_lite = api.model('WorkerDetailsLite', {
             "type": fields.String(example="image", description="The Type of worker this is.", enum=["image", "text", "interrogation"]),
@@ -63,72 +63,72 @@ class Models:
             'count': fields.Integer(description="How many of workers in this horde are running this model."),
         })
         self.response_model_generation_result = api.model('Generation', {
-            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image"),
-            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image"),
-            'model': fields.String(title="Generation Model", description="The model which generated this image"),
+            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image."),
+            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image."),
+            'model': fields.String(title="Generation Model", description="The model which generated this image."),
             'state': fields.String(title="Generation State", required=True, default='ok', enum=["ok", "censored"], description="The state of this generation."), 
         })
         self.response_model_wp_status_full = api.inherit('RequestStatus', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
         })
         self.response_model_async = api.model('RequestAsync', {
-            'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future"),
+            'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future."),
             'kudos': fields.Integer(description="The expected kudos consumption for this request."),
-            'message': fields.String(default=None,description="Any extra information from the horde about this request"),
+            'message': fields.String(default=None,description="Any extra information from the horde about this request."),
         })
         self.response_model_generation_payload = api.model('ModelPayload', {
             'prompt': fields.String(description="The prompt which will be sent to the horde against which to run inference."),
-            'n': fields.Integer(example=1, description="The amount of images to generate"), 
-            'seed': fields.String(description="The seed to use to generete this request"),
+            'n': fields.Integer(example=1, description="The amount of images to generate."),
+            'seed': fields.String(description="The seed to use to generete this request."),
         })
         self.response_model_generations_skipped = api.model('NoValidRequestFound', {
-            'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker", min=0),
-            'performance': fields.Integer(description="How many waiting requests were skipped because they required higher performance", min=0),
+            'worker_id': fields.Integer(description="How many waiting requests were skipped because they demanded a specific worker.", min=0),
+            'performance': fields.Integer(description="How many waiting requests were skipped because they required higher performance.", min=0),
             'nsfw': fields.Integer(description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide.", min=0),
             'blacklist': fields.Integer(description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept.", min=0),
             'untrusted': fields.Integer(description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.", min=0),
             'models': fields.Integer(example=0,description="How many waiting requests were skipped because they demanded a different model than what this worker provides.", min=0),
             'bridge_version': fields.Integer(example=0,description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).", min=0),
-            'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos"),
+            'kudos': fields.Integer(description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos."),
         })
 
         self.response_model_job_pop = api.model('GenerationPayload', {
             'payload': fields.Nested(self.response_model_generation_payload, skip_none=True),
-            'id': fields.String(description="The UUID for this generation"),
+            'id': fields.String(description="The UUID for this generation."),
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True)
         })
         self.input_model_job_submit = api.model('SubmitInput', {
-            'id': fields.String(required=True, description="The UUID of this generation", example="00000000-0000-0000-0000-000000000000"), 
+            'id': fields.String(required=True, description="The UUID of this generation.", example="00000000-0000-0000-0000-000000000000"),
             'generation': fields.String(example="R2", required=False, description="R2 result was uploaded to R2, else the string of the result."),
             'state': fields.String(title="Generation State", required=False, default='ok', enum=["ok", "censored", "faulted", "csam"], description="The state of this generation."), 
         })
         self.response_model_job_submit = api.model('GenerationSubmitted', {
-            'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request"),
+            'reward': fields.Float(example=10.0,description="The amount of kudos gained for submitting this request."),
         })
 
         self.response_model_kudos_transfer = api.model('KudosTransferred', {
-            'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred"),
+            'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred."),
         })
         self.response_model_kudos_award = api.model('KudosAwarded', {
-            'awarded': fields.Integer(example=100,description="The amount of Kudos awarded"),
+            'awarded': fields.Integer(example=100,description="The amount of Kudos awarded."),
         })
 
         self.response_model_admin_maintenance = api.model('MaintenanceModeSet', {
-            'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode"),
+            'maintenance_mode': fields.Boolean(example=True,description="The current state of maintenance_mode."),
         })
 
         self.response_model_worker_kudos_details = api.model('WorkerKudosDetails', {
-            'generated': fields.Float(description="How much Kudos this worker has received for generating images"),
-            'uptime': fields.Integer(description="How much Kudos this worker has received for staying online longer"),
+            'generated': fields.Float(description="How much Kudos this worker has received for generating images."),
+            'uptime': fields.Integer(description="How much Kudos this worker has received for staying online longer."),
         })
         self.input_model_job_pop = api.model('PopInput', {
-            'name': fields.String(description="The Name of the Worker"),
-            'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker")),
+            'name': fields.String(description="The Name of the Worker."),
+            'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker.")),
             'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
-            'models': fields.List(fields.String(description="Which models this worker is serving",min_length=3,max_length=255)),
-            'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker"),
-            'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website", max_length=1000),
-            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde",min=1, max=10),
+            'models': fields.List(fields.String(description="Which models this worker is serving.",min_length=3,max_length=255)),
+            'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker."),
+            'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website.", max_length=1000),
+            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=10),
             'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
         })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
@@ -138,29 +138,29 @@ class Models:
             "performance": fields.String(description="The average performance of this worker in human readable form."),
             "threads": fields.Integer(description="How many threads this worker is running."),
             "uptime": fields.Integer(description="The amount of seconds this worker has been online for this Horde."),
-            "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests"),
+            "maintenance_mode": fields.Boolean(example=False,description="When True, this worker will not pick up any new requests."),
             "paused": fields.Boolean(example=False,description="(Privileged) When True, this worker not be given any new requests."),
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
             "flagged": fields.Boolean(description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process."),
-            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated"),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated."),
             "uncompleted_jobs": fields.Integer(example=0,description="How many jobs this worker has left uncompleted after it started them."),
-            'models': fields.List(fields.String(description="Which models this worker if offerring")),
-            'forms': fields.List(fields.String(description="Which forms this worker if offerring")),
+            'models': fields.List(fields.String(description="Which models this worker if offering.")),
+            'forms': fields.List(fields.String(description="Which forms this worker if offering.")),
             'team': fields.Nested(self.response_model_team_details_lite, "The Team to which this worker is dedicated."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",min_length=5,max_length=500),
-            'bridge_agent': fields.String(required=True, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The bridge agent name, version and website", max_length=1000),
-            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate"),
-            "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now"),
+            'bridge_agent': fields.String(required=True, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The bridge agent name, version and website.", max_length=1000),
+            "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate."),
+            "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now."),
             'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),
             'painting': fields.Boolean(default=None,description="If True, this worker supports and allows inpainting requests."),
             'post-processing': fields.Boolean(default=None,description="If True, this worker supports and allows post-processing requests."),
             'lora': fields.Boolean(default=None,description="If True, this worker supports and allows lora requests."),
-            "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate"),
-            "max_context_length": fields.Integer(example=80,description="The maximum tokens this worker can read"),
-            "tokens_generated": fields.Float(description="How many tokens this worker has generated until now"),
+            "max_length": fields.Integer(example=80,description="The maximum tokens this worker can generate."),
+            "max_context_length": fields.Integer(example=80,description="The maximum tokens this worker can read."),
+            "tokens_generated": fields.Float(description="How many tokens this worker has generated until now."),
         })
 
         self.input_model_worker_modify = api.model('ModifyWorkerInput', {
@@ -192,31 +192,31 @@ class Models:
 
         self.input_model_sharedkey = api.model('SharedKeyInput', {
             "kudos": fields.Integer(min=-1, max=50000000, default=5000, required=False, description="The Kudos limit assigned to this key. If -1, then anyone with this key can use an unlimited amount of kudos from this account."),
-            "expiry": fields.Integer(min=-1, default=-1, example=30, required=False, description="The amount of days after which this key will expire. If -1, this key will not expire"),
-            "name": fields.String(min_length=3, max_length=255, required=False, example="Mutual Aid", description="A descriptive name for this key"),
+            "expiry": fields.Integer(min=-1, default=-1, example=30, required=False, description="The amount of days after which this key will expire. If -1, this key will not expire."),
+            "name": fields.String(min_length=3, max_length=255, required=False, example="Mutual Aid", description="A descriptive name for this key."),
             "max_image_pixels": fields.Integer(min=-1, max=4194304, default=-1, required=False, description="The maximum amount of image pixels this key can generate per job. -1 means unlimited."),
             "max_image_steps": fields.Integer(min=-1, max=500, default=-1, required=False, description="The maximum amount of image steps this key can use per job. -1 means unlimited."),
         })
 
         self.response_model_sharedkey_details = api.model('SharedKeyDetails', {
-            "id": fields.String(description="The SharedKey ID"),
+            "id": fields.String(description="The SharedKey ID."),
             "username": fields.String(description="The owning user's unique Username. It is a combination of their chosen alias plus their ID."),
-            "kudos": fields.Integer(description="The Kudos limit assigned to this key"),
+            "kudos": fields.Integer(description="The Kudos limit assigned to this key."),
             "expiry": fields.DateTime(dt_format='rfc822',description="The date at which this API key will expire."),
-            "utilized": fields.Integer(description="How mych kudos has been utilized via this shared key until now."),
+            "utilized": fields.Integer(description="How much kudos has been utilized via this shared key until now."),
             "max_image_pixels": fields.Integer(description="The maximum amount of image pixels this key can generate per job. -1 means unlimited."),
             "max_image_steps": fields.Integer(description="The maximum amount of image steps this key can use per job. -1 means unlimited."),
         })
 
         #TODO: Obsolete
         self.response_model_contrib_details = api.model('ContributionsDetails', {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated"),
-            "fulfillments": fields.Integer(description="How many images this user has generated")
+            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated."),
+            "fulfillments": fields.Integer(description="How many images this user has generated.")
         })
         #TODO: Obsolete
         self.response_model_use_details = api.model('UsageDetails', {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested"),
-            "requests": fields.Integer(description="How many images this user has requested")
+            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested."),
+            "requests": fields.Integer(description="How many images this user has requested.")
         })
 
         self.response_model_monthly_kudos = api.model('MonthlyKudos', {
@@ -225,14 +225,14 @@ class Models:
         })
 
         self.response_model_user_thing_records = api.model('UserThingRecords', {
-            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated or requested", default=0),
-            "tokens": fields.Integer(description="How many token this user has generated or requested", default=0),
+            "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated or requested.", default=0),
+            "tokens": fields.Integer(description="How many token this user has generated or requested.", default=0),
         })
 
         self.response_model_user_amount_records = api.model('UserAmountRecords', {
-            "image": fields.Integer(description="How many images this user has generated or requested", default=0),
-            "text": fields.Integer(description="How many texts this user has generated or requested", default=0),
-            "interrogation": fields.Integer(description="How many texts this user has generated or requested", default=0),
+            "image": fields.Integer(description="How many images this user has generated or requested.", default=0),
+            "text": fields.Integer(description="How many texts this user has generated or requested.", default=0),
+            "interrogation": fields.Integer(description="How many texts this user has generated or requested.", default=0),
         })
 
         self.response_model_user_records = api.model('UserRecords', {
@@ -251,7 +251,7 @@ class Models:
             "worker_invited": fields.Integer(description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="This user is a Horde moderator."),
             "kudos_details": fields.Nested(self.response_model_user_kudos_details),
-            "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)"),
+            "worker_count": fields.Integer(description="How many workers this user has created (active or inactive)."),
             "worker_ids": fields.List(fields.String(description="Privileged or public when the user has explicitly allows it to be public.", example="00000000-0000-0000-0000-000000000000")),
             "sharedkey_ids": fields.List(fields.String(description="(Privileged) The list of shared key IDs created by this user.", example="00000000-0000-0000-0000-000000000000")),
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
@@ -259,70 +259,70 @@ class Models:
             "flagged": fields.Boolean(example=False,description="This user has been flagged for suspicious activity."),
             "vpn": fields.Boolean(example=False,description="(Privileged) This user has been given the VPN role."),
             "special": fields.Boolean(example=False,description="(Privileged) This user has been given the Special role."),
-            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated"),
+            "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated."),
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),
-            "account_age": fields.Integer(example=60, description="How many seconds since this account was created"),
+            "account_age": fields.Integer(example=60, description="How many seconds since this account was created."),
             "usage": fields.Nested(self.response_model_use_details), #TODO: OBSOLETE
             "contributions": fields.Nested(self.response_model_contrib_details), #TODO: OBSOLETE
             "records": fields.Nested(self.response_model_user_records), #TODO: OBSOLETE
         })
 
         self.input_model_user_details = api.model('ModifyUserInput', {
-            "kudos": fields.Float(description="The amount of kudos to modify (can be negative)"),
-            "concurrency": fields.Integer(description="The amount of concurrent request this user can have",min=0, max=100),
-            "usage_multiplier": fields.Float(description="The amount by which to multiply the users kudos consumption",min=0.1, max=10),    
+            "kudos": fields.Float(description="The amount of kudos to modify (can be negative)."),
+            "concurrency": fields.Integer(description="The amount of concurrent request this user can have.",min=0, max=100),
+            "usage_multiplier": fields.Float(description="The amount by which to multiply the users kudos consumption.",min=0.1, max=10),
             "worker_invited": fields.Integer(description="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode."),
-            "moderator": fields.Boolean(example=False,description="Set to true to Make this user a horde moderator"),
-            "public_workers": fields.Boolean(example=False,description="Set to true to Make this user a display their worker IDs"),
+            "moderator": fields.Boolean(example=False,description="Set to true to make this user a horde moderator."),
+            "public_workers": fields.Boolean(example=False,description="Set to true to make this user display their worker IDs."),
             "monthly_kudos": fields.Integer(description="When specified, will start assigning the user monthly kudos, starting now!"),
             "username": fields.String(description="When specified, will change the username. No profanity allowed!",min_length=3,max_length=100),
-            "trusted": fields.Boolean(example=False,description="When set to true,the user and their servers will not be affected by suspicion"),
+            "trusted": fields.Boolean(example=False,description="When set to true,the user and their servers will not be affected by suspicion."),
             "flagged": fields.Boolean(example=False,description="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance."),
             "customizer": fields.Boolean(example=False,description="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference."),
             "vpn": fields.Boolean(example=False,description="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted."),
             "special": fields.Boolean(example=False,description="When set to true, The user can send special payloads."),
-            "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0"),
+            "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
             "contact": fields.String(example="email@example.com", description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",min_length=5,max_length=500),
         })
 
         self.response_model_user_modify = api.model('ModifyUser', {
-            "new_kudos": fields.Float(description="The new total Kudos this user has after this request"),
-            "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request"),
+            "new_kudos": fields.Float(description="The new total Kudos this user has after this request."),
+            "concurrency": fields.Integer(example=30,description="The request concurrency this user has after this request."),
             "usage_multiplier": fields.Float(example=1.0,description="Multiplies the amount of kudos lost when generating images."),
             "worker_invited": fields.Integer(example=1,description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."),
             "moderator": fields.Boolean(example=False,description="The user's new moderator status."),
             "public_workers": fields.Boolean(example=False,description="The user's new public_workers status."),
             "username": fields.String(example='username#1',description="The user's new username."),
-            "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total"),
-            "trusted": fields.Boolean(description="The user's new trusted status"),
-            "flagged": fields.Boolean(description="The user's new flagged status"),
-            "customizer": fields.Boolean(description="The user's new customizer status"),
-            "vpn": fields.Boolean(description="The user's new vpn status"),
-            "special": fields.Boolean(description="The user's new special status"),
-            "new_suspicion": fields.Integer(description="The user's new suspiciousness rating"),
-            "contact": fields.String(example="email@example.com", description="The new contact details"),
+            "monthly_kudos": fields.Integer(example=0,description="The user's new monthly kudos total."),
+            "trusted": fields.Boolean(description="The user's new trusted status."),
+            "flagged": fields.Boolean(description="The user's new flagged status."),
+            "customizer": fields.Boolean(description="The user's new customizer status."),
+            "vpn": fields.Boolean(description="The user's new vpn status."),
+            "special": fields.Boolean(description="The user's new special status."),
+            "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
+            "contact": fields.String(example="email@example.com", description="The new contact details."),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {
-            "queued_requests": fields.Integer(description="The amount of waiting and processing image requests currently in this Horde"),
-            "queued_text_requests": fields.Integer(description="The amount of waiting and processing text requests currently in this Horde"),
-            "worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes"),
-            "text_worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes"),
-            "thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes"),
-            "text_thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes"),
-            "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde"),
-            "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute"),
-            "queued_forms": fields.Float(description="The amount of image interrogations waiting and processing currently in this Horde"),
-            "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes"),
-            "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes"),
-            "queued_tokens": fields.Float(description="The amount of tokens in waiting and processing requests currently in this Horde"),
-            "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute"),
+            "queued_requests": fields.Integer(description="The amount of waiting and processing image requests currently in this Horde."),
+            "queued_text_requests": fields.Integer(description="The amount of waiting and processing text requests currently in this Horde."),
+            "worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes."),
+            "text_worker_count": fields.Integer(description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes."),
+            "thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes."),
+            "text_thread_count": fields.Integer(description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes."),
+            "queued_megapixelsteps": fields.Float(description="The amount of megapixelsteps in waiting and processing requests currently in this Horde."),
+            "past_minute_megapixelsteps": fields.Float(description="How many megapixelsteps this Horde generated in the last minute."),
+            "queued_forms": fields.Float(description="The amount of image interrogations waiting and processing currently in this Horde."),
+            "interrogator_count": fields.Integer(description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes."),
+            "interrogator_thread_count": fields.Integer(description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes."),
+            "queued_tokens": fields.Float(description="The amount of tokens in waiting and processing requests currently in this Horde."),
+            "past_minute_tokens": fields.Float(description="How many tokens this Horde generated in the last minute."),
         })
 
         self.response_model_newspiece = api.model('Newspiece', {
-            'date_published': fields.String(description="The date this newspiece was published"),
-            'newspiece': fields.String(description="The actual piece of news"),
+            'date_published': fields.String(description="The date this newspiece was published."),
+            'newspiece': fields.String(description="The actual piece of news."),
             'importance': fields.String(example='Information',description="How critical this piece of news is."),
         })
 
@@ -336,23 +336,23 @@ class Models:
             'message': fields.String(description="The error message for this status code."),
         })
         self.response_model_active_model = api.inherit('ActiveModel', self.response_model_active_model_lite, {
-            'performance': fields.Float(description="The average speed of generation for this model"),
-            'queued': fields.Float(description="The amount waiting to be generated by this model"),
-            'jobs': fields.Float(description="The job count waiting to be generated by this model"),
-            'eta': fields.Integer(description="Estimated time in seconds for this model's queue to be cleared"),
-            'type': fields.String(example="image", description="The model type (text or image)", enum=["image", "text"]),
+            'performance': fields.Float(description="The average speed of generation for this model."),
+            'queued': fields.Float(description="The amount waiting to be generated by this model."),
+            'jobs': fields.Float(description="The job count waiting to be generated by this model."),
+            'eta': fields.Integer(description="Estimated time in seconds for this model's queue to be cleared."),
+            'type': fields.String(example="image", description="The model type (text or image).", enum=["image", "tex.t"]),
         })
         self.response_model_deleted_worker = api.model('DeletedWorker', {
-            'deleted_id': fields.String(description="The ID of the deleted worker"),
-            'deleted_name': fields.String(description="The Name of the deleted worker"),
+            'deleted_id': fields.String(description="The ID of the deleted worker."),
+            'deleted_name': fields.String(description="The Name of the deleted worker."),
         })
         self.response_model_team_details = api.inherit('TeamDetails', self.response_model_team_details_lite, {
             "info": fields.String(description="Extra information or comments about this team provided by its owner.", example="Anarchy is emergent order.", default=None),
             "requests_fulfilled": fields.Integer(description="How many images this team's workers have generated."),
             "kudos": fields.Float(description="How many Kudos the workers in this team have been rewarded while part of this team."),
-            "uptime": fields.Integer(description="The total amount of time workers have stayed online while on this team"),
+            "uptime": fields.Integer(description="The total amount of time workers have stayed online while on this team."),
             "creator": fields.String(example="db0#1", description="The alias of the user which created this team."),
-            "worker_count": fields.Integer(example=10,description="How many workers have been dedicated to this team"),
+            "worker_count": fields.Integer(example=10,description="How many workers have been dedicated to this team."),
             'workers': fields.List(fields.Nested(self.response_model_worker_details_lite)),
             'models': fields.List(fields.Nested(self.response_model_active_model_lite)),
         })
@@ -365,47 +365,47 @@ class Models:
             "info": fields.String(description="Extra information or comments about this team.", example="Anarchy is emergent order.", default=None, min_length=3,max_length=1000),
         })
         self.response_model_deleted_team = api.model('DeletedTeam', {
-            'deleted_id': fields.String(description="The ID of the deleted team"),
-            'deleted_name': fields.String(description="The Name of the deleted team"),
+            'deleted_id': fields.String(description="The ID of the deleted team."),
+            'deleted_name': fields.String(description="The Name of the deleted team."),
         })
         self.response_model_team_modify = api.model('ModifyTeam', {
-            'id': fields.String(description="The ID of the team"),
-            'name': fields.String(description="The Name of the team"),
-            'info': fields.String(description="The Info of the team"),
+            'id': fields.String(description="The ID of the team."),
+            'name': fields.String(description="The Name of the team."),
+            'info': fields.String(description="The Info of the team."),
         })
         self.input_model_delete_ip_timeout = api.model('DeleteTimeoutIPInput', {
-            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address to remove from timeout",min_length=7, max_length=15),
+            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address to remove from timeout.",min_length=7, max_length=15),
         })
         self.response_model_simple_response = api.model('SimpleResponse', {
-            "message": fields.String(default='OK',required=True, description="The result of this operation"),
+            "message": fields.String(default='OK',required=True, description="The result of this operation."),
         })
 
         self.input_model_filter_put = api.model('PutNewFilter', {
             "regex": fields.String(required=True, description="The regex for this filter.", example="ac.*"),
-            "filter_type": fields.Integer(required=True, description="The integer defining this filter type", min=10, max=29, example=10),
-            "description": fields.String(required=False, description="Description about this regex"),
-            "replacement": fields.String(required=False, default='', description="The replacement string for this regex"),
+            "filter_type": fields.Integer(required=True, description="The integer defining this filter type.", min=10, max=29, example=10),
+            "description": fields.String(required=False, description="Description about this regex."),
+            "replacement": fields.String(required=False, default='', description="The replacement string for this regex."),
         })
         self.input_model_filter_patch = api.model('PatchExistingFilter', {
             "regex": fields.String(required=False, description="The regex for this filter.", example="ac.*"),
-            "filter_type": fields.Integer(required=False, description="The integer defining this filter type", min=10, max=29, example=10),
-            "description": fields.String(required=False, description="Description about this regex"),
-            "replacement": fields.String(required=False, default='', description="The replacement string for this regex"),
+            "filter_type": fields.Integer(required=False, description="The integer defining this filter type.", min=10, max=29, example=10),
+            "description": fields.String(required=False, description="Description about this regex."),
+            "replacement": fields.String(required=False, default='', description="The replacement string for this regex."),
         })
 
         self.response_model_filter_details = api.model('FilterDetails', {
             "id": fields.String(required=True,description="The UUID of this filter."),
             "regex": fields.String(required=True,description="The regex for this filter.", example="ac.*"),
-            "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=10),
-            "description": fields.String(required=False, description="Description about this regex"),
+            "filter_type": fields.Integer(required=True,description="The integer defining this filter type.", min=10, max=29, example=10),
+            "description": fields.String(required=False, description="Description about this regex."),
             "replacement": fields.String(required=False, default='', description="The replacement string for this regex."),
-            "user": fields.String(required=True, description="The moderator which added or last updated this regex"),
+            "user": fields.String(required=True, description="The moderator which added or last updated this regex."),
         })
         self.response_model_prompt_suspicion = api.model('FilterPromptSuspicion', {
             "suspicion": fields.String(default=0, required=True, description="Rates how suspicious the provided prompt is. A suspicion over 2 means it would be blocked."),
-            "matches": fields.List(fields.String(required=True, description="Which words in the prompt matched the filters")),
+            "matches": fields.List(fields.String(required=True, description="Which words in the prompt matched the filters.")),
         })
         self.response_model_filter_regex = api.model('FilterRegex', {
-            "filter_type": fields.Integer(required=True,description="The integer defining this filter type", min=10, max=29, example=10),
+            "filter_type": fields.Integer(required=True,description="The integer defining this filter type.", min=10, max=29, example=10),
             "regex": fields.String(required=True,description="The full regex for this filter type."),
         })
