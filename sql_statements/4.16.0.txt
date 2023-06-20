@@ -1,0 +1,3 @@
+ALTER TABLE user_sharedkeys ADD COLUMN max_image_pixels INTEGER default -1 not null;
+ALTER TABLE user_sharedkeys ADD COLUMN max_image_step INTEGER default -1 not null;
+ALTER TABLE user_sharedkeys ADD COLUMN max_text_tokens INTEGER default -1 not null;

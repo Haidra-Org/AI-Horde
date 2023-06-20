@@ -87,6 +87,13 @@ class TextAsyncGenerate(GenerateTemplate):
                     message=f"Due to heavy demand, for requests over {tokens} tokens, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
                 )                
 
+        if self.sharedkey:
+            is_in_limit, fail_message = self.sharedkey.is_job_within_limits(
+                text_tokens = self.wp.max_length, 
+            )
+            if not is_in_limit:
+                raise e.BadRequest(fail_message)
+
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Consider reducing the amount of tokens to generate.")
 
@@ -99,6 +106,7 @@ class TextAsyncGenerate(GenerateTemplate):
         params_hash = hash_dictionary(gen_payload)
         logger.debug([params_hash,gen_payload])
         return params_hash
+
 
 class TextAsyncStatus(Resource):
     get_parser = reqparse.RequestParser()

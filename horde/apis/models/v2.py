@@ -194,6 +194,9 @@ class Models:
             "kudos": fields.Integer(min=-1, max=50000000, default=5000, required=False, description="The Kudos limit assigned to this key. If -1, then anyone with this key can use an unlimited amount of kudos from this account."),
             "expiry": fields.Integer(min=-1, default=-1, example=30, required=False, description="The amount of days after which this key will expire. If -1, this key will not expire."),
             "name": fields.String(min_length=3, max_length=255, required=False, example="Mutual Aid", description="A descriptive name for this key."),
+            "max_image_pixels": fields.Integer(min=-1, max=4194304, default=-1, required=False, description="The maximum amount of image pixels this key can generate per job. -1 means unlimited."),
+            "max_image_steps": fields.Integer(min=-1, max=500, default=-1, required=False, description="The maximum amount of image steps this key can use per job. -1 means unlimited."),
+            "max_text_tokens": fields.Integer(min=-1, max=500, default=-1, required=False, description="The maximum amount of text tokens this key can generate per job. -1 means unlimited."),
         })
 
         self.response_model_sharedkey_details = api.model('SharedKeyDetails', {
@@ -202,6 +205,9 @@ class Models:
             "kudos": fields.Integer(description="The Kudos limit assigned to this key."),
             "expiry": fields.DateTime(dt_format='rfc822',description="The date at which this API key will expire."),
             "utilized": fields.Integer(description="How much kudos has been utilized via this shared key until now."),
+            "max_image_pixels": fields.Integer(description="The maximum amount of image pixels this key can generate per job. -1 means unlimited."),
+            "max_image_steps": fields.Integer(description="The maximum amount of image steps this key can use per job. -1 means unlimited."),
+            "max_text_tokens": fields.Integer(description="The maximum amount of text tokens this key can generate per job. -1 means unlimited."),
         })
 
         #TODO: Obsolete

@@ -876,6 +876,7 @@ class UserSingle(Resource):
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description='User Details', skip_none=True)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(404, 'User Not Found', models.response_model_error)
     def get(self, user_id = ''):
         '''Details and statistics about a specific user
@@ -885,10 +886,12 @@ class UserSingle(Resource):
         self.args = self.get_parser.parse_args()
         details_privilege = 0
         if self.args.apikey:
-            admin = database.find_user_by_api_key(self.args['apikey'])
-            if admin.moderator:
+            resolved_user = database.find_user_by_api_key(self.args['apikey'])
+            if not resolved_user:
+                raise e.InvalidAPIKey('User action: ' + 'GET UserSingle')
+            if resolved_user.moderator:
                 details_privilege = 2
-            elif admin.id == user_id:
+            elif str(resolved_user.id) == str(user_id):
                 details_privilege = 1
         cached_user = None
         cache_name = f"cached_user_id_{user_id}_privilege_{details_privilege}"
@@ -1682,6 +1685,9 @@ class SharedKey(Resource):
     put_parser.add_argument("kudos", type=int, required=False, default=5000, help="The amount of kudos limit available to this key.", location="json")
     put_parser.add_argument("expiry", type=int, required=False, default=-1, help="The amount of days which this key will stay active.", location="json")
     put_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key.", location="json")
+    put_parser.add_argument("max_image_pixels", type=int, required=False, default=-1, help="The maximum number of pixels this key can generate per job.", location="json")
+    put_parser.add_argument("max_image_steps", type=int, required=False, default=-1, help="The maximum number of steps this key can use per job.", location="json")
+    put_parser.add_argument("max_text_tokens", type=int, required=False, default=-1, help="The maximum number of tokens this key can generate per job.", location="json")
 
     decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(put_parser, models.input_model_sharedkey)
@@ -1704,11 +1710,15 @@ class SharedKey(Resource):
         expiry = None
         if self.args.expiry and self.args.expiry != -1:
             expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
+
         new_key = UserSharedKey(
             user_id = user.id,
             kudos = self.args.kudos,
             expiry = expiry,
             name = self.args.name,
+            max_image_pixels = self.args.max_image_pixels,
+            max_image_steps = self.args.max_image_steps,
+            max_text_tokens = self.args.max_text_tokens,
         )
         db.session.add(new_key)
         db.session.commit()
@@ -1739,6 +1749,9 @@ class SharedKeySingle(Resource):
     patch_parser.add_argument("kudos", type=int, required=False, help="The amount of kudos limit available to this key.", location="json")
     patch_parser.add_argument("expiry", type=int, required=False, help="The amount of days from today which this key will stay active.", location="json")
     patch_parser.add_argument("name", type=str, required=False, help="A descriptive name for this key.", location="json")
+    patch_parser.add_argument("max_image_pixels", type=int, required=False, help="The maximum number of pixels this key can generate per job.", location="json")
+    patch_parser.add_argument("max_image_steps", type=int, required=False, help="The maximum number of steps this key can use per job.", location="json")
+    patch_parser.add_argument("max_text_tokens", type=int, required=False, help="The maximum number of tokens this key can generate per job.", location="json")
 
     @api.expect(patch_parser, models.input_model_sharedkey)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Key Details', skip_none=True)
@@ -1769,6 +1782,14 @@ class SharedKeySingle(Resource):
             sharedkey.kudos = self.args.kudos
         if self.args.name is not None:
             sharedkey.name = self.args.name
+
+        if self.args.max_image_pixels is not None:
+            sharedkey.max_image_pixels = self.args.max_image_pixels
+        if self.args.max_image_steps is not None:
+            sharedkey.max_image_steps = self.args.max_image_steps
+        if self.args.max_text_tokens is not None:
+            sharedkey.max_text_tokens = self.args.max_text_tokens
+        
         db.session.commit()
         return sharedkey.get_details(),200
 

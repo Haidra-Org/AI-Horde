@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.16.0
+
+Shared keys can now set max pixels, max tokens, and max steps to use
+
 # 4.15.10
 
 * Cancelled requests will now always report done, even if procgens are still waiting
