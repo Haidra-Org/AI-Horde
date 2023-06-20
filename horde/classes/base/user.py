@@ -3,6 +3,7 @@ import os
 
 import dateutil.relativedelta
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import Enum, UniqueConstraint
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.dialects.postgresql import UUID
@@ -118,10 +119,10 @@ class UserSharedKey(db.Model):
 
     def is_job_within_limits(self, 
         *, 
-        image_pixels: int = None, 
-        image_steps: int = None,
-        text_tokens: int = None,
-    ):
+        image_pixels: Optional[int] = None, 
+        image_steps: Optional[int] = None,
+        text_tokens: Optional[int] = None,
+    ) -> tuple[bool, Optional[str]]:
         """Checks if the job is within the limits of the shared key
 
         Args:
@@ -132,20 +133,18 @@ class UserSharedKey(db.Model):
         Returns:
             tuple[bool, str | None]: Whether the job is within the limits and a message if it is not
         """
-        if image_pixels is None and image_steps is None:
-            return True, None
         
-        if self.max_image_pixels != -1:
+        if self.max_image_pixels and self.max_image_pixels != -1:
             if image_pixels > self.max_image_pixels:
                 return False, f"This shared key is limited to {self.max_image_pixels} pixels per job. You requested {image_pixels} pixels."
                 
-        if self.max_image_steps != -1:    
+        if self.max_image_steps and self.max_image_steps != -1:    
             if image_steps > self.max_image_steps:
                 return False, f"This shared key is limited to {self.max_image_steps} steps per job. You requested {image_steps} steps."
 
-        if self.max_text_tokens != -1:    
+        if self.max_text_tokens and self.max_text_tokens != -1:    
             if text_tokens > self.max_text_tokens:
-                return False, f"This shared key is limited to {self.max_text_tokens} tokens per job. You requested {text_tokens} steps."
+                return False, f"This shared key is limited to {self.max_text_tokens} tokens per job. You requested {text_tokens} tokens."
 
         return True, None
 
