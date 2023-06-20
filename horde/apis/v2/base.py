@@ -1699,7 +1699,7 @@ class SharedKey(Resource):
         self.args = self.put_parser.parse_args()
         user: User = database.find_user_by_api_key(self.args.apikey)
         if not user:
-            raise e.InvalidAPIKey("get sharedkey")
+            raise e.InvalidAPIKey("put sharedkey")
         if user.is_anon():
             raise e.AnonForbidden
         if user.count_sharedkeys() > user.max_sharedkeys():
@@ -1720,6 +1720,32 @@ class SharedKey(Resource):
         db.session.add(new_key)
         db.session.commit()
         return new_key.get_details(),200
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=True, help="User API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+
+    @cache.cached(timeout=60)
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_sharedkey_details, code=200, description='Shared Keys', as_list=True, skip_none=True)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def get(self):
+        '''Returns a list of all shared keys details for this user
+        '''
+        self.args = self.get_parser.parse_args()
+        user: User = database.find_user_by_api_key(self.args.apikey)
+        if not user:
+            raise e.InvalidAPIKey("get sharedkey")
+
+        if user.is_anon():
+            raise e.AnonForbidden
+
+        if user.count_sharedkeys() == 0:
+            return []   
+
+        if user.sharedkeys:
+            return [k.get_details() for k in user.sharedkeys],200
 
 
 class SharedKeySingle(Resource):

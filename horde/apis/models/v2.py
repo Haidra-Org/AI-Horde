@@ -210,6 +210,10 @@ class Models:
             "max_text_tokens": fields.Integer(description="The maximum amount of text tokens this key can generate per job. -1 means unlimited."),
         })
 
+        self.response_model_user_sharedkeys = api.model('UserSharedKeys', {
+            "sharedkeys": fields.List(fields.Nested(self.response_model_sharedkey_details)),
+        })
+
         #TODO: Obsolete
         self.response_model_contrib_details = api.model('ContributionsDetails', {
             "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated."),
