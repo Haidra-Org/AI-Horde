@@ -1689,7 +1689,7 @@ class SharedKey(Resource):
     put_parser.add_argument("max_image_steps", type=int, required=False, default=-1, help="The maximum number of steps this key can use per job.", location="json")
     put_parser.add_argument("max_text_tokens", type=int, required=False, default=-1, help="The maximum number of tokens this key can generate per job.", location="json")
 
-    decorators = [limiter.limit("1000/minute", key_func = get_request_path)]
+    decorators = [limiter.limit("5/minute", key_func = get_request_path)]
     @api.expect(put_parser, models.input_model_sharedkey)
     @api.marshal_with(models.response_model_sharedkey_details, code=200, description='SharedKey Details', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
