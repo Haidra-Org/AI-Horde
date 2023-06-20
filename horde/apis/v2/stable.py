@@ -137,16 +137,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 "First ensure it provides a proper name and contact details. "
                 "Then contact us on Discord to discuss the issue it's creating."
             )
-        if self.sharedkey:
-            requested_total_pixels = self.args.params["height"] * self.args.params["width"]
-            requested_steps = self.args.params["steps"]
 
-            is_in_limit, fail_message = self.sharedkey.is_job_within_limits(
-                image_pixels = requested_total_pixels, 
-                image_steps = requested_steps,
-            )
-            if not is_in_limit:
-                raise e.BadRequest(fail_message)
         
 
     # We split this into its own function, so that it may be overriden
@@ -198,6 +189,16 @@ class ImageAsyncGenerate(GenerateTemplate):
             # else:
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
 
+        if self.sharedkey:
+            requested_total_pixels = self.wp.params["height"] * self.wp.params["width"]
+            requested_steps = self.wp.params["steps"]
+
+            is_in_limit, fail_message = self.sharedkey.is_job_within_limits(
+                image_pixels = requested_total_pixels, 
+                image_steps = requested_steps,
+            )
+            if not is_in_limit:
+                raise e.BadRequest(fail_message)
     def extrapolate_dry_run_kudos(self):
         source_processing = self.args.source_processing
         if not self.args.source_image:
