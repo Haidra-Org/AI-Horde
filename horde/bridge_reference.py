@@ -3,11 +3,11 @@ from horde.consts import KNOWN_POST_PROCESSORS
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
-        22: {"lora"},
+        23: {"image_is_control"}, # This used to be bridge version 16, but support was lost in the hordelib update
+        22: {"lora"}, 
         21: {"RealESRGAN_x2plus"},
         19: {"NMKD_Siax", "4x_AnimeSharp"},
-        18: {"strip_background", "return_control_map", "RealESRGAN_x4plus_anime_6B"},
-        16: {"image_is_control"},
+        18: {"strip_background", "return_control_map", "RealESRGAN_x4plus_anime_6B"},        
         15: {"controlnet"},
         14: {"r2_source"},
         13: {"hires_fix", "clip_skip"},
@@ -142,7 +142,7 @@ def get_supported_samplers(bridge_agent, karras=True):
     if bridge_name not in BRIDGE_SAMPLERS:
         # When it's an unknown worker agent we treat it like AI Horde Worker
         bridge_name = "AI Horde Worker"
-        bridge_version = 22
+        bridge_version = 23
     available_samplers = set()
     for iter in range(bridge_version + 1):
         if iter in BRIDGE_SAMPLERS[bridge_name]:
@@ -162,7 +162,7 @@ def get_supported_pp(bridge_agent):
     if bridge_name not in BRIDGE_SAMPLERS:
         # When it's an unknown worker agent we treat it like AI Horde Worker
         bridge_name = "AI Horde Worker"
-        bridge_version = 22
+        bridge_version = 23
     available_pp = set()
     for iter in range(bridge_version + 1):
         if iter in BRIDGE_CAPABILITIES[bridge_name]:

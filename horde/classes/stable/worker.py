@@ -87,6 +87,8 @@ class ImageWorker(Worker):
         if waiting_prompt.params.get('control_type'):
             if not check_bridge_capability("controlnet", self.bridge_agent):
                 return [False, 'bridge_version']
+            if not check_bridge_capability("image_is_control", self.bridge_agent):
+                return [False, 'bridge_version']
             if not self.allow_controlnet:
                 return [False, 'bridge_version']
         if waiting_prompt.params.get('hires_fix') and not check_bridge_capability("hires_fix", self.bridge_agent):
