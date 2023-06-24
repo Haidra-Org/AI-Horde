@@ -532,6 +532,7 @@ class User(db.Model):
     def receive_monthly_kudos(self, force=False, prevent_date_change = False):
         kudos_amount = self.calculate_monthly_kudos()
         if kudos_amount == 0:
+            logger.warning(f"receive_monthly_kudos() received 0 kudos account {self.get_unique_alias()}")
             return
         if force:
             has_month_passed = True

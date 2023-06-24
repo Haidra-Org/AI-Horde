@@ -64,7 +64,7 @@ def assign_monthly_kudos():
         or_conditions.append(User.moderator == True)
         or_conditions.append(User.id.in_(patron_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
-        logger.debug(f"Found {users.count()} users with Monthly Kudos Assignment")
+        logger.info(f"Found {users.count()} users with Monthly Kudos Assignment")
         for user in users.all():
             user.receive_monthly_kudos()
   
