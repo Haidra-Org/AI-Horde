@@ -561,7 +561,6 @@ class User(db.Model):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
         self.ensure_kudos_positive()
-        db.session.commit()
         kudos_details = db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
         if not kudos_details:
             kudos_details = UserStats(user_id=self.id, action=action, value=round(kudos, 2))
