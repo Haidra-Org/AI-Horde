@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.16.1
+
+Fix for duplicate seeds and extra gens
+
 # 4.16.0
 
 Shared keys can now set max pixels, max tokens, and max steps to use
