@@ -1,4 +1,6 @@
-import random
+
+import copy
+
 from sqlalchemy.sql import expression
 
 from horde.logger import logger
@@ -89,23 +91,27 @@ class ImageWaitingPrompt(WaitingPrompt):
         self.gen_payload["batch_size"] = 1
         self.gen_payload["ddim_steps"] = self.params['steps']
         self.gen_payload["seed"] = self.seed
+        # If they want the seed randomized and also a seed variation, we randomize the seed in advance
+        if self.seed is None and self.seed_variation:
+            self.seed = self.seed_to_int(self.seed)
         del self.gen_payload["steps"]
         db.session.commit()
 
     @logger.catch(reraise=True)
     def get_job_payload(self, procgen):
+        ret_payload = copy.deepcopy(self.gen_payload)
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
-            self.gen_payload["seed"] = self.seed_to_int(self.seed)
-        if self.seed_variation and self.jobs - self.n > 1:
-            self.gen_payload["seed"] += self.seed_variation
-            while self.gen_payload["seed"] >= 2**32:
-                self.gen_payload["seed"] = self.gen_payload["seed"] >> 32
-        # logger.debug([self.gen_payload["seed"],self.seed_variation])
+            ret_payload["seed"] = self.seed_to_int(self.seed)
+        elif self.seed_variation and self.jobs - self.n > 1:
+            ret_payload["seed"] += self.seed + (self.seed_variation * self.n)
+            while ret_payload["seed"] >= 2**32:
+                ret_payload["seed"] = ret_payload["seed"] >> 32
+        else:
+            ret_payload["seed"] = self.seed
         if not self.nsfw and self.censor_nsfw:
-            self.gen_payload["use_nsfw_censor"] = True
-        db.session.commit()
-        return(self.gen_payload)
+            ret_payload["use_nsfw_censor"] = True
+        return(ret_payload)
 
     def get_share_metadata(self):
         '''This is uploaded along with the image to the shared R2, when this WP shared'''

@@ -175,14 +175,18 @@ class WaitingPrompt(db.Model):
 
     def start_generation(self, worker):
         # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
-        myself_refresh = db.session.query(type(self)).filter(type(self).id == self.id, type(self).n > 0).with_for_update().first()
+        myself_refresh = db.session.query(
+            type(self)
+        ).filter(
+            type(self).id == self.id, 
+            type(self).n > 0
+        ).with_for_update().populate_existing().first()
         if not myself_refresh:
             return None
         myself_refresh.n -= 1
         db.session.commit()
         procgen_class = procgen_classes[self.wp_type]
         new_gen = procgen_class(wp_id=self.id, worker_id=worker.id)
-        self.n = myself_refresh.n
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
         return self.get_pop_payload(new_gen)
 
