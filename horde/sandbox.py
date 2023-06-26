@@ -20,4 +20,7 @@ import pprint
 print(prompt_checker.regex["filter_10"])
 logger.info(prompt_checker("👧"))
 print("👧" in prompt_checker.regex["filter_10"])
+import regex as re
+print(re.search(r"👧", "This is a test 👧"))
+print(re.search(prompt_checker.regex["filter_10"], "This is a test 👧"))
 sys.exit()
