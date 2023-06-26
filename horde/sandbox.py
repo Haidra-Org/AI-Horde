@@ -16,11 +16,4 @@ import pprint
 # pp = pprint.PrettyPrinter(depth=3)
 # pp.pprint(patrons.get_monthly_kudos(23734))
 # pp.pprint(patrons.get_ids())
-
-print(prompt_checker.regex["filter_10"])
-logger.info(prompt_checker("This is a test 👧"))
-print("👧" in prompt_checker.regex["filter_10"])
-import regex as re
-reg = re.compile(r"student |👧", re.IGNORECASE)
-print(reg.search("This is a test 👧"))
 sys.exit()
