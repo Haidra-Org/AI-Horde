@@ -21,6 +21,6 @@ print(prompt_checker.regex["filter_10"])
 logger.info(prompt_checker("This is a test 👧"))
 print("👧" in prompt_checker.regex["filter_10"])
 import regex as re
-print(re.search(r"👧", "This is a test 👧"))
-print(re.search(prompt_checker.regex["filter_10"], "This is a test 👧"))
+reg = re.compile(r"student |👧", re.IGNORECASE)
+print(reg.search("This is a test 👧"))
 sys.exit()
