@@ -247,6 +247,3 @@ class PromptChecker:
 
 
 prompt_checker = PromptChecker()
-# Test
-# import sys
-# sys.exit()
