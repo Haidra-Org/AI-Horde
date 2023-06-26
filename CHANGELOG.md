@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.16.2
+
+Consider emojis when checking for CSAM potential
+
 # 4.16.1
 
 Fix for duplicate seeds and extra gens

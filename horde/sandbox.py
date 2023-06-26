@@ -4,6 +4,7 @@ import horde.classes.base.stats as stats
 from horde.flask import HORDE
 import sys
 from horde.patreon import patrons
+from horde.detection import prompt_checker
 import pprint
 
 # with HORDE.app_context():
@@ -12,7 +13,7 @@ import pprint
     # logger.debug(database.count_totals())
 
 
-pp = pprint.PrettyPrinter(depth=3)
-pp.pprint(patrons.get_monthly_kudos(23734))
+# pp = pprint.PrettyPrinter(depth=3)
+# pp.pprint(patrons.get_monthly_kudos(23734))
 # pp.pprint(patrons.get_ids())
 sys.exit()
