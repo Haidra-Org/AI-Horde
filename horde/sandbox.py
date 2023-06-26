@@ -17,6 +17,6 @@ import pprint
 # pp.pprint(patrons.get_monthly_kudos(23734))
 # pp.pprint(patrons.get_ids())
 
-logger.info(prompt_checker.regex[213])
+logger.info(prompt_checker.regex["filter_10"])
 logger.info(prompt_checker("👧"))
 sys.exit()
