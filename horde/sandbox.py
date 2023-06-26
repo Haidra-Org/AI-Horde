@@ -18,7 +18,7 @@ import pprint
 # pp.pprint(patrons.get_ids())
 
 print(prompt_checker.regex["filter_10"])
-logger.info(prompt_checker("This is a test 👧")
+logger.info(prompt_checker("This is a test 👧"))
 print("👧" in prompt_checker.regex["filter_10"])
 import regex as re
 print(re.search(r"👧", "This is a test 👧"))
