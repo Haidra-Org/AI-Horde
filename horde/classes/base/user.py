@@ -519,6 +519,7 @@ class User(db.Model):
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
         # If they already had some, we give the difference but don't change the date
+        logger.info(f"Modifying monthly kudos of {self.get_unique_alias()} by {monthly_kudos}")
         if monthly_kudos > 0:
             self.modify_kudos(monthly_kudos, "recurring")
         if not self.monthly_kudos_last_received:

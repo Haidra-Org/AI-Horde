@@ -64,8 +64,9 @@ def assign_monthly_kudos():
         or_conditions.append(User.moderator == True)
         or_conditions.append(User.id.in_(patron_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
-        logger.info(f"Found {users.count()} users with Monthly Kudos Assignment")
-        for user in users.all():
+        all_users = users.all()
+        logger.info(f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}")
+        for user in all_users:
             user.receive_monthly_kudos()
   
 
@@ -315,6 +316,7 @@ def store_patreon_members():
             member_dict["sponsor_link"] = note["sponsor_link"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
+    logger.info(f"patreon_cache ({len(active_members)}): {list(active_members.keys())}")
     hr.horde_r_set('patreon_cache', cached_patreons)
 
 
