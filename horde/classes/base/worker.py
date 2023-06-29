@@ -13,6 +13,7 @@ from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 from horde import horde_redis as hr
 from horde.classes.base import settings
+from horde.discord import send_pause_notification
 
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
@@ -165,6 +166,11 @@ class WorkerTemplate(db.Model):
             logger.warning(f"Worker '{self.id}' suspicion increased. Reason: {reason_log}")
         if self.is_suspicious():
             self.paused = True
+            send_pause_notification(
+                f"Worker {self.name} ({self.id}) automatically set to paused.\n"
+                f"Last suspicion log: {reason.name}.\n"
+                f"Total Suspicion {self.get_suspicion()}"
+            )
         db.session.commit()
 
     def get_suspicion_reasons(self):
