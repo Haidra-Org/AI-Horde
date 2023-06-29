@@ -147,7 +147,7 @@ class WorkerTemplate(db.Model):
         # Each worker starts at the suspicion level of its user
         if len(self.name) > 100:
             if len(self.name) > 200:
-                self.report_suspicion(reason = Suspicions.WORKER_NAME_EXTREMELY_LONG)
+                self.report_suspicion(reason = Suspicions.WORKER_NAME_EXTREME)
             self.name = self.name[:100]
             self.report_suspicion(reason = Suspicions.WORKER_NAME_LONG)
         if is_profane(self.name):

@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.16.3
+
+Working being paused due to suspicion will now inform moderators via a discord webhook
+
 # 4.16.2
 
 Consider emojis when checking for CSAM potential
