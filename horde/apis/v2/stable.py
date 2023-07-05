@@ -444,7 +444,7 @@ class Aesthetics(Resource):
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(404, 'Generation Request Not Found', models.response_model_error)
     def post(self, id):
-        '''Submit aesthetic ratings for generated images to be used by LAION
+        '''Submit aesthetic ratings for generated images to be used by LAION and Stability.AI
         The request has to have been sent as shared: true.
         You can select the best image in the set, and/or provide a rating for each or some images in the set.
         If you select best-of image, you will gain 4 kudos. Each rating is 5 kudos. Best-of will be ignored when ratings conflict with it.
@@ -530,7 +530,7 @@ class Aesthetics(Resource):
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         try:
-            submit_req = requests.post("https://ratings.droom.cloud/api/v1/rating/set", json = aesthetic_payload, timeout=3)
+            submit_req = requests.post("https://ratings.aihorde.net/api/v1/rating/set", json = aesthetic_payload, timeout=3)
             if not submit_req.ok:
                 if submit_req.status_code == 403:
                     raise e.InvalidAestheticAttempt("This generation appears already rated")
