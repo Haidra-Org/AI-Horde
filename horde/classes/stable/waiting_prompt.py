@@ -62,7 +62,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         #     self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
         if "SDXL_beta::stability.ai#6901" in self.get_model_names():
-            self.seed = self.seed_to_int(self.params.pop('seed'))
+            self.seed = self.seed_to_int(self.params.get('seed'))
         elif self.params.get('seed') == '':
             self.seed = None
         elif self.params.get('seed') is not None:
