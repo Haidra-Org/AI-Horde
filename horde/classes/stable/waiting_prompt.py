@@ -61,7 +61,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         # if any(model_name.startswith("stable_diffusion_2") for model_name in self.get_model_names()):
         #     self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
-        if self.params.get('seed') == '':
+        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
+            self.seed = self.seed_to_int(self.params.pop('seed'))
+        elif self.params.get('seed') == '':
             self.seed = None
         elif self.params.get('seed') is not None:
             # logger.warning([self,'seed' in params, params])
@@ -104,13 +106,21 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.seed is None:
             ret_payload["seed"] = self.seed_to_int(self.seed)
         elif self.seed_variation and self.jobs - self.n > 1:
-            ret_payload["seed"] += self.seed + (self.seed_variation * self.n)
+            ret_payload["seed"] = self.seed + (self.seed_variation * self.n)
             while ret_payload["seed"] >= 2**32:
                 ret_payload["seed"] = ret_payload["seed"] >> 32
         else:
-            ret_payload["seed"] = self.seed
+            ret_payload["seed"] = self.seed            
         if not self.nsfw and self.censor_nsfw:
             ret_payload["use_nsfw_censor"] = True
+        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
+            pipline_name = f"pipeline{2 - self.n}"
+            ret_payload["special"] = {
+                "model_name": pipline_name,
+                "pair_id": str(self.id),
+                "comfy_pipeline": f"{pipline_name}".json,          
+            }
+            logger.debug(ret_payload["special"])
         return(ret_payload)
 
     def get_share_metadata(self):

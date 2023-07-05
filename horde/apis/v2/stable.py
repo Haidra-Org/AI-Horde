@@ -107,6 +107,13 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.UnsupportedModel
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
             raise e.UnsupportedModel
+        # If the beta has been requested, it takes over the model list
+        if any(model_name == "SDXL_beta::stability.ai#6901" for model_name in self.models):
+            if self.user.id not in [1,6901]:
+                raise e.Forbidden("Access Denied")
+            self.models = ["SDXL_beta::stability.ai#6901"]
+            # SDXL_Beta always generates 2 images
+            self.params["n"] = 2
         if self.args.source_mask and self.params.get("sampler_name") == "DDIM":
             raise e.UnsupportedModel("You cannot use a mask with the DDIM sampler")
         if self.args.source_image:
@@ -149,8 +156,10 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared=True
         if self.args.source_image:
             shared=False
-        # hlky metldown
-        shared=False
+        if "SDXL_beta::stability.ai#6901" in self.models:
+            shared = True
+        else:
+            shared = False
         self.wp = ImageWaitingPrompt(
             worker_ids = self.workers,
             models = self.models,
