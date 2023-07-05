@@ -118,7 +118,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             ret_payload["special"] = {
                 "model_name": pipline_name,
                 "pair_id": str(self.id),
-                "comfy_pipeline": f"{pipline_name}".json,          
+                "comfy_pipeline": f"{pipline_name}.json",
             }
             logger.debug(ret_payload["special"])
         return(ret_payload)
