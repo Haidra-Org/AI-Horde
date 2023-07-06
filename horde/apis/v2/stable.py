@@ -108,9 +108,9 @@ class ImageAsyncGenerate(GenerateTemplate):
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
             raise e.UnsupportedModel
         # If the beta has been requested, it takes over the model list
-        if any(model_name == "SDXL_beta::stability.ai#6901" for model_name in self.models):
-            if self.user.id not in [1,6901]:
-                raise e.Forbidden("Access Denied")
+        if "SDXL_beta::stability.ai#6901" in self.models:
+            if self.user.is_anon():
+                raise e.Forbidden("Anonymous users cannot use the SDXL_beta.")
             self.models = ["SDXL_beta::stability.ai#6901"]
             # SDXL_Beta always generates 2 images
             self.params["n"] = 2
@@ -493,7 +493,7 @@ class Aesthetics(Resource):
             self.kudos = 5 * len(self.args.ratings)
             for r in self.args.ratings:
                 if r.get("artifacts") is not None:
-                    self.kudos += 3
+                    self.kudos += 5
             aesthetic_payload["ratings"] = self.args.ratings
             # If they only rated one, and rated it > 7, we assume it's the best of the set by default
             # Unless another bestof was selected (for some reason)
@@ -502,7 +502,7 @@ class Aesthetics(Resource):
                     if not self.args.best or self.args.best == self.args.ratings[0]["id"]:
                         aesthetic_payload["best"] = self.args.ratings[0]["id"]
                 elif self.args.best:
-                    self.kudos += 4
+                    self.kudos += 10
                     aesthetic_payload["best"] = self.args.best
             if len(self.args.ratings) > 1:
                 bestofs = None
