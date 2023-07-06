@@ -2,7 +2,13 @@ from dotenv import load_dotenv
 import os
 import logging
 
-load_dotenv()
+profile = os.environ.get('profile')
+
+if profile is not None:
+    env_file = f".env_{profile}"
+    load_dotenv(env_file)
+else:
+    load_dotenv()
 
 from horde.argparser import args
 from horde.flask import HORDE
