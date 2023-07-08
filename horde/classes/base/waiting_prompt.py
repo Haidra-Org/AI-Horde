@@ -255,6 +255,15 @@ class WaitingPrompt(db.Model):
     #     '''The things still queued to be generated for this waiting prompt'''
     #     return round(self.things * self.n ,2)
 
+    def get_generations(self):
+        generations = []
+        for procgen in self.processing_gens:
+            if procgen.fake:
+                continue
+            if procgen.is_completed():
+                generations.append(procgen.get_details())
+        return generations
+
     def get_status(
             self, 
             request_avg, 
@@ -274,12 +283,7 @@ class WaitingPrompt(db.Model):
         ret_dict["faulted"] = self.faulted
         # Lite mode does not include the generations, to spare me download size
         if not lite:
-            ret_dict["generations"] = []
-            for procgen in self.processing_gens:
-                if procgen.fake:
-                    continue
-                if procgen.is_completed():
-                    ret_dict["generations"].append(procgen.get_details())
+            ret_dict["generations"] = self.get_generations()
 
         queue_pos, queued_things, queued_n = wp_queue_stats
         # We increment the priority by 1, because it starts at -1

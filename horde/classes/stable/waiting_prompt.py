@@ -1,5 +1,6 @@
 
 import copy
+import random
 
 from sqlalchemy.sql import expression
 
@@ -365,3 +366,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         ret_dict = super().get_status(**kwargs)
         ret_dict["shared"] = self.shared
         return ret_dict
+
+    def get_generations(self):
+        generations = super().get_generations()
+        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
+            random.shuffle(generations)
+        return generations
