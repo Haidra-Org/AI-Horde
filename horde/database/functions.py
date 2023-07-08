@@ -257,8 +257,8 @@ def get_available_models(filter_model_name: str = None):
             filter_model_name and 
             filter_model_name not in model_reference.stable_diffusion_names and 
             filter_model_name not in model_reference.text_model_names and 
-            'horde_special' not in filter_model_name,
-            filter_model_name != 'SDXL_beta::stability.ai#6901',
+            'horde_special' not in filter_model_name and
+            filter_model_name != 'SDXL_beta::stability.ai#6901'
         ):
             continue
         # If we're doing a filter, and we've already found the model type, we don't want to look in other worker versions
