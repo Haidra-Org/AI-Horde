@@ -96,7 +96,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         TextWaitingPrompt.created.asc()
     ).offset(PER_PAGE * page).limit(PER_PAGE)
     # logger.debug(final_wp_list.all())
-    return final_wp_list.populate_existing().with_for_update().all()
+    return final_wp_list.populate_existing().with_for_update(skip_locked=True, of=TextWaitingPrompt).all()
 
 
 def get_text_wp_by_id(wp_id, lite=False):
