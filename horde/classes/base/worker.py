@@ -337,6 +337,9 @@ class WorkerTemplate(db.Model):
         dropped_job_threshold = 20
         if settings.mode_raid():
             dropped_job_threshold = 10
+        # Avoid putting stability.ai into maintenance until I figure out why I'm getting wrong payloads
+        if self.user.id == 6901:
+            dropped_job_threshold = 100
         # Avoiding putting into maintenance interrogation workers due to crashes from the model
         # TODO: Remove once crashes are fixed
         if self.worker_type == "interrogation_worker":
