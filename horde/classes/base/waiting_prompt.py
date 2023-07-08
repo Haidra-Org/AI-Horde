@@ -185,7 +185,6 @@ class WaitingPrompt(db.Model):
         #     return None
         # myself_refresh.n -= 1
         self.n -= 1
-        db.session.commit()
         procgen_class = procgen_classes[self.wp_type]
         new_gen = procgen_class(wp_id=self.id, worker_id=worker.id)
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
