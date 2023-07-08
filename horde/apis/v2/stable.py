@@ -83,6 +83,8 @@ class ImageAsyncGenerate(GenerateTemplate):
                 user_alias = usermodel[1]
                 if self.user.get_unique_alias() != user_alias:
                     raise e.BadRequest(f"This model can only be requested by {user_alias}")
+                if not self.params.get("special"):
+                    raise e.BadRequest(f"Special models have to include a special payload")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if (
