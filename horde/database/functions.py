@@ -728,7 +728,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ImageWaitingPrompt.extra_priority.desc(), 
         ImageWaitingPrompt.created.asc()
     ).offset(PER_PAGE * page).limit(PER_PAGE)
-    return final_wp_list.populate_existing().with_for_update().all()
+    return final_wp_list.populate_existing().with_for_update(skip_locked=True, of=ImageWaitingPrompt).all()
 
 def count_skipped_image_wp(worker, models_list = None, blacklist = None, priority_user_ids=None):
     ## Massively costly approach, doing 1 new query per count. Not sure about it.
