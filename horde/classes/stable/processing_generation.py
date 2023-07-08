@@ -48,7 +48,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
     def log_aborted_generation(self):
         record_image_statistic(self)
         logger.info(
-            f"Aborted Stale Generation {self.id} "
+            f"Aborted Stale Generation {self.id} of wp {str(self.wp_id)} "
             f"({self.wp.width}x{self.wp.height}x{self.wp.params['steps']}@{self.wp.params['sampler_name']})"
             f" from by worker: {self.worker.name} ({self.worker.id})"
         )
