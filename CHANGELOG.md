@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.17.2
+
+Yet another fix for the duplicate images in SDXL. Hopefully I got it now
+
 # 4.17.1
 
 Another attempt to prevent SDXL duplicates via race conditions
