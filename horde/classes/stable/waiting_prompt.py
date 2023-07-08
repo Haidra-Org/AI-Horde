@@ -121,7 +121,6 @@ class ImageWaitingPrompt(WaitingPrompt):
                 "pair_id": str(self.id),
                 "comfy_pipeline": f"{pipline_name}.json",
             }
-            logger.debug(ret_payload["special"])
         return(ret_payload)
 
     def get_share_metadata(self):
