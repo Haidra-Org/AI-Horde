@@ -506,7 +506,7 @@ class Aesthetics(Resource):
                     if not self.args.best or self.args.best == self.args.ratings[0]["id"]:
                         aesthetic_payload["best"] = self.args.ratings[0]["id"]
                 elif self.args.best:
-                    self.kudos += 10
+                    self.kudos += 15
                     aesthetic_payload["best"] = self.args.best
             if len(self.args.ratings) > 1:
                 bestofs = None
@@ -527,7 +527,7 @@ class Aesthetics(Resource):
                 if len(bestofs) == 1:
                     aesthetic_payload["best"] = bestofs[0]
         else:
-            self.kudos = 4
+            self.kudos = 15
             aesthetic_payload["best"] = self.args.best
         # You can never get more kudos from rating that what you consumed
         if self.kudos >= wp.consumed_kudos:
