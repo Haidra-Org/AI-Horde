@@ -354,7 +354,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         self.job_ttl += 3*weights_count
         if "SDXL_beta::stability.ai#6901" in self.get_model_names():
             logger.debug(self.get_model_names())
-            self.job_ttl = 800
+            self.job_ttl = 300
         # logger.info([weights_count,self.job_ttl])
         db.session.commit()
 
