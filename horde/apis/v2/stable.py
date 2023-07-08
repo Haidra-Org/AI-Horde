@@ -112,6 +112,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             if self.user.is_anon():
                 raise e.Forbidden("Anonymous users cannot use the SDXL_beta.")
             self.models = ["SDXL_beta::stability.ai#6901"]
+            if self.params["n"] == 1:
+                raise e.BadRequest("You need to request at least 2 images for SDXL to allow for comparison")
             # SDXL_Beta always generates 2 images
             self.params["n"] = 2
         if self.args.source_mask and self.params.get("sampler_name") == "DDIM":
