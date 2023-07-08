@@ -107,6 +107,13 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.UnsupportedModel
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
             raise e.UnsupportedModel
+        # If the beta has been requested, it takes over the model list
+        if "SDXL_beta::stability.ai#6901" in self.models:
+            if self.user.is_anon():
+                raise e.Forbidden("Anonymous users cannot use the SDXL_beta.")
+            self.models = ["SDXL_beta::stability.ai#6901"]
+            # SDXL_Beta always generates 2 images
+            self.params["n"] = 2
         if self.args.source_mask and self.params.get("sampler_name") == "DDIM":
             raise e.UnsupportedModel("You cannot use a mask with the DDIM sampler")
         if self.args.source_image:
@@ -149,8 +156,10 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared=True
         if self.args.source_image:
             shared=False
-        # hlky metldown
-        shared=False
+        if "SDXL_beta::stability.ai#6901" in self.models:
+            shared = True
+        else:
+            shared = False
         self.wp = ImageWaitingPrompt(
             worker_ids = self.workers,
             models = self.models,
@@ -435,7 +444,7 @@ class Aesthetics(Resource):
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(404, 'Generation Request Not Found', models.response_model_error)
     def post(self, id):
-        '''Submit aesthetic ratings for generated images to be used by LAION
+        '''Submit aesthetic ratings for generated images to be used by LAION and Stability.AI
         The request has to have been sent as shared: true.
         You can select the best image in the set, and/or provide a rating for each or some images in the set.
         If you select best-of image, you will gain 4 kudos. Each rating is 5 kudos. Best-of will be ignored when ratings conflict with it.
@@ -484,7 +493,7 @@ class Aesthetics(Resource):
             self.kudos = 5 * len(self.args.ratings)
             for r in self.args.ratings:
                 if r.get("artifacts") is not None:
-                    self.kudos += 3
+                    self.kudos += 5
             aesthetic_payload["ratings"] = self.args.ratings
             # If they only rated one, and rated it > 7, we assume it's the best of the set by default
             # Unless another bestof was selected (for some reason)
@@ -493,7 +502,7 @@ class Aesthetics(Resource):
                     if not self.args.best or self.args.best == self.args.ratings[0]["id"]:
                         aesthetic_payload["best"] = self.args.ratings[0]["id"]
                 elif self.args.best:
-                    self.kudos += 4
+                    self.kudos += 10
                     aesthetic_payload["best"] = self.args.best
             if len(self.args.ratings) > 1:
                 bestofs = None
@@ -521,7 +530,7 @@ class Aesthetics(Resource):
             self.kudos = wp.consumed_kudos - 1
         logger.debug(aesthetic_payload)
         try:
-            submit_req = requests.post("https://ratings.droom.cloud/api/v1/rating/set", json = aesthetic_payload, timeout=3)
+            submit_req = requests.post("https://ratings.aihorde.net/api/v1/rating/set", json = aesthetic_payload, timeout=3)
             if not submit_req.ok:
                 if submit_req.status_code == 403:
                     raise e.InvalidAestheticAttempt("This generation appears already rated")

@@ -1,5 +1,6 @@
 
 import copy
+import random
 
 from sqlalchemy.sql import expression
 
@@ -61,7 +62,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         # if any(model_name.startswith("stable_diffusion_2") for model_name in self.get_model_names()):
         #     self.params['sampler_name'] = "dpmsolver"
         # The total amount of to pixelsteps requested.
-        if self.params.get('seed') == '':
+        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
+            self.seed = self.seed_to_int(self.params.get('seed'))
+        elif self.params.get('seed') == '':
             self.seed = None
         elif self.params.get('seed') is not None:
             # logger.warning([self,'seed' in params, params])
@@ -104,13 +107,20 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.seed is None:
             ret_payload["seed"] = self.seed_to_int(self.seed)
         elif self.seed_variation and self.jobs - self.n > 1:
-            ret_payload["seed"] += self.seed + (self.seed_variation * self.n)
+            ret_payload["seed"] = self.seed + (self.seed_variation * self.n)
             while ret_payload["seed"] >= 2**32:
                 ret_payload["seed"] = ret_payload["seed"] >> 32
         else:
-            ret_payload["seed"] = self.seed
+            ret_payload["seed"] = self.seed            
         if not self.nsfw and self.censor_nsfw:
             ret_payload["use_nsfw_censor"] = True
+        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
+            pipline_name = f"pipeline{2 - self.n}"
+            ret_payload["special"] = {
+                "model_name": pipline_name,
+                "pair_id": str(self.id),
+                "comfy_pipeline": f"{pipline_name}.json",
+            }
         return(ret_payload)
 
     def get_share_metadata(self):
@@ -281,9 +291,13 @@ class ImageWaitingPrompt(WaitingPrompt):
             return(True,max_res) 
         if max_res < 576:
             max_res = 576
+            model_names = self.get_model_names()
             # SD 2.0 requires at least 768 to do its thing
-            if max_res < 768 and len(self.models) >= 1 and "stable_diffusion_2." in self.models:
+            if max_res < 768 and len(self.models) >= 1 and "stable_diffusion_2" in model_names:
                 max_res = 768
+            # We allow everyone to use SDXL up to 1024
+            if max_res < 1024 and "SDXL_beta::stability.ai#6901" in model_names:
+                max_res = 1024
         if max_res > 1024:
             max_res = 1024
         if self.get_accurate_steps() > 50:
@@ -351,3 +365,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         ret_dict = super().get_status(**kwargs)
         ret_dict["shared"] = self.shared
         return ret_dict
+
+    def get_generations(self):
+        generations = super().get_generations()
+        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
+            random.shuffle(generations)
+        return generations

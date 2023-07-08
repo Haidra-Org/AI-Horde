@@ -968,6 +968,7 @@ class UserSingle(Resource):
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), 'PUT UserSingle')
             user.usage_multiplier = self.args.usage_multiplier
+            db.session.commit()
             ret_dict["usage_multiplier"] = user.usage_multiplier
         if self.args.moderator is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
@@ -979,11 +980,13 @@ class UserSingle(Resource):
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.concurrency = self.args.concurrency
+            db.session.commit()
             ret_dict["concurrency"] = user.concurrency
         if self.args.worker_invited is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.worker_invited = self.args.worker_invited
+            db.session.commit()
             ret_dict["worker_invited"] = user.worker_invited
         if self.args.trusted is not None:
             if not admin.moderator:
