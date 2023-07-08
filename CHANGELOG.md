@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.17.0
+
+Enabled SDXL_beta model
+
 # 4.16.3
 
 Working being paused due to suspicion will now inform moderators via a discord webhook
