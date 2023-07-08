@@ -101,7 +101,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         db.session.commit()
 
     @logger.catch(reraise=True)
-    def get_job_payload(self, procgen):
+    def get_job_payload(self):
         ret_payload = copy.deepcopy(self.gen_payload)
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
@@ -143,9 +143,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             ret_dict["user_type"] = "pseudonymous"
         return ret_dict
 
-    def get_pop_payload(self, procgen):
-        # This prevents from sending a payload with an ID when there has been an exception inside get_job_payload()
-        payload = self.get_job_payload(procgen)
+    def get_pop_payload(self, procgen, payload):
         if payload:
             prompt_payload = {
                 "payload": payload,

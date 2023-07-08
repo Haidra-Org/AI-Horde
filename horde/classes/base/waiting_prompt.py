@@ -167,7 +167,7 @@ class WaitingPrompt(db.Model):
         self.gen_payload = self.params
         db.session.commit()
     
-    def get_job_payload(self, procgen):
+    def get_job_payload(self):
         return(self.gen_payload)
 
     def needs_gen(self):
@@ -185,14 +185,18 @@ class WaitingPrompt(db.Model):
         #     return None
         # myself_refresh.n -= 1
         self.n -= 1
+        # We get the payload now, so that we ensure any further commits won't disrupt what our n value is
+        # as that value is used to calclate that payload
+        payload = self.get_job_payload()
+        db.session.commit()
         procgen_class = procgen_classes[self.wp_type]
         new_gen = procgen_class(wp_id=self.id, worker_id=worker.id)
         logger.audit(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
-        pop_payload = self.get_pop_payload(new_gen)
-        db.session.commit()
+        pop_payload = self.get_pop_payload(new_gen, payload)
         return pop_payload
 
     def fake_generation(self, worker):
+        payload = self.get_job_payload()
         procgen_class = procgen_classes[self.wp_type]
         new_gen = procgen_class(
             wp_id=self.id, 
@@ -202,14 +206,14 @@ class WaitingPrompt(db.Model):
         db.session.add(new_trick)
         db.session.commit()
         logger.audit(f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
-        return self.get_pop_payload(new_gen)
+        return self.get_pop_payload(new_gen, payload)
     
     def tricked_worker(self, worker):
         return worker.id in [w.worker_id for w in self.tricked_workers]
 
-    def get_pop_payload(self, procgen):
+    def get_pop_payload(self, procgen, payload):
         prompt_payload = {
-            "payload": self.get_job_payload(procgen),
+            "payload": payload,
             "id": procgen.id,
             "model": procgen.model,
         }
