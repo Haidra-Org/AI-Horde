@@ -641,7 +641,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
     # This is just the top 25 - Adjusted method to send ImageWorker object. Filters to add.
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
-    PER_PAGE = 3 # how many requests we're picking up to filter further
+    PER_PAGE = 25 # how many requests we're picking up to filter further
     final_wp_list = db.session.query(
         ImageWaitingPrompt
     ).options(
@@ -728,7 +728,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ImageWaitingPrompt.extra_priority.desc(), 
         ImageWaitingPrompt.created.asc()
     ).offset(PER_PAGE * page).limit(PER_PAGE)
-    return final_wp_list.populate_existing().with_for_update().all()
+    return final_wp_list.all()
 
 def count_skipped_image_wp(worker, models_list = None, blacklist = None, priority_user_ids=None):
     ## Massively costly approach, doing 1 new query per count. Not sure about it.

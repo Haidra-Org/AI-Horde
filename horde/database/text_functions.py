@@ -41,7 +41,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
     # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
-    PER_PAGE = 3 # how many requests we're picking up to filter further
+    PER_PAGE = 25 # how many requests we're picking up to filter further
     final_wp_list = db.session.query(
         TextWaitingPrompt
     ).options(
@@ -96,7 +96,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
         TextWaitingPrompt.created.asc()
     ).offset(PER_PAGE * page).limit(PER_PAGE)
     # logger.debug(final_wp_list.all())
-    return final_wp_list.populate_existing().with_for_update().all()
+    return final_wp_list.all()
 
 
 def get_text_wp_by_id(wp_id, lite=False):
