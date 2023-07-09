@@ -657,7 +657,11 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
         ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
         or_(
             WPModels.model.in_(models_list),
-            WPModels.id.is_(None),
+            and_(
+                WPModels.id.is_(None),
+                not any("horde_special" in mname for mname in models_list),
+                "SDXL_beta::stability.ai#6901" not in models_list,
+            )
         ),
         or_(
             WPAllowedWorkers.id.is_(None),
