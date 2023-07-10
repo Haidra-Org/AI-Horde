@@ -176,10 +176,10 @@ def upload_prompt(prompt_dict):
             filename, "prompts", filename
         )
         os.remove(filename)
-    except ClientError as e:
-        logger.error(f"Error encountered while uploading prompt {filename}: {e}")
-        return False
+    except Exception as err:
+        logger.error(f"Error encountered while uploading prompt {filename}: {err}")
         os.remove(filename)
+        return False
 
 def generate_img_download_url(filename, bucket=r2_transient_bucket):
     return generate_presigned_url(s3_client, "get_object", {'Bucket': bucket, 'Key': filename}, 1800)
