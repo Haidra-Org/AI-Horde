@@ -124,7 +124,7 @@ class TextAsyncStatus(Resource):
         self.args = self.get_parser.parse_args()
         wp = text_database.get_text_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id,request_type="Text Waiting Prompt",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
+            raise e.RequestNotFound(id,request_type="Text Waiting Prompt (Status)",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
@@ -146,7 +146,7 @@ class TextAsyncStatus(Resource):
         self.args = self.delete_parser.parse_args()
         wp = text_database.get_text_wp_by_id(id)
         if not wp:
-            raise e.RequestNotFound(id,request_type="Text Waiting Prompt",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
+            raise e.RequestNotFound(id,request_type="Text Waiting Prompt (Delete)",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("text"),
             has_valid_workers=database.wp_has_valid_workers(wp),
