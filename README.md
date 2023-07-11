@@ -44,3 +44,4 @@ Please see the individual readmes for each specific mode supported by the AI Hor
 
    * [Image generation Readme](README_StableHorde.md)
    * [Text generation Readme](README_KoboldAIHorde.md)
+   * [Docker Readme](README_docker.md)
