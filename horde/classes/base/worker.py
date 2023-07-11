@@ -164,7 +164,7 @@ class WorkerTemplate(db.Model):
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"Worker '{self.id}' suspicion increased. Reason: {reason_log}")
-        if self.is_suspicious():
+        if self.is_suspicious() and not self.paused:
             self.paused = True
             send_pause_notification(
                 f"Worker {self.name} ({self.id}) automatically set to paused.\n"
