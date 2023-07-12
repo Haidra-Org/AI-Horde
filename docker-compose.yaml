@@ -1,0 +1,43 @@
+version: '3'
+services:
+  aihorde:
+    image: aihorde:latest
+    container_name: aihorde
+    ports:
+      - "7001:7001"
+    # The port number written in front of the colon (:) is the port number to be exposed to the outside, so if you change it, you can access it with localhost:{changePort}.
+    environment:
+      - PROFILE=docker # If you write a profile, the .env_{PROFILE} file is read.
+    volumes:
+      - .env_docker:/app/.env_docker # You can replace the local pre-built .env file with the container's file.
+    networks:
+      - aihorde_network
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15.3-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - aihorde_network
+
+  redis:
+    image: redis:7
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - aihorde_network
+
+networks:
+  aihorde_network:
+    driver: bridge

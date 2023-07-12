@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 import os
 import logging
 
-profile = os.environ.get('profile')
+profile = os.environ.get('PROFILE')
 
 if profile is not None:
     env_file = f".env_{profile}"
