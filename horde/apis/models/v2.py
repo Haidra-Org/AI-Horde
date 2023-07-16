@@ -272,7 +272,7 @@ class Models:
 
         self.input_model_user_details = api.model('ModifyUserInput', {
             "kudos": fields.Float(description="The amount of kudos to modify (can be negative)."),
-            "concurrency": fields.Integer(description="The amount of concurrent request this user can have.",min=0, max=100),
+            "concurrency": fields.Integer(description="The amount of concurrent request this user can have.",min=0, max=500),
             "usage_multiplier": fields.Float(description="The amount by which to multiply the users kudos consumption.",min=0.1, max=10),
             "worker_invited": fields.Integer(description="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode."),
             "moderator": fields.Boolean(example=False,description="Set to true to make this user a horde moderator."),
