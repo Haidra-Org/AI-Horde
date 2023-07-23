@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.17.3
+
+* Added some extra rewards to non-trusted alchemists due to the low amount of work atm
+
 # 4.17.2
 
 Yet another fix for the duplicate images in SDXL. Hopefully I got it now
