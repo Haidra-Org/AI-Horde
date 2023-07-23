@@ -4,6 +4,20 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-07-23",
+            "newspiece": 
+                "Join our [Lemmy Community](https://lemmy.dbzer0.com/c/aihorde).",
+            "tags": ["lemmy"],
+            "importance": "Information",
+        },
+        {
+            "date_published": "2023-07-04",
+            "newspiece": 
+                "New [State of the AI Horde](https://dbzer0.com/blog/state-of-the-ai-horde-july-2023/) is out!",
+            "tags": ["state of the ai horde"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-06-01",
             "newspiece": 
                 "LoRas support has now been merged into the main worker branch! "
