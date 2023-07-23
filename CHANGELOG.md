@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.17.4
+
+* Set the Scribe kudos baseline to 4bit. 
+* Added kudos consumption multiplier based on context size
+
 # 4.17.3
 
 * Added some extra rewards to non-trusted alchemists due to the low amount of work atm
