@@ -31,6 +31,11 @@ class TextProcessingGeneration(ProcessingGeneration):
         # 1024 context is considered the base.
         # The reason is that higher context has exponential VRAM requirements
         context_multiplier = 2.5 ** (math.log2(self.wp.max_context_length / 1024))
+        # Prevent shenanigans
+        if context_multiplier > 30:
+            context_multiplier = 30
+        if context_multiplier < 0.1:
+            context_multiplier = 0.1
         # If a worker serves an unknown model, they only get 1 kudos, unless they're trusted in which case they get 20
         if not model_reference.is_known_text_model(self.model):
             if not self.worker.user.trusted:
