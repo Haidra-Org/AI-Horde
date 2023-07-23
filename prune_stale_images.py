@@ -2,7 +2,6 @@ import logging
 import boto3
 import time
 from datetime import datetime, timedelta, timezone
-from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
 from botocore.exceptions import ClientError
