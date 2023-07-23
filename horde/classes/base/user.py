@@ -475,7 +475,7 @@ class User(db.Model):
         )
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted and not self.is_anon():
-            kudos_eval = round(kudos / 2)
+            kudos_eval = round(kudos / 2, 2)
             kudos -= kudos_eval
             self.evaluating_kudos += kudos_eval
             self.modify_kudos(kudos,"accumulated")
@@ -489,10 +489,10 @@ class User(db.Model):
         )
         
 
-    def record_uptime(self, kudos):
+    def record_uptime(self, kudos, bypass_eval = False):
         self.last_active = datetime.utcnow()
         # While a worker is untrusted, all uptime kudos go for evaluation
-        if not self.trusted and not self.is_anon():
+        if not bypass_eval and not self.trusted and not self.is_anon():
             self.evaluating_kudos += kudos
             self.check_for_trust()
         else:

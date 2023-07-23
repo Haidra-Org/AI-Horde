@@ -39,6 +39,10 @@ class InterrogationWorker(WorkerTemplate):
         logger.trace(f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names} @ {self.max_power} max tiles")
 
     def calculate_uptime_reward(self):
+        # If the alchemist is not trusted yet, we give them some extra uptime kudos to tide them over until they get trusted
+        # as otherwise due to the low amount of jobs, they won't be a making any kudos
+        if not self.user.trusted and not self.user.is_anon():
+            self.user.record_uptime(40, True)
         return 40
 
     def can_interrogate(self, interrogation_form):
