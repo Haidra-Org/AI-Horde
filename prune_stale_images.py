@@ -28,11 +28,13 @@ while True:
                     if last_modified < cutoff_time:
                         futures.append(executor.submit(obj.delete))
                         if len(futures) >= 1000:
-                            for future in tqdm(futures):
+                            for future in futures:
                                 future.result()
+                            print(f"Deleted: {len(futures)}")
                             futures = []
-                for future in tqdm(futures):
+                for future in futures:
                     future.result()
+                print(f"Deleted: {len(futures)}")    
         time.sleep(30)
     except:
         time.sleep(30)
