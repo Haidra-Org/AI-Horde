@@ -29,8 +29,8 @@ from horde.database import threads as threads
 # threads.store_patreon_members()
 
 # Cache testing
-# with HORDE.app_context():
-#     logger.info(database.retrieve_totals(True))
-#     logger.info(database.retrieve_totals())
+with HORDE.app_context():
+    logger.info(database.retrieve_totals(True))
+    logger.info(database.retrieve_totals())
 
 sys.exit()

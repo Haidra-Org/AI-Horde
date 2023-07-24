@@ -30,7 +30,7 @@ def horde_r_set(key, value):
     for hr in all_horde_redis:
         hr.set(key, value)
     if horde_local_r:
-        horde_local_r.set(key, value)
+        horde_local_r.setex(key, timedelta(10), value)
 
 def horde_r_setex(key, expiry, value):
     for hr in all_horde_redis:
