@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.17.5
+
+* Fixes the performance caching issue
+
 # 4.17.4
 
 * Set the Scribe kudos baseline to 4bit. 
