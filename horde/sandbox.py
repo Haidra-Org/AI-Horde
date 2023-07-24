@@ -27,4 +27,10 @@ from horde.database import threads as threads
 #     worker = database.find_worker_by_name("Db0_Test_Worker", worker_class=ImageWorker)
 #     worker.report_suspicion(amount = 1, reason = Suspicions.UNREASONABLY_FAST, formats = [9999])
 # threads.store_patreon_members()
+
+# Cache testing
+# with HORDE.app_context():
+#     logger.info(database.retrieve_totals(True))
+#     logger.info(database.retrieve_totals())
+
 sys.exit()

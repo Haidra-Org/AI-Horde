@@ -545,9 +545,9 @@ def count_totals():
     # logger.debug(ret_dict)
     return(ret_dict)
 
-def retrieve_totals():
+def retrieve_totals(ignore_cache = False):
     '''Retrieves horde totals from Redis cache'''
-    if hr.horde_r is None:
+    if ignore_cache or hr.horde_r is None:
         return count_totals()
     totals_ret = hr.horde_r_get('totals_cache')
     if totals_ret is None:

@@ -1139,7 +1139,6 @@ class HordeLoad(Resource):
     get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=2)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_horde_performance, code=200, description='Horde Performance')
     def get(self):
