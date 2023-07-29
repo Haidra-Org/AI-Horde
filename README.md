@@ -6,6 +6,10 @@ It also allows non-python clients, such as games and apps, to use AI-provided ge
 
 For more questions, check the [FAQ](FAQ.md)
 
+# Sponsored by
+
+[![stability.ai](assets/stability.ai.png)](https://stability.ai) [![tensorplay.ai](assets/TensorPlay.ai.png)](https://tensorplay.ai)
+
 # Registering
 
 To use the horde you need to have a registered account, or use anonymous mode.
@@ -17,7 +21,7 @@ and login with one of the available services. Once you do you'll see a form wher
 
 Store this API key and use it for your client or bridge.
 
-By logging in first, you can change your username and API key at any time. 
+By logging in first, you can change your username and API key at any time.
 We don't store any identifiable information other than the ID string sent by the oauth for your user. We only use this for user uniqueness, and no other purpose.
 
 If you want, you can also create a pseudonymous account, without logging in with oauth. However *we will not maintain such accounts*. If you lose access to it, you'll have to make a new one. If someone copies your API Key, they can impersonate you. You cannot change the username or API key anymore etc. If you don't want these risks, login to one of the available services instead.
@@ -28,7 +32,7 @@ The point of registering is to track your usage and your contributions. The more
 
 ## REST API
 
-We provide a fully open REST API for all Generative AI functions we support. 
+We provide a fully open REST API for all Generative AI functions we support.
 
 [Complete Documentation](https://aihorde.net/api).
 
@@ -39,6 +43,7 @@ We provide a fully open REST API for all Generative AI functions we support.
 If you have any questions or feedback, we have a vibrant community on [discord](https://discord.gg/3DxrhksKzn)
 
 # Horde-Specific Information
+
 
 Please see the individual readmes for each specific mode supported by the AI Horde.
 
