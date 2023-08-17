@@ -1,19 +1,19 @@
 # AI Horde Image Generation
 
-Information specific to the Stable Diffusion image generation
+Information specific to the Stable Diffusion image generation.
 
 # Generating Prompts
 
 ## GUI
 
-We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
+We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise.
 
 <img src="https://raw.githubusercontent.com/Haidra-Org/Lucid-Creations/main/screenshot.png" width="500" />
 
 
 ## Command Line
 
-I have provided [a small python script](https://github.com/Haidra-Org/AI-Horde-CLI) with which you can use to call the horde. Please check the [REAMDE](https://github.com/Haidra-Org/AI-Horde-CLI/blob/main/README.md) for usage instructions
+I have provided [a small python script](https://github.com/Haidra-Org/AI-Horde-CLI) with which you can use to call the horde. Please check the [README](https://github.com/Haidra-Org/AI-Horde-CLI/blob/main/README.md) for usage instructions.
 
 # Joining the horde
 
