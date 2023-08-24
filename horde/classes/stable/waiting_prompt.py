@@ -242,7 +242,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         result = pow((self.params.get('width', 512) * self.params.get('height', 512)) - (64*64), 1.75) / pow((1024*1024) - (64*64), 1.75)
         # We need to calculate the steps, without affecting the actual steps requested
         # because some samplers are effectively doubling their steps
-        steps = self.get_accurate_steps()
+        steps = self.params.get('steps')
         legacy_kudos_cost = round((0.1232 * steps) + result * (0.1232 * steps * 8.75),2)
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get('post_processing', []):
@@ -317,7 +317,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             # This sampler chooses the steps amount automatically 
             # and disregards the steps value from the user
             # so we just calculate it as an average 50 steps
-            return(50)
+            return(40)
         steps = self.params['steps']
         if self.params.get('sampler_name', 'k_euler_a') in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
             # These samplerS do double steps per iteration, so they're at half the speed

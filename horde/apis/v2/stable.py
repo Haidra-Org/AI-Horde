@@ -212,6 +212,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             )
             if not is_in_limit:
                 raise e.BadRequest(fail_message)
+
     def extrapolate_dry_run_kudos(self):
         source_processing = self.args.source_processing
         if not self.args.source_image:
