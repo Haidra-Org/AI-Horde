@@ -266,7 +266,7 @@ def get_available_models(filter_model_name: str = None):
             continue
         available_worker_models = db.session.query(
             WorkerModel.model,
-            func.count(WorkerModel.model).label('total_models'), # TODO: This needs to be multiplied by this worker's threads
+            func.sum(worker_class.threads).label('total_threads'), 
             # worker_class.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
         ).join(
             worker_class,
@@ -286,7 +286,7 @@ def get_available_models(filter_model_name: str = None):
                 continue
             models_dict[model_name] = {}
             models_dict[model_name]["name"] = model_name
-            models_dict[model_name]["count"] = model_row.total_models
+            models_dict[model_name]["count"] = model_row.total_threads
             models_dict[model_name]["type"] = model_type
 
             models_dict[model_name]['queued'] = 0

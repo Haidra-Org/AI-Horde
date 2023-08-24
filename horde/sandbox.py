@@ -30,7 +30,8 @@ from horde.database import threads as threads
 
 # Cache testing
 with HORDE.app_context():
-    logger.info(database.retrieve_totals(True))
-    logger.info(database.retrieve_totals())
+    # logger.info(database.retrieve_totals(True))
+    # logger.info(database.retrieve_totals())
+    database.get_available_models()
 
 sys.exit()
