@@ -261,7 +261,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_params = self.params.copy()
             ## IMPORTANT: When adjusting this, also adjust ImageAsyncGenerate.get_hashed_params_dict()
             # That's normally not in the params
-            model_params["source_processing"] = self.source_processing
+            model_params["source_processing"] = self.source_processing if self.source_image else 'txt2img'
             model_params["source_image"] = True if self.source_image else False
             model_params["source_mask"] = True if self.source_mask else False
             self.kudos = kudos_model.calculate_kudos(model_params)

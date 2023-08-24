@@ -214,12 +214,9 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.BadRequest(fail_message)
 
     def extrapolate_dry_run_kudos(self):
-        source_processing = self.args.source_processing
-        if not self.args.source_image:
-            source_processing = "txt2img"
         self.wp.source_image = self.args.source_image
         self.wp.source_mask = self.args.source_mask
-        self.wp.source_processing = source_processing
+        self.wp.source_processing = self.args.source_processing
         return super().extrapolate_dry_run_kudos()
 
     def get_hashed_params_dict(self):

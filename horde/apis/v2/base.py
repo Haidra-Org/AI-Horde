@@ -153,7 +153,7 @@ class GenerateTemplate(Resource):
             return
         self.activate_waiting_prompt()
         # We use the wp.kudos to avoid calling the model twice.
-        self.kudos = self.wp.kudos
+        self.kudos = self.extrapolate_dry_run_kudos()
         #logger.warning(datetime.utcnow())
 
     # Extend if extra payload information needs to be sent

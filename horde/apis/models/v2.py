@@ -73,7 +73,7 @@ class Models:
         })
         self.response_model_async = api.model('RequestAsync', {
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future."),
-            'kudos': fields.Integer(description="The expected kudos consumption for this request."),
+            'kudos': fields.Float(description="The expected kudos consumption for this request."),
             'message': fields.String(default=None,description="Any extra information from the horde about this request."),
         })
         self.response_model_generation_payload = api.model('ModelPayload', {
@@ -107,10 +107,10 @@ class Models:
         })
 
         self.response_model_kudos_transfer = api.model('KudosTransferred', {
-            'transferred': fields.Integer(example=100,description="The amount of Kudos tranferred."),
+            'transferred': fields.Float(example=100,description="The amount of Kudos tranferred."),
         })
         self.response_model_kudos_award = api.model('KudosAwarded', {
-            'awarded': fields.Integer(example=100,description="The amount of Kudos awarded."),
+            'awarded': fields.Float(example=100,description="The amount of Kudos awarded."),
         })
 
         self.response_model_admin_maintenance = api.model('MaintenanceModeSet', {
