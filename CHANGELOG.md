@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.17.7
+
+* Tweaked dry-run to be slightly more accurate
+* Model EtA now takes threads into account
+
 # 4.17.5-6
 
 * Fixes the performance caching issue
