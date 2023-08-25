@@ -275,6 +275,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         # If they're requesting LoRas, we're adding 1 extra kudos per lora requested
         # To make up for time lost downloading
         self.kudos += len(self.params.get("loras",[]))
+        # If they've requested TIs, we add 1 kudos extra
+        if self.params.get("tis"):
+            self.kudos += 1
         db.session.commit()
         return self.kudos
 

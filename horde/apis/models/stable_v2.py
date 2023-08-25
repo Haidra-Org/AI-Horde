@@ -41,12 +41,16 @@ class ImageModels(v2.Models):
             'shared': fields.Boolean(description="If True, These images have been shared with LAION."),
         })
         self.input_model_loras = api.model('ModelPayloadLorasStable', {
-            'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name of the LoRa.", unique=True, min_length = 1, max_length = 255),
+            'name': fields.String(required=True, example="GlowingRunesAIV6", description="The exact name or CivitAI ID of the LoRa.", unique=True, min_length = 1, max_length = 255),
             'model': fields.Float(required=False, default=1.0, min=-5.0, max=5.0, description="The strength of the LoRa to apply to the SD model."), 
             'clip': fields.Float(required=False, default=1.0, min=0.0, max=5.0, description="The strength of the LoRa to apply to the clip model."), 
             'inject_trigger': fields.String(required=False, min_length = 1, max_length = 30, description="If set, will try to discover a trigger for this LoRa which matches or is similar to this string and inject it into the prompt. If 'any' is specified it will be pick the first trigger."),
         })
-
+        self.input_model_tis = api.model('ModelPayloadTextualInversionsStable', {
+            'name': fields.String(required=True, example="7808", description="The exact name or CivitAI ID of the Textual Inversion.", unique=True, min_length = 1, max_length = 255),
+            'inject_ti': fields.String(required=False, default=None,enum=["prompt", "negprompt"], description="If set, Will automatically add this TI filename to the prompt or negative prompt accordingly using the provided strength. If this is set to None, then the user will have to manually add the embed to the prompt themselves."),
+            'strength': fields.Float(required=False, default=1.0, min=-5.0, max=5.0, description="The strength with which to apply the TI to the prompt. Only used when inject_ti is not None"), 
+        })
         self.input_model_special_payload = api.model('ModelSpecialPayloadStable', {
             "*": fields.Wildcard(fields.Raw)
         })        
@@ -68,6 +72,7 @@ class ImageModels(v2.Models):
             'return_control_map': fields.Boolean(default=False,description="Set to True if you want the ControlNet map returned instead of a generated image."),
             'facefixer_strength': fields.Float(required=False,example=0.75, min=0, max=1.0), 
             'loras': fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
+            'tis': fields.List(fields.Nested(self.input_model_tis, skip_none=True)),
             'special': fields.Nested(self.input_model_special_payload, skip_none=True),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadStable', self.root_model_generation_payload_stable, {
