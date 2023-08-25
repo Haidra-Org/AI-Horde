@@ -45,11 +45,11 @@ class ImageAsyncGenerate(GenerateTemplate):
             logger.error(self.args.params)
             return {"message": "Internal Server Error"},500
         if self.args.dry_run:
-            ret_dict = {"kudos":self.kudos}
+            ret_dict = {"kudos":round(self.kudos)}
             return ret_dict, 200
         ret_dict = {
             "id":self.wp.id,
-            "kudos":self.kudos,
+            "kudos":round(self.kudos),
         }
         if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict['message'] = self.get_size_too_big_message()
@@ -185,7 +185,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         )
         _, total_threads = database.count_active_workers("image")
         required_kudos = self.wp.kudos * self.wp.n
-        if self.sharedkey and required_kudos > self.sharedkey.kudos:
+        if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             raise e.KudosUpfront(
                 required_kudos, 
                 self.username, 

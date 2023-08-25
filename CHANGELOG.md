@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.17.8
+
+* Changed returned kudos amounts to be a float
+* Returned kudos amounts are rounded
+* Fixed shared keys with -1 kudos not being let through.
+
 # 4.17.7
 
 * Tweaked dry-run to be slightly more accurate

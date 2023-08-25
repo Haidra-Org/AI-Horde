@@ -314,7 +314,7 @@ class WaitingPrompt(db.Model):
                 highest_expected_time_left = expected_time_left
         wait_time += highest_expected_time_left
         ret_dict["wait_time"] = round(wait_time)
-        ret_dict["kudos"] = self.consumed_kudos
+        ret_dict["kudos"] = round(self.consumed_kudos)
         ret_dict["is_possible"] = has_valid_workers
         return(ret_dict)
 
