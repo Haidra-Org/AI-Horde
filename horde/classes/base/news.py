@@ -3,6 +3,14 @@ from datetime import datetime
 class News:
 
     HORDE_NEWS = [
+        # {
+        #     "date_published": "2023-08-25",
+        #     "newspiece": 
+        #         "Textual Inversions support has now been merged into the main worker branch! "
+        #         "Read the [devlog](https://dbzer0.com)",
+        #     "tags": ["devlog", "TI", "text2img"],
+        #     "importance": "Workers",
+        # },
         {
             "date_published": "2023-07-23",
             "newspiece": 

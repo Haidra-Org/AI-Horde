@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.0
+
+* Added support for TIs in payloads for SD
+
 # 4.17.8
 
 * Changed returned kudos amounts to be a float

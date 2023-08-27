@@ -103,6 +103,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.UnsupportedModel("Controlnet Requires a source image.")
         if "loras" in self.params and len(self.params["loras"]) > 5:
             raise e.BadRequest("You cannot request more than 5 loras per generation.")
+        if "tis" in self.params and len(self.params["tis"]) > 20:
+            raise e.BadRequest("You cannot request more than 10 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map")
         if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):

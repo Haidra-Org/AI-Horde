@@ -706,6 +706,10 @@ def get_sorted_wp_filtered_to_worker(worker, models_list = None, blacklist = Non
             ),
         ),
         or_(
+            not_(ImageWaitingPrompt.params.has_key('tis')),
+            check_bridge_capability("textual_inversion", worker.bridge_agent),
+        ),
+        or_(
             not_(ImageWaitingPrompt.params.has_key('post-processing')),
             and_(
                 worker.allow_post_processing == True,
@@ -823,6 +827,13 @@ def count_skipped_image_wp(worker, models_list = None, blacklist = None, priorit
                 ret_dict["lora"] = skipped_wps
             else:
                 ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
+    # Count skipped TI
+    if not check_bridge_capability("textual_inversion", worker.bridge_agent):
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.params.has_key('tis'),
+        ).count()
+        if skipped_wps > 0:
+            ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
     # Count skipped PP
     if worker.allow_post_processing == False or not check_bridge_capability("post-processing", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
@@ -1177,6 +1188,13 @@ def wp_has_valid_workers(wp):
                     'loras' in wp.params,
                 ),
             ),
+            # or_(
+            #     'tis' not in wp.params,
+            #     and_(
+            #         #TODO: Create an sql function I can call to check the worker bridge capabilities
+            #         'tis' in wp.params,
+            #     ),
+            # ),
         )
     elif wp.wp_type == "text":
         final_worker_list = final_worker_list.filter(

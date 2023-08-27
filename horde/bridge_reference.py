@@ -3,6 +3,7 @@ from horde.consts import KNOWN_POST_PROCESSORS
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker": {
+        24: {"textual_inversion"},
         23: {"image_is_control"}, # This used to be bridge version 16, but support was lost in the hordelib update
         22: {"lora"}, 
         21: {"RealESRGAN_x2plus"},
