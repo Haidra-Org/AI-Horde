@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.18.1
+
+* Returns 400 when replacement filter is on and prompt is > 1000 chars
+* Added `use_default_badwordsids` parameter for Textgen
+
 # 4.18.0
 
 * Added support for TIs in payloads for SD

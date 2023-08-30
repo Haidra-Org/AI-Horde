@@ -231,7 +231,9 @@ class GenerateTemplate(Resource):
             prompt_replaced = False
             if prompt_suspicion >= 2 and self.gentype != "text":
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
-                if self.args.replacement_filter and prompt_checker.check_prompt_replacement_length(self.args.prompt):
+                if self.args.replacement_filter:
+                    if not prompt_checker.check_prompt_replacement_length(self.args.prompt):
+                        raise e.BadRequest("Prompt has to be below 1000 chars when replacement filter is on")
                     self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
                     # If it returns None, it means it replaced everything with an empty string
                     if self.args.prompt is not None:
