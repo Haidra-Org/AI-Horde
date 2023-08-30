@@ -44,7 +44,8 @@ class TextModels(v2.Models):
             'top_k': fields.Integer(description="Top-k sampling value.", min=0, max=100), 
             'top_p': fields.Float(description="Top-p sampling value.", min=0.001, max=1.0), 
             'typical': fields.Float(description="Typical sampling value.", min=0.0, max=1.0),
-            'sampler_order': fields.List(fields.Integer(description="Array of integers representing the sampler order to be used."))
+            'sampler_order': fields.List(fields.Integer(description="Array of integers representing the sampler order to be used.")),
+            'use_default_badwordsids': fields.Boolean(example=True,description="When True, uses the default KoboldAI bad word IDs."),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadKobold', self.root_model_generation_payload_kobold, {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate the text."),
