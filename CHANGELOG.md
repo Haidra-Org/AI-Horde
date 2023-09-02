@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.18.2
+
+* Shared key with -1 kudos (infinite) now works for Text Gen
+* LoRa clip strength now can also go to -5
+* Added some extra validation for KoboldAI Payloads
+
 # 4.18.1
 
 * Returns 400 when replacement filter is on and prompt is > 1000 chars

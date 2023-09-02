@@ -72,7 +72,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 if model_multiplier > highest_multiplier:
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
-        if self.sharedkey and required_kudos > self.sharedkey.kudos:
+        if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             raise e.KudosUpfront(
                 required_kudos, 
                 self.username, 
@@ -97,6 +97,13 @@ class TextAsyncGenerate(GenerateTemplate):
     def get_size_too_big_message(self):
         return("Warning: No available workers can fulfill this request. It will expire in 20 minutes. Consider reducing the amount of tokens to generate.")
 
+    def validate(self):
+        super().validate()
+        if self.params["max_context_length"] < self.params["max_length"]:
+            raise e.BadRequest("You cannot request more tokens than your context length.")
+        if "sampler_order" in self.params and len(set(self.params["sampler_order"])) < 7:
+            raise e.BadRequest("When sending a custom sampler order, you need to specify all possible samplers in the order")
+
 
     def get_hashed_params_dict(self):
         gen_payload = self.params.copy()
@@ -104,7 +111,7 @@ class TextAsyncGenerate(GenerateTemplate):
         # We need to also use the model list into our hash, as our kudos calculation is based on whichever model is first
         gen_payload["models"] = self.args.models
         params_hash = hash_dictionary(gen_payload)
-        logger.debug([params_hash,gen_payload])
+        # logger.debug([params_hash,gen_payload])
         return params_hash
 
 
