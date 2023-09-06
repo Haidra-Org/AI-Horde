@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.3
+
+* Shared key with 0 kudos as a limit now correctly treats that field as disabled. (e.g., `max_image_pixels: 0`` means no image generation for that shared key.)
+
 # 4.18.2
 
 * Shared key with -1 kudos (infinite) now works for Text Gen
