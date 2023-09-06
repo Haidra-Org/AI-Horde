@@ -134,16 +134,16 @@ class UserSharedKey(db.Model):
             tuple[bool, str | None]: Whether the job is within the limits and a message if it is not
         """
         
-        if  image_pixels is not None and self.max_image_pixels and self.max_image_pixels > -1:
-            if image_pixels > self.max_image_pixels:
+        if  image_pixels is not None and self.max_image_pixels is not None:
+            if self.max_image_pixels > -1 and image_pixels > self.max_image_pixels:
                 return False, f"This shared key is limited to {self.max_image_pixels} pixels per job. You requested {image_pixels} pixels."
                 
-        if image_steps is not None and self.max_image_steps and self.max_image_steps > -1:    
-            if image_steps > self.max_image_steps:
+        if image_steps is not None and self.max_image_steps is not None:    
+            if self.max_image_steps > -1 and  image_steps > self.max_image_steps:
                 return False, f"This shared key is limited to {self.max_image_steps} steps per job. You requested {image_steps} steps."
 
-        if text_tokens is not None and self.max_text_tokens and self.max_text_tokens > -1:    
-            if text_tokens > self.max_text_tokens:
+        if text_tokens is not None and self.max_text_tokens is not None:
+            if self.max_text_tokens > -1 and text_tokens > self.max_text_tokens:
                 return False, f"This shared key is limited to {self.max_text_tokens} tokens per job. You requested {text_tokens} tokens."
 
         return True, None
