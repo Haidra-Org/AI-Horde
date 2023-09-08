@@ -4,6 +4,13 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-09-03",
+            "newspiece": 
+                "The AI Horde is officially [one year old!](https://dbzer0.com/blog/year-one-of-the-ai-horde/)",
+            "tags": ["devlog"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-08-30",
             "newspiece": 
                 "Textual Inversions support has now been merged into the main worker branch! "
