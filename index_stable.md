@@ -26,6 +26,8 @@ For more information, check [the FAQ](https://github.com/Haidra-Org/AI-Horde/blo
 * Total processed: {total_forms}{total_forms_char}.
 * Active [Alchemists](/api/v2/workers?type=interrogation)/Threads: {interrogation_workers}/{interrogation_worker_threads}
 * Queue: {total_forms_queue} alchemy forms.
+### Real-time stats
+* You can see the horde activity (also past stats) on [Grafana](https://grafana.aihorde.net/)
 
 ## Usage
 
