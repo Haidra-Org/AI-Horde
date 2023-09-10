@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.4
+
+* API Now shows that you can get details of validation errors in the "errors" key
+
 # 4.18.3
 
 * Shared key with 0 kudos as a limit now correctly treats that field as disabled. (e.g., `max_image_pixels: 0`` means no image generation for that shared key.)

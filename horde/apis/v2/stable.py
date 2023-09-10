@@ -25,7 +25,7 @@ class ImageAsyncGenerate(GenerateTemplate):
 
     @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
-    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(400, 'Validation Error', models.response_model_validation_errors)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(503, 'Maintenance Mode', models.response_model_error)
     @api.response(429, 'Too Many Prompts', models.response_model_error)
