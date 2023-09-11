@@ -12,10 +12,10 @@ model_cacher = PrimaryTimedFunction(10, threads.store_available_models, quorum=q
 if not args.check_prompts:
     wp_cleaner = PrimaryTimedFunction(60, threads.check_waiting_prompts, quorum=quorum)
 interrogations_cleaner = PrimaryTimedFunction(60, threads.check_interrogations, quorum=quorum)
-monthly_kudos = PrimaryTimedFunction(40000, threads.assign_monthly_kudos, quorum=quorum)
+patreon_cacher = PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
+monthly_kudos = PrimaryTimedFunction(3600, threads.assign_monthly_kudos, quorum=quorum)
 totals_store = PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
 prune_stats = PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
-patreon_cacher = PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
 priority_increaser = PrimaryTimedFunction(10, threads.increment_extra_priority, quorum=quorum)
 compiled_filter_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)
 regex_replacements_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex_replacements, quorum=quorum)
