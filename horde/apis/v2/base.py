@@ -1774,7 +1774,7 @@ class SharedKeySingle(Resource):
             raise e.InvalidAPIKey("patch sharedkey")
         if sharedkey.user_id != user.id:
             raise e.Forbidden(f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.")
-        if not self.args.expiry and not self.args.kudos and not self.arg.name:
+        if not self.args.expiry and not self.args.kudos and not self.args.name:
             raise e.NoValidActions("No shared key modification selected!")
         if self.args.expiry is not None:
             if self.args.expiry == -1:
