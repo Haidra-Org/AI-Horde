@@ -4,6 +4,12 @@
 
 * API Now shows that you can get details of validation errors in the "errors" key
 
+# 4.18.4
+
+* Prevent Scribe requests failing when max_length and max_context_length missing
+* Made checking for monthly kudos an hourly task
+* shared key limit func now checks correct variable for `None` (@tazlin)
+
 # 4.18.3
 
 * Shared key with 0 kudos as a limit now correctly treats that field as disabled. (e.g., `max_image_pixels: 0`` means no image generation for that shared key.)

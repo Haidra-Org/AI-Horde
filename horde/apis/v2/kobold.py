@@ -28,7 +28,7 @@ class TextAsyncGenerate(GenerateTemplate):
         self.args = parsers.generate_parser.parse_args()
         try:
             super().post()
-        except KeyError:
+        except KeyError as err:
             logger.error(f"caught missing Key.")
             logger.error(self.args)
             logger.error(self.args.params)
@@ -99,7 +99,7 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def validate(self):
         super().validate()
-        if self.params["max_context_length"] < self.params["max_length"]:
+        if self.params.get("max_context_length", 1024) < self.params.get("max_length", 80):
             raise e.BadRequest("You cannot request more tokens than your context length.")
         if "sampler_order" in self.params and len(set(self.params["sampler_order"])) < 7:
             raise e.BadRequest("When sending a custom sampler order, you need to specify all possible samplers in the order")
