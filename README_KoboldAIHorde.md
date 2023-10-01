@@ -10,7 +10,7 @@ The easiest way to start using the [KoboldAI Lite](https://lite.koboldai.net) re
 
 ## Command Line
 
-I have provided [a small python script](https://github.com/Haidra-Org/AI-Horde-CLI) with which you can use to call the horde. Please check the [REAMDE](https://github.com/Haidra-Org/AI-Horde-CLI/blob/main/README.md) for usage instructions
+I have provided [a small python script](https://github.com/Haidra-Org/AI-Horde-CLI) with which you can use to call the horde. Please check the [README](https://github.com/Haidra-Org/AI-Horde-CLI/blob/main/README.md) for usage instructions
 
 ## Using KoboldAI client
 
