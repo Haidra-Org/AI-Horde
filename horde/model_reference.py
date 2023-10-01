@@ -112,3 +112,4 @@ class ModelReference(PrimaryTimedFunction):
         return False
 
 model_reference = ModelReference(3600, None)
+logger.debug(model_reference.get_image_model_names())
