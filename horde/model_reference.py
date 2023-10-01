@@ -30,7 +30,7 @@ class ModelReference(PrimaryTimedFunction):
                             self.nsfw_models.add(model)
                         if self.reference[model].get("type") == "controlnet":
                             self.controlnet_models.add(model)
-                break
+                break            
             except Exception as e:
                 logger.error(f"Error when downloading nataili models list: {e}")
         for iter in range(10):
@@ -112,4 +112,4 @@ class ModelReference(PrimaryTimedFunction):
         return False
 
 model_reference = ModelReference(3600, None)
-logger.debug(model_reference.get_image_model_names())
+model_reference.call_function()
