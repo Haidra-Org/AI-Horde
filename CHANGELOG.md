@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.5
+
+* Support for AI Horde Worker reGen and its SDXL features
+
 # 4.18.4
 
 * API Now shows that you can get details of validation errors in the "errors" key
