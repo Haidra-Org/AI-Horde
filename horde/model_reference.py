@@ -18,19 +18,19 @@ class ModelReference(PrimaryTimedFunction):
         # We don't want to report on any random model name a client might request
         for iter in range(10):
             try:
-                self.reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
-                diffusers = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
+                self.reference = requests.get("https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
+                diffusers = requests.get("https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
                 self.reference.update(diffusers)
                 # logger.debug(self.reference)
                 self.stable_diffusion_names = set()
                 for model in self.reference:
-                    if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512"}:
+                    if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512", "stable_diffusion_xl"}:
                         self.stable_diffusion_names.add(model)
                         if self.reference[model].get("nsfw"):
                             self.nsfw_models.add(model)
                         if self.reference[model].get("type") == "controlnet":
                             self.controlnet_models.add(model)
-                break
+                break            
             except Exception as e:
                 logger.error(f"Error when downloading nataili models list: {e}")
         for iter in range(10):
@@ -112,3 +112,4 @@ class ModelReference(PrimaryTimedFunction):
         return False
 
 model_reference = ModelReference(3600, None)
+model_reference.call_function()
