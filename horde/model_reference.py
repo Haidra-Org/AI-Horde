@@ -21,7 +21,8 @@ class ModelReference(PrimaryTimedFunction):
                 self.reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/SDXL/stable_diffusion.json", timeout=2).json()
                 diffusers = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/SDXL/diffusers.json", timeout=2).json()
                 self.reference.update(diffusers)
-                logger.debug(self.reference)
+                import json
+                logger.debug(json.dumps(self.reference, indent=4))
                 # logger.debug(self.reference)
                 self.stable_diffusion_names = set()
                 for model in self.reference:
