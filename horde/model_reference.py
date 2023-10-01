@@ -21,13 +21,10 @@ class ModelReference(PrimaryTimedFunction):
                 self.reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
                 diffusers = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
                 self.reference.update(diffusers)
-                import json
-                logger.debug(self.reference.keys())
-                logger.debug(self.reference['SDXL 1.0'])
                 # logger.debug(self.reference)
                 self.stable_diffusion_names = set()
                 for model in self.reference:
-                    if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512"}:
+                    if self.reference[model].get("baseline") in {"stable diffusion 1","stable diffusion 2", "stable diffusion 2 512", "stable_diffusion_xl"}:
                         self.stable_diffusion_names.add(model)
                         if self.reference[model].get("nsfw"):
                             self.nsfw_models.add(model)
