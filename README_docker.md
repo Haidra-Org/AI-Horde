@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- [Insatll Docker](https://docs.docker.com/get-docker/)
+- [Install Docker](https://docs.docker.com/get-docker/)
 
 ## Build
 
