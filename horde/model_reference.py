@@ -18,8 +18,8 @@ class ModelReference(PrimaryTimedFunction):
         # We don't want to report on any random model name a client might request
         for iter in range(10):
             try:
-                self.reference = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
-                diffusers = requests.get("https://raw.githubusercontent.com/db0/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
+                self.reference = requests.get("https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json", timeout=2).json()
+                diffusers = requests.get("https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/diffusers.json", timeout=2).json()
                 self.reference.update(diffusers)
                 # logger.debug(self.reference)
                 self.stable_diffusion_names = set()
