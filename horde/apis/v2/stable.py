@@ -101,8 +101,15 @@ class ImageAsyncGenerate(GenerateTemplate):
         #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
             raise e.UnsupportedModel("Controlnet Requires a source image.")
-        if self.params.get("hires_fix",False) is True and any(model_name in ["SDXL 1.0"] for model_name in self.args.models):
-            raise e.BadRequest("hires fix does not work with SDXL currently.")
+        if any(model_name in ["SDXL 1.0"] for model_name in self.args.models):
+            if self.params.get("hires_fix",False) is True:
+                raise e.BadRequest("hires fix does not work with SDXL currently.")
+            if "control_type" in self.params:
+                raise e.BadRequest("ControlNet does not work with SDXL currently.")
+            if "loras" in self.params:
+                raise e.BadRequest("Loras does not work with SDXL currently.")
+            if "tis" in self.params:
+                raise e.BadRequest("Tis does not work with SDXL currently.")
         if "loras" in self.params and len(self.params["loras"]) > 5:
             raise e.BadRequest("You cannot request more than 5 loras per generation.")
         if "tis" in self.params and len(self.params["tis"]) > 20:
