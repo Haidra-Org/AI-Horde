@@ -297,7 +297,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             if max_res < 768 and len(self.models) >= 1 and "stable_diffusion_2" in model_names:
                 max_res = 768
             # We allow everyone to use SDXL up to 1024
-            if max_res < 1024 and "SDXL_beta::stability.ai#6901" in model_names:
+            if max_res < 1024 and any(mn in model_names for mn in ["SDXL_beta::stability.ai#6901","SDXL 1.0"]):
                 max_res = 1024
         if max_res > 1024:
             max_res = 1024
