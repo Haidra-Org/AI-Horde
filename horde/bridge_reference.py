@@ -3,7 +3,7 @@ from horde.consts import KNOWN_POST_PROCESSORS
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
-        # 2: {"textual_inversion","lora"},
+        2: {"textual_inversion","lora"},
         1: {"img2img", "inpainting", "karras", "post-processing", "GFPGAN", 
             "RealESRGAN_x4plus", "r2", "CodeFormers", "clip_skip","r2_source",
             "controlnet", "strip_background", "return_control_map", "RealESRGAN_x4plus_anime_6B",

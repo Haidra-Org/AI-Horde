@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.6
+
+* Re-enable LoRas and TIs for reGen
+
 # 4.18.5
 
 * Support for AI Horde Worker reGen and its SDXL features

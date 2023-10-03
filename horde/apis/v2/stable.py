@@ -106,10 +106,6 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.BadRequest("hires fix does not work with SDXL currently.")
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with SDXL currently.")
-            if "loras" in self.params:
-                raise e.BadRequest("Loras does not work with SDXL currently.")
-            if "tis" in self.params:
-                raise e.BadRequest("Tis does not work with SDXL currently.")
         if "loras" in self.params and len(self.params["loras"]) > 5:
             raise e.BadRequest("You cannot request more than 5 loras per generation.")
         if "tis" in self.params and len(self.params["tis"]) > 20:
