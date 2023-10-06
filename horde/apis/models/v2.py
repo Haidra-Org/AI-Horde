@@ -128,7 +128,7 @@ class Models:
             'models': fields.List(fields.String(description="Which models this worker is serving.",min_length=3,max_length=255)),
             'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker."),
             'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website.", max_length=1000),
-            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=10),
+            'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=50),
             'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
         })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
