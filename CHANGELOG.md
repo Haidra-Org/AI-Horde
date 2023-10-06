@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.7
+
+* Fix source image rer-uploads not working
+
 # 4.18.6
 
 * Re-enable LoRas and TIs for reGen

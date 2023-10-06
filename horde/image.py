@@ -116,7 +116,8 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                     raise ImageValidationFailed("Something went wrong when opening image.")
                 if force_r2:
                     logger.debug(f"uploading {img} {uuid_string}")
-                    upload_source_image(img,uuid_string)
+                    download_url = upload_source_image(img,uuid_string)
+                    return (download_url, img, True)
         except Exception as err:
             if type(err) == ImageValidationFailed:
                 raise err

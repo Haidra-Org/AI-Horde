@@ -10,6 +10,7 @@ from horde.discord import send_pause_notification
 from horde.classes.stable.worker import ImageWorker
 from horde.suspicions import Suspicions
 from horde.database import threads as threads
+from horde.model_reference import model_reference
 
 # with HORDE.app_context():
 #     logger.debug(stats.get_model_avg("Deliberate"))
@@ -29,9 +30,14 @@ from horde.database import threads as threads
 # threads.store_patreon_members()
 
 # Cache testing
-with HORDE.app_context():
+# with HORDE.app_context():
     # logger.info(database.retrieve_totals(True))
     # logger.info(database.retrieve_totals())
-    database.get_available_models()
+    # database.get_available_models()
+
+
+logger.debug(model_reference.get_text_model_multiplier("koboldcpp/mythalion-13b"))
+import json
+logger.debug(json.dumps(model_reference.text_reference["koboldcpp/mythalion-13b"],indent=4))
 
 sys.exit()

@@ -112,4 +112,3 @@ class ModelReference(PrimaryTimedFunction):
         return False
 
 model_reference = ModelReference(3600, None)
-model_reference.call_function()
