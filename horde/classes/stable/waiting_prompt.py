@@ -106,7 +106,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
             ret_payload["seed"] = self.seed_to_int(self.seed)
-        elif self.seed_variation and self.jobs - self.n > 1:
+        elif self.seed_variation:
             ret_payload["seed"] = self.seed + (self.seed_variation * self.n)
             while ret_payload["seed"] >= 2**32:
                 ret_payload["seed"] = ret_payload["seed"] >> 32

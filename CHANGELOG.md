@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.18.8
+
+* Fix seed variation ending with duplicate seeds
+
 # 4.18.7
 
 * Fix source image rer-uploads not working
