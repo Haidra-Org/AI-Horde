@@ -125,7 +125,6 @@ class GenerateTemplate(Resource):
         #logger.warning(datetime.utcnow())
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
-        logger.debug("wut")
         self.params = {}
         if self.args.params:
             self.params = self.args.params
@@ -173,6 +172,7 @@ class GenerateTemplate(Resource):
         So we need the logic of each GenerateTemplate class to be able to override this class to adjust the params dict accordingly.
         '''
         gen_payload = self.params.copy()
+        gen_payload["models"] = self.models
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 
