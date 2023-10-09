@@ -148,7 +148,7 @@ class GenerateTemplate(Resource):
         self.initiate_waiting_prompt()
         #logger.warning(datetime.utcnow())
         if self.args.dry_run:
-            logger.debug(self.models)
+            logger.debug(self.args.models)
             self.kudos = self.extrapolate_dry_run_kudos()
             self.wp.delete()
             return
