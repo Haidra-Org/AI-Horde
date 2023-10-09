@@ -6,6 +6,7 @@
 * Dry run for LLMs should now be more accurate
 * Unreasonably fast speed for LLMs increased to 150t/s
 * For LLMs Kudos rewards, the system will now use the returned generation token count. The tokens count used will be either (generation chars / 4) or max tokens requested, whichever is lower.
+* Avoid textgen dry_run crashing when model list is empty
 
 # 4.18.8
 
