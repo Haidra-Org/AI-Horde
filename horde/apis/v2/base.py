@@ -172,11 +172,9 @@ class GenerateTemplate(Resource):
         This is needed because some parameters are injected into the dict for the model, during runtime.
         So we need the logic of each GenerateTemplate class to be able to override this class to adjust the params dict accordingly.
         '''
-        logger.debug("wut")
         gen_payload = self.params.copy()
         gen_payload["models"] = self.models
         params_hash = hash_dictionary(gen_payload)
-        logger.debug([gen_payload,params_hash])
         return params_hash
 
     # We split this into its own function, so that it may be overriden and extended
