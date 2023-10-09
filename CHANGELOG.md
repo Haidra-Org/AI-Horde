@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.18.9
+
+* SDXL gens now costs double kudos
+* Dry run for LLMs should now be more accurate
+* Unreasonably fast speed for LLMs increased to 150t/s
+
 # 4.18.8
 
 * Fix seed variation ending with duplicate seeds

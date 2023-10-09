@@ -19,7 +19,7 @@ thing_divisors = {
 
 suspicion_thresholds = {
     "image": 20,
-    "text": 100,
+    "text": 150,
 }
 icon = {
     "image": 1000000,
