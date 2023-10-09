@@ -132,6 +132,7 @@ class GenerateTemplate(Resource):
         if self.args.models:
             self.models = self.args.models.copy()
         params_hash = self.get_hashed_params_dict()
+        logger.debug(params_hash)
         cached_payload_kudos_calc = hr.horde_r_get(f"payload_kudos_{params_hash}")
         if cached_payload_kudos_calc and self.args.dry_run:
             self.kudos = float(cached_payload_kudos_calc)
