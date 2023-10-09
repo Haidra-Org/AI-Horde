@@ -171,6 +171,7 @@ class GenerateTemplate(Resource):
         So we need the logic of each GenerateTemplate class to be able to override this class to adjust the params dict accordingly.
         '''
         gen_payload = self.params.copy()
+        gen_payload["models"] = self.models
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 
@@ -513,7 +514,7 @@ class JobSubmitTemplate(Resource):
 
     def set_generation(self):
         '''Set to its own function to it can be overwritten depending on the class'''
-        things_per_sec = stats.record_fulfilment(self.procgen)
+        things_per_sec = stats.record_fulfilment(self.procgen,self.procgen.get_things_count(self.args['generation']))
         self.kudos = self.procgen.set_generation(
             generation=self.args['generation'], 
             things_per_sec=things_per_sec, 

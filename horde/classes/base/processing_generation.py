@@ -157,3 +157,9 @@ class ProcessingGeneration(db.Model):
             "model": self.model,
         }
         return(ret_dict)
+
+    # Extendable function to be able to dynamically adjust the amount of things
+    # based on what the worker actually returned. 
+    # Typically needed for LLMs using EOS tokens etc
+    def get_things_count(self, generation):
+        return self.wp.things

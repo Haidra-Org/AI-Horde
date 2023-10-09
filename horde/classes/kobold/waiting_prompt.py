@@ -1,4 +1,5 @@
 import random
+import math
 from sqlalchemy.sql import expression
 from horde.logger import logger
 from horde import vars as hv
@@ -85,9 +86,18 @@ class TextWaitingPrompt(WaitingPrompt):
         # Slimmed down version of procgen.get_gen_kudos()
         # As we don't know the worker's trusted status.
         # It exists here in order to allow us to calculate dry_runs
+        context_multiplier = 2.5 ** (math.log2(self.max_context_length / 1024))
+        # Prevent shenanigans
+        if context_multiplier > 30:
+            context_multiplier = 30
+        if context_multiplier < 0.1:
+            context_multiplier = 0.1
         if len(self.models) > 0:
             model_name = self.models[0].model
+        else:
+            # For empty model lists, we assume they're going to run into a 13B model
+            return round(self.max_length * 13 * context_multiplier / 84, 2)
         if not model_reference.is_known_text_model(model_name):
-            return self.wp.max_length * 0.12
-        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) / 21, 2)    
+            return self.wp.max_length * 0.12 * context_multiplier
+        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) * context_multiplier / 84, 2)   
         return self.kudos

@@ -229,6 +229,7 @@ class ImageAsyncGenerate(GenerateTemplate):
     def get_hashed_params_dict(self):
         gen_payload = self.params.copy()
         ## IMPORTANT: When adjusting this, also adjust ImageWaitingPrompt.calculate_kudos()
+        gen_payload["models"] = self.args.models
         gen_payload["source_processing"] = self.args.source_processing
         if not self.args.source_image:
             gen_payload["source_processing"] = "txt2img"
