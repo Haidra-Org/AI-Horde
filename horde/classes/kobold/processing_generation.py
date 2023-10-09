@@ -69,3 +69,9 @@ class TextProcessingGeneration(ProcessingGeneration):
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         record_text_statistic(self)
         return(kudos)
+    
+    def get_things_count(self, generation):
+        quick_token_count = len(generation)/4
+        if self.wp.things > quick_token_count:
+            return quick_token_count
+        return self.wp.things

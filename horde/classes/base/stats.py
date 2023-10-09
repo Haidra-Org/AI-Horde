@@ -23,8 +23,12 @@ class FulfillmentPerformance(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-def record_fulfilment(procgen):
-    things = procgen.wp.things
+def record_fulfilment(procgen, things = None):
+    # TODO: Refactor this so that I don't need to calulcate it in advance for LLMs
+    # This will require changing how set_generation() works
+    if things is None:
+        things = procgen.get_things_count()
+    logger.debug(things)
     starting_time = procgen.start_time
     model = procgen.model
     thing_type = procgen.procgen_type

@@ -513,7 +513,7 @@ class JobSubmitTemplate(Resource):
 
     def set_generation(self):
         '''Set to its own function to it can be overwritten depending on the class'''
-        things_per_sec = stats.record_fulfilment(self.procgen)
+        things_per_sec = stats.record_fulfilment(self.procgen,self.procgen.get_things_count(self.args['generation']))
         self.kudos = self.procgen.set_generation(
             generation=self.args['generation'], 
             things_per_sec=things_per_sec, 
