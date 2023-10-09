@@ -132,7 +132,6 @@ class GenerateTemplate(Resource):
         if self.args.models:
             self.models = self.args.models.copy()
         params_hash = self.get_hashed_params_dict()
-        logger.debug(params_hash)
         cached_payload_kudos_calc = hr.horde_r_get(f"payload_kudos_{params_hash}")
         if cached_payload_kudos_calc and self.args.dry_run:
             self.kudos = float(cached_payload_kudos_calc)
@@ -149,7 +148,6 @@ class GenerateTemplate(Resource):
         self.initiate_waiting_prompt()
         #logger.warning(datetime.utcnow())
         if self.args.dry_run:
-            logger.debug(self.args.models)
             self.kudos = self.extrapolate_dry_run_kudos()
             self.wp.delete()
             return

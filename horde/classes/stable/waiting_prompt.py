@@ -383,7 +383,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_name = self.models[0].model
         else:
             model_name = "SDXL 1.0"
-        logger.debug(model_name)
         if model_reference.get_model_baseline(model_name) == "stable_diffusion_xl":
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1      
         # The +1 is the extra kudos burn per request
