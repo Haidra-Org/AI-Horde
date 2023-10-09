@@ -125,6 +125,7 @@ class GenerateTemplate(Resource):
         #logger.warning(datetime.utcnow())
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
+        logger.debug("wut")
         self.params = {}
         if self.args.params:
             self.params = self.args.params
