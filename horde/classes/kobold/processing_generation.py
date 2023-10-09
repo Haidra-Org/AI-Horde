@@ -75,7 +75,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             if self.generation is None:
                 return 0
             generation = self.generation
-        quick_token_count = len(generation)/4
+        quick_token_count = math.ceil(len(generation)/4)
         if self.wp.things > quick_token_count:
             return quick_token_count
         return self.wp.things
