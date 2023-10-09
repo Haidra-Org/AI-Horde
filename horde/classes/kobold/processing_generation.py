@@ -71,6 +71,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         return(kudos)
     
     def get_things_count(self, generation = None):
+        return self.wp.things
         if generation is None:
             if self.generation is None:
                 return 0
