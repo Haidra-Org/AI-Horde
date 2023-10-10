@@ -76,6 +76,8 @@ class TextProcessingGeneration(ProcessingGeneration):
                 return 0
             generation = self.generation
         quick_token_count = math.ceil(len(generation)/4)
+        if quick_token_count < 20:
+            quick_token_count = 20
         if self.wp.things > quick_token_count:
             # logger.debug([self.wp.things,quick_token_count])
             return quick_token_count
