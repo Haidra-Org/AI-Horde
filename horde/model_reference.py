@@ -67,7 +67,9 @@ class ModelReference(PrimaryTimedFunction):
             model_name = usermodel[0]
         if not self.text_reference.get(model_name):
             return 1
-        return int(self.text_reference[model_name]["parameters"]) / 1000000000
+        multiplier = int(self.text_reference[model_name]["parameters"]) / 1000000000
+        logger.debug(f"{model_name} param multiplier: {multiplier}")
+        return multiplier
 
     def has_inpainting_models(self, model_names):
         for model_name in model_names:
