@@ -41,9 +41,9 @@ class TextProcessingGeneration(ProcessingGeneration):
             if not self.worker.user.trusted:
                 return context_multiplier
             # Trusted users with an unknown model gain 1 per token requested, as we don't know their parameters amount
-            return self.get_things_count() * 0.03 * context_multiplier
+            return self.get_things_count() * 0.10 * context_multiplier
         # This is the approximate reward for generating with a 2.7 model at 4bit
-        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 350
+        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 100
         return round(kudos * context_multiplier, 2)
 
 
