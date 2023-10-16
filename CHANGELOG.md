@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.18.10
+
+* Fixed kudos calculations for untrusted LLMs
+* Synced dry-run kudos calculations for LLMs to their real calculations
+
 # 4.18.9
 
 * SDXL gens now costs double kudos
