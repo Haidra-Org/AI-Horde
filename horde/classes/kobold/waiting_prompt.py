@@ -96,8 +96,8 @@ class TextWaitingPrompt(WaitingPrompt):
             model_name = self.models[0].model
         else:
             # For empty model lists, we assume they're going to run into a 13B model
-            return round(self.max_length * 13 * context_multiplier / 84, 2)
+            return round(self.max_length * 13 * context_multiplier / 100, 2)
         if not model_reference.is_known_text_model(model_name):
-            return self.wp.max_length * 0.12 * context_multiplier
-        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) * context_multiplier / 84, 2)   
+            return self.wp.max_length * 0.027 * context_multiplier
+        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) * context_multiplier / 100, 2)   
         return self.kudos
