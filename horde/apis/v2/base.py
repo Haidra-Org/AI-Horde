@@ -1487,7 +1487,7 @@ class OperationsBlockWorkerIP(Resource):
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
-    def put(self, worker_id):
+    def delete(self, worker_id):
         '''Remove a worker's IP block.
         Only usable by horde moderators
         '''
