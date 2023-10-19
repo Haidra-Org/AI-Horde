@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.19.0
+
+* Add option to block worker IP
+
 # 4.18.10
 
 * Fixed kudos calculations for untrusted LLMs
