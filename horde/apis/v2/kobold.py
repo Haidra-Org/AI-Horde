@@ -213,12 +213,6 @@ class TextJobPop(JobPopTemplate):
 
         return sorted_wps
 
-    def check_ip(self):
-        self.safe_ip = True
-        if not self.user.trusted and not patrons.is_patron(self.user.id):
-            self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
-        # We don't abort for VPN IPs in KAI for now
-
 class TextJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)

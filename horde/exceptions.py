@@ -169,9 +169,9 @@ class UnsafeIP(wze.Forbidden):
         self.log = f"Worker attempted to pop from unsafe IP: {ipaddr}"
 
 class TimeoutIP(wze.Forbidden):
-    def __init__(self, ipaddr, ttl):
+    def __init__(self, ipaddr, ttl, connect_type='Client'):
         self.specific = f"Due to abuse prevention, your IP address has been put into timeout for {ttl} more seconds. Please try again later, or contact us on discord if you think this was an error."
-        self.log = f"Client attempted to generate from {ipaddr} while in {ttl} seconds timeout"
+        self.log = f"{connect_type} attempted to connect from {ipaddr} while in {ttl} seconds timeout"
 
 class TooManyNewIPs(wze.Forbidden):
     def __init__(self, ipaddr):
