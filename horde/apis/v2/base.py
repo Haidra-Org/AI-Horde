@@ -1471,11 +1471,12 @@ class OperationsBlockWorkerIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.delete_parser.parse_args()
-        check_for_mod(self.args.apikey, 'PUT OperationsBlockWorkerIP')
+        mod = check_for_mod(self.args.apikey, 'PUT OperationsBlockWorkerIP')
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
         CounterMeasures.set_timeout(self.worker.ipaddr, minutes=60*24)
+        logger.info(f"Worker {worker_id} set into 24h IP timeout by {mod.get_unique_alias()} ")
         return({"message":'OK'}, 200)
     
     delete_parser = reqparse.RequestParser()
@@ -1492,11 +1493,12 @@ class OperationsBlockWorkerIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.delete_parser.parse_args()
-        check_for_mod(self.args.apikey, 'DELETE OperationsBlockWorkerIP')
+        mod = check_for_mod(self.args.apikey, 'DELETE OperationsBlockWorkerIP')
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
         CounterMeasures.delete_timeout(self.worker.ipaddr)
+        logger.info(f"Worker {worker_id} removed from IP timeout by {mod.get_unique_alias()} ")
         return({"message":'OK'}, 200)
 
 class Filters(Resource):
