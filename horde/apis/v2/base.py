@@ -488,7 +488,6 @@ class JobPopTemplate(Resource):
 
     def check_ip(self):
         ip_timeout = CounterMeasures.retrieve_timeout(self.worker_ip)
-        logger.debug([ip_timeout,self.worker_ip])
         if ip_timeout:
             raise e.TimeoutIP(self.worker_ip, ip_timeout, connect_type='Worker')
         self.safe_ip = True
