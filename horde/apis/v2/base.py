@@ -487,6 +487,9 @@ class JobPopTemplate(Resource):
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
 
     def check_ip(self):
+        ip_timeout = CounterMeasures.retrieve_timeout(self.worker_ip)
+        if ip_timeout:
+            raise e.TimeoutIP(self.worker_ip, ip_timeout, connect_type='Worker')
         self.safe_ip = True
         if not self.user.trusted and not self.user.vpn and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
@@ -1444,13 +1447,56 @@ class OperationsIP(Resource):
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
     @api.response(403, 'Access Denied', models.response_model_error)
-    def delete(self, team_id = ''):
+    def delete(self):
         '''Remove an IP from timeout.
         Only usable by horde moderators
         '''
         self.args = self.delete_parser.parse_args()
         check_for_mod(self.args.apikey, 'DELETE OperationsIP')
         CounterMeasures.delete_timeout(self.args.ipaddr)
+        return({"message":'OK'}, 200)
+
+class OperationsBlockWorkerIP(Resource):
+    put_parser = reqparse.RequestParser()
+    put_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+
+    @api.expect(put_parser)
+    @api.marshal_with(models.response_model_simple_response, code=200, description='Operation Completed', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def put(self, worker_id):
+        '''Block worker's from a specific IP for 24 hours.
+        Only usable by horde moderators
+        '''
+        self.args = self.delete_parser.parse_args()
+        check_for_mod(self.args.apikey, 'PUT OperationsBlockWorkerIP')
+        self.worker = database.find_worker_by_id(worker_id)
+        if self.worker is None:
+            raise e.WorkerNotFound(worker_id)
+        CounterMeasures.set_timeout(self.worker.ipaddr, minutes=60*24)
+        return({"message":'OK'}, 200)
+    
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+
+    @api.expect(delete_parser)
+    @api.marshal_with(models.response_model_simple_response, code=200, description='Operation Completed', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def put(self, worker_id):
+        '''Remove a worker's IP block.
+        Only usable by horde moderators
+        '''
+        self.args = self.delete_parser.parse_args()
+        check_for_mod(self.args.apikey, 'DELETE OperationsBlockWorkerIP')
+        self.worker = database.find_worker_by_id(worker_id)
+        if self.worker is None:
+            raise e.WorkerNotFound(worker_id)
+        CounterMeasures.delete_timeout(self.worker.ipaddr)
         return({"message":'OK'}, 200)
 
 class Filters(Resource):
