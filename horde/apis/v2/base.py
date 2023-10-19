@@ -488,6 +488,7 @@ class JobPopTemplate(Resource):
 
     def check_ip(self):
         ip_timeout = CounterMeasures.retrieve_timeout(self.worker_ip)
+        logger.debug([ip_timeout,self.worker_ip])
         if ip_timeout:
             raise e.TimeoutIP(self.worker_ip, ip_timeout, connect_type='Worker')
         self.safe_ip = True
@@ -1476,7 +1477,7 @@ class OperationsBlockWorkerIP(Resource):
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
         CounterMeasures.set_timeout(self.worker.ipaddr, minutes=60*24)
-        logger.info(f"Worker {worker_id} set into 24h IP timeout by {mod.get_unique_alias()} ")
+        logger.info(f"Worker {worker_id} with IP {self.worker.ipaddr} set into 24h IP timeout by {mod.get_unique_alias()} ")
         return({"message":'OK'}, 200)
     
     delete_parser = reqparse.RequestParser()
