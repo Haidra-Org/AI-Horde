@@ -27,6 +27,8 @@ KNOWN_UPSCALERS = [
 WHITELISTED_VPN_IPS = [
     "212.227.227.178/32", # Turing Bot
     "141.144.197.64/32",
+    # Digital Ocean / Paperspace
+    "172.83.13.4/32",
     # Google
     "8.8.4.0/24",
     "8.8.8.0/24",
