@@ -5,7 +5,8 @@ from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.model_reference import model_reference
-
+from horde import vars as hv
+from horde.suspicions import Suspicions
 
 class TextProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
@@ -82,3 +83,28 @@ class TextProcessingGeneration(ProcessingGeneration):
             # logger.debug([self.wp.things,quick_token_count])
             return quick_token_count
         return self.wp.things
+
+    def record(self, things_per_sec, kudos):
+        # Extended function to try and catch workers using unreasonable
+        # speeds at higher params
+        # This only affects untrusted workers running known models
+        super().record(things_per_sec, kudos)
+        if not model_reference.is_known_text_model(self.model):
+            return
+        if self.worker.user.trusted:
+            return
+        param_multiplier = model_reference.get_text_model_multiplier(self.model)
+        unreasonable_speed = hv.suspicion_thresholds['text']
+        max_speed_per_multiplier = {
+            70: 12,
+            40: 22,
+            20: 35,
+            13: 50,
+            7: 70,
+        }
+        for params_count in max_speed_per_multiplier:
+            if param_multiplier >= params_count:
+                unreasonable_speed = max_speed_per_multiplier[params_count]
+                break
+        if things_per_sec > unreasonable_speed:
+            self.worker.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[things_per_sec])
