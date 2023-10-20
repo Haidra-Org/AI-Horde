@@ -31,7 +31,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         # This formula creates an exponential increase on the kudos consumption, based on the context requested
         # 1024 context is considered the base.
         # The reason is that higher context has exponential VRAM requirements
-        context_multiplier = 2.5 ** (math.log2(self.wp.max_context_length / 1024))
+        context_multiplier = 1.2 + (2.2 ** (math.log2(self.wp.max_context_length / 1024)))
         # Prevent shenanigans
         if context_multiplier > 30:
             context_multiplier = 30
@@ -44,7 +44,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             # Trusted users with an unknown model are considered as running a 2.7B model
             return self.get_things_count() * 0.027 * context_multiplier
         # This is the approximate reward for generating with a 2.7 model at 4bit
-        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 100
+        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 120
         return round(kudos * context_multiplier, 2)
 
 
