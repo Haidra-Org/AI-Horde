@@ -321,7 +321,6 @@ class User(db.Model):
 
     def create(self):
         self.check_for_bad_actor()
-        self.ensure_kudos_positive()
         db.session.add(self)
         db.session.commit()
         logger.info(f"New User Created {self.get_unique_alias()}")
