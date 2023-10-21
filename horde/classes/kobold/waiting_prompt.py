@@ -86,7 +86,7 @@ class TextWaitingPrompt(WaitingPrompt):
         # Slimmed down version of procgen.get_gen_kudos()
         # As we don't know the worker's trusted status.
         # It exists here in order to allow us to calculate dry_runs
-        context_multiplier = 2.5 ** (math.log2(self.max_context_length / 1024))
+        context_multiplier = 1.2 + (2.2 ** (math.log2(self.wp.max_context_length / 1024)))
         # Prevent shenanigans
         if context_multiplier > 30:
             context_multiplier = 30
@@ -98,6 +98,6 @@ class TextWaitingPrompt(WaitingPrompt):
             # For empty model lists, we assume they're going to run into a 13B model
             return round(self.max_length * 13 * context_multiplier / 100, 2)
         if not model_reference.is_known_text_model(model_name):
-            return self.wp.max_length * 0.027 * context_multiplier
-        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) * context_multiplier / 100, 2)   
+            return self.wp.max_length * (2.7 / 120) * context_multiplier
+        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) * context_multiplier / 120, 2)   
         return self.kudos
