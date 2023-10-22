@@ -86,7 +86,7 @@ class TextWaitingPrompt(WaitingPrompt):
         # Slimmed down version of procgen.get_gen_kudos()
         # As we don't know the worker's trusted status.
         # It exists here in order to allow us to calculate dry_runs
-        context_multiplier = 1.2 + (2.2 ** (math.log2(self.wp.max_context_length / 1024)))
+        context_multiplier = 1.2 + (2.2 ** (math.log2(self.max_context_length / 1024)))
         # Prevent shenanigans
         if context_multiplier > 30:
             context_multiplier = 30
