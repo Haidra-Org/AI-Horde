@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.19.1
+
+* Allow Horde modes to see worker IP
+* Worker IP block now lasts a week
+* IP Ban also blocks new registrations from that IP
+
 # 4.19.0
 
 * Add option to block worker IP

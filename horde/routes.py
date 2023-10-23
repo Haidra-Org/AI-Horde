@@ -24,6 +24,7 @@ from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
 from horde.vars import thing_name, raw_thing_name, thing_divisor, google_verification_string, img_url, horde_title, horde_url
 from horde import vars as hv
 from horde.patreon import patrons
+from horde.countermeasures import CounterMeasures
 
 dance_return_to = '/'
 
@@ -212,6 +213,11 @@ def register():
                     return render_template('recaptcha_error.html',
                                         page_title=f"Recaptcha validation Error!",
                                         use_recaptcha=False)
+                ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
+                if ip_timeout:
+                    return render_template('ipaddr_ban_error.html',
+                                        page_title=f"IP Address Banned",
+                                        use_recaptcha=False)                    
             except Exception as err:
                 logger.error(err)
                 return render_template('recaptcha_error.html',
