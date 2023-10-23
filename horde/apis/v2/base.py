@@ -1536,13 +1536,18 @@ class OperationsBlockWorkerIP(Resource):
         '''Block worker's from a specific IP for 24 hours.
         Only usable by horde moderators
         '''
-        self.args = self.delete_parser.parse_args()
+        self.args = self.put_parser.parse_args()
         mod = check_for_mod(self.args.apikey, 'PUT OperationsBlockWorkerIP')
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
-        CounterMeasures.set_timeout(self.worker.ipaddr, minutes=60*24*self.args.days)
-        logger.info(f"Worker {worker_id} with IP {self.worker.ipaddr} set into {self.args.days} days IP timeout by {mod.get_unique_alias()} ")
+        blocked_ip = self.worker.ipaddr
+        if CounterMeasures.is_ipv6(self.worker.ipaddr):
+            blocked_ip = CounterMeasures.extract_ipv6_subnet(self.worker.ipaddr)
+            CounterMeasures.set_block_timeout(blocked_ip, minutes=60*24*self.args.days)
+        else:
+            CounterMeasures.set_timeout(blocked_ip, minutes=60*24*self.args.days)
+        logger.info(f"Worker {worker_id} with IP {blocked_ip} set into {self.args.days} days IP timeout by {mod.get_unique_alias()} ")
         return({"message":'OK'}, 200)
     
     delete_parser = reqparse.RequestParser()
@@ -1563,8 +1568,12 @@ class OperationsBlockWorkerIP(Resource):
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
-        CounterMeasures.delete_timeout(self.worker.ipaddr)
-        logger.info(f"Worker {worker_id} removed from IP timeout by {mod.get_unique_alias()} ")
+        blocked_ip = self.worker.ipaddr
+        if CounterMeasures.is_ipv6(self.worker.ipaddr):
+            blocked_ip = CounterMeasures.extract_ipv6_subnet(self.worker.ipaddr)
+            CounterMeasures.delete_block_timeout(blocked_ip)
+        CounterMeasures.delete_timeout(blocked_ip)
+        logger.info(f"Worker {worker_id} with IP {blocked_ip} removed from IP timeout by {mod.get_unique_alias()} ")
         return({"message":'OK'}, 200)
 
 class Filters(Resource):

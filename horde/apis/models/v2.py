@@ -380,14 +380,14 @@ class Models:
             'info': fields.String(description="The Info of the team."),
         })
         self.input_model_delete_ip_timeout = api.model('DeleteTimeoutIPInput', {
-            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address or CIDR to remove from timeout.",min_length=7, max_length=19),
+            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address or CIDR to remove from timeout.",min_length=7, max_length=40),
         })
         self.input_model_add_ip_timeout = api.model('AddTimeoutIPInput', {
-            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address or CIDR to add from timeout.",min_length=7, max_length=19),
+            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The IP address or CIDR to add from timeout.",min_length=7, max_length=40),
             "hours": fields.Integer(example=24,required=True, description="For how many hours to put this IP in timeout.",min=1,max=24*30),
         })
         self.response_model_ip_timeout = api.model('IPTimeout', {
-            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The CIDR which is in timeout.",min_length=7, max_length=19),
+            "ipaddr": fields.String(example="127.0.0.1",required=True, description="The CIDR which is in timeout.",min_length=7, max_length=40),
             "seconds": fields.Integer(example=24*60,required=True, description="How many more seconds this IP block is in timeout "),
         })
         self.input_model_add_worker_timeout = api.model('AddWorkerTimeout', {

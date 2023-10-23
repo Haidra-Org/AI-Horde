@@ -210,4 +210,20 @@ class CounterMeasures:
 			if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(block["ipaddr"]):
 				timeouts.append(block)
 		return timeouts
-		
+
+	@staticmethod
+	def is_ipv6(ipaddr):
+		try:
+			ipaddress.IPv6Address(ipaddr)
+			return True
+		except ipaddress.AddressValueError:
+			return False
+
+	@staticmethod
+	def extract_ipv6_subnet(ipaddr, subnet_prefix_length=64):
+		try:
+			ip = ipaddress.IPv6Address(ipaddr)
+			network = ipaddress.IPv6Network(f"{ip.exploded}/{subnet_prefix_length}", strict=False)
+			return str(network)
+		except ipaddress.AddressValueError:
+			return None

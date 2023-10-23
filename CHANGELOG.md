@@ -1,10 +1,15 @@
 # Changelog
 
-# 4.19.1
+# 4.20.0
 
 * Allow Horde modes to see worker IP
-* Worker IP block now lasts a week
+* Worker IP block now lasts a week by default
+* Worker IP block adjustable by days
+* Worker IP block now handles IPv6 defaulting to a /64 range (See https://www.mediawiki.org/wiki/Help:Range_blocks/IPv6)
 * IP Ban also blocks new registrations from that IP
+* Added manual IP ban endpoint. 
+* Added endpoint to get all IP blocks
+* Added endpoint to check if a specific IP is blocked
 
 # 4.19.0
 

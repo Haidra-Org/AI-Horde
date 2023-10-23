@@ -37,7 +37,9 @@ from horde.countermeasures import CounterMeasures
     # database.get_available_models()
 
 # IP timeout testing
-CounterMeasures.set_block_timeout("192.168.0.0/24",1)
+CounterMeasures.set_block_timeout("2001:db8::/64",1)
 logger.debug(CounterMeasures.get_block_timeouts())
+logger.debug(CounterMeasures.retrieve_timeout('2001:db8:0000:0000:0000:0000:0000:0001'))
+logger.debug(CounterMeasures.extract_ipv6_subnet('2001:db8:0000:0000:0000:0000:0000:0001'))
 
 sys.exit()
