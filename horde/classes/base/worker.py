@@ -438,6 +438,7 @@ class WorkerTemplate(db.Model):
             ret_dict['suspicious'] = len(self.suspicions)
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict['owner'] = self.user.get_unique_alias()
+            ret_dict['ipaddr'] = self.ipaddr
             ret_dict['contact'] = self.user.contact
         return ret_dict
 

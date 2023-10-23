@@ -143,6 +143,7 @@ class Models:
             "info": fields.String(description="Extra information or comments about this worker provided by its owner.", example="https://dbzer0.com", default=None),
             "nsfw": fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             "owner": fields.String(example="username#1", description="Privileged or public if the owner has allowed it. The alias of the owner of this worker."),
+            "ipaddr": fields.String(example="username#1", description="Privileged. The last known IP this worker has connected from."),
             "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
             "flagged": fields.Boolean(description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this worker has accumulated."),
