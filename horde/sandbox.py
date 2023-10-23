@@ -11,6 +11,7 @@ from horde.classes.stable.worker import ImageWorker
 from horde.suspicions import Suspicions
 from horde.database import threads as threads
 from horde.model_reference import model_reference
+from horde.countermeasures import CounterMeasures
 
 # with HORDE.app_context():
 #     logger.debug(stats.get_model_avg("Deliberate"))
@@ -35,9 +36,8 @@ from horde.model_reference import model_reference
     # logger.info(database.retrieve_totals())
     # database.get_available_models()
 
-
-logger.debug(model_reference.get_text_model_multiplier("koboldcpp/mythalion-13b"))
-import json
-logger.debug(json.dumps(model_reference.text_reference["koboldcpp/mythalion-13b"],indent=4))
+# IP timeout testing
+CounterMeasures.set_block_timeout("192.168.0.0/24",1)
+logger.debug(CounterMeasures.get_block_timeouts())
 
 sys.exit()

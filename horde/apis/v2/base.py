@@ -1435,8 +1435,46 @@ class TeamSingle(Resource):
         team.delete()
         return(ret_dict, 200)
 
-
 class OperationsIP(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_ip_timeout, code=200, description='An IP timeout entry', as_list=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def get(self):
+        '''Return all existing IP Block timeouts.
+        '''
+        self.args = self.get_parser.parse_args()
+        check_for_mod(self.args.apikey, 'GET OperationsIP')
+        return(CounterMeasures.get_block_timeouts(), 200)
+    
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    post_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    post_parser.add_argument("ipaddr", type=str, required=True, location="json")
+    post_parser.add_argument("hours", type=int, required=True, location="json")
+
+    @api.expect(post_parser, models.input_model_add_ip_timeout, validate=True)
+    @api.marshal_with(models.response_model_simple_response, code=200, description='Operation Completed', skip_none=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def post(self):
+        '''Add an IP or CIDR to timeout.
+        Only usable by horde moderators
+        '''
+        self.args = self.post_parser.parse_args()
+        check_for_mod(self.args.apikey, 'POST OperationsIP')
+        if len(self.args.ipaddr.split('/')) == 2:
+            CounterMeasures.set_block_timeout(self.args.ipaddr,self.args.hours*60)
+        else:
+            CounterMeasures.set_timeout(self.args.ipaddr,self.args.hours*60)
+        return({"message":'OK'}, 200)
+    
     delete_parser = reqparse.RequestParser()
     delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
     delete_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
@@ -1453,8 +1491,35 @@ class OperationsIP(Resource):
         '''
         self.args = self.delete_parser.parse_args()
         check_for_mod(self.args.apikey, 'DELETE OperationsIP')
-        CounterMeasures.delete_timeout(self.args.ipaddr)
+        if len(self.args.ipaddr.split('/')) == 2:
+            CounterMeasures.delete_block_timeout(self.args.ipaddr)
+        else:
+            CounterMeasures.delete_timeout(self.args.ipaddr)
         return({"message":'OK'}, 200)
+
+class OperationsIPSingle(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
+    get_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_ip_timeout, code=200, description='IP timeout entries that match IP', as_list=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def get(self,ipaddr):
+        '''Check if an IP or CIDR is in timeout.
+        '''
+        self.args = self.get_parser.parse_args()
+        check_for_mod(self.args.apikey, 'GET OperationsIPSingle')        
+        timeouts = CounterMeasures.get_block_timeouts_matching_ip(ipaddr)
+        direct_timeout = CounterMeasures.retrieve_timeout(ipaddr, True)
+        if direct_timeout:
+            timeouts.append({
+                "ipaddr": ipaddr,
+                "seconds": direct_timeout,
+            })
+        return timeouts,200
 
 class OperationsBlockWorkerIP(Resource):
     put_parser = reqparse.RequestParser()

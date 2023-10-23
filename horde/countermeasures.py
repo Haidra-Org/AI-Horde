@@ -130,13 +130,15 @@ class CounterMeasures:
 		ip_t_r.setex(ipaddr, timedelta(minutes=minutes), int(True))
 
 	@staticmethod
-	def retrieve_timeout(ipaddr):
+	def retrieve_timeout(ipaddr,ignore_blocks=False):
 		'''Checks if an IP address is still in timeout'''
 		if not ip_t_r:
 			return test_timeout*3*60
 		has_timeout = ip_t_r.get(ipaddr)
 		if not bool(has_timeout):
-			return 0
+			if ignore_blocks is True:
+				return 0
+			return CounterMeasures.retrieve_block_timeout(ipaddr)
 		ttl = ip_t_r.ttl(ipaddr)
 		return int(ttl)
 
@@ -154,3 +156,58 @@ class CounterMeasures:
 			if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(iprange):
 				return True
 		return False
+
+	@staticmethod
+	def set_block_timeout(ip_block, minutes):
+		'''Puts the ip address block into timeout for these amount of seconds'''
+		if not ip_t_r:
+			return
+		if len(ip_block.split('/')) != 2:
+			logger.warning(f"Attempted to inset non-block {ip_block} IP as a block timeout")
+			return
+		ip_t_r.setex(f"ipblock_{ip_block}", timedelta(minutes=minutes), int(True))
+		
+	@staticmethod
+	def retrieve_block_timeout(ipaddr):
+		'''Checks if the IP is in a block timeout'''
+		if not ip_t_r:
+			return
+		for ip_block_key in ip_t_r.scan_iter("ipblock_*"):
+			ip_range = ip_block_key.decode().split('_',1)[1]
+			if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(ip_range):
+				ttl = ip_t_r.ttl(ip_block_key)
+				return int(ttl)
+		return 0
+		
+	@staticmethod
+	def delete_block_timeout(ip_block):
+		'''Deletes an IP address block from being in timeout'''
+		if not ip_t_r:
+			return
+		if len(ip_block.split('/')) != 2:
+			logger.warning(f"Attempted to inset non-block {ip_block} IP as a block timeout")
+			return
+		ip_t_r.delete(f"ipblock_{ip_block}")
+
+	@staticmethod
+	def get_block_timeouts():
+		'''Returns all known IP block timeouts'''
+		ip_blocks = []
+		for ip_block_key in ip_t_r.scan_iter("ipblock_*"):
+			ip_range = ip_block_key.decode().split('_',1)[1]
+			ip_blocks.append({
+				"ipaddr": ip_range,
+				"seconds": ip_t_r.ttl(ip_block_key),
+			})
+		return ip_blocks
+		
+	@staticmethod
+	def get_block_timeouts_matching_ip(ipaddr):
+		'''Returns all known IP block timeouts which match a specific IP address'''
+		ip_blocks = CounterMeasures.get_block_timeouts()
+		timeouts = []
+		for block in ip_blocks:
+			if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(block["ipaddr"]):
+				timeouts.append(block)
+		return timeouts
+		
