@@ -1525,8 +1525,9 @@ class OperationsBlockWorkerIP(Resource):
     put_parser = reqparse.RequestParser()
     put_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location='headers')
     put_parser.add_argument("Client-Agent", default="unknown:0:unknown", type=str, required=False, help="The client name and version.", location="headers")
+    put_parser.add_argument("days", type=int, required=True, location="json")
 
-    @api.expect(put_parser)
+    @api.expect(put_parser, models.input_model_add_worker_timeout, validate=True)
     @api.marshal_with(models.response_model_simple_response, code=200, description='Operation Completed', skip_none=True)
     @api.response(400, 'Validation Error', models.response_model_error)
     @api.response(401, 'Invalid API Key', models.response_model_error)
@@ -1540,8 +1541,8 @@ class OperationsBlockWorkerIP(Resource):
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
-        CounterMeasures.set_timeout(self.worker.ipaddr, minutes=60*24)
-        logger.info(f"Worker {worker_id} with IP {self.worker.ipaddr} set into 24h IP timeout by {mod.get_unique_alias()} ")
+        CounterMeasures.set_timeout(self.worker.ipaddr, minutes=60*24*self.args.days)
+        logger.info(f"Worker {worker_id} with IP {self.worker.ipaddr} set into {self.args.days} days IP timeout by {mod.get_unique_alias()} ")
         return({"message":'OK'}, 200)
     
     delete_parser = reqparse.RequestParser()

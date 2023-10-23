@@ -390,6 +390,9 @@ class Models:
             "ipaddr": fields.String(example="127.0.0.1",required=True, description="The CIDR which is in timeout.",min_length=7, max_length=19),
             "seconds": fields.Integer(example=24*60,required=True, description="How many more seconds this IP block is in timeout "),
         })
+        self.input_model_add_worker_timeout = api.model('AddWorkerTimeout', {
+            "days": fields.Integer(example=7,required=True, description="For how many days to put this worker's IP in timeout.",min=1,max=30),
+        })
         self.response_model_simple_response = api.model('SimpleResponse', {
             "message": fields.String(default='OK',required=True, description="The result of this operation."),
         })
