@@ -46,6 +46,7 @@ class TextModels(v2.Models):
             'typical': fields.Float(description="Typical sampling value.", min=0.0, max=1.0),
             'sampler_order': fields.List(fields.Integer(description="Array of integers representing the sampler order to be used.")),
             'use_default_badwordsids': fields.Boolean(example=True,description="When True, uses the default KoboldAI bad word IDs."),
+            'stop_sequence': fields.List(fields.String(description="An array of string sequences whereby the model will stop generating further tokens. The returned text WILL contain the stop sequence.")),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadKobold', self.root_model_generation_payload_kobold, {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate the text."),
