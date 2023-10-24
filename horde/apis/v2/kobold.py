@@ -103,6 +103,13 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("You cannot request more tokens than your context length.")
         if "sampler_order" in self.params and len(set(self.params["sampler_order"])) < 7:
             raise e.BadRequest("When sending a custom sampler order, you need to specify all possible samplers in the order")
+        if "stop_sequence" in self.params:
+            stop_seqs = set(self.params["stop_sequence"])
+            if len(stop_seqs) > 16:
+                raise e.BadRequest("Too many stop sequences specified (max allowed is 16).")
+            for seq in stop_seqs:
+                if len(seq) > 512:
+                    raise e.BadRequest("A stop sequence exceeds maximum allowed length (max 512 chars).")
 
 
     def get_hashed_params_dict(self):
