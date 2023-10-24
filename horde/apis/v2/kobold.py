@@ -107,9 +107,11 @@ class TextAsyncGenerate(GenerateTemplate):
             stop_seqs = set(self.params["stop_sequence"])
             if len(stop_seqs) > 16:
                 raise e.BadRequest("Too many stop sequences specified (max allowed is 16).")
+            total_stop_seq_len = 0
             for seq in stop_seqs:
-                if len(seq) > 512:
-                    raise e.BadRequest("A stop sequence exceeds maximum allowed length (max 512 chars).")
+                total_stop_seq_len += len(seq)
+            if total_stop_seq_len > 2000:
+                raise e.BadRequest("Your total stop sequence length exceeds the allowed limit (2000 chars).")
 
 
     def get_hashed_params_dict(self):
