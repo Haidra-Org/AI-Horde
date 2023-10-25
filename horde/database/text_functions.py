@@ -43,6 +43,16 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     PER_PAGE = 3 # how many requests we're picking up to filter further
+    if len(models_list) >= 1:
+        params = model_reference.get_text_model_multiplier(models_list[0])
+        if params >= 20:
+            slow_speed = 3
+        elif params >= 13:
+            slow_speed = 4
+        else:
+            slow_speed = 5
+    else:
+        slow_speed = 3
     final_wp_list = db.session.query(
         TextWaitingPrompt
     ).options(
@@ -81,7 +91,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list = None, priority_u
             ),
         ),
         or_(
-            worker.speed >= 2, # 2 tokens/s
+            worker.speed >= slow_speed, # Slow speed is based on the model parameters used
             TextWaitingPrompt.slow_workers == True,
         ),
         or_(
