@@ -42,8 +42,8 @@ First [Register an account](/register) which will generate for you an API key. S
 
 * We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
-    * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [Art Bot](https://tinybots.net/artbot)
+    * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [AAAI UI](https://artificial-art.eu/)
 * There are also mobile apps:
     * AI Painter ([iOS](https://apps.apple.com/hk/app/%E6%A9%9F%E7%95%AB%E5%B8%AB-%E5%B0%88%E6%A5%AD%E7%9A%84ai%E7%B9%AA%E7%95%ABapp/id1644645946) + [Android](https://play.google.com/store/apps/details?id=wkygame.ai.all.in.one))
