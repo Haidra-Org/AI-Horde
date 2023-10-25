@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.21.0
+
+* Added `stop_sequence` to scribe payloads. Allows up to 128 individual sequences.
+
 # 4.20.0
 
 * Allow Horde mods to see worker IP

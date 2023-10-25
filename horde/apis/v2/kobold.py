@@ -105,8 +105,8 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("When sending a custom sampler order, you need to specify all possible samplers in the order")
         if "stop_sequence" in self.params:
             stop_seqs = set(self.params["stop_sequence"])
-            if len(stop_seqs) > 16:
-                raise e.BadRequest("Too many stop sequences specified (max allowed is 16).")
+            if len(stop_seqs) > 128:
+                raise e.BadRequest("Too many stop sequences specified (max allowed is 128).")
             total_stop_seq_len = 0
             for seq in stop_seqs:
                 total_stop_seq_len += len(seq)
