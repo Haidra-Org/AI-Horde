@@ -31,7 +31,8 @@ class TextProcessingGeneration(ProcessingGeneration):
         # This formula creates an exponential increase on the kudos consumption, based on the context requested
         # 1024 context is considered the base.
         # The reason is that higher context has exponential VRAM requirements
-        context_multiplier = 1.2 + (2.2 ** (math.log2(self.wp.max_context_length / 1024)))
+        actual_context_length = self.get_things_count(self.wp.prompt)
+        context_multiplier = 1.2 + (2.2 ** (math.log2(actual_context_length / 1024)))
         # Prevent shenanigans
         if context_multiplier > 30:
             context_multiplier = 30

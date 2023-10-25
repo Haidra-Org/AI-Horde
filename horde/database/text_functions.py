@@ -26,6 +26,7 @@ from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.database.functions import query_prioritized_wps
 from horde.enums import State
 from horde.bridge_reference import check_bridge_capability
+from horde.model_reference import model_reference
 
 # Should be overriden
 def convert_things_to_kudos(things, **kwargs):
@@ -127,28 +128,6 @@ def get_text_progen_by_id(procgen_id):
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
     return db.session.query(TextProcessingGeneration).filter_by(id=procgen_uuid).first()
-
-
-def get_interrogation_by_id(i_id):
-    try:
-        i_uuid = uuid.UUID(i_id)
-    except ValueError as e: 
-        logger.debug(f"Non-UUID i_id sent: '{i_id}'.")
-        return None
-    if SQLITE_MODE:
-        i_uuid = str(i_uuid)
-    return db.session.query(Interrogation).filter_by(id=i_uuid).first()
-
-
-def get_form_by_id(form_id):
-    try:
-        form_uuid = uuid.UUID(form_id)
-    except ValueError as e: 
-        logger.debug(f"Non-UUID form_id sent: '{form_id}'.")
-        return None
-    if SQLITE_MODE:
-        form_uuid = str(form_uuid)
-    return db.session.query(InterrogationForms).filter_by(id=form_uuid).first()
 
 
 def get_all_text_wps():
