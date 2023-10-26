@@ -43,9 +43,9 @@ class TextProcessingGeneration(ProcessingGeneration):
             if not self.worker.user.trusted:
                 return context_multiplier
             # Trusted users with an unknown model are considered as running a 2.7B model
-            return self.get_things_count() * context_multiplier * (2.7 / 120)
+            return self.get_things_count() * context_multiplier * (2.7 / 100)
         # This is the approximate reward for generating with a 2.7 model at 4bit
-        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 120
+        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 100
         return round(kudos * context_multiplier, 2)
 
 
