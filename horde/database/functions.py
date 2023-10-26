@@ -271,7 +271,8 @@ def get_available_models(filter_model_name: str = None):
         ).join(
             worker_class,
         ).filter(
-            worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300)
+            worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300),
+            worker_class.maintenance == False,
         )
         if filter_model_name:
             available_worker_models = available_worker_models.filter(
