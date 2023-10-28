@@ -96,7 +96,7 @@ class TextWorker(Worker):
         if param_multiplier < 0.25:
             param_multiplier = 0.25
         # The uptime is based on both how much context they provide, as well as how many parameters they're serving
-        return base_kudos * param_multiplier
+        return round(base_kudos * param_multiplier, 2)
 
 
     def can_generate(self, waiting_prompt):
