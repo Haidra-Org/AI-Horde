@@ -45,7 +45,9 @@ class TextProcessingGeneration(ProcessingGeneration):
             # Trusted users with an unknown model are considered as running a 2.7B model
             return self.get_things_count() * context_multiplier * (2.7 / 100)
         # This is the approximate reward for generating with a 2.7 model at 4bit
-        kudos = self.get_things_count() * model_reference.get_text_model_multiplier(self.model) / 100
+        model_multiplier = model_reference.get_text_model_multiplier(self.model)
+        parameter_bonus =  (max(model_multiplier, 13) / 13) ** 0.20
+        kudos = self.get_things_count() * parameter_bonus * model_multiplier / 100
         return round(kudos * context_multiplier, 2)
 
 

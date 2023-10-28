@@ -99,5 +99,7 @@ class TextWaitingPrompt(WaitingPrompt):
             return round(self.max_length * 13 * context_multiplier / 100, 2)
         if not model_reference.is_known_text_model(model_name):
             return self.wp.max_length * (2.7 / 100) * context_multiplier
-        self.kudos = round(self.max_length * model_reference.get_text_model_multiplier(model_name) * context_multiplier / 100, 2)   
+        model_multiplier = model_reference.get_text_model_multiplier(model_name)
+        parameter_bonus =  (max(model_multiplier, 13) / 13) ** 0.20
+        self.kudos = round(self.max_length * parameter_bonus * model_multiplier * context_multiplier / 100, 2)   
         return self.kudos

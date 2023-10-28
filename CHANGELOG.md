@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.21.1
+
+* Improved Kudos calculations for scribes per request and per uptime
+
 # 4.21.0
 
 * Added `stop_sequence` to scribe payloads. Allows up to 128 individual sequences.

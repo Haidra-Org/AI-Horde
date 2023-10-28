@@ -37,9 +37,14 @@ from horde.countermeasures import CounterMeasures
     # database.get_available_models()
 
 # IP timeout testing
-CounterMeasures.set_block_timeout("2001:db8::/64",1)
-logger.debug(CounterMeasures.get_block_timeouts())
-logger.debug(CounterMeasures.retrieve_timeout('2001:db8:0000:0000:0000:0000:0000:0001'))
-logger.debug(CounterMeasures.extract_ipv6_subnet('2001:db8:0000:0000:0000:0000:0000:0001'))
+# CounterMeasures.set_block_timeout("2001:db8::/64",1)
+# logger.debug(CounterMeasures.get_block_timeouts())
+# logger.debug(CounterMeasures.retrieve_timeout('2001:db8:0000:0000:0000:0000:0000:0001'))
+# logger.debug(CounterMeasures.extract_ipv6_subnet('2001:db8:0000:0000:0000:0000:0000:0001'))
 
+# Worker rewards test
+with HORDE.app_context():
+    w = database.find_worker_by_id("43f5f639-134f-4687-a130-b4bf13821d8c")
+    logger.debug(w.max_context_length)
+    logger.debug(w.calculate_uptime_reward())
 sys.exit()

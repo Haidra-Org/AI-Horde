@@ -86,7 +86,18 @@ class TextWorker(Worker):
 
 
     def calculate_uptime_reward(self):
-        return 50
+        model = self.get_model_names()[0]
+        model = "EleutherAI/gpt-neo-2.7asdasdB"
+        # The base amount of kudos one gets is based on the max context length they've loaded
+        base_kudos = 25 + (15 * self.max_context_length / 1024)
+        if not model_reference.is_known_text_model(model):
+            return base_kudos * 0.5
+        # We consider the 7B models the baseline here
+        param_multiplier = model_reference.get_text_model_multiplier(model) / 7
+        if param_multiplier < 0.25:
+            param_multiplier = 0.25
+        # The uptime is based on both how much context they provide, as well as how many parameters they're serving
+        return base_kudos * param_multiplier
 
 
     def can_generate(self, waiting_prompt):
