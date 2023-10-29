@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.21.2
+
+Correctly calculate waiting requests with n>1
+
 # 4.21.1
 
 * Improved Kudos calculations for scribes per request and per uptime

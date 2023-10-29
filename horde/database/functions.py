@@ -420,28 +420,26 @@ def count_waiting_requests(user, models = None, request_type = "image"):
     if request_type == "text":
         wp_class = TextWaitingPrompt
        
-    # TODO: This is incorrect. It should count the amount of waiting 'n' + in-progress generations too
-    # Currently this is just counting how many requests, but each requests can have more than 1 image waiting
     if not models: models = []
     if len(models):
         return db.session.query(
-            WPModels.id,
+            func.sum(wp_class.n)
         ).join(
             wp_class
         ).filter(
             WPModels.model.in_(models),
             wp_class.user_id == user.id,
             wp_class.faulted == False,
-            wp_class.n >= 1, 
-        ).group_by(WPModels.id).count()
+            wp_class.n >= 1,
+        ).scalar()
     else:
         return db.session.query(
-            wp_class
+            func.sum(wp_class.n)
         ).filter(
             wp_class.user_id == user.id,
             wp_class.faulted == False,
             wp_class.n >= 1, 
-        ).count()
+        ).scalar()
 
 def count_waiting_interrogations(user):
     found_i_forms = db.session.query(
