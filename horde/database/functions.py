@@ -424,14 +424,20 @@ def count_waiting_requests(user, models = None, request_type = "image"):
     if len(models):
         known_model_query = db.session.query(
             func.sum(wp_class.n)
+        ).select_from(
+            WPModels,
         ).join(
-            wp_class
+            wp_class,
+            WPModels.wp_id == wp_class.id
         ).filter(
             WPModels.model.in_(models),
             wp_class.user_id == user.id,
             wp_class.faulted == False,
             wp_class.n >= 1,
         ).scalar()
+        if known_model_query is None:
+            return 0
+        logger.debug(known_model_query)
         return known_model_query
     else:
         unknown_model_query = db.session.query(
@@ -441,6 +447,8 @@ def count_waiting_requests(user, models = None, request_type = "image"):
             wp_class.faulted == False,
             wp_class.n >= 1, 
         ).scalar()
+        if unknown_model_query is None:
+            return 0
         return unknown_model_query
 
 def count_waiting_interrogations(user):
