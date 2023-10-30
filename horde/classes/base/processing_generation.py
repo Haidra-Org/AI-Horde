@@ -23,7 +23,7 @@ class ProcessingGeneration(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
-    gen_metadata = db.Column(json_column_type, default=[], nullable=False)
+    gen_metadata = db.Column(json_column_type, default=None, nullable=False)
 
     model = db.Column(db.String(255), default='', nullable=False)
     seed = db.Column(db.BigInteger, default=0, nullable=False)
