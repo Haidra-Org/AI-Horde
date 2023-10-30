@@ -1,1 +1,1 @@
-ALTER TABLE waiting_prompts ADD COLUMN metadata JSONB;
+ALTER TABLE processing_gens ADD COLUMN metadata JSONB;

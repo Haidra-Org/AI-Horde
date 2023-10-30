@@ -23,7 +23,7 @@ class ProcessingGeneration(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
-    metadata = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
+    gen_metadata = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
 
     model = db.Column(db.String(255), default='', nullable=False)
     seed = db.Column(db.BigInteger, default=0, nullable=False)
@@ -64,7 +64,7 @@ class ProcessingGeneration(db.Model):
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        self.metadata = kwargs.get('metadata', None)
+        self.gen_metadata = kwargs.get('metadata', None)
         kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
