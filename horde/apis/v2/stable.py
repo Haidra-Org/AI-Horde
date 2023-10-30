@@ -447,7 +447,7 @@ class ImageJobSubmit(JobSubmitTemplate):
             seed=self.args.seed,
             censored=self.args.censored,
             state=self.args.state,
-            gen_metadata=self.args.metadata,
+            gen_metadata=self.args.gen_metadata,
         )
 
 
