@@ -154,6 +154,7 @@ class ProcessingGeneration(db.Model):
     # This should be extended by every horde type
     def get_details(self):
         '''Returns a dictionary with details about this processing generation'''
+        logger.debug(self.gen_metadata)
         ret_dict = {
             "gen": self.generation,
             "worker_id": self.worker.id,
