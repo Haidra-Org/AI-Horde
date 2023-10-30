@@ -318,6 +318,7 @@ class ImageAsyncStatus(Resource):
         wp.n = 0
         wp.jobs = wp_status["finished"]
         db.session.commit()
+        logger.debug(wp_status)
         return(wp_status, 200)
 
 
