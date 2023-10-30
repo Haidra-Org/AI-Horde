@@ -64,7 +64,7 @@ class ProcessingGeneration(db.Model):
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
-        self.gen_metadata = kwargs.get('metadata', None)
+        self.gen_metadata = kwargs.get('gen_metadata', None)
         kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
@@ -159,7 +159,7 @@ class ProcessingGeneration(db.Model):
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
             "model": self.model,
-            "metadata": self.metadata,
+            "metadata": self.gen_metadata,
         }
         return(ret_dict)
 
