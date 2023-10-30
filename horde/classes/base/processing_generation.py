@@ -158,7 +158,7 @@ class ProcessingGeneration(db.Model):
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
             "model": self.model,
-            "gen_metadata": self.gen_metadata,
+            "gen_metadata": self.gen_metadata if self.gen_metadata is not None else [],
         }
         return(ret_dict)
 
