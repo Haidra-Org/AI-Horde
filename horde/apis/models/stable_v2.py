@@ -39,7 +39,7 @@ class ImageModels(v2.Models):
             'seed': fields.String(title="Generation Seed", description="The seed which generated this image."),
             'id': fields.String(title="Generation ID", description="The ID for this image."),
             'censored': fields.Boolean(description="When true this image has been censored by the worker's safety filter."),
-            'gen_metadata': fields.List(fields.Nested(self.input_model_job_submit_metadata)),
+            'gen_metadata': fields.List(fields.Nested(self.input_model_job_submit_metadata, skip_none=True)),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusStable', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
