@@ -32,6 +32,7 @@ class Parsers:
         self.job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid.", location="json")
         self.job_submit_parser.add_argument("generation", type=str, required=True, help="The generated output.", location="json")
         self.job_submit_parser.add_argument("state", type=str, required=False, default='ok', help="The state of this returned generation.", location="json")
+        self.job_submit_parser.add_argument("gen_metadata", type=dict, required=False, help="Metadata about this job such as defaulted components due to failures.", location="json")
 
 
 class Models:
