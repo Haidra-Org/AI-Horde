@@ -17,10 +17,15 @@ class TextModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)
-
+        self.input_model_job_submit_metadata = api.model('SubmitInputMetaStable', {
+            'type': fields.String(enum=["censorship"], description="The relevance of the metadata field"),
+            'value': fields.String(enum=["csam"], description="The value of the metadata field"),
+            'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
+        })
         self.response_model_generation_result = api.inherit('GenerationKobold', self.response_model_generation_result, {
             'text': fields.String(title="Generated Text", description="The generated text.", min_length = 0),
             'seed': fields.Integer(title="Generation Seed", description="The seed which generated this text.", default=0),
+            'gen_metadata': fields.List(fields.Nested(self.input_model_job_submit_metadata, skip_none=True)),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusKobold', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
