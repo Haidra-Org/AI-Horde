@@ -18,8 +18,8 @@ class TextModels(v2.Models):
 
         super().__init__(api)
         self.model_job_metadata = api.model('GenerationMetadataKobold', {
-            'type': fields.String(enum=["censorship"], description="The relevance of the metadata field"),
-            'value': fields.String(enum=["csam"], description="The value of the metadata field"),
+            'type': fields.String(required=True, enum=["censorship"], description="The relevance of the metadata field"),
+            'value': fields.String(required=True, enum=["csam"], description="The value of the metadata field"),
             'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
         })
         self.response_model_generation_result = api.inherit('GenerationKobold', self.response_model_generation_result, {

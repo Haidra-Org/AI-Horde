@@ -30,8 +30,8 @@ class ImageModels(v2.Models):
 
         super().__init__(api)
         self.model_job_metadata = api.model('GenerationMetadataStable', {
-            'type': fields.String(enum=["lora", "ti", "censorship", "source_image", "source_mask"], description="The relevance of the metadata field"),
-            'value': fields.String(enum=["download_failed", "parse_failed", "baseline_mismatch", "csam", "nsfw"], description="The value of the metadata field"),
+            'type': fields.String(required=True, enum=["lora", "ti", "censorship", "source_image", "source_mask"], description="The relevance of the metadata field"),
+            'value': fields.String(required=True, enum=["download_failed", "parse_failed", "baseline_mismatch", "csam", "nsfw"], description="The value of the metadata field"),
             'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
         })
         self.response_model_generation_result = api.inherit('GenerationStable', self.response_model_generation_result, {
