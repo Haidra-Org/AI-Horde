@@ -200,7 +200,11 @@ class ImageAsyncGenerate(GenerateTemplate):
                 self.username, 
                 message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfill this reques ({required_kudos})."
             )
-        if needs_kudos:
+        if needs_kudos is False and required_kudos > 300:
+            logger.warning(f"High kudos count didn't require upfront kudos: {self.params}")
+        if self.params['steps'] >= 300 and (needs_kudos is False or self.user.kudos <= 25):
+            logger.warning(f"High step count didn't require upfront kudos: {self.params}")
+        if needs_kudos is True:
             if required_kudos > self.user.kudos:
                 raise e.KudosUpfront(
                     required_kudos, 

@@ -190,7 +190,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         self.calculate_kudos()
         logger.info(
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}) ({self.client_agent}): "
-            f"w:{self.width} * h:{self.height} * s:{self.params['steps']} * n:{self.n} == {self.total_usage} Total MPs. "
+            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} == {self.total_usage} Total MPs for {self.kudos} kudos."
         )
 
 
@@ -250,9 +250,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             legacy_kudos_cost = round(legacy_kudos_cost * 1.2,2)
         if self.gen_payload.get('control_type') and not self.gen_payload.get('return_control_map', False):
             legacy_kudos_cost= round(legacy_kudos_cost * 3,2)
-        weights_count = count_parentheses(self.prompt)
-        ## we increase the kudos cost per weight
-        legacy_kudos_cost += weights_count
         
         #
         # Model based calculation
@@ -308,9 +305,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             return(True,max_res)
         if self.params.get('control_type') and self.get_accurate_steps() > 20:
             return(True,max_res)
-        # 10 or more weights, require upfront kudos
-        if count_parentheses(self.prompt) > 12:
-            return(True,max_res)
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
@@ -352,8 +346,6 @@ class ImageWaitingPrompt(WaitingPrompt):
         # CN is 3 times slower
         if self.gen_payload.get('control_type'):
             self.job_ttl = self.job_ttl * 3
-        weights_count = count_parentheses(self.prompt)
-        self.job_ttl += 3*weights_count
         if "SDXL_beta::stability.ai#6901" in self.get_model_names():
             logger.debug(self.get_model_names())
             self.job_ttl = 300
