@@ -39,7 +39,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             "model": self.model,
             "id": self.id,
             "censored": self.censored,
-            "metadata": self.gen_metadata,
+            "gen_metadata": self.gen_metadata,
         }
         return ret_dict
 

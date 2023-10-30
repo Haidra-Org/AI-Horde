@@ -159,7 +159,7 @@ class ProcessingGeneration(db.Model):
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
             "model": self.model,
-            "metadata": self.gen_metadata,
+            "gen_metadata": self.gen_metadata,
         }
         return(ret_dict)
 
