@@ -122,7 +122,7 @@ class ImageModels(v2.Models):
         self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
             'seed': fields.Integer(required=True, description="The seed for this generation."),
             'censored': fields.Boolean(required=False, default=False,description="OBSOLETE (start using meta): If True, this resulting image has been censored."),
-            'metadata': fields.Nested(self.input_model_job_submit_metadata),
+            'metadata': fields.List(fields.Nested(self.input_model_job_submit_metadata)),
         })
         self.input_model_request_generation = api.model('GenerationInputStable', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image.", min_length = 1),
