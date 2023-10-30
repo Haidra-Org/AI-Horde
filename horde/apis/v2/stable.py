@@ -441,7 +441,6 @@ class ImageJobSubmit(JobSubmitTemplate):
     def set_generation(self):
         '''Set to its own function to it can be overwritten depending on the class'''
         things_per_sec = stats.record_fulfilment(self.procgen)
-        logger.debug(self.args)
         self.kudos = self.procgen.set_generation(
             generation=self.args['generation'], 
             things_per_sec=things_per_sec, 

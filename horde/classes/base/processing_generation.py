@@ -3,7 +3,6 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy import JSON
 from sqlalchemy.sql import expression
 from horde.utils import get_db_uuid
