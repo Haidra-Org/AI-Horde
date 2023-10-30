@@ -209,7 +209,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                     self.username, 
                     message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (25 for k_heun and k_dpm_2*), the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
                 )
-        if self.params['steps'] >= 300:
+        if self.wp.params["steps"] >= 300:
             print_args = self.args.copy()
             print_args["apikey"] = "REDACTED"
             logger.warning(
@@ -447,6 +447,7 @@ class ImageJobSubmit(JobSubmitTemplate):
             seed=self.args.seed,
             censored=self.args.censored,
             state=self.args.state,
+            gen_metadata=self.args.gen_metadata,
         )
 
 

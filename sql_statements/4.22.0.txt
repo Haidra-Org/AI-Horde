@@ -1,0 +1,1 @@
+ALTER TABLE processing_gens ADD COLUMN gen_metadata JSONB;

@@ -29,12 +29,17 @@ class ImageModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)
-
+        self.model_job_metadata = api.model('SubmitInputMetaStable', {
+            'type': fields.String(enum=["lora", "ti", "censorship", "source_image", "source_mask"], description="The relevance of the metadata field"),
+            'value': fields.String(enum=["download_failed", "parse_failed", "baseline_mismatch", "csam", "nsfw"], description="The value of the metadata field"),
+            'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
+        })
         self.response_model_generation_result = api.inherit('GenerationStable', self.response_model_generation_result, {
             'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file."),
             'seed': fields.String(title="Generation Seed", description="The seed which generated this image."),
             'id': fields.String(title="Generation ID", description="The ID for this image."),
             'censored': fields.Boolean(description="When true this image has been censored by the worker's safety filter."),
+            'gen_metadata': fields.List(fields.Nested(self.model_job_metadata, skip_none=True)),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatusStable', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),
@@ -116,7 +121,8 @@ class ImageModels(v2.Models):
         })
         self.input_model_job_submit = api.inherit('SubmitInputStable', self.input_model_job_submit, {
             'seed': fields.Integer(required=True, description="The seed for this generation."),
-            'censored': fields.Boolean(required=False, default=False,description="If True, this resulting image has been censored."),
+            'censored': fields.Boolean(required=False, default=False,description="OBSOLETE (start using meta): If True, this resulting image has been censored."),
+            'gen_metadata': fields.List(fields.Nested(self.model_job_metadata)),
         })
         self.input_model_request_generation = api.model('GenerationInputStable', {
             'prompt': fields.String(required=True,description="The prompt which will be sent to Stable Diffusion to generate an image.", min_length = 1),

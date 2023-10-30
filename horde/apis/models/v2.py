@@ -32,6 +32,7 @@ class Parsers:
         self.job_submit_parser.add_argument("id", type=str, required=True, help="The processing generation uuid.", location="json")
         self.job_submit_parser.add_argument("generation", type=str, required=True, help="The generated output.", location="json")
         self.job_submit_parser.add_argument("state", type=str, required=False, default='ok', help="The state of this returned generation.", location="json")
+        self.job_submit_parser.add_argument("gen_metadata", type=list, required=False, help="Metadata about this job such as defaulted components due to failures.", location="json")
 
 
 class Models:
@@ -66,7 +67,7 @@ class Models:
             'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image."),
             'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image."),
             'model': fields.String(title="Generation Model", description="The model which generated this image."),
-            'state': fields.String(title="Generation State", required=True, default='ok', enum=["ok", "censored"], description="The state of this generation."),
+            'state': fields.String(title="Generation State", required=True, default='ok', enum=["ok", "censored"], description="OBSOLETE (Use the gen_metadata field). The state of this generation."),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatus', self.response_model_wp_status_lite, {
             'generations': fields.List(fields.Nested(self.response_model_generation_result)),

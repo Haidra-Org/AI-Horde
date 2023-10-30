@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.22.0
+
+Allows workers to send the `gen_metadata` key which can contain a list of dictionaries. 
+Each dictionary will be information to give to the user about that specific metadata
+Such as wether it's been censored and why, or whether any loras have been skipped.
+
 # 4.21.2
 
 Correctly calculate waiting requests with n>1

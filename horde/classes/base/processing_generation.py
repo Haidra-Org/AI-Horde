@@ -3,12 +3,14 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
 from sqlalchemy.sql import expression
 from horde.utils import get_db_uuid
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+json_column_type = JSONB if not SQLITE_MODE else JSON
 
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
@@ -20,6 +22,7 @@ class ProcessingGeneration(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
+    gen_metadata = db.Column(json_column_type, nullable=False)
 
     model = db.Column(db.String(255), default='', nullable=False)
     seed = db.Column(db.BigInteger, default=0, nullable=False)
@@ -60,6 +63,7 @@ class ProcessingGeneration(db.Model):
         self.generation = generation
         # Support for two typical properties 
         self.seed = kwargs.get('seed', None)
+        self.gen_metadata = kwargs.get('gen_metadata', None)
         kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
@@ -154,6 +158,7 @@ class ProcessingGeneration(db.Model):
             "worker_id": self.worker.id,
             "worker_name": self.worker.name,
             "model": self.model,
+            "gen_metadata": self.gen_metadata if self.gen_metadata is not None else [],
         }
         return(ret_dict)
 
