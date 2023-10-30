@@ -290,6 +290,7 @@ class ImageAsyncStatus(Resource):
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
+        logger.debug(wp_status)
         return(wp_status, 200)
 
     delete_parser = reqparse.RequestParser()
@@ -318,7 +319,6 @@ class ImageAsyncStatus(Resource):
         wp.n = 0
         wp.jobs = wp_status["finished"]
         db.session.commit()
-        logger.debug(wp_status)
         return(wp_status, 200)
 
 
