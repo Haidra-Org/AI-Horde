@@ -17,7 +17,7 @@ class TextModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)
-        self.model_job_metadata = api.model('SubmitInputMetaKobold', {
+        self.model_job_metadata = api.model('GenerationMetadataKobold', {
             'type': fields.String(enum=["censorship"], description="The relevance of the metadata field"),
             'value': fields.String(enum=["csam"], description="The value of the metadata field"),
             'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),

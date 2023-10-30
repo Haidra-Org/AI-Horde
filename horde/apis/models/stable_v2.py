@@ -29,7 +29,7 @@ class ImageModels(v2.Models):
     def __init__(self,api):
 
         super().__init__(api)
-        self.model_job_metadata = api.model('SubmitInputMetaStable', {
+        self.model_job_metadata = api.model('GenerationMetadataStable', {
             'type': fields.String(enum=["lora", "ti", "censorship", "source_image", "source_mask"], description="The relevance of the metadata field"),
             'value': fields.String(enum=["download_failed", "parse_failed", "baseline_mismatch", "csam", "nsfw"], description="The value of the metadata field"),
             'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
