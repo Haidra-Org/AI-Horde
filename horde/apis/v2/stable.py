@@ -41,8 +41,9 @@ class ImageAsyncGenerate(GenerateTemplate):
             super().post()
         except KeyError:
             logger.error(f"caught missing Key.")
-            logger.error(self.args)
-            logger.error(self.args.params)
+            print_args = self.args.copy()
+            print_args["apikey"] = "REDACTED"
+            logger.error(print_args)
             return {"message": "Internal Server Error"},500
         if self.args.dry_run:
             ret_dict = {"kudos":round(self.kudos)}
@@ -206,13 +207,15 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.KudosUpfront(
                     required_kudos, 
                     self.username, 
-                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (25 for k_heun and k_dpm_2*), and for 12 or more weights, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
+                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (25 for k_heun and k_dpm_2*), the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
                 )
         if self.params['steps'] >= 300:
+            print_args = self.args.copy()
+            print_args["apikey"] = "REDACTED"
             logger.warning(
                 f"High step count detected! " 
                 f"User: {self.username}. Balance: {self.user.kudos}. Required: {required_kudos}. Upfront: {needs_kudos}. "
-                f"Params: {self.params}"
+                f"Args: {print_args}"
             )
             # else:
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
