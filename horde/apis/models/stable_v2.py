@@ -31,7 +31,7 @@ class ImageModels(v2.Models):
         super().__init__(api)
         self.input_model_job_submit_metadata = api.model('SubmitInputMetaStable', {
             'name': fields.String(description="The name of the metadata field"),
-            'type': fields.String(enum=["lora", "ti", "censorship", "source_image", "source_mask"], description="The relevance of the metadata field"),
+            'type': fields.String(enum=["lora", "ti", "censorship", "img2img"], description="The relevance of the metadata field"),
             'value': fields.String(["download_failed", "parse_failed", "baseline_mismatch"], description="The value of the metadata field"),
         })
         self.response_model_generation_result = api.inherit('GenerationStable', self.response_model_generation_result, {
