@@ -24,6 +24,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             "worker_name": self.worker.name,
             "model": self.model,
             "id": self.id,
+            "gen_metadata": self.gen_metadata,
         }
         return ret_dict
 
