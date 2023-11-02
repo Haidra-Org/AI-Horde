@@ -41,6 +41,22 @@ class PromptChecker:
                 "replacement": "adult"
             },
         ]
+        suspect_emojis = ["👧","👧🏻","👧🏼","👧🏽","👧🏾","👧🏿",
+                                "👦","👦🏻","👦🏼","👦🏽","👦🏾","👦🏿",
+                                "👶🏻","👶","👶🏼","👶🏽","👶🏾","👶🏿",
+                                "👪",
+                                "🤱","🤱🏻","🤱🏼","🤱🏽","🤱🏾","🤱🏿",
+                                "👼","👼🏻","👼🏼","👼🏽","👼🏾","👼🏿",
+                                "🐤","🐥","🚼","🍼","🚸"]
+
+        nsfw_model_regex = nsfw_model_regex + [
+                {
+                    "regex": re.compile(f"({'|'.join(suspect_emojis)})", re.IGNORECASE),
+                    "replacement": "adult"
+                },
+            ]
+
+
         self.nsfw_model_regex = nsfw_model_regex + [
                 {
                     "regex": re.compile(r"girl|nina", re.IGNORECASE),
