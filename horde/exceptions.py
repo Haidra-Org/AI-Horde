@@ -238,8 +238,11 @@ class RequestExpired(wze.Gone):
         self.log = f"Request from '{username}' took too long to complete and has been cancelled."
 
 class TooManyPrompts(wze.TooManyRequests):
-    def __init__(self, username, count, concurrency):
-        self.specific = f"Parallel requests ({count}) exceeded user limit ({concurrency}). Please try again later or request to increase your concurrency."
+    def __init__(self, username, count, concurrency, msg = None):
+        if msg is None:
+            self.specific = f"Parallel requests ({count}) exceeded user limit ({concurrency}). Please try again later or request to increase your concurrency."
+        else:
+            self.specific = msg
         self.log = f"User '{username}' has already requested too many parallel requests ({count}/{concurrency}). Aborting!"
 
 class NoValidWorkers(wze.BadRequest):

@@ -221,7 +221,12 @@ class GenerateTemplate(Resource):
             user_limit = self.user.get_concurrency(self.args["models"],database.retrieve_available_models)
             #logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
-                raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
+                if self.user.is_anon():
+                    raise e.TooManyPrompts(self.username, wp_count + n, user_limit, 
+                        msg = f"Too many anonymous requests on using the AI Horde currently ({wp_count + n}/{user_limit}). Please consider getting a personal API key at https://aihorde.net/register which will also provide higher priority."
+                    )
+                else:
+                    raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
             ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
             #logger.warning(datetime.utcnow())
             if ip_timeout:
