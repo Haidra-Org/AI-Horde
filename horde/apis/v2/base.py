@@ -256,20 +256,25 @@ class GenerateTemplate(Resource):
                         self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
                     raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
-            if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
-                # For NSFW models, we always do replacements
+            if_nsfw_model = prompt_checker.check_nsfw_model_block(self.args.prompt, self.models)
+            if if_nsfw_model or self.user.flagged:
+                # For NSFW models and flagged users, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
                 self.args.prompt = prompt_checker.nsfw_model_prompt_replace(self.args.prompt, self.models, already_replaced=prompt_replaced)
                 if self.args.prompt is None:
                     prompt_replaced = False
                 elif prompt_replaced is False:
                     prompt_replaced = True
+                # This will only trigger if the prompt after replacements is an empty string
                 if not prompt_replaced:
+                    msg = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again."
+                    if self.user.flagged and not if_nsfw_model:
+                        msg = "To prevent generation of unethical images, we cannot allow this prompt."
                     raise e.CorruptPrompt(
                         self.username, 
                         self.user_ip, 
                         self.args.prompt, 
-                        message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
+                        message = msg)
             # Disabling as this is handled by the worker-csam-filter now
             # If I re-enable it, also make it use the prompt replacement
             # if not prompt_replaced:
