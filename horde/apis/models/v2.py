@@ -309,6 +309,7 @@ class Models:
             "special": fields.Boolean(description="The user's new special status."),
             "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
             "contact": fields.String(example="email@example.com", description="The new contact details."),
+            "admin_comment": fields.String(example="User is sus", description="The new admin comment.",min_length=5,max_length=500),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {
