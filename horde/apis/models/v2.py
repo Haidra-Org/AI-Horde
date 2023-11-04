@@ -266,6 +266,7 @@ class Models:
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated."),
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the user in case of emergency."),
+            "admin_comment": fields.String(example="User is sus", description="(Privileged) Information about this users by the admins"),
             "account_age": fields.Integer(example=60, description="How many seconds since this account was created."),
             "usage": fields.Nested(self.response_model_use_details), #TODO: OBSOLETE
             "contributions": fields.Nested(self.response_model_contrib_details), #TODO: OBSOLETE
@@ -286,8 +287,10 @@ class Models:
             "customizer": fields.Boolean(example=False,description="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference."),
             "vpn": fields.Boolean(example=False,description="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted."),
             "special": fields.Boolean(example=False,description="When set to true, The user can send special payloads."),
+            "filtered": fields.Boolean(example=False,description="When set to true, the replacement filter will always be applied against this user"),
             "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
             "contact": fields.String(example="email@example.com", description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",min_length=5,max_length=500),
+            "admin_comment": fields.String(example="User is sus", description="Add further information about this user for the other admins.",min_length=5,max_length=500),
         })
 
         self.response_model_user_modify = api.model('ModifyUser', {
@@ -306,6 +309,7 @@ class Models:
             "special": fields.Boolean(description="The user's new special status."),
             "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
             "contact": fields.String(example="email@example.com", description="The new contact details."),
+            "admin_comment": fields.String(example="User is sus", description="The new admin comment.",min_length=5,max_length=500),
         })
 
         self.response_model_horde_performance = api.model('HordePerformance', {

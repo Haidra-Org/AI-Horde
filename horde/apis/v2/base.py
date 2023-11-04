@@ -256,20 +256,25 @@ class GenerateTemplate(Resource):
                         self.user.report_suspicion(1,Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
                     raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
-            if prompt_checker.check_nsfw_model_block(self.args.prompt, self.models):
-                # For NSFW models, we always do replacements
+            if_nsfw_model = prompt_checker.check_nsfw_model_block(self.args.prompt, self.models)
+            if if_nsfw_model or self.user.flagged:
+                # For NSFW models and flagged users, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
                 self.args.prompt = prompt_checker.nsfw_model_prompt_replace(self.args.prompt, self.models, already_replaced=prompt_replaced)
                 if self.args.prompt is None:
                     prompt_replaced = False
                 elif prompt_replaced is False:
                     prompt_replaced = True
+                # This will only trigger if the prompt after replacements is an empty string
                 if not prompt_replaced:
+                    msg = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again."
+                    if self.user.flagged and not if_nsfw_model:
+                        msg = "To prevent generation of unethical images, we cannot allow this prompt."
                     raise e.CorruptPrompt(
                         self.username, 
                         self.user_ip, 
                         self.args.prompt, 
-                        message = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again.")
+                        message = msg)
             # Disabling as this is handled by the worker-csam-filter now
             # If I re-enable it, also make it use the prompt replacement
             # if not prompt_replaced:
@@ -945,6 +950,7 @@ class UserSingle(Resource):
     parser.add_argument("vpn", type=bool, required=False, help="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.", location="json")
     parser.add_argument("special", type=bool, required=False, help="When set to true, the user will be marked as special.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
+    parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
@@ -1056,8 +1062,17 @@ class UserSingle(Resource):
                 raise e.AnonForbidden()
             ret = user.set_contact(self.args.contact)
             if ret == "Profanity":
-                raise e.Profanity(admin.get_unique_alias(), self.args.contact, 'worker contact')
+                raise e.Profanity(admin.get_unique_alias(), self.args.contact, 'user contact')
             ret_dict["contact"] = user.contact
+        if self.args.admin_comment is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            ret = user.set_admin_comment(self.args.admin_comment)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.admin_comment, 'user admin_comment')
+            ret_dict["admin_comment"] = user.admin_comment
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)

@@ -164,6 +164,7 @@ class User(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
+    admin_comment = db.Column(db.Text, default=None)
 
     kudos = db.Column(db.BigInteger, default=0, nullable=False, index=True)
     monthly_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -359,6 +360,15 @@ class User(db.Model):
         if is_profane(new_contact):
             return("Profanity")
         self.contact = sanitize_string(new_contact)
+        db.session.commit()
+        return("OK")
+    
+    def set_admin_comment(self,new_comment):
+        if self.admin_comment == new_comment:
+            return("OK")
+        if is_profane(new_comment):
+            return("Profanity")
+        self.admin_comment = sanitize_string(new_comment)
         db.session.commit()
         return("OK")
 
@@ -751,6 +761,7 @@ class User(db.Model):
             ret_dict["evaluating_kudos"] = self.evaluating_kudos
             ret_dict["monthly_kudos"] = mk_dict
             ret_dict["suspicious"] = len(self.suspicions)
+            ret_dict['admin_comment'] = self.admin_comment
         return(ret_dict)
 
 

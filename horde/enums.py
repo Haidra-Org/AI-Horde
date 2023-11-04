@@ -29,4 +29,4 @@ class UserRoleTypes(enum.Enum):
     CUSTOMIZER = 4
     VPN = 5
     SPECIAL = 6
-
+    
