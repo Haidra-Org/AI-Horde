@@ -177,8 +177,6 @@ class PromptChecker:
 
     def nsfw_model_prompt_replace(self, prompt, models, already_replaced = False):
         # logger.debug([prompt, models])
-        if not model_reference.has_nsfw_models(models):
-            return False
         if not already_replaced:
             prompt = self.apply_replacement_filter(prompt)
         if prompt is None:
