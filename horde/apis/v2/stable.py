@@ -137,7 +137,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         #     raise e.UnsupportedSampler
         if self.args.models == ["pix2pix"] and self.params.get("sampler_name") == "DDIM":
              raise e.UnsupportedSampler("You cannot use pix2pix with the DDIM sampler")
-        logger.debug([self.args['prompt']])
         if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
         if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
