@@ -105,7 +105,7 @@ class PromptChecker:
                 }
                 for f_entry in stored_replacements
             ]
-            self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+1)
+        self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=1)
 
     def __call__(self, prompt, id = None):
         if args.disable_filters:
