@@ -945,6 +945,7 @@ class UserSingle(Resource):
     parser.add_argument("vpn", type=bool, required=False, help="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.", location="json")
     parser.add_argument("special", type=bool, required=False, help="When set to true, the user will be marked as special.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
+    parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
     decorators = [limiter.limit("60/minute", key_func = get_request_path)]
@@ -1056,8 +1057,17 @@ class UserSingle(Resource):
                 raise e.AnonForbidden()
             ret = user.set_contact(self.args.contact)
             if ret == "Profanity":
-                raise e.Profanity(admin.get_unique_alias(), self.args.contact, 'worker contact')
+                raise e.Profanity(admin.get_unique_alias(), self.args.contact, 'user contact')
             ret_dict["contact"] = user.contact
+        if self.args.admin_comment is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            if admin.is_anon():
+                raise e.AnonForbidden()
+            ret = user.set_admin_comment(self.args.admin_comment)
+            if ret == "Profanity":
+                raise e.Profanity(admin.get_unique_alias(), self.args.admin_comment, 'user admin_comment')
+            ret_dict["admin_comment"] = user.admin_comment
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!")
         return(ret_dict, 200)

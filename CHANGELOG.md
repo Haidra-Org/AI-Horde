@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.23.0
+
+* Flagged users with 0 kudos will now have have lower priority that anon
+* Replacement filter will always be applied to Flagged user prompts
+* Added user admin comments
+
 # 4.22.0
 
 Allows workers to send the `gen_metadata` key which can contain a list of dictionaries. 

@@ -130,7 +130,9 @@ class WaitingPrompt(db.Model):
         '''
         self.active = True
         if self.user.flagged and self.user.kudos > 10:
-            self.extra_priority = round(self.user.kudos / 100) 
+            self.extra_priority = round(self.user.kudos / 1000)
+        elif self.user.flagged:
+            self.extra_priority = -100
         else:    
             self.extra_priority = self.user.kudos
         # This is an extra cost for the operation as a whole, to represent the infrastructure costs
