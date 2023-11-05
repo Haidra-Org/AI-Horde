@@ -31,7 +31,7 @@ from horde import horde_redis as hr
 from horde.patreon import patrons
 from horde.detection import prompt_checker
 from horde.r2 import upload_prompt
-from horde.consts import HORDE_VERSION
+from horde.consts import HORDE_VERSION, WHITELISTED_SERVICE_IPS
 
 # Not used yet
 authorizations = {
@@ -101,6 +101,16 @@ locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 def get_request_path():
     # logger.info(dir(request))
     return f"{request.remote_addr}@{request.method}@{request.path}"
+
+def get_request_90min_limit_per_ip():
+    if request.remote_addr in WHITELISTED_SERVICE_IPS:
+        return "300/minute"
+    return "90/minute"
+
+def get_request_2sec_limit_per_ip():
+    if request.remote_addr in WHITELISTED_SERVICE_IPS:
+        return "10/second"
+    return "2/second"
 
 def get_request_api_key():
     apikey = hash_api_key(request.headers.get("apikey", 0000000000))
