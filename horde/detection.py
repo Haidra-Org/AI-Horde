@@ -47,7 +47,7 @@ class PromptChecker:
                     "replacement": "adult woman"
                 },
                 {
-                    "regex": re.compile(r"\bboy\b|\bson\b", re.IGNORECASE),
+                    "regex": re.compile(r"\bboys?\b|\bsons?\b", re.IGNORECASE),
                     "replacement": "adult man"
                 },
             ]
@@ -57,7 +57,7 @@ class PromptChecker:
                     "replacement": "adult woman"
                 },
                 {
-                    "regex": re.compile(r"\b(?<!1)boy\b|\bson\b", re.IGNORECASE),
+                    "regex": re.compile(r"\b(?<!1)boys?\b|\bsons?\b", re.IGNORECASE),
                     "replacement": "adult man"
                 },
             ]
