@@ -257,7 +257,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 
-
     def activate_waiting_prompt(self):
         self.source_image = None
         self.source_mask = None
@@ -347,6 +346,12 @@ class ImageAsyncCheck(Resource):
         # Sending lite mode to try and reduce the amount of bandwidth
         # This will not retrieve procgens, so ETA will not be completely accurate
         self.args = self.get_parser.parse_args()
+        ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
+        if ip_timeout and self.args["Client-Agent"] == "unknown:0:unknown":
+            raise e.Forbidden(
+                message = "Your IP address has been blocked due to using an unknown client which is sending too many garbage requests. Please contact us on discord.",
+                log = f"Check request via IP {request.remote_addr} on unknown client blocked."
+            )
         wp = database.get_wp_by_id(id)
         if not wp:
             raise e.RequestNotFound(id,request_type="Image Waiting Prompt (Check)",client_agent=self.args["Client-Agent"],ipaddr=request.remote_addr)

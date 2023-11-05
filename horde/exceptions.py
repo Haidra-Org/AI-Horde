@@ -2,14 +2,14 @@ from werkzeug import exceptions as wze
 from horde.logger import logger
 
 class BadRequest(wze.BadRequest):
-    def __init__(self, message):
+    def __init__(self, message, log = None):
         self.specific = message
-        self.log = None
+        self.log = log
 
 class Forbidden(wze.Forbidden):
-    def __init__(self, message):
+    def __init__(self, message, log = None):
         self.specific = message
-        self.log = None
+        self.log = log
 
 class MissingPrompt(wze.BadRequest):
     def __init__(self, username):
