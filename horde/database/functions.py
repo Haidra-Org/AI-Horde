@@ -433,6 +433,7 @@ def count_waiting_requests(user, models = None, request_type = "image"):
             WPModels.model.in_(models),
             wp_class.user_id == user.id,
             wp_class.faulted == False,
+            wp_class.active == True,
             wp_class.n >= 1,
         ).scalar()
         if known_model_query is None:
