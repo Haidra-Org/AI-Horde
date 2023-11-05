@@ -26,7 +26,7 @@ class ImageAsyncGenerate(GenerateTemplate):
     decorators = [
         limiter.limit(limit_value = get_request_90min_limit_per_ip, key_func = get_request_path), 
         limiter.limit(limit_value = get_request_2sec_limit_per_ip, key_func = get_request_path),
-        limiter.limit("2/second", key_func = get_request_api_key),
+        limiter.limit(limit_value = get_request_limit_per_apikey, key_func = get_request_api_key),
     ]
     @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(models.response_model_async, code=202, description='Generation Queued', skip_none=True)
