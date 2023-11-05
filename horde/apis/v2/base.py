@@ -113,9 +113,14 @@ def get_request_2sec_limit_per_ip():
     return "2/second"
 
 def get_request_api_key():
-    apikey = hash_api_key(request.headers.get("apikey", 0000000000))
+    apikey = hash_api_key(request.headers.get("apikey", "0000000000"))
     return f"{apikey}@{request.method}@{request.path}"
 
+def get_request_limit_per_apikey():
+    apikey = request.headers.get("apikey", "0000000000")
+    if apikey == "0000000000":
+        return "60/second"
+    return "2/second"
 
 def check_for_mod(api_key, operation, whitelisted_users = None):
     mod = database.find_user_by_api_key(api_key)
