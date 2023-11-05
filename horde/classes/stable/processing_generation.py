@@ -97,6 +97,13 @@ class ImageProcessingGeneration(ProcessingGeneration):
         record_image_statistic(self)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
+        if state == 'csam':
+            self.wp.user.record_problem_job(
+                procgen = self,
+                ipaddr = self.wp.ipaddr,
+                worker = self.worker,
+                prompt = self.wp.prompt,
+            )
         return(kudos)
         
     def upload_generation_metadata(self):
