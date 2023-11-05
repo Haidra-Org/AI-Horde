@@ -809,7 +809,7 @@ class User(db.Model):
         )
         db.session.add(new_problem_job)
         db.session.commit()
-        HOURLY_THRESHOLD = 1
+        HOURLY_THRESHOLD = 50
         DAILY_THRESHOLD = 200
         if not self.is_anon():
             user_count_q = UserProblemJobs.query.filter_by(
