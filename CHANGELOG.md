@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.24.0
+
+* Notifies mods on too many gens being censored as csam
+
 # 4.23.0
 
 * Flagged users with 0 kudos will now have have lower priority that anon
