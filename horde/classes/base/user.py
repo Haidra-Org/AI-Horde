@@ -812,7 +812,7 @@ class User(db.Model):
             user_id=self.id
         )
         user_hourly = user_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
         ).count()
         if user_hourly > HOURLY_THRESHOLD:
             if hr.horde_r_get(f"user_{self.id}_hourly_problem_notified"):
@@ -826,7 +826,7 @@ class User(db.Model):
             hr.horde_r_setex(f"user_{self.id}_hourly_problem_notified", timedelta(hours=1), 1)
             return
         user_daily = user_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(days=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
         ).count()
         if user_daily > DAILY_THRESHOLD:
             # We don't want to spam notifications
@@ -844,7 +844,7 @@ class User(db.Model):
             ipaddr=ipaddr
         )
         ip_hourly = ip_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
         ).count()        
         if ip_hourly > HOURLY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_hourly_problem_notified"):
@@ -858,7 +858,7 @@ class User(db.Model):
             hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
             return
         ip_daily = ip_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
         ).count()
         if ip_daily > DAILY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_daily_problem_notified"):
