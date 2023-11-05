@@ -19,3 +19,10 @@ def send_pause_notification(message: str):
         logger.warning("Cannot send Pause notification. No DISCORD_PAUSED_NOTICE_WEBHOOK set")
         return
     send_webhook(webhook_url,message)
+    
+def send_problem_user_notification(message: str):
+    webhook_url = os.getenv("DISCORD_PROBLEM_USER_WEBHOOK")
+    if not webhook_url:
+        logger.warning("Cannot send Pause notification. No DISCORD_PROBLEM_USER_WEBHOOK set")
+        return
+    send_webhook(webhook_url,message)

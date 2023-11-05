@@ -103,6 +103,7 @@ class WorkerTemplate(db.Model):
     stats = db.relationship("WorkerStats", back_populates="worker", cascade="all, delete-orphan")
     performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete-orphan")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
+    problem_jobs = db.relationship("UserProblemJobs", back_populates="worker", cascade="all, delete-orphan")
 
     require_upfront_kudos = False
     prioritized_users = []

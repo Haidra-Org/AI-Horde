@@ -1,8 +1,9 @@
 import uuid
 import os
+import ipaddress
 
 import dateutil.relativedelta
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy import Enum, UniqueConstraint
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -17,6 +18,9 @@ from horde.utils import is_profane, sanitize_string, generate_client_id
 from horde.patreon import patrons
 from horde.enums import UserRecordTypes, UserRoleTypes
 from horde.utils import get_db_uuid
+from horde.discord import send_problem_user_notification
+from horde import horde_redis as hr
+from horde.countermeasures import CounterMeasures
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
@@ -26,8 +30,12 @@ class UserProblemJobs(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     user = db.relationship("User", back_populates="problem_jobs")
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
+    worker = db.relationship(f"Worker", back_populates="problem_jobs")
+    ipaddr = db.Column(db.String(39), nullable=False, index=True)
+    # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
     job_id = db.Column(uuid_column_type(), nullable=False)
-    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class UserStats(db.Model):
@@ -192,6 +200,7 @@ class User(db.Model):
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
     roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
+    problem_jobs = db.relationship("UserProblemJobs", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
@@ -785,3 +794,81 @@ class User(db.Model):
             new_kd = UserStats(user_id=self.id, action=key, value=kudos_details[key])
             db.session.add(new_kd)
         db.session.commit()
+
+    def record_problem_job(self, procgen, ipaddr, worker, prompt):
+        if CounterMeasures.is_ipv6(ipaddr):
+            ipaddr = CounterMeasures.extract_ipv6_subnet(ipaddr)        
+        new_problem_job = UserProblemJobs(
+            user_id=self.id,
+            ipaddr=ipaddr,
+            job_id=procgen.id,
+            worker_id=worker.id,
+        )
+        db.session.add(new_problem_job)
+        db.session.commit()
+        HOURLY_THRESHOLD = 50
+        DAILY_THRESHOLD = 200
+        user_count_q = UserProblemJobs.query.filter_by(
+            user_id=self.id
+        )
+        user_hourly = user_count_q.filter(
+            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+1)
+        ).count()
+        if user_hourly > HOURLY_THRESHOLD:
+            if hr.horde_r_get(f"user_{self.id}_hourly_problem_notified"):
+                return
+            send_problem_user_notification(
+                f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
+                f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})"
+                f"Latest IP: {ipaddr}.\n"
+                f"Latest Prompt: {prompt}."
+            )
+            hr.horde_r_setex(f"user_{self.id}_hourly_problem_notified", timedelta(hours=1), 1)
+            return
+        user_daily = user_count_q.filter(
+            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(days=+1)
+        ).count()
+        if user_daily > DAILY_THRESHOLD:
+            # We don't want to spam notifications
+            if hr.horde_r_get(f"user_{self.id}_daily_problem_notified"):
+                return
+            send_problem_user_notification(
+                f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
+                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}"
+                f"Latest IP: {ipaddr}.\n"
+                f"Latest Prompt: {prompt}."
+            )
+            hr.horde_r_setex(f"user_{self.id}_daily_problem_notified", timedelta(days=1), 1)
+            return
+        ip_count_q = UserProblemJobs.query.filter_by(
+            ipaddr=ipaddr
+        )
+        ip_hourly = ip_count_q.filter(
+            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+1)
+        ).count()        
+        if ip_hourly > HOURLY_THRESHOLD:
+            if hr.horde_r_get(f"ip_{ipaddr}_hourly_problem_notified"):
+                return
+            send_problem_user_notification(
+                f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
+                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}"
+                f"Latest User: {self.get_unique_alias()}.\n"
+                f"Latest Prompt: {prompt}."
+            )
+            hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
+            return
+        ip_daily = ip_count_q.filter(
+            UserProblemJobs.created > datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+1)
+        ).count()
+        if ip_daily > DAILY_THRESHOLD:
+            if hr.horde_r_get(f"ip_{ipaddr}_daily_problem_notified"):
+                return
+            send_problem_user_notification(
+                f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
+                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}"
+                f"Latest User: {self.get_unique_alias()}.\n"
+                f"Latest Prompt: {prompt}."
+            )
+            hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)
+            return
+
