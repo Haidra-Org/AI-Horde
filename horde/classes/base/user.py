@@ -819,7 +819,7 @@ class User(db.Model):
                 return
             send_problem_user_notification(
                 f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})"
+                f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
                 f"Latest IP: {ipaddr}.\n"
                 f"Latest Prompt: {prompt}."
             )
@@ -834,7 +834,7 @@ class User(db.Model):
                 return
             send_problem_user_notification(
                 f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
-                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}"
+                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest IP: {ipaddr}.\n"
                 f"Latest Prompt: {prompt}."
             )
@@ -851,7 +851,7 @@ class User(db.Model):
                 return
             send_problem_user_notification(
                 f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}"
+                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {self.get_unique_alias()}.\n"
                 f"Latest Prompt: {prompt}."
             )
@@ -865,7 +865,7 @@ class User(db.Model):
                 return
             send_problem_user_notification(
                 f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}"
+                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {self.get_unique_alias()}.\n"
                 f"Latest Prompt: {prompt}."
             )
