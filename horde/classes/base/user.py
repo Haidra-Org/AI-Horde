@@ -806,7 +806,7 @@ class User(db.Model):
         )
         db.session.add(new_problem_job)
         db.session.commit()
-        HOURLY_THRESHOLD = 50
+        HOURLY_THRESHOLD = 1
         DAILY_THRESHOLD = 200
         user_count_q = UserProblemJobs.query.filter_by(
             user_id=self.id
