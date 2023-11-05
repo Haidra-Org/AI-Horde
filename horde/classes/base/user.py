@@ -21,6 +21,15 @@ from horde.utils import get_db_uuid
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 
+class UserProblemJobs(db.Model):
+    __tablename__ = "user_problem_jobs"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user = db.relationship("User", back_populates="problem_jobs")
+    job_id = db.Column(uuid_column_type(), nullable=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
 class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
