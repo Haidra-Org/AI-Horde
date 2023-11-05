@@ -796,6 +796,9 @@ class User(db.Model):
         db.session.commit()
 
     def record_problem_job(self, procgen, ipaddr, worker, prompt):
+        # We do not report the admin as they do dev work often.
+        if self.id == 1:
+            return
         if CounterMeasures.is_ipv6(ipaddr):
             ipaddr = CounterMeasures.extract_ipv6_subnet(ipaddr)        
         new_problem_job = UserProblemJobs(
@@ -808,38 +811,39 @@ class User(db.Model):
         db.session.commit()
         HOURLY_THRESHOLD = 1
         DAILY_THRESHOLD = 200
-        user_count_q = UserProblemJobs.query.filter_by(
-            user_id=self.id
-        )
-        user_hourly = user_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
-        ).count()
-        if user_hourly > HOURLY_THRESHOLD:
-            if hr.horde_r_get(f"user_{self.id}_hourly_problem_notified"):
-                return
-            send_problem_user_notification(
-                f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
-                f"Latest IP: {ipaddr}.\n"
-                f"Latest Prompt: {prompt}."
+        if not self.is_anon():
+            user_count_q = UserProblemJobs.query.filter_by(
+                user_id=self.id
             )
-            hr.horde_r_setex(f"user_{self.id}_hourly_problem_notified", timedelta(hours=1), 1)
-            return
-        user_daily = user_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
-        ).count()
-        if user_daily > DAILY_THRESHOLD:
-            # We don't want to spam notifications
-            if hr.horde_r_get(f"user_{self.id}_daily_problem_notified"):
+            user_hourly = user_count_q.filter(
+                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+            ).count()
+            if user_hourly > HOURLY_THRESHOLD:
+                if hr.horde_r_get(f"user_{self.id}_hourly_problem_notified"):
+                    return
+                send_problem_user_notification(
+                    f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
+                    f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
+                    f"Latest IP: {ipaddr}.\n"
+                    f"Latest Prompt: {prompt}."
+                )
+                hr.horde_r_setex(f"user_{self.id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
-            send_problem_user_notification(
-                f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
-                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
-                f"Latest IP: {ipaddr}.\n"
-                f"Latest Prompt: {prompt}."
-            )
-            hr.horde_r_setex(f"user_{self.id}_daily_problem_notified", timedelta(days=1), 1)
-            return
+            user_daily = user_count_q.filter(
+                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
+            ).count()
+            if user_daily > DAILY_THRESHOLD:
+                # We don't want to spam notifications
+                if hr.horde_r_get(f"user_{self.id}_daily_problem_notified"):
+                    return
+                send_problem_user_notification(
+                    f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
+                    f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
+                    f"Latest IP: {ipaddr}.\n"
+                    f"Latest Prompt: {prompt}."
+                )
+                hr.horde_r_setex(f"user_{self.id}_daily_problem_notified", timedelta(days=1), 1)
+                return
         ip_count_q = UserProblemJobs.query.filter_by(
             ipaddr=ipaddr
         )
