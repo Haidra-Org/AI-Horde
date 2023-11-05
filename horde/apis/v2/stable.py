@@ -197,6 +197,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         if (self.sharedkey and self.sharedkey.kudos != -1) or needs_kudos:
             required_kudos = self.wp.extrapolate_dry_run_kudos()
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
+            self.wp.delete()
             raise e.KudosUpfront(
                 required_kudos, 
                 self.username, 
@@ -204,6 +205,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             )
         if needs_kudos is True:
             if required_kudos > self.user.kudos:
+                self.wp.delete()
                 raise e.KudosUpfront(
                     required_kudos, 
                     self.username, 
@@ -229,6 +231,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 image_steps = requested_steps,
             )
             if not is_in_limit:
+                self.wp.delete()
                 raise e.BadRequest(fail_message)
 
     def extrapolate_dry_run_kudos(self):

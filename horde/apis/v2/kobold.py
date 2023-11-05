@@ -73,6 +73,7 @@ class TextAsyncGenerate(GenerateTemplate):
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
+            self.wp.delete()
             raise e.KudosUpfront(
                 required_kudos, 
                 self.username, 
@@ -81,6 +82,7 @@ class TextAsyncGenerate(GenerateTemplate):
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
         if needs_kudos:
             if required_kudos > self.user.kudos:
+                self.wp.delete()
                 raise e.KudosUpfront(
                     required_kudos, 
                     self.username, 
@@ -92,6 +94,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 text_tokens = self.wp.max_length, 
             )
             if not is_in_limit:
+                self.wp.delete()
                 raise e.BadRequest(fail_message)
 
     def get_size_too_big_message(self):
