@@ -95,8 +95,12 @@ class ProcessingGeneration(db.Model):
         else:
             self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
             self.wp.record_usage(raw_things = self.wp.things, kudos = self.adjust_user_kudos(kudos))
-            logger.info(f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
-                f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])")
+            log_string = f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} " + \
+                f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
+
+            if self.wp.censor_nsfw is not True:
+                log_string += f" (censored: {self.censored})"
+            logger.info(log_string)
 
     def adjust_user_kudos(self, kudos):
         if self.censored:
