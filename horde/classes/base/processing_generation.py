@@ -97,9 +97,6 @@ class ProcessingGeneration(db.Model):
             self.wp.record_usage(raw_things = self.wp.things, kudos = self.adjust_user_kudos(kudos)) 
             log_string = f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
             log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
-
-            if self.wp.censor_nsfw is not True:
-                log_string += f" (censored: {self.censored})"
             logger.info(log_string)
 
     def adjust_user_kudos(self, kudos):
