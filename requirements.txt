@@ -20,7 +20,7 @@ flask_sqlalchemy==3.0.2
 oauthlib~=3.2.2
 SQLAlchemy~=1.4.44
 psycopg2-binary
-boto3
+boto3>=1.33.7
 regex
 unidecode
 git+https://github.com/Patreon/patreon-python.git

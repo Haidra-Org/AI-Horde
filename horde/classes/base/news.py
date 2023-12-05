@@ -4,6 +4,13 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-11-23",
+            "newspiece": 
+                "The AI Horde will receive [an NLNet Grant!](https://dbzer0.com/blog/ai-horde-to-receive-nlnet-grant/)",
+            "tags": ["devlog", "funding"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-09-03",
             "newspiece": 
                 "The AI Horde is officially [one year old!](https://dbzer0.com/blog/year-one-of-the-ai-horde/)",
