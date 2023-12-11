@@ -28,13 +28,19 @@ else:
 
 def horde_r_set(key, value):
     for hr in all_horde_redis:
-        hr.set(key, value)
+        try:
+            hr.set(key, value)
+        except Exception as err:
+            logger.warning("Exception when writing in redis servers {hr}: {err}")
     if horde_local_r:
         horde_local_r.setex(key, timedelta(10), value)
 
 def horde_r_setex(key, expiry, value):
     for hr in all_horde_redis:
-        hr.setex(key, expiry, value)
+        try:
+            hr.setex(key, expiry, value)
+        except Exception as err:
+            logger.warning(f"Exception when writing in redis servers {hr}: {err}")
     # We don't keep local cache for more than 5 seconds
     if expiry > timedelta(5):
         expiry = timedelta(5)
