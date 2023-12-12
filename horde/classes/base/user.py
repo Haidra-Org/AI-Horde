@@ -33,6 +33,7 @@ class UserProblemJobs(db.Model):
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False)
     worker = db.relationship(f"Worker", back_populates="problem_jobs")
     ipaddr = db.Column(db.String(39), nullable=False, index=True)
+    proxied_account = db.Column(db.String(255), nullable=True, index=True)
     # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
     job_id = db.Column(uuid_column_type(), nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
@@ -311,6 +312,26 @@ class User(db.Model):
         subquery = db.session.query(UserRole.user_id
             ).filter(
                 UserRole.user_role == UserRoleTypes.VPN,
+                UserRole.value == True,
+                UserRole.user_id == cls.id
+            ).correlate(
+                cls
+            ).as_scalar()
+        return cls.id == subquery
+
+    @hybrid_property
+    def service(self) -> bool:
+        user_role = UserRole.query.filter_by(
+            user_id=self.id, 
+            user_role=UserRoleTypes.SERVICE
+        ).first()
+        return user_role is not None and user_role.value
+
+    @service.expression
+    def service(cls):
+        subquery = db.session.query(UserRole.user_id
+            ).filter(
+                UserRole.user_role == UserRoleTypes.SERVICE,
                 UserRole.value == True,
                 UserRole.user_id == cls.id
             ).correlate(
@@ -806,20 +827,27 @@ class User(db.Model):
             ipaddr=ipaddr,
             job_id=procgen.id,
             worker_id=worker.id,
+            proxied_account=procgen.wp.proxied_account,
         )
         db.session.add(new_problem_job)
         db.session.commit()
         HOURLY_THRESHOLD = 50
         DAILY_THRESHOLD = 200
+        redis_id = self.id
+        latest_user = self.get_unique_alias()
+        if self.service:
+            redis_id = f"{self.id}:{procgen.wp.proxied_account}" 
+            latest_user = f"{self.get_unique_alias()}:{procgen.wp.proxied_account}" 
         if not self.is_anon():
             user_count_q = UserProblemJobs.query.filter_by(
-                user_id=self.id
+                user_id=self.id,
+                proxied_account = procgen.wp.proxied_account,
             )
             user_hourly = user_count_q.filter(
                 UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
             ).count()
             if user_hourly > HOURLY_THRESHOLD:
-                if hr.horde_r_get(f"user_{self.id}_hourly_problem_notified"):
+                if hr.horde_r_get(f"user_{redis_id}_hourly_problem_notified"):
                     return
                 send_problem_user_notification(
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
@@ -827,14 +855,14 @@ class User(db.Model):
                     f"Latest IP: {ipaddr}.\n"
                     f"Latest Prompt: {prompt}."
                 )
-                hr.horde_r_setex(f"user_{self.id}_hourly_problem_notified", timedelta(hours=1), 1)
+                hr.horde_r_setex(f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
             user_daily = user_count_q.filter(
                 UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
             ).count()
             if user_daily > DAILY_THRESHOLD:
                 # We don't want to spam notifications
-                if hr.horde_r_get(f"user_{self.id}_daily_problem_notified"):
+                if hr.horde_r_get(f"user_{redis_id}_daily_problem_notified"):
                     return
                 send_problem_user_notification(
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
@@ -842,7 +870,7 @@ class User(db.Model):
                     f"Latest IP: {ipaddr}.\n"
                     f"Latest Prompt: {prompt}."
                 )
-                hr.horde_r_setex(f"user_{self.id}_daily_problem_notified", timedelta(days=1), 1)
+                hr.horde_r_setex(f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1)
                 return
         ip_count_q = UserProblemJobs.query.filter_by(
             ipaddr=ipaddr
@@ -856,7 +884,7 @@ class User(db.Model):
             send_problem_user_notification(
                 f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
-                f"Latest User: {self.get_unique_alias()}.\n"
+                f"Latest User: {latest_user}.\n"
                 f"Latest Prompt: {prompt}."
             )
             hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
@@ -870,7 +898,7 @@ class User(db.Model):
             send_problem_user_notification(
                 f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
-                f"Latest User: {self.get_unique_alias()}.\n"
+                f"Latest User: {latest_user}.\n"
                 f"Latest Prompt: {prompt}."
             )
             hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)

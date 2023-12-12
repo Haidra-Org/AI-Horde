@@ -208,6 +208,8 @@ class GenerateTemplate(Resource):
             #logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey('generation')
+            if not self.user.service and self.args['proxied_account']:
+                raise e.BadRequest("Only service accounts can provide a proxied_account value.")
             self.username = self.user.get_unique_alias()
             #logger.warning(datetime.utcnow())
             if self.args['prompt'] == '':

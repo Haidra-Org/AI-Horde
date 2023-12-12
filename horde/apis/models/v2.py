@@ -14,6 +14,7 @@ class Parsers:
         self.generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
         self.generate_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
         self.generate_parser.add_argument("dry_run", type=bool, default=False, required=False, help="When false, the endpoint will simply return the cost of the request in kudos and exit.", location="json")
+        self.generate_parser.add_argument("proxied_account", type=str, required=False, help="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.", location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()

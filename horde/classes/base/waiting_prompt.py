@@ -89,6 +89,7 @@ class WaitingPrompt(db.Model):
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
     sharedkey_id = db.Column(uuid_column_type(), db.ForeignKey("user_sharedkeys.id", ondelete="CASCADE"), nullable=True)
     sharedkey = db.relationship("UserSharedKey", back_populates="waiting_prompts")
+    proxied_account = db.Column(db.String(255), nullable=True)
 
     tricked_workers = db.relationship("WPTrickedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
     workers = db.relationship("WPAllowedWorkers", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
