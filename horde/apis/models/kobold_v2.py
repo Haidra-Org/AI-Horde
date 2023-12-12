@@ -86,6 +86,7 @@ class TextModels(v2.Models):
             'worker_blacklist': fields.Boolean(default=False,required=False,description="If true, the worker list will be treated as a blacklist instead of a whitelist."),
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request.")),
             'dry_run': fields.Boolean(default=False,description="When false, the endpoint will simply return the cost of the request in kudos and exit."),
+            'proxied_account': fields.String(description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsKobold', self.response_model_contrib_details, {
             "tokens": fields.Float(description="How many tokens this user has generated."),
