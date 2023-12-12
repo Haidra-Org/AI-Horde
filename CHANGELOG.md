@@ -4,6 +4,8 @@
 
 * Added service account role
 * service account can now report their proxied accounts.
+* Validates IP addresses added to the bans
+* Added min_p to LLM payloads
 
 # 4.24.0
 
