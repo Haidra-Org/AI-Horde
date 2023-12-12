@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.25.0
+
+* Added service account role
+* service account can now report their proxied accounts.
+
 # 4.24.0
 
 * Notifies mods on too many gens being censored as csam
