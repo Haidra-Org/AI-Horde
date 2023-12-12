@@ -471,6 +471,11 @@ class User(db.Model):
             return
         self.set_user_role(UserRoleTypes.VPN, is_vpn)
 
+    def set_service(self, is_service):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.SERVICE, is_service)
+
     def set_special(self, is_special):
         if self.is_anon():
             return
