@@ -781,6 +781,7 @@ class User(db.Model):
             "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
             "account_age": (datetime.utcnow() - self.created).total_seconds(),
+            "service": self.service
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }
@@ -789,14 +790,14 @@ class User(db.Model):
             for worker in self.workers:
                 workers_array.append(str(worker.id))
             ret_dict["worker_ids"] = workers_array
-            ret_dict['contact'] = self.contact
-            ret_dict['vpn'] = self.vpn
-            ret_dict['special'] = self.special
         if details_privilege >= 1:
             sharedkeys_array = []
             for sk in self.sharedkeys:
                 sharedkeys_array.append(str(sk.id))
             ret_dict["sharedkey_ids"] = sharedkeys_array
+            ret_dict['contact'] = self.contact
+            ret_dict['vpn'] = self.vpn
+            ret_dict['special'] = self.special
         if details_privilege >= 2:
             mk_dict = {
                 "amount": self.calculate_monthly_kudos(),
