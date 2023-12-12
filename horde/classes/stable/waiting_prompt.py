@@ -188,8 +188,11 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.source_image:
             prompt_type = self.source_processing
         self.calculate_kudos()
+        proxied_account = ''
+        if self.proxied_account:
+            proxied_account = f":{self.proxied_account}"
         logger.info(
-            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()} ({self.ipaddr}) ({self.client_agent}): "
+            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} ({self.ipaddr}) ({self.client_agent}): "
             f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} == {self.total_usage} Total MPs for {self.kudos} kudos."
         )
 

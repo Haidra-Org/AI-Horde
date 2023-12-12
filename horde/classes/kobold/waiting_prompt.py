@@ -44,7 +44,9 @@ class TextWaitingPrompt(WaitingPrompt):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
-        logger.info(f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
+        if self.proxied_account:
+            proxied_account = f":{self.proxied_account}"
+        logger.info(f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
 
     def calculate_extra_kudos_burn(self, kudos):
         # This represents the cost of using the resources of the horde

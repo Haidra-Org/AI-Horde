@@ -1,0 +1,4 @@
+ALTER TYPE userroletypes ADD VALUE 'SERVICE';
+ALTER TABLE waiting_prompts ADD COLUMN proxied_account VARCHAR(255);
+ALTER TABLE user_problem_jobs ADD COLUMN proxied_account VARCHAR(255);
+

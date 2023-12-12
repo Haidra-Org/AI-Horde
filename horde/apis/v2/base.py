@@ -208,6 +208,8 @@ class GenerateTemplate(Resource):
             #logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey('generation')
+            if not self.user.service and self.args['proxied_account']:
+                raise e.BadRequest("Only service accounts can provide a proxied_account value.")
             self.username = self.user.get_unique_alias()
             #logger.warning(datetime.utcnow())
             if self.args['prompt'] == '':
@@ -963,6 +965,7 @@ class UserSingle(Resource):
     parser.add_argument("flagged", type=bool, required=False, help="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance.", location="json")
     parser.add_argument("customizer", type=bool, required=False, help="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference.", location="json")
     parser.add_argument("vpn", type=bool, required=False, help="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.", location="json")
+    parser.add_argument("service", type=bool, required=False, location="json")
     parser.add_argument("special", type=bool, required=False, help="When set to true, the user will be marked as special.", location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("admin_comment", type=str, required=False, location="json")
@@ -1041,6 +1044,11 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
             user.set_vpn(self.args.vpn)
             ret_dict["vpn"] = user.vpn
+        if self.args.service is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
+            user.set_service(self.args.service)
+            ret_dict["service"] = user.service
         if self.args.special is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), 'PUT UserSingle')
@@ -1505,6 +1513,8 @@ class OperationsIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.post_parser.parse_args()
+        if not CounterMeasures.is_valid_ip(self.args.ipaddr):
+            raise e.BadRequest("Invalid IP Address")
         check_for_mod(self.args.apikey, 'POST OperationsIP')
         if len(self.args.ipaddr.split('/')) == 2:
             CounterMeasures.set_block_timeout(self.args.ipaddr,self.args.hours*60)
@@ -1527,6 +1537,8 @@ class OperationsIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.delete_parser.parse_args()
+        if not CounterMeasures.is_valid_ip(self.args.ipaddr):
+            raise e.BadRequest("Invalid IP Address")
         check_for_mod(self.args.apikey, 'DELETE OperationsIP')
         if len(self.args.ipaddr.split('/')) == 2:
             CounterMeasures.delete_block_timeout(self.args.ipaddr)
@@ -1548,6 +1560,8 @@ class OperationsIPSingle(Resource):
         '''Check if an IP or CIDR is in timeout.
         '''
         self.args = self.get_parser.parse_args()
+        if not CounterMeasures.is_valid_ip(ipaddr):
+            raise e.BadRequest("Invalid IP Address")
         check_for_mod(self.args.apikey, 'GET OperationsIPSingle')        
         timeouts = CounterMeasures.get_block_timeouts_matching_ip(ipaddr)
         direct_timeout = CounterMeasures.retrieve_timeout(ipaddr, True)

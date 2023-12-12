@@ -14,6 +14,7 @@ class Parsers:
         self.generate_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.", location="json")
         self.generate_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
         self.generate_parser.add_argument("dry_run", type=bool, default=False, required=False, help="When false, the endpoint will simply return the cost of the request in kudos and exit.", location="json")
+        self.generate_parser.add_argument("proxied_account", type=str, required=False, help="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.", location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
@@ -260,8 +261,9 @@ class Models:
             "sharedkey_ids": fields.List(fields.String(description="(Privileged) The list of shared key IDs created by this user.", example="00000000-0000-0000-0000-000000000000")),
             "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
             "trusted": fields.Boolean(example=False,description="This user is a trusted member of the Horde."),
-            "flagged": fields.Boolean(example=False,description="This user has been flagged for suspicious activity."),
+            "flagged": fields.Boolean(example=False,description="(Privileged) This user has been flagged for suspicious activity."),
             "vpn": fields.Boolean(example=False,description="(Privileged) This user has been given the VPN role."),
+            "service": fields.Boolean(example=False,description="This is a service account used by a horde proxy."),
             "special": fields.Boolean(example=False,description="(Privileged) This user has been given the Special role."),
             "suspicious": fields.Integer(example=0,description="(Privileged) How much suspicion this user has accumulated."),
             "pseudonymous": fields.Boolean(example=False,description="If true, this user has not registered using an oauth service."),
@@ -286,6 +288,7 @@ class Models:
             "flagged": fields.Boolean(example=False,description="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance."),
             "customizer": fields.Boolean(example=False,description="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference."),
             "vpn": fields.Boolean(example=False,description="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted."),
+            "service": fields.Boolean(example=False,description="When set to true, the user is considered a service account proxying the requests for other users."),
             "special": fields.Boolean(example=False,description="When set to true, The user can send special payloads."),
             "filtered": fields.Boolean(example=False,description="When set to true, the replacement filter will always be applied against this user"),
             "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
@@ -306,6 +309,7 @@ class Models:
             "flagged": fields.Boolean(description="The user's new flagged status."),
             "customizer": fields.Boolean(description="The user's new customizer status."),
             "vpn": fields.Boolean(description="The user's new vpn status."),
+            "service": fields.Boolean(description="The user's new service status."),
             "special": fields.Boolean(description="The user's new special status."),
             "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
             "contact": fields.String(example="email@example.com", description="The new contact details."),
