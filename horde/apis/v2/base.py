@@ -1507,6 +1507,8 @@ class OperationsIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.post_parser.parse_args()
+        if not CounterMeasures.is_valid_ip(self.args.ipaddr):
+            raise e.BadRequest("Invalid IP Address")
         check_for_mod(self.args.apikey, 'POST OperationsIP')
         if len(self.args.ipaddr.split('/')) == 2:
             CounterMeasures.set_block_timeout(self.args.ipaddr,self.args.hours*60)
@@ -1529,6 +1531,8 @@ class OperationsIP(Resource):
         Only usable by horde moderators
         '''
         self.args = self.delete_parser.parse_args()
+        if not CounterMeasures.is_valid_ip(self.args.ipaddr):
+            raise e.BadRequest("Invalid IP Address")
         check_for_mod(self.args.apikey, 'DELETE OperationsIP')
         if len(self.args.ipaddr.split('/')) == 2:
             CounterMeasures.delete_block_timeout(self.args.ipaddr)
@@ -1550,6 +1554,8 @@ class OperationsIPSingle(Resource):
         '''Check if an IP or CIDR is in timeout.
         '''
         self.args = self.get_parser.parse_args()
+        if not CounterMeasures.is_valid_ip(ipaddr):
+            raise e.BadRequest("Invalid IP Address")
         check_for_mod(self.args.apikey, 'GET OperationsIPSingle')        
         timeouts = CounterMeasures.get_block_timeouts_matching_ip(ipaddr)
         direct_timeout = CounterMeasures.retrieve_timeout(ipaddr, True)

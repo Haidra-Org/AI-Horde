@@ -220,6 +220,22 @@ class CounterMeasures:
 			return False
 
 	@staticmethod
+	def is_ipv4(ipaddr):
+		try:
+			ipaddress.IPv4Address(ipaddr)
+			return True
+		except ipaddress.AddressValueError:
+			return False
+
+	@staticmethod
+	def is_valid_ip(ipaddr):
+		if CounterMeasures.is_ipv4(ipaddr):
+			return True
+		if CounterMeasures.is_ipv6(ipaddr):
+			return True
+		return False
+
+	@staticmethod
 	def extract_ipv6_subnet(ipaddr, subnet_prefix_length=64):
 		try:
 			ip = ipaddress.IPv6Address(ipaddr)
