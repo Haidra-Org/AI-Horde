@@ -217,7 +217,11 @@ class CounterMeasures:
 			ipaddress.IPv6Address(ipaddr)
 			return True
 		except ipaddress.AddressValueError:
-			return False
+			try:
+				ipaddress.IPv6Network(ipaddr)
+				return True
+			except ipaddress.AddressValueError:
+				return False
 
 	@staticmethod
 	def is_ipv4(ipaddr):
@@ -225,7 +229,11 @@ class CounterMeasures:
 			ipaddress.IPv4Address(ipaddr)
 			return True
 		except ipaddress.AddressValueError:
-			return False
+			try:
+				ipaddress.IPv4Network(ipaddr)
+				return True
+			except ipaddress.AddressValueError:
+				return False
 
 	@staticmethod
 	def is_valid_ip(ipaddr):
