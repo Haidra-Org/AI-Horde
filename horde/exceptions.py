@@ -170,7 +170,22 @@ class UnsafeIP(wze.Forbidden):
 
 class TimeoutIP(wze.Forbidden):
     def __init__(self, ipaddr, ttl, connect_type='Client'):
-        self.specific = f"Due to abuse prevention, your IP address has been put into timeout for {ttl} more seconds. Please try again later, or contact us on discord if you think this was an error."
+        base_message = "Due to abuse prevention, your IP address has been put into timeout for {ttl} more seconds. Please try again later, or contact us on discord if you think this was an error."
+        non_atomic_message = "Due to abuse prevention, your IP address has been put into timeout. Please try again later, or contact us on discord if you think this was an error."
+
+        try:
+            ttl = int(ttl)
+        except ValueError:
+            logger.warning(f"Invalid TTL value: {ttl} during timeout IP for {ipaddr}")
+            ttl = None
+
+        if ttl is None:
+            self.specific = non_atomic_message
+        elif ttl > (60*60*24*4):
+            self.specific = non_atomic_message
+        else:
+            self.specific = base_message.format(ttl=ttl)
+        
         self.log = f"{connect_type} attempted to connect from {ipaddr} while in {ttl} seconds timeout"
 
 class TooManyNewIPs(wze.Forbidden):
