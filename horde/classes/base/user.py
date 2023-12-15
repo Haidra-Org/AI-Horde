@@ -847,7 +847,10 @@ class User(db.Model):
         loras = ""
         if "loras" in procgen.wp.params:
             loras = f"\nLatest LoRas: {[l['name'] for l in procgen.wp.params['loras']]}."
-        if not self.is_anon():
+        # Manual exception for pawky as they won't add proxied_accounts for a while
+        # And I'm tired of seeing reports from their user instead of from IPs
+        # TODO: Remove id check once pawkygame adds proxied_accounts
+        if not self.is_anon() and self.id != 1560:
             user_count_q = UserProblemJobs.query.filter_by(
                 user_id=self.id,
                 proxied_account = procgen.wp.proxied_account,
