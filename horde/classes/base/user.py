@@ -844,6 +844,9 @@ class User(db.Model):
         if self.service:
             redis_id = f"{self.id}:{procgen.wp.proxied_account}" 
             latest_user = f"{self.get_unique_alias()}:{procgen.wp.proxied_account}" 
+        loras = ""
+        if "loras" in procgen.wp.params:
+            loras = f"\nLatest LoRas: {[l['name'] for l in procgen.wp.params['loras']]}."
         if not self.is_anon():
             user_count_q = UserProblemJobs.query.filter_by(
                 user_id=self.id,
@@ -859,7 +862,7 @@ class User(db.Model):
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                     f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
                     f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}."
+                    f"Latest Prompt: {prompt}.{loras}"
                 )
                 hr.horde_r_setex(f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
@@ -874,7 +877,7 @@ class User(db.Model):
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
                     f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                     f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}."
+                    f"Latest Prompt: {prompt}.{loras}"
                 )
                 hr.horde_r_setex(f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1)
                 return
@@ -891,7 +894,7 @@ class User(db.Model):
                 f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}."
+                f"Latest Prompt: {prompt}.{loras}"
             )
             hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
             return
@@ -905,7 +908,7 @@ class User(db.Model):
                 f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}."
+                f"Latest Prompt: {prompt}.{loras}"
             )
             hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)
             return
