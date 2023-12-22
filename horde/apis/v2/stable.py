@@ -155,6 +155,19 @@ class ImageAsyncGenerate(GenerateTemplate):
             )
             if upscaler_count > 1:
                 raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
+
+            cfg_scale = self.args.params.get("cfg_scale")
+            if cfg_scale is not None:
+                try:                
+                    rounded_cfg_scale = round(cfg_scale, 2)
+                    if rounded_cfg_scale != cfg_scale:
+                        raise e.BadRequest("cfg_scale must be rounded to 2 decimal places")
+                except (TypeError, ValueError):
+                    logger.warning(f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated.")
+                    raise e.BadRequest("cfg_scale must be a valid number")
+                    
+                
+
         if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
             raise e.BadRequest(
                 "This Client-Agent appears badly designed and is causing too many warnings. "
