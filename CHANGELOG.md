@@ -1,5 +1,12 @@
 # Changelog
 
+# 4.26.0
+
+* Support for multiple LoRa versions (only for worker reGen v3+)
+* Better handles more SDXL models based on baseline instead of name
+* Reports workers picking up requests
+* Reports LoRas on notifications
+
 # 4.25.0
 
 * Added service account role
