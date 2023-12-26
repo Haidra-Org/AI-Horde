@@ -50,6 +50,7 @@ class ImageModels(v2.Models):
             'model': fields.Float(required=False, default=1.0, min=-5.0, max=5.0, description="The strength of the LoRa to apply to the SD model."), 
             'clip': fields.Float(required=False, default=1.0, min=-5.0, max=5.0, description="The strength of the LoRa to apply to the clip model."), 
             'inject_trigger': fields.String(required=False, min_length = 1, max_length = 30, description="If set, will try to discover a trigger for this LoRa which matches or is similar to this string and inject it into the prompt. If 'any' is specified it will be pick the first trigger."),
+            'is_version': fields.Boolean(required=False, default=False, description="If true, will consider the LoRa ID as a CivitAI version ID and search accordingly. Ensure the name is an integer."),
         })
         self.input_model_tis = api.model('ModelPayloadTextualInversionsStable', {
             'name': fields.String(required=True, example="7808", description="The exact name or CivitAI ID of the Textual Inversion.", unique=True, min_length = 1, max_length = 255),

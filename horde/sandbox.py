@@ -31,7 +31,6 @@ from horde.countermeasures import CounterMeasures
 # threads.store_patreon_members()
 
 # Test problem userdiscord webhook
-send_problem_user_notification("Hello World")
 # with HORDE.app_context():
 #     worker = database.find_worker_by_name("Db0_Test_Worker", worker_class=ImageWorker)
 #     worker.report_suspicion(amount = 1, reason = Suspicions.UNREASONABLY_FAST, formats = [9999])

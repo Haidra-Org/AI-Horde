@@ -107,13 +107,17 @@ class ImageAsyncGenerate(GenerateTemplate):
         #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
             raise e.UnsupportedModel("Controlnet Requires a source image.")
-        if any(model_name in ["SDXL 1.0"] for model_name in self.args.models):
+        if any(model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl") for model_name in self.args.models):
             if self.params.get("hires_fix",False) is True:
                 raise e.BadRequest("hires fix does not work with SDXL currently.")
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with SDXL currently.")
-        if "loras" in self.params and len(self.params["loras"]) > 5:
-            raise e.BadRequest("You cannot request more than 5 loras per generation.")
+        if "loras" in self.params:
+            if len(self.params["loras"]) > 5:
+                raise e.BadRequest("You cannot request more than 5 loras per generation.")
+            for lora in self.params["loras"]:
+                if lora.get("is_version") and not lora["name"].isdigit():
+                    raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 10 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
