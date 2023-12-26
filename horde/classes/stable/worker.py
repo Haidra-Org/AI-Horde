@@ -95,6 +95,8 @@ class ImageWorker(Worker):
             return [False, 'bridge_version']
         if waiting_prompt.params.get('clip_skip', 1) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
             return [False, 'bridge_version']
+        if any(lora.get("is_version") for lora in waiting_prompt.params.get('loras', [])) and not check_bridge_capability("lora_versions", self.bridge_agent):
+            return [False, 'bridge_version']
         if waiting_prompt.source_processing != 'img2img' and not self.allow_painting:
             return [False, 'painting']
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
