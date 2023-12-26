@@ -4,6 +4,13 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2023-11-26",
+            "newspiece": 
+                "The AI Horde now supports different LoRa versions from each LoRa. Happy Winter Solstice!",
+            "tags": ["lora"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2023-11-23",
             "newspiece": 
                 "The AI Horde will receive [an NLNet Grant!](https://dbzer0.com/blog/ai-horde-to-receive-nlnet-grant/)",
