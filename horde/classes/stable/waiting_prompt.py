@@ -12,7 +12,7 @@ from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
-from horde.consts import KNOWN_POST_PROCESSORS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_LCM_LORA_VERSIONS, KNOWN_LCM_LORA_IDS
 from horde.classes.stable.kudos import KudosModel
 from horde.model_reference import model_reference
 
@@ -53,11 +53,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.params["steps"] = 40
         if "sampler_name" not in self.params:
             self.params["sampler_name"] = "k_euler_a"
-        if self.params["sampler_name"] == 'lcm' and self.params["steps"] > 6 and not self.user.trusted:
-            # If someone requested more than 6 steps on LCM sampler, 
-            # we assume it's a mistake and set it to 3
-            # Unless they're trusted so they know what they're doing
-            self.params["steps"] = 3
         if "cfg_scale" not in self.params:
             self.params["cfg_scale"] = 5.0
         if "karras" not in self.params:
@@ -307,6 +302,9 @@ class ImageWaitingPrompt(WaitingPrompt):
             max_res = 1024
         if max_res > 1024:
             max_res = 1024
+        # Using more than 10 steps with LCM requires upfront kudos
+        if self.is_using_lcm() and self.get_accurate_steps() > 10:
+            return(True,max_res)
         if self.get_accurate_steps() > 50:
             return(True,max_res)
         if self.width * self.height > max_res*max_res:
@@ -317,6 +315,18 @@ class ImageWaitingPrompt(WaitingPrompt):
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
         return(False,max_res)
+
+
+    def is_using_lcm(self):
+        if self.params["sampler_name"] == 'lcm':
+            return True
+        for lora in self.params.get("loras",[]):
+            if lora.get("is_version"):
+                if lora["name"] in KNOWN_LCM_LORA_VERSIONS:
+                    return True
+            elif lora["name"] in KNOWN_LCM_LORA_IDS:
+                return True
+
 
     def get_accurate_steps(self):
         if self.params.get('sampler_name', 'k_euler_a') in ['k_dpm_adaptive']:

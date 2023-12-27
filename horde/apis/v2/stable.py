@@ -12,7 +12,7 @@ from horde.logger import logger
 from horde.classes.stable.genstats import compile_imagegen_stats_totals, compile_imagegen_stats_models
 from horde.image import ensure_source_image_uploaded, calculate_image_tiles
 from horde.model_reference import model_reference
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS, KNOWN_LCM_LORA_VERSIONS, KNOWN_LCM_LORA_IDS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 from horde.classes.base import settings
 
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
@@ -118,11 +118,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             for lora in self.params["loras"]:
                 if lora.get("is_version") and not lora["name"].isdigit():
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
-                if lora.get("is_version"):
-                    if lora["name"] in KNOWN_LCM_LORA_VERSIONS and self.params["steps"] > 10 and not self.user.trusted:
-                        raise e.BadRequest("Do not use LCM loras with more than 10 steps")
-                elif lora["name"] in KNOWN_LCM_LORA_IDS and self.params["steps"] > 10 and not self.user.trusted:
-                    raise e.BadRequest("Do not use LCM loras with more than 10 steps")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 10 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
