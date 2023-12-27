@@ -119,9 +119,9 @@ class ImageAsyncGenerate(GenerateTemplate):
                 if lora.get("is_version") and not lora["name"].isdigit():
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
                 if lora.get("is_version"):
-                    if lora["name"] in KNOWN_LCM_LORA_VERSIONS and self.params["steps"] > 10:
+                    if lora["name"] in KNOWN_LCM_LORA_VERSIONS and self.params["steps"] > 10 and not self.user.trusted:
                         raise e.BadRequest("Do not use LCM loras with more than 10 steps")
-                elif lora["name"] in KNOWN_LCM_LORA_IDS and self.params["steps"] > 10:
+                elif lora["name"] in KNOWN_LCM_LORA_IDS and self.params["steps"] > 10 and not self.user.trusted:
                     raise e.BadRequest("Do not use LCM loras with more than 10 steps")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 10 Textual Inversions per generation.")
