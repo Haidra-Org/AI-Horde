@@ -53,7 +53,31 @@ BRIDGE_CAPABILITIES = {
     }
 }
 
-BRIDGE_SAMPLERS = {
+BRIDGE_SAMPLERS = { # TODO: Refactor along with schedulers
+    "AI Horde Worker reGen": {
+        3: {
+            "karras": {"lcm"},  
+            "no karras": {}
+        },
+        2: {
+            "karras": {
+                "k_lms", 
+                "k_heun", 
+                "k_euler", 
+                "k_euler_a", 
+                "k_dpm_2", 
+                "k_dpm_2_a", 
+                "k_dpm_fast", 
+                "k_dpm_adaptive", 
+                "k_dpmpp_2s_a", 
+                "k_dpmpp_2m", 
+                "k_dpmpp_sde", 
+                "dpmsolver", 
+                "DDIM", 
+            },  
+            "no karras": {}
+        }
+    },
     "AI Horde Worker": {
         17: {
             "karras": {},
