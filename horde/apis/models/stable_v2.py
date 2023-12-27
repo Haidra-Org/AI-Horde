@@ -1,7 +1,7 @@
 from flask_restx import fields
 from . import v2
 from horde.logger import logger
-from horde.consts import KNOWN_POST_PROCESSORS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS
 
 class ImageParsers(v2.Parsers):
     def __init__(self):
@@ -61,7 +61,7 @@ class ImageModels(v2.Models):
             "*": fields.Wildcard(fields.Raw)
         })        
         self.root_model_generation_payload_stable = api.model('ModelPayloadRootStable', {
-            'sampler_name': fields.String(required=False, default='k_euler_a',enum=["k_lms", "k_heun", "k_euler", "k_euler_a", "k_dpm_2", "k_dpm_2_a", "k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m", "dpmsolver", "k_dpmpp_sde", "DDIM"]), 
+            'sampler_name': fields.String(required=False, default='k_euler_a',enum=list(KNOWN_SAMPLERS)), 
             'cfg_scale': fields.Float(required=False,default=7.5, min=0, max=100), 
             'denoising_strength': fields.Float(required=False, example=0.75, min=0.01, max=1.0), 
             'seed': fields.String(required=False, example="The little seed that could", description="The seed to use to generate this request. You can pass text as well as numbers."),

@@ -53,6 +53,10 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.params["steps"] = 40
         if "sampler_name" not in self.params:
             self.params["sampler_name"] = "k_euler_a"
+        if self.params["sampler_name"] == 'lcm' and self.params["steps"] > 6:
+            # If someone requested more than 6 steps on LCM sampler, 
+            # we assume it's a mistake and set it to 3
+            self.params["steps"] = 3
         if "cfg_scale" not in self.params:
             self.params["cfg_scale"] = 5.0
         if "karras" not in self.params:

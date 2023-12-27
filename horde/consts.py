@@ -25,6 +25,38 @@ KNOWN_UPSCALERS = [
     "4x_AnimeSharp"
 ]
 
+
+KNOWN_SAMPLERS = {
+    "k_lms", 
+    "k_heun", 
+    "k_euler", 
+    "k_euler_a", 
+    "k_dpm_2", 
+    "k_dpm_2_a", 
+    "k_dpm_fast", 
+    "k_dpm_adaptive", 
+    "k_dpmpp_2s_a", 
+    "k_dpmpp_2m", 
+    "dpmsolver", 
+    "k_dpmpp_sde", 
+    "DDIM",
+    "lcm"
+}
+
+KNOWN_LCM_LORA_VERSIONS = {
+    "246747",
+    "247778",
+    "268475",
+    "243643",
+    "225222",
+    "219782",
+}
+
+KNOWN_LCM_LORA_IDS = {
+    "195519",
+    "216190",
+}
+
 WHITELISTED_VPN_IPS = [
     "212.227.227.178/32", # Turing Bot
     "141.144.197.64/32",
