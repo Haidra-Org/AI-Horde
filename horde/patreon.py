@@ -1,5 +1,4 @@
 import json
-import pprint
 from horde.logger import logger
 from horde import horde_redis as hr
 from horde.threads import PrimaryTimedFunction
@@ -50,7 +49,8 @@ class PatreonCache(PrimaryTimedFunction):
         eamount = int(self.patrons[user_id]["entitlement_amount"] )
         # Yearly amounts with discounts
         # 10 per month
-        if eamount == 108:
+        # Amount changes a bit randomly
+        if eamount > 105 and eamount < 109:
             return(50000)
         # Monthly amounts
         if eamount == 100:
@@ -88,7 +88,7 @@ patrons = PatreonCache(3600, None)
     # We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
 if hr.horde_r:
     patrons.call_function()
-    # pp = pprint.PrettyPrinter(depth=3)
-    # pp.pprint(patrons.patrons)
-    # pp.pprint(patrons.get_ids())
+    # logger.debug(json.dumps(patrons.patrons, indent=4))
+    # logger.debug(json.dumps(patrons.get_ids(), indent=4))
+    # logger.debug(len(patrons.patrons))
     

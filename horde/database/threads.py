@@ -316,7 +316,7 @@ def store_patreon_members():
             member_dict["sponsor_link"] = note["sponsor_link"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
-    logger.info(f"patreon_cache ({len(active_members)}): {list(active_members.keys())}")
+    logger.info(f"patreon_cache ({len(active_members)}): {sorted(list(active_members.keys()))}")
     hr.horde_r_set('patreon_cache', cached_patreons)
 
 
