@@ -52,4 +52,5 @@ from horde.countermeasures import CounterMeasures
 #     w = database.find_worker_by_id("43f5f639-134f-4687-a130-b4bf13821d8c")
 #     logger.debug(w.max_context_length)
 #     logger.debug(w.calculate_uptime_reward())
+
 sys.exit()
