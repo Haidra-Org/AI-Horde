@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.27.0
+
+* Allow sending semver bridge-agent strings
+* Fix bug which caused most workers to get reduced rewards
+
 # 4.26.0
 
 * Support for multiple LoRa versions (only for worker reGen v3+)
