@@ -8,6 +8,11 @@ For more information, check [the FAQ](https://github.com/Haidra-Org/AI-Horde/blo
 
 {news}
 
+## Sponsors
+
+[![](assets/logo_nlnet.svg)](https://nlnet.nl/project/AI-Horde/)
+
+
 ## Stats 
 
 ### Image Generation
@@ -40,11 +45,13 @@ First [Register an account](/register) which will generate for you an API key. S
 
 #### Image Generation
 
+The following are some of the popular tools which provide an interface for Image Generation on the AI Horde
+
 * We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
     * [Art Bot](https://tinybots.net/artbot)
-    * [Stable UI](https://aqualxx.github.io/stable-ui/)
     * [AAAI UI](https://artificial-art.eu/)
+    * [AI Brush](https://www.aibrush.art/)
 * There are also mobile apps:
     * AI Painter ([iOS](https://apps.apple.com/hk/app/%E6%A9%9F%E7%95%AB%E5%B8%AB-%E5%B0%88%E6%A5%AD%E7%9A%84ai%E7%B9%AA%E7%95%ABapp/id1644645946) + [Android](https://play.google.com/store/apps/details?id=wkygame.ai.all.in.one))
     * [aislingeach](https://github.com/amiantos/aislingeach) (iOS)
@@ -53,10 +60,11 @@ First [Register an account](/register) which will generate for you an API key. S
 
 #### Text Generation
 
-The following tools provide an interface for Text Generation on the AI Horde
+The following are some of the popular tools which provide an interface for Text Generation on the AI Horde
 
-* [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
 * [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
+* [SillyTavern](https://sillytavernai.com/) - Another Dedicated WebUI
+* [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
 * [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
 
 ### Command Line
@@ -88,6 +96,7 @@ We provide a CLI tool for each type of AI Horde usage in [this repository](https
         * [Photoshop Plugin](https://github.com/grizbil/Auto-Photoshop-StableDiffusion-Plugin)
         * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
     * Other
+        * [python SDK](hhttps://github.com/Haidra-Org/horde-sdk)
         * [npm SDK](https://www.npmjs.com/package/@zeldafan0225/ai_horde)
 
 You can see many more integrations and links to their communities in our discord server!
