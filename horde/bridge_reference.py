@@ -157,7 +157,7 @@ def parse_bridge_agent(bridge_agent):
     except Exception as err:
         logger.debug(f"Could not parse bridge_agent '{bridge_agent}': {err}")
         bridge_name = "unknown"
-        bridge_semver = semver.Version.parse(0, True)
+        bridge_semver = semver.Version.parse('0', True)
     # logger.debug([bridge_name, bridge_version])
     return bridge_name,bridge_semver
 
