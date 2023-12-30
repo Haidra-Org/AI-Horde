@@ -4,6 +4,7 @@
 
 * Allow sending semver bridge-agent strings
 * Fix bug which caused most workers to get reduced rewards
+* LCM requesting a lot of steps just requires upfront kudos
 
 # 4.26.0
 
