@@ -6,6 +6,10 @@ It also allows non-python clients, such as games and apps, to use AI-provided ge
 
 For more questions, check the [FAQ](FAQ.md)
 
+# Sponsors
+
+[![](assets/logo_nlnet.svg)](https://nlnet.nl/project/AI-Horde/)
+
 # Registering
 
 To use the horde you need to have a registered account, or use anonymous mode.

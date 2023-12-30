@@ -12,7 +12,6 @@ For more information, check [the FAQ](https://github.com/Haidra-Org/AI-Horde/blo
 
 [![](assets/logo_nlnet.svg)](https://nlnet.nl/project/AI-Horde/)
 
-
 ## Stats 
 
 ### Image Generation
