@@ -1,3 +1,4 @@
+import semver
 from horde.logger import logger
 from horde.consts import KNOWN_POST_PROCESSORS
 
@@ -149,15 +150,16 @@ BRIDGE_SAMPLERS = { # TODO: Refactor along with schedulers
 def parse_bridge_agent(bridge_agent):
     try:
         bridge_name, bridge_version, _ = bridge_agent.split(":", 2)
+        bridge_semver = semver.Version.parse(bridge_version, True)
         if not bridge_version.isdigit():
             bridge_version = 0
         bridge_version = int(bridge_version)
-    except Exception:
-        logger.debug(f"Could not parse bridge_agent: {bridge_agent}")
+    except Exception as err:
+        logger.debug(f"Could not parse bridge_agent '{bridge_agent}': {err}")
         bridge_name = "unknown"
-        bridge_version = 0
+        bridge_semver = semver.Version.parse('0', True)
     # logger.debug([bridge_name, bridge_version])
-    return bridge_name,bridge_version
+    return bridge_name,bridge_semver
 
 def check_bridge_capability(capability, bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
@@ -165,9 +167,10 @@ def check_bridge_capability(capability, bridge_agent):
         return False
     total_capabilities = set()
     # Because we start from 0 
-    for iter in range(bridge_version + 1):
-        if iter in BRIDGE_CAPABILITIES[bridge_name]:
-            total_capabilities.update(BRIDGE_CAPABILITIES[bridge_name][iter])
+    for version in BRIDGE_CAPABILITIES[bridge_name]:
+        checked_semver = semver.Version.parse(str(version), True)
+        if checked_semver.compare(bridge_version) <= 0:
+            total_capabilities.update(BRIDGE_CAPABILITIES[bridge_name][version])
     # logger.debug([total_capabilities, capability, capability in total_capabilities])
     return capability in total_capabilities
 
@@ -178,13 +181,14 @@ def get_supported_samplers(bridge_agent, karras=True):
         bridge_name = "AI Horde Worker"
         bridge_version = 23
     available_samplers = set()
-    for iter in range(bridge_version + 1):
-        if iter in BRIDGE_SAMPLERS[bridge_name]:
-            available_samplers.update(BRIDGE_SAMPLERS[bridge_name][iter]["karras"])
+    for version in BRIDGE_SAMPLERS[bridge_name]:
+        checked_semver = semver.Version.parse(str(version), True)
+        if checked_semver.compare(bridge_version) <= 0:
+            available_samplers.update(BRIDGE_SAMPLERS[bridge_name][version]["karras"])
             # If karras == True, only karras samplers can be used.
             # Else, all samplers can be used
             if not karras:
-                available_samplers.update(BRIDGE_SAMPLERS[bridge_name][iter]["no karras"])
+                available_samplers.update(BRIDGE_SAMPLERS[bridge_name][version]["no karras"])
     # logger.debug([available_samplers, sampler, sampler in available_samplers])
     return available_samplers
 
@@ -198,9 +202,29 @@ def get_supported_pp(bridge_agent):
         bridge_name = "AI Horde Worker"
         bridge_version = 23
     available_pp = set()
-    for iter in range(bridge_version + 1):
-        if iter in BRIDGE_CAPABILITIES[bridge_name]:
-            for capability in BRIDGE_CAPABILITIES[bridge_name][iter]:
+    for version in BRIDGE_CAPABILITIES[bridge_name]:
+        checked_semver = semver.Version.parse(str(version), True)
+        if checked_semver.compare(bridge_version) <= 0:
+            for capability in BRIDGE_CAPABILITIES[bridge_name][version]:
                 if capability in KNOWN_POST_PROCESSORS:
                     available_pp.add(capability)
     return available_pp
+
+def get_latest_version(bridge_name):
+    latest_semver = None
+    for version in BRIDGE_CAPABILITIES[bridge_name]:
+        chkver = semver.Version.parse(str(version), True)
+        if latest_semver is None:
+            latest_semver = semver.Version.parse(str(version), True)
+        elif latest_semver.compare(chkver) < 0:
+            latest_semver = chkver
+    return latest_semver
+
+def is_latest_bridge_version(bridge_agent):
+    bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
+    latest_version = get_latest_version(bridge_name)
+    return latest_version.compare(bridge_version) <= 0
+
+def is_official_bridge_version(bridge_agent):
+    bridge_name, _ = parse_bridge_agent(bridge_agent)
+    return bridge_name in ["AI Horde Worker reGen", "AI Horde Worker"]

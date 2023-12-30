@@ -340,7 +340,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             # So we adjust the things to take that into account
             steps *= 2
         if self.source_image and self.source_processing == "img2img":
-            # 0.8 is the default on nataili
             steps *= self.gen_payload.get("denoising_strength",0.8)
         return(steps)
 

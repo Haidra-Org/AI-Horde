@@ -3,7 +3,7 @@ from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
 from horde.suspicions import Suspicions
-from horde.bridge_reference import check_bridge_capability, check_sampler_capability, parse_bridge_agent
+from horde.bridge_reference import check_bridge_capability, check_sampler_capability, is_latest_bridge_version, is_official_bridge_version
 from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
@@ -162,9 +162,12 @@ class ImageWorker(Worker):
         return models
 
     def get_bridge_kudos_multiplier(self):
-        bridge_name, bridge_version = parse_bridge_agent(self.bridge_agent)
+        if is_official_bridge_version(self.bridge_agent):
+            # Obsolete hordelib workers get their kudos rewards reduced by 10%
+            if not is_latest_bridge_version(self.bridge_agent):
+                return 0.90
         # Non-hordelib workers gets their kudos rewards reduced by 25% 
         # to incentivize switching to the latest version
-        if bridge_name != "AI Horde Worker" or bridge_version < 21:
+        else:
             return 0.75
         return 1
