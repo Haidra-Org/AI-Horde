@@ -85,7 +85,6 @@ class WorkerTemplate(db.Model):
     uncompleted_jobs = db.Column(db.Integer, default=0, nullable=False)
     uptime = db.Column(db.BigInteger, default=0, nullable=False)
     threads = db.Column(db.Integer, default=1, nullable=False)
-    bridge_version = db.Column(db.Integer, default=1, nullable=False)
     bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     last_reward_uptime = db.Column(db.BigInteger, default=0, nullable=False)
     # Used by all workers to record how much they can pick up to generate
@@ -238,7 +237,6 @@ class WorkerTemplate(db.Model):
     # This should be extended by each worker type
     def check_in(self, **kwargs):
         self.ipaddr = kwargs.get("ipaddr", None)
-        self.bridge_version = kwargs.get("bridge_version", 1)
         self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
         self.threads = kwargs.get("threads", 1)
         self.require_upfront_kudos = kwargs.get('require_upfront_kudos', False)

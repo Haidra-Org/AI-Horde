@@ -23,7 +23,6 @@ class Parsers:
         self.job_pop_parser.add_argument("priority_usernames", type=list, required=False, help="The usernames which get priority use on this worker.", location="json")
         self.job_pop_parser.add_argument("nsfw", type=bool, default=True, required=False, help="Marks that this worker is capable of generating NSFW content.", location="json")
         self.job_pop_parser.add_argument("models", type=list, required=False, help="The models currently available on this worker.", location="json")
-        self.job_pop_parser.add_argument("bridge_version", type=int, required=False, default=1, help="Specify the version of the worker bridge, as that can modify the way the arguments are being sent.", location="json")
         self.job_pop_parser.add_argument("bridge_agent", type=str, required=False, default="unknown:0:unknown", location="json")
         self.job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde.", location="json")
         self.job_pop_parser.add_argument("require_upfront_kudos", type=bool, required=False, default=False, help="If True, this worker will only pick up requests where the owner has the required kudos to consume already available.", location="json")
@@ -128,7 +127,6 @@ class Models:
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker.")),
             'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             'models': fields.List(fields.String(description="Which models this worker is serving.",min_length=3,max_length=255)),
-            'bridge_version': fields.Integer(default=1,description="The version of the bridge used by this worker."),
             'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:24:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website.", max_length=1000),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=50),
             'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
