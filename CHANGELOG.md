@@ -1,8 +1,12 @@
 # Changelog
 
+# 4.27.1
+
+* Remove the `bridge_version` key from pop payloads. It is obsolete in favour of bridge-agent
+
 # 4.27.0
 
-* Allow sending semver bridge-agent strings
+* Allow sending semver in bridge-agent strings
 * Fix bug which caused most workers to get reduced rewards
 * LCM requesting a lot of steps just requires upfront kudos
 

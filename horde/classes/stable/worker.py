@@ -129,12 +129,8 @@ class ImageWorker(Worker):
         ret_dict = super().get_details(details_privilege)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
-        allow_img2img = self.allow_img2img
-        if self.bridge_version < 3: allow_img2img = False
-        ret_dict["img2img"] = allow_img2img
-        allow_painting = self.allow_painting
-        if self.bridge_version < 4: allow_painting = False
-        ret_dict["painting"] = allow_painting
+        ret_dict["img2img"] = self.allow_img2img if check_bridge_capability('img2img', self.bridge_agent) else False
+        ret_dict["painting"] = self.allow_painting if check_bridge_capability('inpainting', self.bridge_agent) else False
         ret_dict["post-processing"] = self.allow_post_processing        
         ret_dict["controlnet"] = self.allow_controlnet        
         ret_dict["lora"] = self.allow_lora

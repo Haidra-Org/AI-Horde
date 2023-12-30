@@ -80,7 +80,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
         if self.is_faulted():
             return(-1)
         if generation != "R2":
-            logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge version {self.worker.bridge_version} returned a b64. Converting...")
+            logger.warning(f"Worker {self.worker.name} ({self.worker.id}) with bridge agent {self.worker.bridge_agent} returned a b64. Converting...")
             if self.wp.shared:
                 upload_method = upload_shared_generated_image
             else:
