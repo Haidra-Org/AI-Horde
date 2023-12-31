@@ -1,0 +1,1 @@
+alter table workers drop column bridge_version;
