@@ -27,7 +27,8 @@ from horde.countermeasures import CounterMeasures
 # send_pause_notification("Hello World")
 # with HORDE.app_context():
 #     worker = database.find_worker_by_name("Db0_Test_Worker", worker_class=ImageWorker)
-#     worker.report_suspicion(amount = 1, reason = Suspicions.UNREASONABLY_FAST, formats = [9999])
+#     logger.debug(worker.get_bridge_kudos_multiplier())
+    # worker.report_suspicion(amount = 1, reason = Suspicions.UNREASONABLY_FAST, formats = [9999])
 # threads.store_patreon_members()
 
 # Test problem userdiscord webhook

@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.27.2
+
+* Increased lora cost to 3 kudos per-lora
+
 # 4.27.1
 
 * Remove the `bridge_version` key from pop payloads. It is obsolete in favour of bridge-agent
