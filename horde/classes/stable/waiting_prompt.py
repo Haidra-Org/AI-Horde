@@ -273,9 +273,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         kudos_difference = abs(legacy_kudos_cost - self.kudos) 
         if kudos_difference > (legacy_kudos_cost * 0.5):
             logger.debug(f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}")
-        # If they're requesting LoRas, we're adding 1 extra kudos per lora requested
+        # If they're requesting LoRas, we're adding 3 extra kudos per lora requested
         # To make up for time lost downloading
-        self.kudos += len(self.params.get("loras",[]))
+        self.kudos += len(self.params.get("loras",[])) * 3
         # If they've requested TIs, we add 1 kudos extra
         if self.params.get("tis"):
             self.kudos += 1
