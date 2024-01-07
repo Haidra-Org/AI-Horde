@@ -167,3 +167,7 @@ class ImageWorker(Worker):
         else:
             return 0.75
         return 1
+
+    def get_safe_amount(self, amount, things):
+        safe_generations = (self.max_pixels / 3) * amount
+        return safe_generations / things

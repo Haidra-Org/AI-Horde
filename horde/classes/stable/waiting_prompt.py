@@ -401,3 +401,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1      
         # The +1 is the extra kudos burn per request
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1 
+    
+    def get_amount_calculation_things(self):
+        return self.width * self.height

@@ -603,3 +603,7 @@ class Worker(WorkerTemplate):
         for model in self.models:
             db.session.delete(model)
         super().delete()
+
+    # To override
+    def get_max_amount(self, amount, things):
+        return amount

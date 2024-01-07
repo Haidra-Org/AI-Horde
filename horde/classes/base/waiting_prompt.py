@@ -187,20 +187,21 @@ class WaitingPrompt(db.Model):
         # if not myself_refresh:
         #     return None
         # myself_refresh.n -= 1
-        if amount > self.n:
-            amount = self.n
+        safe_amount = worker.get_safe_amount(amount, self.get_amount_calculation_things())
+        if safe_amount > self.n:
+            safe_amount = self.n
         # We use a local var to avoid touching the DB through self.n
         # due to all the commits clearing row lock, 
         # can we can't ensure a race-condition won't have changed self.n between iterations
         current_n = self.n
-        self.n -= amount
+        self.n -= safe_amount
         payload = self.get_job_payload(current_n)
         db.session.commit()
         procgen_class = procgen_classes[self.wp_type]
         gens_list = []
         model = None
-        while amount >= 1:
-            amount -= 1
+        while safe_amount >= 1:
+            safe_amount -= 1
             current_n -= 1
             new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, model=model)
             # For batched requests, we need all procgens to use the same model
@@ -441,3 +442,7 @@ class WaitingPrompt(db.Model):
         if worker_cache is None:
             return self.refresh_worker_cache()
         return [uuid.UUID(wid) for wid in worker_cache]
+
+    # To override
+    def get_amount_calculation_things(self):
+        return self.things
