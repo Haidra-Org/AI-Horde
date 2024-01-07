@@ -379,9 +379,15 @@ class ImageAsyncCheck(Resource):
         )
         return(lite_status, 200)
    
-class ImageJobPopTemplate(JobPopTemplate):
+class ImageJobPop(JobPopTemplate):
     worker_class = ImageWorker
 
+    decorators = [limiter.limit("60/second")]
+    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
+    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
@@ -390,25 +396,23 @@ class ImageJobPopTemplate(JobPopTemplate):
         # Without copying the whole post() code
         # TODO: self.args is set on the extending methods. 
         # When ImageJobPopSingle is removed, I'll merge back into one method
-        # self.args = parsers.job_pop_parser.parse_args() 
+        self.args = parsers.job_pop_parser.parse_args() 
         self.blacklist = []
         if self.args.blacklist:
             self.blacklist = self.args.blacklist
-        return_list, retcode = super().post()
-        for post_ret in return_list:
-            # This should always be a loop of 1, so we don't worry about DB calls
-            if post_ret["id"] == None:
-                db_skipped = database.count_skipped_image_wp(
-                    self.worker,
-                    self.models,
-                    self.blacklist,
-                )
-                if 'kudos' in post_ret.get("skipped",{}):
-                    db_skipped['kudos'] = post_ret["skipped"]["kudos"]
-                if 'blacklist' in post_ret.get("skipped",{}):
-                    db_skipped['blacklist'] = post_ret["skipped"]["blacklist"]
-                post_ret["skipped"] = db_skipped
-        return return_list,retcode
+        post_ret, retcode = super().post()
+        if len(post_ret["ids"]) == 0:
+            db_skipped = database.count_skipped_image_wp(
+                self.worker,
+                self.models,
+                self.blacklist,
+            )
+            if 'kudos' in post_ret.get("skipped",{}):
+                db_skipped['kudos'] = post_ret["skipped"]["kudos"]
+            if 'blacklist' in post_ret.get("skipped",{}):
+                db_skipped['blacklist'] = post_ret["skipped"]["blacklist"]
+            post_ret["skipped"] = db_skipped
+        return post_ret,retcode
     
 
     def check_in(self):
@@ -440,45 +444,7 @@ class ImageJobPopTemplate(JobPopTemplate):
             priority_user_ids = priority_user_ids,
             page = self.wp_page
         )
-        return sorted_wps
-    
-class ImageJobPopSingle(ImageJobPopTemplate):
-    # TODO: Obsolete for v3
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
-    def post(self):
-        '''Check if there are generation requests queued for fulfillment.
-        This endpoint is used by registered workers only
-        Always treats amount = 1
-        '''
-        # Splitting the post to its own function so that I can have the decorators of post on each extended class
-        # Without copying the whole post() code
-        self.args = parsers.job_pop_parser.parse_args()
-        if self.args.amount:
-            self.args.amount = 1
-        return super().pop()[0]
-    
-class ImageJobPopMultiple(ImageJobPopTemplate):
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped', as_list=True)
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
-    def post(self):
-        '''Check if there are generation requests queued for fulfillment.
-        This endpoint is used by registered workers only
-        '''
-        # Splitting the post to its own function so that I can have the decorators of post on each extended class
-        # Without copying the whole post() code
-        self.args = parsers.job_pop_parser.parse_args()
-        return super().pop()
-
-    
+        return sorted_wps   
 
 class ImageJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]

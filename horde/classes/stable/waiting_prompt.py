@@ -144,12 +144,15 @@ class ImageWaitingPrompt(WaitingPrompt):
             ret_dict["user_type"] = "pseudonymous"
         return ret_dict
 
-    def get_pop_payload(self, procgen, payload):
+    def get_pop_payload(self, procgen_list, payload):
         if payload:
+            # They're all the same, so we pick up the first to extract some var
+            procgen = procgen_list[0]
             prompt_payload = {
                 "payload": payload,
                 "id": procgen.id,
                 "model": procgen.model,
+                "ids": [g.id for g in procgen_list]
             }
             if self.source_image and check_bridge_capability("img2img", procgen.worker.bridge_agent):
                 if check_bridge_capability("r2_source", procgen.worker.bridge_agent):
@@ -169,6 +172,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             # We always ask the workers to upload the generation to R2 instead of sending it back as b64
             # If they send it back as b64 anyway, we upload it outselves
             prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
+            prompt_payload["r2_uploads"] = [generate_procgen_upload_url(str(procgen.id), self.shared) for p in procgen_list]
         else:
             prompt_payload = {}
             self.faulted = True

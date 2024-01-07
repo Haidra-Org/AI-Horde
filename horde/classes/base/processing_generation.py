@@ -43,16 +43,19 @@ class ProcessingGeneration(db.Model):
         # If there has been no explicit model requested by the user, we just choose the first available from the worker
         db.session.add(self)
         db.session.commit()
-        worker_models = self.worker.get_model_names()
-        if len(worker_models):
-            self.model = worker_models[0]
+        if kwargs.get('model') is None:
+            worker_models = self.worker.get_model_names()
+            if len(worker_models):
+                self.model = worker_models[0]
+            else:
+                self.model = ''
+            # If we reached this point, it means there is at least 1 matching model between worker and client
+            # so we pick the first one.
+            matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
+            random.shuffle(matching_models)
+            self.model = matching_models[0]
         else:
-            self.model = ''
-        # If we reached this point, it means there is at least 1 matching model between worker and client
-        # so we pick the first one.
-        matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
-        random.shuffle(matching_models)
-        self.model = matching_models[0]
+            self.model = kwargs['model']
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):

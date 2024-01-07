@@ -200,7 +200,7 @@ class TextJobPop(JobPopTemplate):
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
         self.args = parsers.job_pop_parser.parse_args()
-        return super().post()[0]
+        return super().post()
 
     def check_in(self):
         self.softprompts = []
