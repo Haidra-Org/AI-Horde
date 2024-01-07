@@ -441,7 +441,7 @@ class JobPopTemplate(Resource):
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
         # logger.warning(datetime.utcnow())
-        return [{"id": None, "ids": [], "skipped": self.skipped}], 200
+        return {"id": None, "ids": [], "skipped": self.skipped}, 200
 
     def get_sorted_wp(self,priority_user_ids=None):
         '''Extendable class to retrieve the sorted WP list for this worker'''
