@@ -1,4 +1,5 @@
 import uuid
+import random
 
 from datetime import datetime
 
@@ -49,9 +50,9 @@ class ProcessingGeneration(db.Model):
             self.model = ''
         # If we reached this point, it means there is at least 1 matching model between worker and client
         # so we pick the first one.
-        for model in self.wp.get_model_names():
-            if model in worker_models:
-                self.model = model
+        matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
+        random.shuffle(matching_models)
+        self.model = matching_models[0]
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):

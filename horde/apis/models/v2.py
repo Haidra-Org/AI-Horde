@@ -26,6 +26,7 @@ class Parsers:
         self.job_pop_parser.add_argument("bridge_agent", type=str, required=False, default="unknown:0:unknown", location="json")
         self.job_pop_parser.add_argument("threads", type=int, required=False, default=1, help="How many threads this worker is running. This is used to accurately the current power available in the horde.", location="json")
         self.job_pop_parser.add_argument("require_upfront_kudos", type=bool, required=False, default=False, help="If True, this worker will only pick up requests where the owner has the required kudos to consume already available.", location="json")
+        self.job_pop_parser.add_argument("amount", type=int, required=False, default=1, help="How many jobvs to pop at the same time", location="json")
 
         self.job_submit_parser = reqparse.RequestParser()
         self.job_submit_parser.add_argument("apikey", type=str, required=True, help="The worker's owner API key.", location='headers')
@@ -130,6 +131,7 @@ class Models:
             'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:24:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website.", max_length=1000),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=50),
             'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
+            'amount': fields.Integer(default=1, required=False, description="How many jobvs to pop at the same time", min=1, max=20),
         })
         self.response_model_worker_details = api.inherit('WorkerDetails', self.response_model_worker_details_lite, {
             "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),

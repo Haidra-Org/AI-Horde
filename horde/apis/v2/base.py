@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError,InvalidRequestError
 from sqlalchemy import literal
 from sqlalchemy import func, or_, and_
+from flask_restx.reqparse import ParseResult
 
 from horde.database import functions as database
 from horde.classes.base import settings
@@ -371,6 +372,7 @@ class SyncGenerate(GenerateTemplate):
 
 class JobPopTemplate(Resource):
     worker_class = Worker
+    args: ParseResult
 
     def post(self):
         # I have to extract and store them this way, because if I use the defaults
@@ -439,7 +441,7 @@ class JobPopTemplate(Resource):
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
         # logger.warning(datetime.utcnow())
-        return({"id": None, "skipped": self.skipped}, 200)
+        return [{"id": None, "skipped": self.skipped}], 200
 
     def get_sorted_wp(self,priority_user_ids=None):
         '''Extendable class to retrieve the sorted WP list for this worker'''
@@ -457,8 +459,8 @@ class JobPopTemplate(Resource):
         if self.worker.paused and wp.user != self.worker.user:
             ret = wp.fake_generation(self.worker)
         else:
-            ret = wp.start_generation(self.worker)
-        return(ret)
+            ret = wp.start_generation(self.worker, self.args.amount)
+        return ret
 
     # We split this to its own function so that it can be extended with the specific vars needed to check in
     # You typically never want to use this template's function without extending it

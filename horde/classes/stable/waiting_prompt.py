@@ -102,13 +102,13 @@ class ImageWaitingPrompt(WaitingPrompt):
         db.session.commit()
 
     @logger.catch(reraise=True)
-    def get_job_payload(self):
+    def get_job_payload(self, current_n):
         ret_payload = copy.deepcopy(self.gen_payload)
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
             ret_payload["seed"] = self.seed_to_int(self.seed)
         elif self.seed_variation:
-            ret_payload["seed"] = self.seed + (self.seed_variation * self.n)
+            ret_payload["seed"] = self.seed + (self.seed_variation * current_n)
             while ret_payload["seed"] >= 2**32:
                 ret_payload["seed"] = ret_payload["seed"] >> 32
         else:
@@ -116,7 +116,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         if not self.nsfw and self.censor_nsfw:
             ret_payload["use_nsfw_censor"] = True
         if "SDXL_beta::stability.ai#6901" in self.get_model_names():
-            pipline_name = f"pipeline{2 - self.n}"
+            pipline_name = f"pipeline{2 - current_n}"
             ret_payload["special"] = {
                 "model_name": pipline_name,
                 "pair_id": str(self.id),
@@ -174,7 +174,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.faulted = True
             db.session.commit()
         # logger.debug([payload,prompt_payload])
-        return(prompt_payload)
+        return prompt_payload
 
     def activate(self, source_image = None, source_mask = None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it

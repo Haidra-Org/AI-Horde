@@ -119,7 +119,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 if lora.get("is_version") and not lora["name"].isdigit():
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
         if "tis" in self.params and len(self.params["tis"]) > 20:
-            raise e.BadRequest("You cannot request more than 10 Textual Inversions per generation.")
+            raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map")
         if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
@@ -169,8 +169,6 @@ class ImageAsyncGenerate(GenerateTemplate):
                 except (TypeError, ValueError):
                     logger.warning(f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated.")
                     raise e.BadRequest("cfg_scale must be a valid number")
-                    
-                
 
         if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
             raise e.BadRequest(
@@ -380,41 +378,37 @@ class ImageAsyncCheck(Resource):
             active_worker_count=database.count_active_workers()
         )
         return(lite_status, 200)
-
-
-    
-class ImageJobPop(JobPopTemplate):
+   
+class ImageJobPopTemplate(JobPopTemplate):
     worker_class = ImageWorker
 
-    decorators = [limiter.limit("60/second")]
-    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
-    @api.response(400, 'Validation Error', models.response_model_error)
-    @api.response(401, 'Invalid API Key', models.response_model_error)
-    @api.response(403, 'Access Denied', models.response_model_error)
     def post(self):
         '''Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only
         '''
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
-        self.args = parsers.job_pop_parser.parse_args()
+        # TODO: self.args is set on the extending methods. 
+        # When ImageJobPopSingle is removed, I'll merge back into one method
+        # self.args = parsers.job_pop_parser.parse_args() 
         self.blacklist = []
         if self.args.blacklist:
             self.blacklist = self.args.blacklist
-        post_ret, retcode = super().post()
-        if post_ret["id"] == None:
-            db_skipped = database.count_skipped_image_wp(
-                self.worker,
-                self.models,
-                self.blacklist,
-            )
-            if 'kudos' in post_ret.get("skipped",{}):
-                db_skipped['kudos'] = post_ret["skipped"]["kudos"]
-            if 'blacklist' in post_ret.get("skipped",{}):
-                db_skipped['blacklist'] = post_ret["skipped"]["blacklist"]
-            post_ret["skipped"] = db_skipped
-        return post_ret,retcode
+        return_list, retcode = super().post()
+        for post_ret in return_list:
+            # This should always be a loop of 1, so we don't worry about DB calls
+            if post_ret["id"] == None:
+                db_skipped = database.count_skipped_image_wp(
+                    self.worker,
+                    self.models,
+                    self.blacklist,
+                )
+                if 'kudos' in post_ret.get("skipped",{}):
+                    db_skipped['kudos'] = post_ret["skipped"]["kudos"]
+                if 'blacklist' in post_ret.get("skipped",{}):
+                    db_skipped['blacklist'] = post_ret["skipped"]["blacklist"]
+                post_ret["skipped"] = db_skipped
+        return return_list,retcode
     
 
     def check_in(self):
@@ -447,6 +441,44 @@ class ImageJobPop(JobPopTemplate):
             page = self.wp_page
         )
         return sorted_wps
+    
+class ImageJobPopSingle(ImageJobPopTemplate):
+    # TODO: Obsolete for v3
+    decorators = [limiter.limit("60/second")]
+    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
+    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped')
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def post(self):
+        '''Check if there are generation requests queued for fulfillment.
+        This endpoint is used by registered workers only
+        Always treats amount = 1
+        '''
+        # Splitting the post to its own function so that I can have the decorators of post on each extended class
+        # Without copying the whole post() code
+        self.args = parsers.job_pop_parser.parse_args()
+        if self.args.amount:
+            self.args.amount = 1
+        return super().pop()[0]
+    
+class ImageJobPopMultiple(ImageJobPopTemplate):
+    decorators = [limiter.limit("60/second")]
+    @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
+    @api.marshal_with(models.response_model_job_pop, code=200, description='Generation Popped', as_list=True)
+    @api.response(400, 'Validation Error', models.response_model_error)
+    @api.response(401, 'Invalid API Key', models.response_model_error)
+    @api.response(403, 'Access Denied', models.response_model_error)
+    def post(self):
+        '''Check if there are generation requests queued for fulfillment.
+        This endpoint is used by registered workers only
+        '''
+        # Splitting the post to its own function so that I can have the decorators of post on each extended class
+        # Without copying the whole post() code
+        self.args = parsers.job_pop_parser.parse_args()
+        return super().pop()
+
+    
 
 class ImageJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]
