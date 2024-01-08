@@ -135,17 +135,10 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.BadRequest("You need to request at least 2 images for SDXL to allow for comparison")
             # SDXL_Beta always generates 2 images
             self.params["n"] = 2
-        if self.args.source_mask and self.params.get("sampler_name") == "DDIM":
-            raise e.UnsupportedModel("You cannot use a mask with the DDIM sampler")
-        if self.args.source_image:
-            if self.args.source_processing == "img2img" and self.params.get("sampler_name") in ["k_dpm_fast", "k_dpm_adaptive", "k_dpmpp_2s_a", "k_dpmpp_2m"]:
-                raise e.UnsupportedSampler
         #     if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
         #         raise e.UnsupportedModel
         # if not any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models) and self.params.get("sampler_name") in ["dpmsolver"]:
         #     raise e.UnsupportedSampler
-        if self.args.models == ["pix2pix"] and self.params.get("sampler_name") == "DDIM":
-             raise e.UnsupportedSampler("You cannot use pix2pix with the DDIM sampler")
         if len(self.args['prompt'].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
         if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
