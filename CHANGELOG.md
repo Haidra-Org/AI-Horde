@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.28.0
+
+* Adds support for batch processing
+
+
 # 4.27.2
 
 * Increased lora cost to 3 kudos per-lora
