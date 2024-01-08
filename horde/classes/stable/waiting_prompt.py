@@ -12,7 +12,7 @@ from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_LCM_LORA_VERSIONS, KNOWN_LCM_LORA_IDS, SECOND_ORDER_SAMPLERS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_LCM_LORA_VERSIONS, KNOWN_LCM_LORA_IDS
 from horde.classes.stable.kudos import KudosModel
 from horde.model_reference import model_reference
 
@@ -340,7 +340,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             # so we just calculate it as an average 50 steps
             return(40)
         steps = self.params['steps']
-        if self.params.get('sampler_name', 'k_euler_a') in SECOND_ORDER_SAMPLERS:
+        if self.params.get('sampler_name', 'k_euler_a') in ['k_heun', "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a"]:
             # These samplerS do double steps per iteration, so they're at half the speed
             # So we adjust the things to take that into account
             steps *= 2

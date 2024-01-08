@@ -3,7 +3,6 @@
 # 4.28.0
 
 * Adds support for batch processing
-* added dpmpp_sde to SECOND_ORDER_SAMPLERS
 
 
 # 4.27.2

@@ -43,16 +43,6 @@ KNOWN_SAMPLERS = {
     "lcm"
 }
 
-# These samplers perform double the steps per image
-# As such we need to take it into account for the upfront kudos requirements
-SECOND_ORDER_SAMPLERS = [
-    "k_heun", 
-    "k_dpm_2", 
-    "k_dpm_2_a", 
-    "k_dpmpp_2s_a", 
-    "k_dpmpp_sde"
-]
-
 KNOWN_LCM_LORA_VERSIONS = {
     "246747",
     "247778",
