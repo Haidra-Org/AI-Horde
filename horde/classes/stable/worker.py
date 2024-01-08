@@ -173,4 +173,6 @@ class ImageWorker(Worker):
         safe_amount = round(safe_generations / things)
         if safe_amount > amount:
             safe_amount = amount
+        if safe_amount <= 0:
+            safe_amount = 1
         return safe_amount
