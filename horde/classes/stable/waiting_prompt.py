@@ -102,13 +102,13 @@ class ImageWaitingPrompt(WaitingPrompt):
         db.session.commit()
 
     @logger.catch(reraise=True)
-    def get_job_payload(self):
+    def get_job_payload(self, current_n):
         ret_payload = copy.deepcopy(self.gen_payload)
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
             ret_payload["seed"] = self.seed_to_int(self.seed)
         elif self.seed_variation:
-            ret_payload["seed"] = self.seed + (self.seed_variation * self.n)
+            ret_payload["seed"] = self.seed + (self.seed_variation * current_n)
             while ret_payload["seed"] >= 2**32:
                 ret_payload["seed"] = ret_payload["seed"] >> 32
         else:
@@ -116,7 +116,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         if not self.nsfw and self.censor_nsfw:
             ret_payload["use_nsfw_censor"] = True
         if "SDXL_beta::stability.ai#6901" in self.get_model_names():
-            pipline_name = f"pipeline{2 - self.n}"
+            pipline_name = f"pipeline{2 - current_n}"
             ret_payload["special"] = {
                 "model_name": pipline_name,
                 "pair_id": str(self.id),
@@ -144,12 +144,16 @@ class ImageWaitingPrompt(WaitingPrompt):
             ret_dict["user_type"] = "pseudonymous"
         return ret_dict
 
-    def get_pop_payload(self, procgen, payload):
+    def get_pop_payload(self, procgen_list, payload):
         if payload:
+            # They're all the same, so we pick up the first to extract some var
+            procgen = procgen_list[0]
+            payload['n_iter'] = len(procgen_list)
             prompt_payload = {
                 "payload": payload,
                 "id": procgen.id,
                 "model": procgen.model,
+                "ids": [g.id for g in procgen_list]
             }
             if self.source_image and check_bridge_capability("img2img", procgen.worker.bridge_agent):
                 if check_bridge_capability("r2_source", procgen.worker.bridge_agent):
@@ -169,12 +173,13 @@ class ImageWaitingPrompt(WaitingPrompt):
             # We always ask the workers to upload the generation to R2 instead of sending it back as b64
             # If they send it back as b64 anyway, we upload it outselves
             prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
+            prompt_payload["r2_uploads"] = [generate_procgen_upload_url(str(p.id), self.shared) for p in procgen_list]
         else:
             prompt_payload = {}
             self.faulted = True
             db.session.commit()
         # logger.debug([payload,prompt_payload])
-        return(prompt_payload)
+        return prompt_payload
 
     def activate(self, source_image = None, source_mask = None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -396,3 +401,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1      
         # The +1 is the extra kudos burn per request
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1 
+    
+    def get_amount_calculation_things(self):
+        return self.width * self.height

@@ -103,12 +103,14 @@ class ImageModels(v2.Models):
         self.response_model_job_pop = api.model('GenerationPayloadStable', {
             'payload': fields.Nested(self.response_model_generation_payload,skip_none=True),
             'id': fields.String(description="The UUID for this image generation."),
+            'ids': fields.List(fields.String(description="The UUID for this image generation.", example="00000000-0000-0000-0000-000000000000")),
             'skipped': fields.Nested(self.response_model_generations_skipped, skip_none=True),
             'model': fields.String(description="Which of the available models to use for this request."),
             'source_image': fields.String(description="The Base64-encoded webp to use for img2img."),
             'source_processing': fields.String(required=False, default='img2img',enum=["img2img", "inpainting", "outpainting"], description="If source_image is provided, specifies how to process it."), 
             'source_mask': fields.String(description="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."),
             'r2_upload': fields.String(description="The r2 upload link to use to upload this image."),
+            'r2_uploads': fields.List(fields.String(description="The r2 upload link to use to upload this image.")),
         })
         self.input_model_job_pop = api.inherit('PopInputStable', self.input_model_job_pop, {
             'max_pixels': fields.Integer(default=512*512,description="The maximum amount of pixels this worker can generate."),

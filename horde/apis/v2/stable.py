@@ -119,7 +119,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 if lora.get("is_version") and not lora["name"].isdigit():
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
         if "tis" in self.params and len(self.params["tis"]) > 20:
-            raise e.BadRequest("You cannot request more than 10 Textual Inversions per generation.")
+            raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map")
         if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
@@ -169,8 +169,6 @@ class ImageAsyncGenerate(GenerateTemplate):
                 except (TypeError, ValueError):
                     logger.warning(f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated.")
                     raise e.BadRequest("cfg_scale must be a valid number")
-                    
-                
 
         if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
             raise e.BadRequest(
@@ -380,9 +378,7 @@ class ImageAsyncCheck(Resource):
             active_worker_count=database.count_active_workers()
         )
         return(lite_status, 200)
-
-
-    
+   
 class ImageJobPop(JobPopTemplate):
     worker_class = ImageWorker
 
@@ -398,12 +394,14 @@ class ImageJobPop(JobPopTemplate):
         '''
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
-        self.args = parsers.job_pop_parser.parse_args()
+        # TODO: self.args is set on the extending methods. 
+        # When ImageJobPopSingle is removed, I'll merge back into one method
+        self.args = parsers.job_pop_parser.parse_args() 
         self.blacklist = []
         if self.args.blacklist:
             self.blacklist = self.args.blacklist
         post_ret, retcode = super().post()
-        if post_ret["id"] == None:
+        if len(post_ret["ids"]) == 0:
             db_skipped = database.count_skipped_image_wp(
                 self.worker,
                 self.models,
@@ -446,7 +444,7 @@ class ImageJobPop(JobPopTemplate):
             priority_user_ids = priority_user_ids,
             page = self.wp_page
         )
-        return sorted_wps
+        return sorted_wps   
 
 class ImageJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]

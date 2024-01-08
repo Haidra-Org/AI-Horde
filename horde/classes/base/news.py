@@ -4,6 +4,15 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2024-01-07",
+            "newspiece": 
+                "The new generation of the AI Horde worker is out. The [Horde Worker reGen](https://github.com/Haidra-Org/horde-worker-reGen)!"
+                "It should have always the latest version of comfyUI, which allows us access to all the latest features of Stable Diffusion"
+                "Every worker should work on switching ASAP, as the new worker can support SDXL models as well as LCM payloads!",
+            "tags": ["dreamer", "tazlin"],
+            "importance": "Workers",
+        },
+        {
             "date_published": "2023-11-26",
             "newspiece": 
                 "The AI Horde now supports different LoRa versions from each LoRa. Happy Winter Solstice!",

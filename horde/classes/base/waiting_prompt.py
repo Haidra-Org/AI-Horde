@@ -170,13 +170,13 @@ class WaitingPrompt(db.Model):
         self.gen_payload = self.params
         db.session.commit()
     
-    def get_job_payload(self):
+    def get_job_payload(self, current_n):
         return(self.gen_payload)
 
     def needs_gen(self):
         return self.n > 0
 
-    def start_generation(self, worker):
+    def start_generation(self, worker, amount=1):
         # # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
         # myself_refresh = db.session.query(
         #     type(self)
@@ -187,15 +187,30 @@ class WaitingPrompt(db.Model):
         # if not myself_refresh:
         #     return None
         # myself_refresh.n -= 1
-        self.n -= 1
-        # We get the payload now, so that we ensure any further commits won't disrupt what our n value is
-        # as that value is used to calclate that payload
-        payload = self.get_job_payload()
+        safe_amount = worker.get_safe_amount(amount, self.get_amount_calculation_things())
+        if safe_amount > self.n:
+            safe_amount = self.n
+        # We use a local var to avoid touching the DB through self.n
+        # due to all the commits clearing row lock, 
+        # can we can't ensure a race-condition won't have changed self.n between iterations
+        current_n = self.n
+        self.n -= safe_amount
+        payload = self.get_job_payload(current_n)
         db.session.commit()
         procgen_class = procgen_classes[self.wp_type]
-        new_gen = procgen_class(wp_id=self.id, worker_id=worker.id)
-        logger.info(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
-        pop_payload = self.get_pop_payload(new_gen, payload)
+        gens_list = []
+        model = None
+        while safe_amount >= 1:
+            safe_amount -= 1
+            current_n -= 1
+            new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, model=model)
+            # For batched requests, we need all procgens to use the same model
+            model = new_gen.model
+            logger.info(f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {current_n} gens left")
+            gens_list.append(new_gen)
+            if self.faulted:
+                break
+        pop_payload = self.get_pop_payload(gens_list, payload)
         return pop_payload
 
     def fake_generation(self, worker):
@@ -209,16 +224,17 @@ class WaitingPrompt(db.Model):
         db.session.add(new_trick)
         db.session.commit()
         logger.audit(f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
-        return self.get_pop_payload(new_gen, payload)
+        return [self.get_pop_payload(new_gen, payload)]
     
     def tricked_worker(self, worker):
         return worker.id in [w.worker_id for w in self.tricked_workers]
 
-    def get_pop_payload(self, procgen, payload):
+    def get_pop_payload(self, procgen_list, payload):
         prompt_payload = {
             "payload": payload,
-            "id": procgen.id,
-            "model": procgen.model,
+            "id": procgen_list[0].id,
+            "model": procgen_list[0].model,
+            "ids": [g.id for g in procgen_list]
         }
         return(prompt_payload)
 
@@ -426,3 +442,7 @@ class WaitingPrompt(db.Model):
         if worker_cache is None:
             return self.refresh_worker_cache()
         return [uuid.UUID(wid) for wid in worker_cache]
+
+    # To override
+    def get_amount_calculation_things(self):
+        return self.things

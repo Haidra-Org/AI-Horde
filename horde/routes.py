@@ -6,7 +6,7 @@ import os
 import requests
 from uuid import uuid4
 
-from flask import render_template, redirect, url_for, request
+from flask import render_template, redirect, url_for, request, send_from_directory
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from flask_dance.contrib.google import google
@@ -353,3 +353,7 @@ def terms():
     return render_template('terms_of_service.html',
                             horde_title=horde_title,
                             horde_url=horde_url)
+
+@HORDE.route('/assets/<filename>')
+def assets(filename):
+    return send_from_directory('../assets', filename)
