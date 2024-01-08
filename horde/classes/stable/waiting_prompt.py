@@ -145,7 +145,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         return ret_dict
 
     def get_pop_payload(self, procgen_list, payload):
-        if payload:
+        if payload and len(procgen_list) > 0:
             # They're all the same, so we pick up the first to extract some var
             procgen = procgen_list[0]
             payload['n_iter'] = len(procgen_list)
