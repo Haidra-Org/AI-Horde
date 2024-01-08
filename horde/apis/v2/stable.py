@@ -377,6 +377,7 @@ class ImageAsyncCheck(Resource):
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers()
         )
+        logger.debug(lite_status)
         return(lite_status, 200)
    
 class ImageJobPop(JobPopTemplate):

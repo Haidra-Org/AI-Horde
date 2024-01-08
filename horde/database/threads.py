@@ -212,7 +212,7 @@ def check_waiting_prompts():
             ).having(func.count(procgen_class.wp_id) > 2)
             wp_ids = [wp_id[0] for wp_id in wp_ids]
             waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted == False)
-            logger.debug(f"Found {waiting_prompts.count()} New faulted WPs")
+            logger.info(f"Found {waiting_prompts.count()} New faulted WPs")
             waiting_prompts.update({wp_class.faulted: True}, synchronize_session=False)
             db.session.commit()
             for wp in waiting_prompts.all():
