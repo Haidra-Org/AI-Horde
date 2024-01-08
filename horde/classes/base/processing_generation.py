@@ -51,11 +51,11 @@ class ProcessingGeneration(db.Model):
                 self.model = ''
             # If we reached this point, it means there is at least 1 matching model between worker and client
             # so we pick the first one.
-            matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
+            wp_models = self.wp.get_model_names()
+            matching_models = worker_models
+            if len(wp_models) != 0:
+                matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
             random.shuffle(matching_models)
-            if len(matching_models) == 0:
-                logger.info(self.wp.get_model_names())
-                logger.info(worker_models)
             self.model = matching_models[0]
         else:
             self.model = kwargs['model']
