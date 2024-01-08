@@ -53,6 +53,9 @@ class ProcessingGeneration(db.Model):
             # so we pick the first one.
             matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
             random.shuffle(matching_models)
+            if len(matching_models) == 0:
+                logger.info(self.wp.get_model_names())
+                logger.info(worker_models)
             self.model = matching_models[0]
         else:
             self.model = kwargs['model']
