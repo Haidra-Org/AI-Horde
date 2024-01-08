@@ -70,6 +70,7 @@ class KudosModel:
         "plms",
         "uni_pc_bh2",
         "uni_pc",
+        "lcm",
     ]
 
     KNOWN_CONTROL_TYPES = [
