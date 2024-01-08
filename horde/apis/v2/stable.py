@@ -230,7 +230,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.KudosUpfront(
                     required_kudos, 
                     self.username, 
-                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (10 steps for LCM work, 25 for k_heun and k_dpm_2*), the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
+                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (10 steps for LCM work, 25 for k_heun, dpmpp_sde, and dpm_2*), the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil."
                 )
         if self.wp.params["steps"] >= 300:
             print_args = self.args.copy()
