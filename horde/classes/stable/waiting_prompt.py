@@ -300,10 +300,10 @@ class ImageWaitingPrompt(WaitingPrompt):
             max_res = 576
         model_names = self.get_model_names()
         # SD 2.0 requires at least 768 to do its thing
-        if max_res < 768 and len(self.models) >= 1 and "stable_diffusion_2" in model_names:
+        if max_res < 768 and len(self.models) >= 1 and any(model_reference.get_model_baseline(mn) == "stable_diffusion_2" for mn in model_names):
             max_res = 768
         # We allow everyone to use SDXL up to 1024
-        if max_res < 1024 and any(mn in model_names for mn in ["SDXL_beta::stability.ai#6901","SDXL 1.0"]):
+        if max_res < 1024 and any(model_reference.get_model_baseline(mn) == "stable_diffusion_xl" for mn in model_names):
             max_res = 1024
         if max_res > 1024:
             max_res = 1024

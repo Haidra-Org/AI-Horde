@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.28.1
+
+* Removed obsolete sampler limiters
+* Allow AlbedoBaseXL to have a min 1024x1024 min resoluition before requiring upfront kudos
+
 # 4.28.0
 
 * Adds support for batch processing
