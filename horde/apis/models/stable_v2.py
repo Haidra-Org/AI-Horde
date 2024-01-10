@@ -145,6 +145,7 @@ class ImageModels(v2.Models):
             'replacement_filter': fields.Boolean(default=True,description="If enabled, suspicious prompts are sanitized through a string replacement filter instead."),
             'dry_run': fields.Boolean(default=False,description="When true, the endpoint will simply return the cost of the request in kudos and exit."),
             'proxied_account': fields.String(description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."),
+            'disable_batching': fields.Boolean(default=False,description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons."),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),

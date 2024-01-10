@@ -88,6 +88,7 @@ class TextModels(v2.Models):
             'models': fields.List(fields.String(description="Specify which models are allowed to be used for this request.")),
             'dry_run': fields.Boolean(default=False,description="When true, the endpoint will simply return the cost of the request in kudos and exit."),
             'proxied_account': fields.String(description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."),
+            'disable_batching': fields.Boolean(default=False,description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons."),
         })
         self.response_model_contrib_details = api.inherit('ContributionsDetailsKobold', self.response_model_contrib_details, {
             "tokens": fields.Float(description="How many tokens this user has generated."),

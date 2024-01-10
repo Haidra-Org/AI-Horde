@@ -86,6 +86,8 @@ class WaitingPrompt(db.Model):
     total_usage = db.Column(db.Float, default=0, nullable=False)
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
+    disable_batching = db.Column(db.Boolean, default=False, nullable=False)
+
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
     sharedkey_id = db.Column(uuid_column_type(), db.ForeignKey("user_sharedkeys.id", ondelete="CASCADE"), nullable=True)
     sharedkey = db.relationship("UserSharedKey", back_populates="waiting_prompts")
@@ -190,6 +192,8 @@ class WaitingPrompt(db.Model):
         safe_amount = worker.get_safe_amount(amount, self.get_amount_calculation_things())
         if safe_amount > self.n:
             safe_amount = self.n
+        if self.disable_batching:
+            safe_amount = 1
         # We use a local var to avoid touching the DB through self.n
         # due to all the commits clearing row lock, 
         # can we can't ensure a race-condition won't have changed self.n between iterations

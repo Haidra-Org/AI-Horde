@@ -236,6 +236,13 @@ class GenerateTemplate(Resource):
             n = 1
             if self.args.params:
                 n = self.args.params.get('n',1)
+            if (
+                n > 1
+                and self.args['disable_batching'] is True
+                and not self.user.trusted 
+                and not patrons.is_patron(self.user.id)
+            ):
+                raise e.BadRequest("Only trusted users and patreon supporters can disable batching.")
             user_limit = self.user.get_concurrency(self.args["models"],database.retrieve_available_models)
             #logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
