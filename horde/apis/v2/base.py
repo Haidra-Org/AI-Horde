@@ -108,6 +108,11 @@ def get_request_90min_limit_per_ip():
         return "300/minute"
     return "90/minute"
 
+def get_request_90hour_limit_per_ip():
+    if request.remote_addr in WHITELISTED_SERVICE_IPS:
+        return "600/hour"
+    return "90/hour"
+
 def get_request_2sec_limit_per_ip():
     if request.remote_addr in WHITELISTED_SERVICE_IPS:
         return "10/second"
@@ -592,7 +597,7 @@ class TransferKudos(Resource):
 
     decorators = [
         limiter.limit("1/second", key_func = get_request_api_key),
-        limiter.limit("90/hour", key_func = get_request_api_key), 
+        limiter.limit(limit_value=get_request_90hour_limit_per_ip, key_func = get_request_api_key), 
     ]
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
