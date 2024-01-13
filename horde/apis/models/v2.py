@@ -15,6 +15,7 @@ class Parsers:
         self.generate_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
         self.generate_parser.add_argument("dry_run", type=bool, default=False, required=False, help="When true, the endpoint will simply return the cost of the request in kudos and exit.", location="json")
         self.generate_parser.add_argument("proxied_account", type=str, required=False, help="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.", location="json")
+        self.generate_parser.add_argument("disable_batching", type=bool, default=False, required=False, location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
@@ -128,7 +129,7 @@ class Models:
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker.")),
             'nsfw': fields.Boolean(default=False, description="Whether this worker can generate NSFW requests or not."),
             'models': fields.List(fields.String(description="Which models this worker is serving.",min_length=3,max_length=255)),
-            'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker:24:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website.", max_length=1000),
+            'bridge_agent': fields.String(required=False, default="unknown:0:unknown", example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen", description="The worker name, version and website.", max_length=1000),
             'threads': fields.Integer(default=1,description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=50),
             'require_upfront_kudos': fields.Boolean(example=False, default=False, description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available."),
             'amount': fields.Integer(default=1, required=False, description="How many jobvs to pop at the same time", min=1, max=20),
@@ -154,7 +155,7 @@ class Models:
             'forms': fields.List(fields.String(description="Which forms this worker if offering.")),
             'team': fields.Nested(self.response_model_team_details_lite, "The Team to which this worker is dedicated."),
             "contact": fields.String(example="email@example.com", description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",min_length=5,max_length=500),
-            'bridge_agent': fields.String(required=True, default="unknown:0:unknown", example="AI Horde Worker:24:https://github.com/db0/AI-Horde-Worker", description="The bridge agent name, version and website.", max_length=1000),
+            'bridge_agent': fields.String(required=True, default="unknown:0:unknown", example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen", description="The bridge agent name, version and website.", max_length=1000),
             "max_pixels": fields.Integer(example=262144,description="The maximum pixels in resolution this worker can generate."),
             "megapixelsteps_generated": fields.Float(description="How many megapixelsteps this worker has generated until now."),
             'img2img': fields.Boolean(default=None,description="If True, this worker supports and allows img2img requests."),

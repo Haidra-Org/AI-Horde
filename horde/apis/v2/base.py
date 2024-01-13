@@ -108,6 +108,11 @@ def get_request_90min_limit_per_ip():
         return "300/minute"
     return "90/minute"
 
+def get_request_90hour_limit_per_ip():
+    if request.remote_addr in WHITELISTED_SERVICE_IPS:
+        return "600/hour"
+    return "90/hour"
+
 def get_request_2sec_limit_per_ip():
     if request.remote_addr in WHITELISTED_SERVICE_IPS:
         return "10/second"
@@ -236,6 +241,13 @@ class GenerateTemplate(Resource):
             n = 1
             if self.args.params:
                 n = self.args.params.get('n',1)
+            if (
+                n > 1
+                and self.args['disable_batching'] is True
+                and not self.user.trusted 
+                and not patrons.is_patron(self.user.id)
+            ):
+                raise e.BadRequest("Only trusted users and patreon supporters can disable batching.")
             user_limit = self.user.get_concurrency(self.args["models"],database.retrieve_available_models)
             #logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
@@ -585,7 +597,7 @@ class TransferKudos(Resource):
 
     decorators = [
         limiter.limit("1/second", key_func = get_request_api_key),
-        limiter.limit("90/hour", key_func = get_request_api_key), 
+        limiter.limit(limit_value=get_request_90hour_limit_per_ip, key_func = get_request_api_key), 
     ]
     @api.expect(parser)
     @api.marshal_with(models.response_model_kudos_transfer, code=200, description='Kudos Transferred')
