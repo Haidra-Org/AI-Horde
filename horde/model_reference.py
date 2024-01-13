@@ -74,7 +74,7 @@ class ModelReference(PrimaryTimedFunction):
     def has_inpainting_models(self, model_names):
         for model_name in model_names:
             model_details = self.reference.get(model_name, {})
-            if model_details.get("style") == "inpainting":
+            if model_details.get("inpainting"):
                 return True
         return False
 
@@ -83,7 +83,7 @@ class ModelReference(PrimaryTimedFunction):
             return False
         for model_name in model_names:
             model_details = self.reference.get(model_name, {})
-            if model_details.get("style") != "inpainting":
+            if not model_details.get("inpainting"):
                 return False
         return True
 
