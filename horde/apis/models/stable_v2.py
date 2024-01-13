@@ -187,7 +187,7 @@ class ImageModels(v2.Models):
             'priority_usernames': fields.List(fields.String(description="Users with priority to use this worker.")),
             'forms': fields.List(fields.String(description="The type of interrogation this worker can fulfil.", enum=["caption", "interrogation", "nsfw"]+list(KNOWN_POST_PROCESSORS.keys()), unique=True)),
             'amount': fields.Integer(default=1, description="The amount of forms to pop at the same time."),
-            'bridge_agent': fields.String(required=False, default="unknown", example="AI Horde Worker:24:https://github.com/db0/AI-Horde-Worker", description="The worker name, version and website.", max_length=1000),
+            'bridge_agent': fields.String(required=False, default="unknown", example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen", description="The worker name, version and website.", max_length=1000),
             'threads': fields.Integer(default=1, description="How many threads this worker is running. This is used to accurately the current power available in the horde.",min=1, max=100),
             'max_tiles': fields.Integer(default=16, description="The maximum amount of 512x512 tiles this worker can post-process.", min=1, max=256),
         })
