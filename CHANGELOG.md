@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.28.2
+
+* Fixes inpainting being never available
+
 # 4.28.1
 
 * Removed obsolete sampler limiters
