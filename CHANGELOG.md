@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.29.0
+
+* New async key `disable_batching`. Set to true to avoid batching these requests. Useful for picking up an accurate seed.
+* Allows reporting back a `batch_index` in the `gen_metadata`
+
 # 4.28.2
 
 * Fixes inpainting being never available
