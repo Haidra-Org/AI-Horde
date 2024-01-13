@@ -51,22 +51,20 @@ class PatreonCache(PrimaryTimedFunction):
         # 10 per month
         # Amount changes a bit randomly
         if eamount > 105 and eamount < 109:
-            return(50000)
+            return(150_000)
         # Monthly amounts
         if eamount == 100:
-            return(300000)
+            return(1_500_000)
         if eamount == 50:
-            return(500000)
+            return(1_500_000)
         if eamount == 25:
-            return(300000)
+            return(900_000)
         if eamount == 24:
-            return(200000)
-        if eamount == 23:
-            return(150000)
+            return(600_000)
         elif eamount == 10:
-            return(50000)
+            return(150_000)
         elif eamount < 10:
-            return(eamount * 1000)
+            return(eamount * 10_000)
         else:
             logger.warning(f"Found patron '{user_id}' with non-standard entitlement: {eamount}")
             return(0)
