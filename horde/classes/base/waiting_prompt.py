@@ -189,7 +189,7 @@ class WaitingPrompt(db.Model):
         # if not myself_refresh:
         #     return None
         # myself_refresh.n -= 1
-        safe_amount = worker.get_safe_amount(amount, self.get_amount_calculation_things())
+        safe_amount = worker.get_safe_amount(amount, self)
         if safe_amount > self.n:
             safe_amount = self.n
         if self.disable_batching:

@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.29.1
+
+* Upscalers reduce the batching amount
+
 # 4.29.0
 
 * New async key `disable_batching`. Set to true to avoid batching these requests. Useful for picking up an accurate seed.

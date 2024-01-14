@@ -605,5 +605,5 @@ class Worker(WorkerTemplate):
         super().delete()
 
     # To override
-    def get_safe_amount(self, amount, things):
+    def get_safe_amount(self, amount, wp):
         return amount
