@@ -168,9 +168,14 @@ class ImageWorker(Worker):
             return 0.75
         return 1
 
-    def get_safe_amount(self, amount, things):
+    def get_safe_amount(self, amount, wp):
         safe_generations = (self.max_pixels / 3) * amount
-        safe_amount = round(safe_generations / things)
+        mps = wp.get_amount_calculation_things()
+        # If the job has upscalers, we increase the amount of MPS in our calculations
+        # As currently the upscaling happens serially on the worker
+        if wp.has_upscalers():
+            mps *= 1.5
+        safe_amount = round(safe_generations / mps)
         if safe_amount > amount:
             safe_amount = amount
         if safe_amount <= 0:

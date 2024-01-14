@@ -12,7 +12,7 @@ from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
 from horde.image import convert_pil_to_b64
 from horde.bridge_reference import check_bridge_capability
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_LCM_LORA_VERSIONS, KNOWN_LCM_LORA_IDS, SECOND_ORDER_SAMPLERS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_LCM_LORA_VERSIONS, KNOWN_LCM_LORA_IDS, SECOND_ORDER_SAMPLERS, KNOWN_UPSCALERS
 from horde.classes.stable.kudos import KudosModel
 from horde.model_reference import model_reference
 
@@ -404,3 +404,9 @@ class ImageWaitingPrompt(WaitingPrompt):
     
     def get_amount_calculation_things(self):
         return self.width * self.height
+    
+    def has_upscalers(self):
+        for pp in self.params.get('post_processing', []):
+            if pp in KNOWN_UPSCALERS:
+                return True
+        return False
