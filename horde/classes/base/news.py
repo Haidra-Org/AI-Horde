@@ -6,7 +6,7 @@ class News:
         {
             "date_published": "2024-01-13",
             "newspiece": 
-                "We have now added batching to the AI Horde!"
+                "We have now [added batching](https://dbzer0.com/blog/ludicrous-speed/) to the AI Horde!"
                 "This means that if your frontend is handling this properly, sending requests for multiple images should fulfill much faster overall."
                 "However this can have an impact on the resulting seed. If you need to have an accurate seed, for now you can use disable_batching.",
             "tags": ["dreamer", "db0", "batching", "seed"],
