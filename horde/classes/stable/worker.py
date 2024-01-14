@@ -174,7 +174,7 @@ class ImageWorker(Worker):
         # If the job has upscalers, we increase the amount of MPS in our calculations
         # As currently the upscaling happens serially on the worker
         if wp.has_upscalers():
-            mps *= 1.5
+            mps *= 2
         safe_amount = round(safe_generations / mps)
         if safe_amount > amount:
             safe_amount = amount
