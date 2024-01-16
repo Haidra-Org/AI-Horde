@@ -95,7 +95,7 @@ We provide a CLI tool for each type of AI Horde usage in [this repository](https
         * [Photoshop Plugin](https://github.com/grizbil/Auto-Photoshop-StableDiffusion-Plugin)
         * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
     * Other
-        * [python SDK](hhttps://github.com/Haidra-Org/horde-sdk)
+        * [python SDK](https://github.com/Haidra-Org/horde-sdk)
         * [npm SDK](https://www.npmjs.com/package/@zeldafan0225/ai_horde)
 
 You can see many more integrations and links to their communities in our discord server!
