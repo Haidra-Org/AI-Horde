@@ -53,6 +53,8 @@ class TextModels(v2.Models):
             'use_default_badwordsids': fields.Boolean(example=True,description="When True, uses the default KoboldAI bad word IDs."),
             'stop_sequence': fields.List(fields.String(description="An array of string sequences whereby the model will stop generating further tokens. The returned text WILL contain the stop sequence.")),
             'min_p': fields.Float(description="Min-p sampling value.", min=0.0, default=0.0, max=1.0),
+            'dynatemp_range': fields.Float(description="Dynamic temperature range value.", min=0.0, default=0.0, max=5.0),
+            'dynatemp_exponent': fields.Float(description="Dynamic temperature exponent value.", min=0.0, default=1.0, max=5.0),
         })
         self.response_model_generation_payload = api.inherit('ModelPayloadKobold', self.root_model_generation_payload_kobold, {
             'prompt': fields.String(description="The prompt which will be sent to KoboldAI to generate the text."),
