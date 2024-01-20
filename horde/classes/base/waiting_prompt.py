@@ -218,7 +218,7 @@ class WaitingPrompt(db.Model):
         return pop_payload
 
     def fake_generation(self, worker):
-        payload = self.get_job_payload()
+        payload = self.get_job_payload(self.n)
         procgen_class = procgen_classes[self.wp_type]
         new_gen = procgen_class(
             wp_id=self.id, 
