@@ -66,9 +66,6 @@ class Models:
             'count': fields.Integer(description="How many of workers in this horde are running this model."),
         })
         self.response_model_generation_result = api.model('Generation', {
-            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image."),
-            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image."),
-            'model': fields.String(title="Generation Model", description="The model which generated this image."),
             'state': fields.String(title="Generation State", required=True, default='ok', enum=["ok", "censored"], description="OBSOLETE (Use the gen_metadata field). The state of this generation."),
         })
         self.response_model_wp_status_full = api.inherit('RequestStatus', self.response_model_wp_status_lite, {
