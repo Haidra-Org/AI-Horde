@@ -227,7 +227,7 @@ class WaitingPrompt(db.Model):
         new_trick = WPTrickedWorkers(wp_id=self.id, worker_id=worker.id)
         db.session.add(new_trick)
         db.session.commit()
-        logger.audit(f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
+        logger.info(f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left")
         return self.get_pop_payload([new_gen], payload)
     
     def tricked_worker(self, worker):
