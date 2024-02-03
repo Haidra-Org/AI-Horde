@@ -200,6 +200,8 @@ class GenerateTemplate(Resource):
     def validate(self):
         if settings.mode_maintenance():
             raise e.MaintenanceMode('Generate')
+        if self.args.webhook and not self.args.webhook.startswith("https://"):
+            raise e.BadRequest("webhooks need to point to an https endpoint.")
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
             if self.args.apikey:
@@ -333,6 +335,7 @@ class GenerateTemplate(Resource):
             worker_blacklist = self.args.worker_blacklist,
             ipaddr = self.user_ip,
             sharedkey_id = self.args.apikey if self.sharedkey else None,
+            webhook = self.args.webhook,
         )
     
     # We split this into its own function, so that it may be overriden and extended

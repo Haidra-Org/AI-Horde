@@ -87,6 +87,7 @@ class WaitingPrompt(db.Model):
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
     disable_batching = db.Column(db.Boolean, default=False, nullable=False)
+    webhook = db.Column(db.String(1024))
 
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
     sharedkey_id = db.Column(uuid_column_type(), db.ForeignKey("user_sharedkeys.id", ondelete="CASCADE"), nullable=True)

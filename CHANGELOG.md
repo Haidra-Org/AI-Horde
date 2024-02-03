@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.30.0
+
+* Added webhooks
+
 # 4.29.1
 
 * Upscalers reduce the batching amount

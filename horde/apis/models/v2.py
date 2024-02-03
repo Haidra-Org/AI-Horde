@@ -16,6 +16,7 @@ class Parsers:
         self.generate_parser.add_argument("dry_run", type=bool, default=False, required=False, help="When true, the endpoint will simply return the cost of the request in kudos and exit.", location="json")
         self.generate_parser.add_argument("proxied_account", type=str, required=False, help="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.", location="json")
         self.generate_parser.add_argument("disable_batching", type=bool, default=False, required=False, location="json")
+        self.generate_parser.add_argument("webhook", type=str, required=False, location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()

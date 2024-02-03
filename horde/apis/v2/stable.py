@@ -205,6 +205,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             sharedkey_id = self.args.apikey if self.sharedkey else None,
             proxied_account = self.args['proxied_account'],
             disable_batching = self.args['disable_batching'],
+            webhook = self.args.webhook,
         )
         _, total_threads = database.count_active_workers("image")
         needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)
@@ -609,6 +610,7 @@ class Interrogate(Resource):
     post_parser.add_argument("source_image", type=str, required=True, location="json")
     post_parser.add_argument("trusted_workers", type=bool, required=False, default=False, help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.", location="json")
     post_parser.add_argument("slow_workers", type=bool, default=True, required=False, help="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.", location="json")
+    post_parser.add_argument("webhook", type=str, required=False, location="json")
 
     @api.expect(post_parser, models.input_interrogate_request_generation, validate=True)
     @api.marshal_with(models.response_model_interrogation, code=202, description='Interrogation Queued', skip_none=True)
@@ -640,6 +642,7 @@ class Interrogate(Resource):
             slow_workers = self.args.slow_workers,
             ipaddr = self.user_ip,
             safe_ip = self.safe_ip,
+            webhook = self.args.webhook,
         )
         # If anything goes wrong when uploading an image, we don't want to leave garbage around
         try:
@@ -660,6 +663,8 @@ class Interrogate(Resource):
     def validate(self):
         if settings.mode_maintenance():
             raise e.MaintenanceMode('Interrogate')
+        if self.args.webhook and not self.args.webhook.startswith("https://"):
+            raise e.BadRequest("webhooks need to point to an https endpoint.")
         with HORDE.app_context():
             if self.args.apikey:
                 self.user = database.find_user_by_api_key(self.args['apikey'])

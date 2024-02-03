@@ -30,13 +30,9 @@ If you do not want to login even with a pseudonymous account, you can use this s
 
 The point of registering is to track your usage and your contributions. The more you contribute to the Horde, the more priority you have. [Read about this here](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/)
 
-## REST API
+## Integration
 
-We provide a fully open REST API for all Generative AI functions we support.
-
-[Complete Documentation](https://aihorde.net/api).
-
-![](api_screenshot.png)
+If you want to build an integration to the AI Horde (Bot, application, scripts etc), please consult our [Integration Readme](README_integration.md)
 
 # Community
 

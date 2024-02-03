@@ -1,4 +1,4 @@
-import uuid
+import requests
 import json
 
 from datetime import datetime, timedelta
@@ -84,6 +84,7 @@ class InterrogationForms(db.Model):
                 hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(self.result))
         self.state = State.DONE
         self.record(self.kudos)
+        self.send_webhook(self.kudos)
         db.session.commit()
         return(self.kudos)
 
@@ -145,7 +146,33 @@ class InterrogationForms(db.Model):
         db.session.delete(self)
         db.session.commit()
 
+    def get_details(self):
+        return {
+            "form": self.name,
+            "state": self.state.name.lower(),
+            "result": self.result,
+            "worker_id": self.worker_id,
+            "worker_name": self.worker.name,
+        }
 
+    def send_webhook(self,kudos):
+        if not self.interrogation.webhook:
+            return
+        data = self.get_details()
+        data["request"] = str(self.interrogation.id)
+        data["id"] = str(self.id)
+        data["kudos"] = kudos
+        data["worker_id"] = str(data['worker_id'])
+        for riter in range(3):
+            try:
+                req = requests.post(self.interrogation.webhook,json=data, timeout=3)
+                if not req.ok:
+                    logger.debug(f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...")
+                    continue
+                break
+            except Exception as err:
+                logger.debug(f"Exception when sending alchemy webhook: {err}. Will retry {3-riter-1} more times...")
+            
 class Interrogation(db.Model):
     """For storing the request for interrogating an image"""
     __tablename__ = "interrogations"
@@ -163,6 +190,7 @@ class Interrogation(db.Model):
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
+    webhook = db.Column(db.String(1024))
     forms = db.relationship("InterrogationForms", back_populates="interrogation", cascade="all, delete-orphan")
 
 
@@ -270,11 +298,7 @@ class Interrogation(db.Model):
         processing = False
         found_waiting = False
         for form in self.forms:
-            form_dict = {
-                "form": form.name,
-                "state": form.state.name.lower(),
-                "result": form.result,
-            }
+            form_dict = form.get_details()
             ret_dict["forms"].append(form_dict)
             if form.state != State.FAULTED:
                 all_faulted = False

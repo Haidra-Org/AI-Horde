@@ -1,5 +1,5 @@
-import uuid
 import random
+import requests
 
 from datetime import datetime
 
@@ -77,6 +77,7 @@ class ProcessingGeneration(db.Model):
         kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
+        self.send_webhook(kudos)
         db.session.commit()
         return(kudos)
         
@@ -179,3 +180,22 @@ class ProcessingGeneration(db.Model):
     # Typically needed for LLMs using EOS tokens etc
     def get_things_count(self, generation):
         return self.wp.things
+
+    def send_webhook(self,kudos):
+        if not self.wp.webhook:
+            return
+        data = self.get_details()
+        data["request"] = str(self.wp.id)
+        data["id"] = str(self.id)
+        data["kudos"] = kudos
+        data["worker_id"] = str(data['worker_id'])
+        for riter in range(3):
+            try:
+                req = requests.post(self.wp.webhook,json=data, timeout=3)
+                if not req.ok:
+                    logger.debug(f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...")
+                    continue
+                break
+            except Exception as err:
+                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times...")
+            
