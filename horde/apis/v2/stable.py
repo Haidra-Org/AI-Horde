@@ -205,6 +205,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             sharedkey_id = self.args.apikey if self.sharedkey else None,
             proxied_account = self.args['proxied_account'],
             disable_batching = self.args['disable_batching'],
+            webhook = self.args.webhook,
         )
         _, total_threads = database.count_active_workers("image")
         needs_kudos,resolution = self.wp.require_upfront_kudos(database.retrieve_totals(),total_threads)

@@ -146,6 +146,7 @@ class ImageModels(v2.Models):
             'dry_run': fields.Boolean(default=False,description="When true, the endpoint will simply return the cost of the request in kudos and exit."),
             'proxied_account': fields.String(description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."),
             'disable_batching': fields.Boolean(default=False,description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons."),
+            'webhook': fields.String(description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID."),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),

@@ -65,6 +65,7 @@ class TextAsyncGenerate(GenerateTemplate):
             client_agent=self.args["Client-Agent"],
             sharedkey_id = self.args.apikey if self.sharedkey else None,
             proxied_account = self.args['proxied_account'],
+            webhook = self.args.webhook,
         )
         _, total_threads = database.count_active_workers("text")
         highest_multiplier = 0
