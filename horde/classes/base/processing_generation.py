@@ -188,6 +188,7 @@ class ProcessingGeneration(db.Model):
         data["request"] = str(self.wp.id)
         data["id"] = str(self.id)
         data["kudos"] = kudos
+        data["id"] = str(data['id'])
         logger.debug(data)
         for riter in range(3):
             try:
