@@ -146,7 +146,7 @@ class ImageModels(v2.Models):
             'dry_run': fields.Boolean(default=False,description="When true, the endpoint will simply return the cost of the request in kudos and exit."),
             'proxied_account': fields.String(description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."),
             'disable_batching': fields.Boolean(default=False,description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons."),
-            'webhook': fields.String(required=False, max_length=1024, min_length=10, description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID."),
+            'webhook': fields.String(required=False, max_length=1024, min_length=10, example="https://haidra.net/00000000-0000-0000-0000-000000000000", description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID."),
         })
         self.response_model_team_details = api.inherit('TeamDetailsStable', self.response_model_team_details, {
             "contributions": fields.Float(description="How many megapixelsteps the workers in this team have been rewarded while part of this team."),
@@ -165,7 +165,7 @@ class ImageModels(v2.Models):
             'forms': fields.List(fields.Nested(self.input_model_interrogation_form)),
             'source_image': fields.String(required=False, description="The public URL of the image to interrogate."),
             'slow_workers': fields.Boolean(default=True,description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost."),
-            'webhook': fields.String(required=False, max_length=1024, min_length=10, description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID."),
+            'webhook': fields.String(required=False, max_length=1024, min_length=10, example="https://haidra.net/00000000-0000-0000-0000-000000000000", description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID."),
         })
         self.response_model_interrogation = api.model('RequestInterrogationResponse', {
             'id': fields.String(description="The UUID of the request. Use this to retrieve the request status in the future."),
