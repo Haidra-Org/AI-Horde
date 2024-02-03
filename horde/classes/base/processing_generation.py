@@ -193,6 +193,7 @@ class ProcessingGeneration(db.Model):
         for riter in range(3):
             try:
                 req = requests.post(self.wp.webhook,json=data, timeout=3)
+                logger.debug(req.status_code)
                 if not req.ok:
                     logger.debug(f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...")
                     continue
