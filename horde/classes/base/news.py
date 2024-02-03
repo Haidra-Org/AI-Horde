@@ -4,6 +4,14 @@ class News:
 
     HORDE_NEWS = [
         {
+            "date_published": "2024-02-03",
+            "newspiece": 
+                "Webhooks are here. You can [now specify a webhook URL](https://github.com/Haidra-Org/AI-Horde/blob/main/README_integration.md#webhooks) "
+                "which the horde will POST to when your generations are ready",
+            "tags": ["webhooks", "db0"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2024-01-13",
             "newspiece": 
                 "We have now [added batching](https://dbzer0.com/blog/ludicrous-speed/) to the AI Horde!"

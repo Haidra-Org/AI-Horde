@@ -65,6 +65,7 @@ Below you will find the webhook json payload for each type of generation
 
 ### Image
 
+```
 {
   "img": "<IMAGE URL: STR>",
   "seed": <IMAGE SEED: INT>,
@@ -76,10 +77,10 @@ Below you will find the webhook json payload for each type of generation
   "request": "<REQUEST ID: STR>",
   "kudos": <KUDOS CONSUMED: INT>
 }
-
+```
 ### Text
 
-{
+```{
   "text": "<TEXT URL: STR>",
   "seed": <TEXT SEED: INT>,
   "worker_id": "<WORKER ID: STR>",
@@ -90,10 +91,10 @@ Below you will find the webhook json payload for each type of generation
   "request": "<REQUEST ID: STR>",
   "kudos": <KUDOS CONSUMED: INT>
 }
-
+```
 ### Alchemy
 
-{
+```{
   "form": "<FORM TYPE: STR>",
   "state": <FORM STATE: STR>,
   "result": "<FORM RESULTS: DICT>",
@@ -103,3 +104,4 @@ Below you will find the webhook json payload for each type of generation
   "request": "<REQUEST ID: STR>",
   "kudos": <KUDOS CONSUMED: INT>
 }
+```
