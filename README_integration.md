@@ -90,3 +90,16 @@ Below you will find the webhook json payload for each type of generation
   "request": "<REQUEST ID: STR>",
   "kudos": <KUDOS CONSUMED: INT>
 }
+
+### Alchemy
+
+{
+  "form": "<FORM TYPE: STR>",
+  "state": <FORM STATE: STR>,
+  "result": "<FORM RESULTS: DICT>",
+  "worker_id": "<WORKER ID: STR>",
+  "worker_name": "<WORKER NAME: STR>",
+  "id": "<JOB ID: STR>",
+  "request": "<REQUEST ID: STR>",
+  "kudos": <KUDOS CONSUMED: INT>
+}
