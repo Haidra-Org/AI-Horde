@@ -200,7 +200,7 @@ class GenerateTemplate(Resource):
     def validate(self):
         if settings.mode_maintenance():
             raise e.MaintenanceMode('Generate')
-        if self.args.webhook and not self.args.webhook.startwith("https://"):
+        if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
             #logger.warning(datetime.utcnow())
