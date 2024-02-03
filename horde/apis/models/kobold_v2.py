@@ -23,6 +23,9 @@ class TextModels(v2.Models):
             'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
         })
         self.response_model_generation_result = api.inherit('GenerationKobold', self.response_model_generation_result, {
+            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this text."),
+            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this text."),
+            'model': fields.String(title="Generation Model", description="The model which generated this text."),
             'text': fields.String(title="Generated Text", description="The generated text.", min_length = 0),
             'seed': fields.Integer(title="Generation Seed", description="The seed which generated this text.", default=0),
             'gen_metadata': fields.List(fields.Nested(self.model_job_metadata, skip_none=True)),

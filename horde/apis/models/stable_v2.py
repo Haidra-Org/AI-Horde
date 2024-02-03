@@ -35,6 +35,9 @@ class ImageModels(v2.Models):
             'ref': fields.String(required=False, description="Optionally a reference for the metadata (e.g. a lora ID)", max_length = 255),
         })
         self.response_model_generation_result = api.inherit('GenerationStable', self.response_model_generation_result, {
+            'worker_id': fields.String(title="Worker ID", description="The UUID of the worker which generated this image."),
+            'worker_name': fields.String(title="Worker Name", description="The name of the worker which generated this image."),
+            'model': fields.String(title="Generation Model", description="The model which generated this image."),
             'img': fields.String(title="Generated Image", description="The generated image as a Base64-encoded .webp file."),
             'seed': fields.String(title="Generation Seed", description="The seed which generated this image."),
             'id': fields.String(title="Generation ID", description="The ID for this image."),
