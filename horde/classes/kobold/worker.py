@@ -1,12 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from sqlalchemy.dialects.postgresql import UUID
 import json
 
 from horde.logger import logger
-from horde.flask import db
 from horde.classes.base.worker import Worker
-from horde.suspicions import Suspicions
-from horde.bridge_reference import check_bridge_capability, check_sampler_capability
 from horde.model_reference import model_reference
 from horde import exceptions as e
 from horde.utils import sanitize_string
@@ -14,7 +11,7 @@ from horde.flask import db, SQLITE_MODE
 from horde import horde_redis as hr
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 
 
 class TextWorkerSoftprompts(db.Model):
@@ -25,7 +22,7 @@ class TextWorkerSoftprompts(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"TextWorker", back_populates="softprompts")
+    worker = db.relationship("TextWorker", back_populates="softprompts")
     softprompt = db.Column(db.String(255))
     wtype = "text"
 
@@ -77,8 +74,8 @@ class TextWorker(Worker):
             return self.refresh_softprompt_cache()
         try:
             softprompts_ret = json.loads(softprompts_cache)
-        except TypeError as e:
-            logger.error(f"Softprompts cache could not be loaded: {softprompts_cache}")
+        except TypeError:
+            logger.error("Softprompts cache could not be loaded: {softprompts_cache}")
             return self.refresh_softprompt_cache()
         if softprompts_ret is None:
             return self.refresh_softprompt_cache()

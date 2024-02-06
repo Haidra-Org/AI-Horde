@@ -1,4 +1,3 @@
-from datetime import datetime
 from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import Worker
@@ -11,7 +10,6 @@ from horde.bridge_reference import (
 )
 from horde.model_reference import model_reference
 from horde import exceptions as e
-from horde.utils import sanitize_string
 from horde.consts import KNOWN_POST_PROCESSORS
 
 

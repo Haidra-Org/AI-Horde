@@ -2,15 +2,12 @@ import uuid
 
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import func, or_
 
-from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde import vars as hv
 from horde.utils import get_expiry_date
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 
 
 class UploadedImage(db.Model):

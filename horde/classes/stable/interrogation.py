@@ -3,11 +3,10 @@ import json
 
 from datetime import datetime, timedelta
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy import Enum, JSON, func, or_
+from sqlalchemy import Enum, JSON
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde import vars as hv
 from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
 from horde.enums import State
 from horde import horde_redis as hr
@@ -15,7 +14,7 @@ from horde.consts import KNOWN_POST_PROCESSORS
 from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 
@@ -29,7 +28,7 @@ class InterrogationForms(db.Model):
         db.ForeignKey("interrogations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    interrogation = db.relationship(f"Interrogation", back_populates="forms")
+    interrogation = db.relationship("Interrogation", back_populates="forms")
     name = db.Column(db.String(30), nullable=False)
     state = db.Column(Enum(State), default=State.WAITING, nullable=False, index=True)
     payload = db.Column(json_column_type, default=None)
@@ -256,7 +255,7 @@ class Interrogation(db.Model):
         """
         cached_result = hr.horde_r_get(f"{form.name}_{source_image}")
         # The entry might be False, so we need to check explicitly against None
-        if cached_result != None:
+        if cached_result is not None: 
             form.result = json.loads(cached_result)
             form.state = State.DONE
 
@@ -308,7 +307,6 @@ class Interrogation(db.Model):
             return None
         myself_refresh.n -= 1
         db.session.commit()
-        worker_id = worker.id
         self.refresh()
         logger.audit(
             f"Interrogation with ID {self.id} popped by worker {worker.id} ('{worker.name}' / {worker.ipaddr})"

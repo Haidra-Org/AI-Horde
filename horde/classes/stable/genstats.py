@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 
-from horde.logger import logger
 from horde.flask import db
 from horde.enums import ImageGenState
 from sqlalchemy import Enum, func
@@ -15,7 +14,7 @@ class ImageGenerationStatisticPP(db.Model):
         nullable=False,
     )
     imgstat = db.relationship(
-        f"ImageGenerationStatistic", back_populates="post_processors"
+        "ImageGenerationStatistic", back_populates="post_processors"
     )
     pp = db.Column(db.String(40), nullable=False)
 
@@ -28,7 +27,7 @@ class ImageGenerationStatisticCN(db.Model):
         db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"),
         nullable=False,
     )
-    imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="controlnet")
+    imgstat = db.relationship("ImageGenerationStatistic", back_populates="controlnet")
     control_type = db.Column(db.String(40), nullable=False)
 
 
@@ -40,7 +39,7 @@ class ImageGenerationStatisticLora(db.Model):
         db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"),
         nullable=False,
     )
-    imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="loras")
+    imgstat = db.relationship("ImageGenerationStatistic", back_populates="loras")
     lora = db.Column(db.String(255), nullable=False)
 
 
@@ -52,7 +51,7 @@ class ImageGenerationStatisticTI(db.Model):
         db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"),
         nullable=False,
     )
-    imgstat = db.relationship(f"ImageGenerationStatistic", back_populates="tis")
+    imgstat = db.relationship("ImageGenerationStatistic", back_populates="tis")
     ti = db.Column(db.String(255), nullable=False)
 
 
@@ -129,7 +128,7 @@ def record_image_statistic(procgen):
         negprompt="###" in procgen.wp.prompt,
         hires_fix=procgen.wp.params.get("hires_fix", False),
         tiling=procgen.wp.params.get("tiling", False),
-        img2img=procgen.wp.source_image != None,
+        img2img=procgen.wp.source_image != None, #noqa E711
         nsfw=procgen.wp.nsfw,
         bridge_agent=procgen.worker.bridge_agent,
         client_agent=procgen.wp.client_agent,

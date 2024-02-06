@@ -6,7 +6,7 @@ from sqlalchemy.sql import expression
 from horde.logger import logger
 from horde import vars as hv
 from horde.flask import db
-from horde.utils import get_random_seed, count_parentheses
+from horde.utils import get_random_seed
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.r2 import (
     generate_procgen_upload_url,
@@ -20,7 +20,6 @@ from horde.consts import (
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_LCM_LORA_IDS,
     SECOND_ORDER_SAMPLERS,
-    KNOWN_UPSCALERS,
     HEAVY_POST_PROCESSORS,
 )
 from horde.classes.stable.kudos import KudosModel
@@ -251,7 +250,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         )
 
     def seed_to_int(self, s=None):
-        if type(s) is int:
+        if isinstance(s,int):
             return s
         if s is None or s == "":
             return get_random_seed(self.n)

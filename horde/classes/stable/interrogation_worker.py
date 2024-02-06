@@ -1,5 +1,4 @@
 from sqlalchemy import func
-from datetime import datetime
 from horde.logger import logger
 from horde.flask import db
 from horde.classes.base.worker import (
@@ -7,7 +6,7 @@ from horde.classes.base.worker import (
     WorkerPerformance,
     uuid_column_type,
 )
-from horde.suspicions import Suspicions
+# from horde.suspicions import Suspicions
 
 
 class WorkerInterrogationForm(db.Model):
@@ -18,7 +17,7 @@ class WorkerInterrogationForm(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"InterrogationWorker", back_populates="forms")
+    worker = db.relationship("InterrogationWorker", back_populates="forms")
     form = db.Column(db.String(30))
 
 
@@ -136,7 +135,7 @@ class InterrogationWorker(WorkerTemplate):
                 f"{round(sum(performances) / len(performances),1)} seconds per form"
             )
         else:
-            ret_str = f"No requests fulfilled yet"
+            ret_str = "No requests fulfilled yet"
         return ret_str
 
     def get_details(self, details_privilege=0):

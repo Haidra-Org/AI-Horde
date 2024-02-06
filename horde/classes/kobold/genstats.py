@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 
-from horde.logger import logger
 from horde.flask import db
 from horde.enums import ImageGenState
 from sqlalchemy import Enum, func
