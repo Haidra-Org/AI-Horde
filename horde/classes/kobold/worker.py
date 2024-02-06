@@ -11,7 +11,9 @@ from horde.flask import db, SQLITE_MODE
 from horde import horde_redis as hr
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
+uuid_column_type = (
+    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+)  # FIXME # noqa E731
 
 
 class TextWorkerSoftprompts(db.Model):

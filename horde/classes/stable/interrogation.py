@@ -14,7 +14,9 @@ from horde.consts import KNOWN_POST_PROCESSORS
 from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
+uuid_column_type = (
+    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 
@@ -255,7 +257,7 @@ class Interrogation(db.Model):
         """
         cached_result = hr.horde_r_get(f"{form.name}_{source_image}")
         # The entry might be False, so we need to check explicitly against None
-        if cached_result is not None: 
+        if cached_result is not None:
             form.result = json.loads(cached_result)
             form.state = State.DONE
 

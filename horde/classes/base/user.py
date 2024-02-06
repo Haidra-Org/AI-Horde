@@ -20,7 +20,9 @@ from horde.discord import send_problem_user_notification
 from horde import horde_redis as hr
 from horde.countermeasures import CounterMeasures
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
+uuid_column_type = (
+    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+)  # FIXME # noqa E731
 
 
 class UserProblemJobs(db.Model):
@@ -314,7 +316,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.TRUSTED,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -335,7 +337,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.FLAGGED,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -356,7 +358,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.MODERATOR,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -377,7 +379,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.CUSTOMIZER,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -398,7 +400,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.VPN,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -419,7 +421,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SERVICE,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -440,7 +442,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SPECIAL,
-                UserRole.value == True, #noqa E712
+                UserRole.value == True,  # noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -970,9 +972,7 @@ class User(db.Model):
             latest_user = f"{self.get_unique_alias()}:{procgen.wp.proxied_account}"
         loras = ""
         if "loras" in procgen.wp.params:
-            loras = (
-                f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
-            )
+            loras = f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
         # Manual exception for pawky as they won't add proxied_accounts for a while
         # And I'm tired of seeing reports from their user instead of from IPs
         # TODO: Remove id check once pawkygame adds proxied_accounts

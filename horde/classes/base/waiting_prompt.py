@@ -24,7 +24,9 @@ procgen_classes = {
 }
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
+uuid_column_type = (
+    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+)  # FIXME # noqa E731
 
 
 class WPAllowedWorkers(db.Model):
@@ -294,10 +296,10 @@ class WaitingPrompt(db.Model):
             db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
-                procgen_class.fake == False, #noqa E712
+                procgen_class.fake == False,  # noqa E712
                 or_(
-                    procgen_class.faulted == True, #noqa E712
-                    procgen_class.generation != None, #noqa E712
+                    procgen_class.faulted == True,  # noqa E712
+                    procgen_class.generation != None,  # noqa E712
                 ),
             )
             .count()

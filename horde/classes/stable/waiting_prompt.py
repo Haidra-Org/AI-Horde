@@ -250,7 +250,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         )
 
     def seed_to_int(self, s=None):
-        if isinstance(s,int):
+        if isinstance(s, int):
             return s
         if s is None or s == "":
             return get_random_seed(self.n)

@@ -91,9 +91,7 @@ def generate_procgen_download_url(procgen_id, shared=False):
 
 
 def delete_procgen_image(procgen_id):
-    s3_client.delete_object(
-        Bucket=r2_transient_bucket, Key=f"{procgen_id}.webp"
-    )
+    s3_client.delete_object(Bucket=r2_transient_bucket, Key=f"{procgen_id}.webp")
 
 
 def delete_source_image(source_image_uuid):
@@ -219,9 +217,9 @@ def check_file(client, bucket, filename):
 
 
 def check_shared_image(filename):
-    return isinstance(check_file(s3_client_shared, r2_transient_bucket, filename),dict)
+    return isinstance(check_file(s3_client_shared, r2_transient_bucket, filename), dict)
 
 
 def file_exists(client, bucket, filename):
     # If the return of check_file is an int, it means it encountered an error
-    return not isinstance(check_file(client, bucket, filename),int)
+    return not isinstance(check_file(client, bucket, filename), int)

@@ -3,19 +3,23 @@ from horde.flask import db, HORDE
 from horde.utils import hash_api_key
 
 # Importing for DB creation
-from horde.classes.stable.processing_generation import ImageProcessingGeneration #noqa 401
-from horde.classes.kobold.processing_generation import TextProcessingGeneration #noqa 401
-from horde.classes.stable.waiting_prompt import ImageWaitingPrompt #noqa 401
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt #noqa 401
-from horde.classes.stable.interrogation import Interrogation #noqa 401
-from horde.classes.stable.interrogation_worker import InterrogationWorker #noqa 401
+from horde.classes.stable.processing_generation import (
+    ImageProcessingGeneration,
+)  # noqa 401
+from horde.classes.kobold.processing_generation import (
+    TextProcessingGeneration,
+)  # noqa 401
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt  # noqa 401
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt  # noqa 401
+from horde.classes.stable.interrogation import Interrogation  # noqa 401
+from horde.classes.stable.interrogation_worker import InterrogationWorker  # noqa 401
 from horde.classes.base.user import User
-from horde.classes.base.team import Team #noqa 401
-from horde.classes.stable.worker import ImageWorker #noqa 401
-from horde.classes.kobold.worker import TextWorker #noqa 401
+from horde.classes.base.team import Team  # noqa 401
+from horde.classes.stable.worker import ImageWorker  # noqa 401
+from horde.classes.kobold.worker import TextWorker  # noqa 401
 from horde.classes.base.settings import HordeSettings
-import horde.classes.base.stats #noqa 401
-from horde.classes.base.detection import Filter #noqa 401
+import horde.classes.base.stats  # noqa 401
+from horde.classes.base.detection import Filter  # noqa 401
 
 with HORDE.app_context():
     # from sqlalchemy import select

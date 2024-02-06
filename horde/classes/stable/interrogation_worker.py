@@ -6,6 +6,7 @@ from horde.classes.base.worker import (
     WorkerPerformance,
     uuid_column_type,
 )
+
 # from horde.suspicions import Suspicions
 
 

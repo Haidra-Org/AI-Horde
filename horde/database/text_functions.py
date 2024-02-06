@@ -55,16 +55,16 @@ def get_sorted_text_wp_filtered_to_worker(
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.max_length <= worker.max_length,
             TextWaitingPrompt.max_context_length <= worker.max_context_length,
-            TextWaitingPrompt.active == True, #noqa E712
-            TextWaitingPrompt.faulted == False, #noqa E712
+            TextWaitingPrompt.active == True,  # noqa E712
+            TextWaitingPrompt.faulted == False,  # noqa E712
             TextWaitingPrompt.expiry > datetime.utcnow(),
             or_(
-                TextWaitingPrompt.safe_ip == True, #noqa E712
-                worker.allow_unsafe_ipaddr == True, #noqa E712
+                TextWaitingPrompt.safe_ip == True,  # noqa E712
+                worker.allow_unsafe_ipaddr == True,  # noqa E712
             ),
             or_(
-                TextWaitingPrompt.nsfw == False, #noqa E712
-                worker.nsfw == True, #noqa E712
+                TextWaitingPrompt.nsfw == False,  # noqa E712
+                worker.nsfw == True,  # noqa E712
             ),
             or_(
                 WPModels.model.in_(models_list),
@@ -84,10 +84,10 @@ def get_sorted_text_wp_filtered_to_worker(
             or_(
                 worker.speed
                 >= slow_speed,  # Slow speed is based on the model parameters used
-                TextWaitingPrompt.slow_workers == True, #noqa E712
+                TextWaitingPrompt.slow_workers == True,  # noqa E712
             ),
             or_(
-                worker.maintenance == False, #noqa E712
+                worker.maintenance == False,  # noqa E712
                 TextWaitingPrompt.user_id == worker.user_id,
             ),
         )
@@ -145,8 +145,8 @@ def get_all_text_wps():
     return (
         db.session.query(TextWaitingPrompt)
         .filter(
-            TextWaitingPrompt.active == True, #noqa E712
-            TextWaitingPrompt.faulted == False, #noqa E712
+            TextWaitingPrompt.active == True,  # noqa E712
+            TextWaitingPrompt.faulted == False,  # noqa E712
             TextWaitingPrompt.expiry > datetime.utcnow(),
         )
         .all()

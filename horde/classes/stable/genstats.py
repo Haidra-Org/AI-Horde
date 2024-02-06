@@ -128,7 +128,7 @@ def record_image_statistic(procgen):
         negprompt="###" in procgen.wp.prompt,
         hires_fix=procgen.wp.params.get("hires_fix", False),
         tiling=procgen.wp.params.get("tiling", False),
-        img2img=procgen.wp.source_image != None, #noqa E711
+        img2img=procgen.wp.source_image != None,  # noqa E711
         nsfw=procgen.wp.nsfw,
         bridge_agent=procgen.worker.bridge_agent,
         client_agent=procgen.wp.client_agent,

@@ -37,13 +37,15 @@ class ImageAsyncGenerate(GenerateTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value=lim.get_request_90min_limit_per_ip, key_func=lim.get_request_path
+            limit_value=lim.get_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
         ),
         limiter.limit(
             limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path
         ),
         limiter.limit(
-            limit_value=lim.get_request_limit_per_apikey, key_func=lim.get_request_api_key
+            limit_value=lim.get_request_limit_per_apikey,
+            key_func=lim.get_request_api_key,
         ),
     ]
 

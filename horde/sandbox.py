@@ -13,12 +13,12 @@ from horde.database import threads as threads
 from horde.model_reference import model_reference
 from horde.countermeasures import CounterMeasures
 
+
 def test():
     # with HORDE.app_context():
     #     logger.debug(stats.get_model_avg("Deliberate"))
     #     logger.debug(stats.get_model_avg("stable_diffusion"))
     # logger.debug(database.count_totals())
-
 
     # pp = pprint.PrettyPrinter(depth=3)
     # pp.pprint(patrons.get_monthly_kudos(42742))

@@ -9,7 +9,9 @@ from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
+uuid_column_type = (
+    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+)  # FIXME # noqa E731
 
 
 class Team(db.Model):

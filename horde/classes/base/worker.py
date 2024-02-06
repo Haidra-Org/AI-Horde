@@ -15,7 +15,9 @@ from horde.classes.base import settings
 from horde.discord import send_pause_notification
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
+uuid_column_type = (
+    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+)  # FIXME # noqa E731
 
 
 class WorkerStats(db.Model):
@@ -174,7 +176,7 @@ class WorkerTemplate(db.Model):
             .label("speed")
         )
         return db.case(
-            [(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])], #noqa E712
+            [(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])],  # noqa E712
             else_=performance_avg,
         )
 

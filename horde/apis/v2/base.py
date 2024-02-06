@@ -105,8 +105,6 @@ handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_reque
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
 
-
-
 def check_for_mod(api_key, operation, whitelisted_users=None):
     mod = database.find_user_by_api_key(api_key)
     if not mod:
@@ -656,7 +654,8 @@ class TransferKudos(Resource):
     decorators = [
         limiter.limit("1/second", key_func=lim.get_request_api_key),
         limiter.limit(
-            limit_value=lim.get_request_90hour_limit_per_ip, key_func=lim.get_request_api_key
+            limit_value=lim.get_request_90hour_limit_per_ip,
+            key_func=lim.get_request_api_key,
         ),
     ]
 
@@ -1213,7 +1212,9 @@ class UserSingle(Resource):
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
             user_details = json.loads(cached_user)
-            if isinstance(user_details.get("monthly_kudos", {}).get("last_received"),str):
+            if isinstance(
+                user_details.get("monthly_kudos", {}).get("last_received"), str
+            ):
                 user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(
                     user_details["monthly_kudos"]["last_received"]
                 )
