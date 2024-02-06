@@ -8,15 +8,16 @@ from horde.model_reference import model_reference
 from horde import vars as hv
 from horde.suspicions import Suspicions
 
+
 class TextProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
         "polymorphic_identity": "text",
-    }    
+    }
     wp = db.relationship("TextWaitingPrompt", back_populates="processing_gens")
     worker = db.relationship("TextWorker", back_populates="processing_gens")
 
     def get_details(self):
-        '''Returns a dictionary with details about this processing generation'''
+        """Returns a dictionary with details about this processing generation"""
         ret_dict = {
             "text": self.generation,
             "seed": self.seed,
@@ -47,10 +48,9 @@ class TextProcessingGeneration(ProcessingGeneration):
             return self.get_things_count() * context_multiplier * (2.7 / 100)
         # This is the approximate reward for generating with a 2.7 model at 4bit
         model_multiplier = model_reference.get_text_model_multiplier(self.model)
-        parameter_bonus =  (max(model_multiplier, 13) / 13) ** 0.20
+        parameter_bonus = (max(model_multiplier, 13) / 13) ** 0.20
         kudos = self.get_things_count() * parameter_bonus * model_multiplier / 100
         return round(kudos * context_multiplier, 2)
-
 
     def log_aborted_generation(self):
         record_text_statistic(self)
@@ -60,11 +60,10 @@ class TextProcessingGeneration(ProcessingGeneration):
             f" from by worker: {self.worker.name} ({self.worker.id})"
         )
 
-
     def set_generation(self, generation, things_per_sec, **kwargs):
         # We don't check the state in the super() function as image gen sets it early here
         # as well, so it can abort before doing R2 operations
-        state = kwargs.get("state", 'ok')
+        state = kwargs.get("state", "ok")
         if state == "faulted":
             self.wp.n += 1
             self.abort()
@@ -73,14 +72,14 @@ class TextProcessingGeneration(ProcessingGeneration):
             db.session.commit()
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         record_text_statistic(self)
-        return(kudos)
-    
-    def get_things_count(self, generation = None):
+        return kudos
+
+    def get_things_count(self, generation=None):
         if generation is None:
             if self.generation is None:
                 return 0
             generation = self.generation
-        quick_token_count = math.ceil(len(generation)/4)
+        quick_token_count = math.ceil(len(generation) / 4)
         if quick_token_count < 20:
             quick_token_count = 20
         if self.wp.things > quick_token_count:
@@ -98,7 +97,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         if self.worker.user.trusted:
             return
         param_multiplier = model_reference.get_text_model_multiplier(self.model)
-        unreasonable_speed = hv.suspicion_thresholds['text']
+        unreasonable_speed = hv.suspicion_thresholds["text"]
         max_speed_per_multiplier = {
             70: 12,
             40: 22,
@@ -111,4 +110,6 @@ class TextProcessingGeneration(ProcessingGeneration):
                 unreasonable_speed = max_speed_per_multiplier[params_count]
                 break
         if things_per_sec > unreasonable_speed:
-            self.worker.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[things_per_sec])
+            self.worker.report_suspicion(
+                reason=Suspicions.UNREASONABLY_FAST, formats=[things_per_sec]
+            )

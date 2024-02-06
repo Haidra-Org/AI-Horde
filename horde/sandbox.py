@@ -16,7 +16,7 @@ from horde.countermeasures import CounterMeasures
 # with HORDE.app_context():
 #     logger.debug(stats.get_model_avg("Deliberate"))
 #     logger.debug(stats.get_model_avg("stable_diffusion"))
-    # logger.debug(database.count_totals())
+# logger.debug(database.count_totals())
 
 
 # pp = pprint.PrettyPrinter(depth=3)
@@ -28,7 +28,7 @@ from horde.countermeasures import CounterMeasures
 # with HORDE.app_context():
 #     worker = database.find_worker_by_name("Db0_Test_Worker", worker_class=ImageWorker)
 #     logger.debug(worker.get_bridge_kudos_multiplier())
-    # worker.report_suspicion(amount = 1, reason = Suspicions.UNREASONABLY_FAST, formats = [9999])
+# worker.report_suspicion(amount = 1, reason = Suspicions.UNREASONABLY_FAST, formats = [9999])
 # threads.store_patreon_members()
 
 # Test problem userdiscord webhook
@@ -38,9 +38,9 @@ from horde.countermeasures import CounterMeasures
 
 # Cache testing
 # with HORDE.app_context():
-    # logger.info(database.retrieve_totals(True))
-    # logger.info(database.retrieve_totals())
-    # database.get_available_models()
+# logger.info(database.retrieve_totals(True))
+# logger.info(database.retrieve_totals())
+# database.get_available_models()
 
 # IP timeout testing
 # CounterMeasures.set_block_timeout("2001:db8::/64",1)

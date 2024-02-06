@@ -16,12 +16,14 @@ if SQLITE_MODE:
     logger.warning("Using SQLite for database")
     HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
 else:
-    HORDE.config["SQLALCHEMY_DATABASE_URI"] = f"postgresql://postgres:{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
-    HORDE.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    HORDE.config[
+        "SQLALCHEMY_DATABASE_URI"
+    ] = f"postgresql://postgres:{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
+    HORDE.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
         "pool_size": 50,
         "max_overflow": -1,
     }
-HORDE.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+HORDE.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(HORDE)
 db.init_app(HORDE)
 
@@ -34,8 +36,8 @@ if is_redis_up():
     try:
         cache_config = {
             "CACHE_REDIS_URL": ger_cache_url(),
-            "CACHE_TYPE": "RedisCache",  
-            "CACHE_DEFAULT_TIMEOUT": 300
+            "CACHE_TYPE": "RedisCache",
+            "CACHE_DEFAULT_TIMEOUT": 300,
         }
         cache = Cache(config=cache_config)
         cache.init_app(HORDE)
@@ -46,10 +48,7 @@ if is_redis_up():
 
 # Allow local workstation run
 if cache is None:
-    cache_config = {
-        "CACHE_TYPE": "SimpleCache",
-        "CACHE_DEFAULT_TIMEOUT": 300
-    }
+    cache_config = {"CACHE_TYPE": "SimpleCache", "CACHE_DEFAULT_TIMEOUT": 300}
     cache = Cache(config=cache_config)
     cache.init_app(HORDE)
     logger.init_warn("Flask Cache", status="SimpleCache")

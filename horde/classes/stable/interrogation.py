@@ -21,29 +21,39 @@ json_column_type = JSONB if not SQLITE_MODE else JSON
 
 class InterrogationForms(db.Model):
     """For storing the details of each image interrogation form"""
+
     __tablename__ = "interrogation_forms"
-    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid) 
-    i_id = db.Column(uuid_column_type(), db.ForeignKey("interrogations.id", ondelete="CASCADE"), nullable=False)
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    i_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("interrogations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     interrogation = db.relationship(f"Interrogation", back_populates="forms")
     name = db.Column(db.String(30), nullable=False)
-    state = db.Column(Enum(State), default=State.WAITING, nullable=False, index=True) 
+    state = db.Column(Enum(State), default=State.WAITING, nullable=False, index=True)
     payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
     kudos = db.Column(db.Float, default=1, nullable=False)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), default=None, nullable=True)
+    worker_id = db.Column(
+        uuid_column_type(), db.ForeignKey("workers.id"), default=None, nullable=True
+    )
     worker = db.relationship("InterrogationWorker", back_populates="processing_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    initiated =  db.Column(db.DateTime, default=None)
+    initiated = db.Column(db.DateTime, default=None)
     expiry = db.Column(db.DateTime, default=None, index=True)
     abort_count = db.Column(db.Integer, default=0, nullable=False)
 
     def pop(self, worker):
-        myself_refresh = db.session.query(
-            InterrogationForms
-        ).filter(
-            InterrogationForms.id == self.id, 
-            InterrogationForms.state == State.WAITING
-        ).with_for_update().first()
+        myself_refresh = (
+            db.session.query(InterrogationForms)
+            .filter(
+                InterrogationForms.id == self.id,
+                InterrogationForms.state == State.WAITING,
+            )
+            .with_for_update()
+            .first()
+        )
         if not myself_refresh:
             return None
         myself_refresh.state = State.PROCESSING
@@ -60,33 +70,45 @@ class InterrogationForms(db.Model):
             "source_image": self.interrogation.source_image,
         }
         if self.name in KNOWN_POST_PROCESSORS:
-           ret_dict["r2_upload"] = generate_procgen_upload_url(str(self.id), False)
-        logger.debug([self.name in KNOWN_POST_PROCESSORS,self.name, KNOWN_POST_PROCESSORS])
+            ret_dict["r2_upload"] = generate_procgen_upload_url(str(self.id), False)
+        logger.debug(
+            [self.name in KNOWN_POST_PROCESSORS, self.name, KNOWN_POST_PROCESSORS]
+        )
         logger.debug(ret_dict)
         return ret_dict
-    
+
     def deliver(self, result, state):
         if self.state != State.PROCESSING:
-            return(0)
+            return 0
         if state == "faulted":
             self.abort()
-            return(-1)
+            return -1
         # If the image was not sent as b64, we cache its origin url and result so we save on compute
         self.result = result
         for form_name in self.result:
-            if self.result[form_name] == 'R2':
-                self.result[form_name] = generate_procgen_download_url(str(self.id), False)
+            if self.result[form_name] == "R2":
+                self.result[form_name] = generate_procgen_download_url(
+                    str(self.id), False
+                )
         if not self.interrogation.r2stored:
             if self.name in KNOWN_POST_PROCESSORS:
                 # Post-processed images live in R2 only for 120 minutes
-                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(minutes=90), json.dumps(self.result))
+                hr.horde_r_setex(
+                    f"{self.name}_{self.interrogation.source_image}",
+                    timedelta(minutes=90),
+                    json.dumps(self.result),
+                )
             else:
-                hr.horde_r_setex(f'{self.name}_{self.interrogation.source_image}', timedelta(days=5), json.dumps(self.result))
+                hr.horde_r_setex(
+                    f"{self.name}_{self.interrogation.source_image}",
+                    timedelta(days=5),
+                    json.dumps(self.result),
+                )
         self.state = State.DONE
         self.record(self.kudos)
         self.send_webhook(self.kudos)
         db.session.commit()
-        return(self.kudos)
+        return self.kudos
 
     def cancel(self):
         if self.state != State.DONE:
@@ -95,22 +117,26 @@ class InterrogationForms(db.Model):
         if self.state == State.PROCESSING:
             self.record(self.kudos)
         db.session.commit()
-        return(self.kudos)
+        return self.kudos
 
     def record(self, kudos):
         cancel_txt = ""
         if self.state == State.CANCELLED:
             cancel_txt = " CANCELLED"
-        self.worker.record_interrogation(kudos = self.kudos, seconds_taken = (datetime.utcnow() - self.initiated).total_seconds())
+        self.worker.record_interrogation(
+            kudos=self.kudos,
+            seconds_taken=(datetime.utcnow() - self.initiated).total_seconds(),
+        )
         kudos_burn = 1
         if self.interrogation.slow_workers:
             kudos_burn += 1
-        self.interrogation.record_usage(kudos = self.kudos + kudos_burn)
-        logger.info(f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}")
-
+        self.interrogation.record_usage(kudos=self.kudos + kudos_burn)
+        logger.info(
+            f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}"
+        )
 
     def abort(self):
-        '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
+        """Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash"""
         if self.state != State.PROCESSING:
             return
         self.worker.log_aborted_job()
@@ -124,9 +150,11 @@ class InterrogationForms(db.Model):
             self.state = State.WAITING
             self.abort_count += 1
         db.session.commit()
-        
+
     def log_aborted_interrogation(self):
-        logger.info(f"Aborted Stale Interrogation {self.id} ({self.name}) from by worker: {self.worker.name} ({self.worker.id})")
+        logger.info(
+            f"Aborted Stale Interrogation {self.id} ({self.name}) from by worker: {self.worker.name} ({self.worker.id})"
+        )
 
     def is_completed(self):
         return self.state == State.DONE
@@ -155,30 +183,38 @@ class InterrogationForms(db.Model):
             "worker_name": self.worker.name,
         }
 
-    def send_webhook(self,kudos):
+    def send_webhook(self, kudos):
         if not self.interrogation.webhook:
             return
         data = self.get_details()
         data["request"] = str(self.interrogation.id)
         data["id"] = str(self.id)
         data["kudos"] = kudos
-        data["worker_id"] = str(data['worker_id'])
+        data["worker_id"] = str(data["worker_id"])
         for riter in range(3):
             try:
-                req = requests.post(self.interrogation.webhook,json=data, timeout=3)
+                req = requests.post(self.interrogation.webhook, json=data, timeout=3)
                 if not req.ok:
-                    logger.debug(f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...")
+                    logger.debug(
+                        f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times..."
+                    )
                     continue
                 break
             except Exception as err:
-                logger.debug(f"Exception when sending alchemy webhook: {err}. Will retry {3-riter-1} more times...")
-            
+                logger.debug(
+                    f"Exception when sending alchemy webhook: {err}. Will retry {3-riter-1} more times..."
+                )
+
+
 class Interrogation(db.Model):
     """For storing the request for interrogating an image"""
+
     __tablename__ = "interrogations"
-    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid) 
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     source_image = db.Column(db.Text, nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     user = db.relationship("User", back_populates="interrogations")
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -188,11 +224,16 @@ class Interrogation(db.Model):
     # This is used so I know to delete up the image 30 mins after this request expires
     r2stored = db.Column(db.Boolean, default=False, nullable=False)
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
-    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
+    created = db.Column(
+        db.DateTime(timezone=False), default=datetime.utcnow, index=True
+    )
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     webhook = db.Column(db.String(1024))
-    forms = db.relationship("InterrogationForms", back_populates="interrogation", cascade="all, delete-orphan")
-
+    forms = db.relationship(
+        "InterrogationForms",
+        back_populates="interrogation",
+        cascade="all, delete-orphan",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -210,10 +251,10 @@ class Interrogation(db.Model):
         db.session.commit()
 
     def check_cache(self, form, source_image):
-        '''Checks if the image is already in the redis cache. 
+        """Checks if the image is already in the redis cache.
         If it is, it sets the cached forms to DONE and sets the cached value as its result
-        '''
-        cached_result = hr.horde_r_get(f'{form.name}_{source_image}')
+        """
+        cached_result = hr.horde_r_get(f"{form.name}_{source_image}")
         # The entry might be False, so we need to check explicitly against None
         if cached_result != None:
             form.result = json.loads(cached_result)
@@ -225,11 +266,12 @@ class Interrogation(db.Model):
 
     def is_stale(self):
         if datetime.utcnow() > self.expiry:
-            return(True)
-        return(False)
+            return True
+        return False
 
-    def set_forms(self, forms = None):
-        if not forms: forms = []
+    def set_forms(self, forms=None):
+        if not forms:
+            forms = []
         seen_names = []
         for form in forms:
             # We don't allow the same interrogation type twice
@@ -246,7 +288,7 @@ class Interrogation(db.Model):
                 name=form["name"],
                 payload=form.get("payload"),
                 i_id=self.id,
-                kudos = kudos, #TODO: Adjust the kudos cost per interrogation
+                kudos=kudos,  # TODO: Adjust the kudos cost per interrogation
             )
             db.session.add(form_entry)
         db.session.commit()
@@ -256,16 +298,22 @@ class Interrogation(db.Model):
 
     def start_interrogation(self, worker):
         # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
-        myself_refresh = db.session.query(Interrogation).filter(Interrogation.id == self.id, Interrogation.n > 0).with_for_update().first()
+        myself_refresh = (
+            db.session.query(Interrogation)
+            .filter(Interrogation.id == self.id, Interrogation.n > 0)
+            .with_for_update()
+            .first()
+        )
         if not myself_refresh:
             return None
         myself_refresh.n -= 1
         db.session.commit()
         worker_id = worker.id
         self.refresh()
-        logger.audit(f"Interrogation with ID {self.id} popped by worker {worker.id} ('{worker.name}' / {worker.ipaddr})")
+        logger.audit(
+            f"Interrogation with ID {self.id} popped by worker {worker.id} ('{worker.name}' / {worker.ipaddr})"
+        )
         return self.get_pop_payload()
-
 
     def get_pop_payload(self):
         interrogation_payload = {
@@ -273,7 +321,7 @@ class Interrogation(db.Model):
             "source_image": self.source_image,
             "forms": self.get_form_names(),
         }
-        return(interrogation_payload)
+        return interrogation_payload
 
     def needs_interrogation(self):
         return any(not form.is_completed() for form in self.forms)
@@ -285,10 +333,9 @@ class Interrogation(db.Model):
             return False
         return True
 
-
     def get_status(
-            self, 
-        ):
+        self,
+    ):
         ret_dict = {
             "state": State.PARTIAL.name.lower(),
             "forms": [],
@@ -316,18 +363,17 @@ class Interrogation(db.Model):
             ret_dict["state"] = State.PROCESSING.name.lower()
         elif found_waiting:
             ret_dict["state"] = State.WAITING.name.lower()
-        return(ret_dict)
+        return ret_dict
 
     def record_usage(self, kudos):
-        '''Record that we received a requested interrogation and how much kudos it costs us
-        '''
+        """Record that we received a requested interrogation and how much kudos it costs us"""
         self.user.record_usage(0, kudos, "interrogation")
         self.refresh()
-    
+
     def cancel(self):
         for form in self.forms:
             form.cancel()
-        
+
     def delete(self):
         if not self.is_completed():
             self.cancel()

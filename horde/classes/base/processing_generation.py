@@ -13,29 +13,42 @@ from horde.flask import db, SQLITE_MODE
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
+
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
+
     __tablename__ = "processing_gens"
     __mapper_args__ = {
         "polymorphic_identity": "template",
         "polymorphic_on": "procgen_type",
-    }    
+    }
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     procgen_type = db.Column(db.String(30), nullable=False, index=True)
     generation = db.Column(db.Text)
     gen_metadata = db.Column(json_column_type, nullable=False)
 
-    model = db.Column(db.String(255), default='', nullable=False)
+    model = db.Column(db.String(255), default="", nullable=False)
     seed = db.Column(db.BigInteger, default=0, nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     cancelled = db.Column(db.Boolean, default=False, nullable=False)
     faulted = db.Column(db.Boolean, default=False, nullable=False)
     fake = db.Column(db.Boolean, default=False, nullable=False)
-    censored = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.literal(False))
+    censored = db.Column(
+        db.Boolean,
+        default=False,
+        nullable=False,
+        server_default=expression.literal(False),
+    )
 
-    wp_id = db.Column(uuid_column_type(), db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"), nullable=False)
-    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
+    wp_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    worker_id = db.Column(
+        uuid_column_type(), db.ForeignKey("workers.id"), nullable=False
+    )
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __init__(self, *args, **kwargs):
@@ -43,47 +56,52 @@ class ProcessingGeneration(db.Model):
         # If there has been no explicit model requested by the user, we just choose the first available from the worker
         db.session.add(self)
         db.session.commit()
-        if kwargs.get('model') is None:
+        if kwargs.get("model") is None:
             worker_models = self.worker.get_model_names()
             if len(worker_models):
                 self.model = worker_models[0]
             else:
-                self.model = ''
+                self.model = ""
             # If we reached this point, it means there is at least 1 matching model between worker and client
             # so we pick the first one.
             wp_models = self.wp.get_model_names()
             matching_models = worker_models
             if len(wp_models) != 0:
-                matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
+                matching_models = [
+                    model
+                    for model in self.wp.get_model_names()
+                    if model in worker_models
+                ]
             if len(matching_models) == 0:
-                logger.warning(f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. Request Models: {wp_models}. Will use random worker model.")
+                logger.warning(
+                    f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. Request Models: {wp_models}. Will use random worker model."
+                )
                 matching_models = worker_models
             random.shuffle(matching_models)
             self.model = matching_models[0]
         else:
-            self.model = kwargs['model']
+            self.model = kwargs["model"]
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):
         if self.is_completed():
-            return(0)
+            return 0
         # We return -1 to know to send a different error
         if self.is_faulted():
-            return(-1)
+            return -1
         self.generation = generation
-        # Support for two typical properties 
-        self.seed = kwargs.get('seed', None)
-        self.gen_metadata = kwargs.get('gen_metadata', None)
+        # Support for two typical properties
+        self.seed = kwargs.get("seed", None)
+        self.gen_metadata = kwargs.get("gen_metadata", None)
         kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
         self.send_webhook(kudos)
         db.session.commit()
-        return(kudos)
-        
+        return kudos
 
     def cancel(self):
-        '''Cancelling requests in progress still rewards/burns the relevant amount of kudos'''
+        """Cancelling requests in progress still rewards/burns the relevant amount of kudos"""
         if self.is_completed() or self.is_faulted():
             return
         self.faulted = True
@@ -91,21 +109,29 @@ class ProcessingGeneration(db.Model):
         things_per_sec = self.worker.speed
         kudos = self.get_gen_kudos()
         self.cancelled = True
-        self.record(things_per_sec,kudos)
+        self.record(things_per_sec, kudos)
         db.session.commit()
-        return(kudos * self.worker.get_bridge_kudos_multiplier())
-    
+        return kudos * self.worker.get_bridge_kudos_multiplier()
+
     def record(self, things_per_sec, kudos):
         cancel_txt = ""
         if self.cancelled:
             cancel_txt = " Cancelled"
         if self.fake and self.worker.user == self.wp.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
-            self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
-            logger.info(f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}")
+            self.worker.record_contribution(
+                raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec
+            )
+            logger.info(
+                f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}"
+            )
         else:
-            self.worker.record_contribution(raw_things = self.wp.things, kudos = kudos, things_per_sec = things_per_sec)
-            self.wp.record_usage(raw_things = self.wp.things, kudos = self.adjust_user_kudos(kudos)) 
+            self.worker.record_contribution(
+                raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec
+            )
+            self.wp.record_usage(
+                raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos)
+            )
             log_string = f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
             log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
             logger.info(log_string)
@@ -116,16 +142,18 @@ class ProcessingGeneration(db.Model):
         return kudos
 
     def abort(self):
-        '''Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash'''
+        """Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash"""
         if self.is_completed() or self.is_faulted():
-            return        
+            return
         self.faulted = True
         self.worker.log_aborted_job()
         self.log_aborted_generation()
         db.session.commit()
-        
+
     def log_aborted_generation(self):
-        logger.info(f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})")
+        logger.info(
+            f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})"
+        )
 
     # Overridable function
     def get_gen_kudos(self):
@@ -134,8 +162,8 @@ class ProcessingGeneration(db.Model):
 
     def is_completed(self):
         if self.generation is not None:
-            return(True)
-        return(False)
+            return True
+        return False
 
     def is_faulted(self):
         return self.faulted
@@ -150,22 +178,22 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def get_seconds_needed(self):
-        return(self.wp.things / self.worker.speed)
+        return self.wp.things / self.worker.speed
 
     def get_expected_time_left(self):
         if self.is_completed():
-            return(0)
+            return 0
         seconds_needed = self.get_seconds_needed()
         seconds_elapsed = (datetime.utcnow() - self.start_time).total_seconds()
         expected_time = seconds_needed - seconds_elapsed
         # In case we run into a slow request
         if expected_time < 0:
             expected_time = 0
-        return(expected_time)
+        return expected_time
 
     # This should be extended by every horde type
     def get_details(self):
-        '''Returns a dictionary with details about this processing generation'''
+        """Returns a dictionary with details about this processing generation"""
         ret_dict = {
             "gen": self.generation,
             "worker_id": self.worker.id,
@@ -173,29 +201,32 @@ class ProcessingGeneration(db.Model):
             "model": self.model,
             "gen_metadata": self.gen_metadata if self.gen_metadata is not None else [],
         }
-        return(ret_dict)
+        return ret_dict
 
     # Extendable function to be able to dynamically adjust the amount of things
-    # based on what the worker actually returned. 
+    # based on what the worker actually returned.
     # Typically needed for LLMs using EOS tokens etc
     def get_things_count(self, generation):
         return self.wp.things
 
-    def send_webhook(self,kudos):
+    def send_webhook(self, kudos):
         if not self.wp.webhook:
             return
         data = self.get_details()
         data["request"] = str(self.wp.id)
         data["id"] = str(self.id)
         data["kudos"] = kudos
-        data["worker_id"] = str(data['worker_id'])
+        data["worker_id"] = str(data["worker_id"])
         for riter in range(3):
             try:
-                req = requests.post(self.wp.webhook,json=data, timeout=3)
+                req = requests.post(self.wp.webhook, json=data, timeout=3)
                 if not req.ok:
-                    logger.debug(f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...")
+                    logger.debug(
+                        f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times..."
+                    )
                     continue
                 break
             except Exception as err:
-                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times...")
-            
+                logger.debug(
+                    f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times..."
+                )

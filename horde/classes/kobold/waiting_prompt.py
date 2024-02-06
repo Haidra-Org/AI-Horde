@@ -5,85 +5,112 @@ from horde.logger import logger
 from horde import vars as hv
 from horde.flask import db
 from horde.classes.base.waiting_prompt import WaitingPrompt
-from horde.r2 import generate_procgen_upload_url, download_source_image, download_source_mask
+from horde.r2 import (
+    generate_procgen_upload_url,
+    download_source_image,
+    download_source_mask,
+)
 from horde.bridge_reference import check_bridge_capability
 from horde.model_reference import model_reference
+
 
 class TextWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
         "polymorphic_identity": "text",
-    }    
-    max_length = db.Column(db.Integer, default=80, nullable=False, index=True, server_default=expression.literal(80))
-    max_context_length = db.Column(db.Integer, default=1024, nullable=False, index=True, server_default=expression.literal(1024))
+    }
+    max_length = db.Column(
+        db.Integer,
+        default=80,
+        nullable=False,
+        index=True,
+        server_default=expression.literal(80),
+    )
+    max_context_length = db.Column(
+        db.Integer,
+        default=1024,
+        nullable=False,
+        index=True,
+        server_default=expression.literal(1024),
+    )
     softprompt = db.Column(db.String(255), default=None, nullable=True)
-    processing_gens = db.relationship("TextProcessingGeneration", back_populates="wp", passive_deletes=True, cascade="all, delete-orphan")
-
+    processing_gens = db.relationship(
+        "TextProcessingGeneration",
+        back_populates="wp",
+        passive_deletes=True,
+        cascade="all, delete-orphan",
+    )
 
     def extract_params(self, **kwargs):
-        self.n = self.params.pop('n', 1)
-        self.jobs = self.n 
+        self.n = self.params.pop("n", 1)
+        self.jobs = self.n
         self.max_length = self.params.get("max_length", 80)
         self.max_context_length = self.params.get("max_context_length", 1024)
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.max_length
         # The total amount of to pixelsteps requested.
-        self.total_usage = round(self.max_length * self.n / hv.thing_divisors["text"],2)
+        self.total_usage = round(
+            self.max_length * self.n / hv.thing_divisors["text"], 2
+        )
         self.softprompt = kwargs.get("softprompt")
         self.prepare_job_payload(self.params)
 
     @logger.catch(reraise=True)
-    def prepare_job_payload(self, initial_dict = None):
-        '''Prepares the default job payload. This might be further adjusted per job in get_job_payload()'''
-        if not initial_dict: initial_dict = {}
+    def prepare_job_payload(self, initial_dict=None):
+        """Prepares the default job payload. This might be further adjusted per job in get_job_payload()"""
+        if not initial_dict:
+            initial_dict = {}
         self.gen_payload = initial_dict.copy()
         self.gen_payload["prompt"] = self.prompt
         self.gen_payload["n"] = 1
         db.session.commit()
 
-    def activate(self, source_image = None, source_mask = None):
+    def activate(self, source_image=None, source_mask=None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate()
-        proxied_account = ''
+        proxied_account = ""
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
-        logger.info(f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens")
+        logger.info(
+            f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens"
+        )
 
     def calculate_extra_kudos_burn(self, kudos):
         # This represents the cost of using the resources of the horde
         return kudos + 1
 
     def log_faulted_prompt(self):
-        source_processing = 'txt2img'
+        source_processing = "txt2img"
         if self.source_image:
             source_processing = self.source_processing
-        logger.warning(f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs")
+        logger.warning(
+            f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs"
+        )
 
     def get_status(self, **kwargs):
         ret_dict = super().get_status(**kwargs)
         return ret_dict
 
-    def record_usage(self, raw_things, kudos, usage_type = "text", avoid_burn = False):
-        '''I need to extend this to point it to record_text_usage()
-        '''
+    def record_usage(self, raw_things, kudos, usage_type="text", avoid_burn=False):
+        """I need to extend this to point it to record_text_usage()"""
         super().record_usage(raw_things, kudos, usage_type)
 
     def require_upfront_kudos(self, counted_totals, total_threads):
-        '''Returns True if this wp requires that the user already has the required kudos to fulfil it
+        """Returns True if this wp requires that the user already has the required kudos to fulfil it
         else returns False
-        '''
+        """
         queue = counted_totals["queued_text_requests"]
-        max_tokens = 512 + (total_threads*5) - round(queue * 0.9)
+        max_tokens = 512 + (total_threads * 5) - round(queue * 0.9)
         # logger.debug([queue,max_tokens])
         if not self.slow_workers:
-            return(True,max_tokens) 
+            return (True, max_tokens)
         if max_tokens < 256:
             max_tokens = 256
         if max_tokens > 512:
             max_tokens = 512
         if self.max_length > max_tokens:
-            return (True,max_tokens)
-        return (False,max_tokens)
+            return (True, max_tokens)
+        return (False, max_tokens)
 
     def calculate_kudos(self):
         # Slimmed down version of procgen.get_gen_kudos()
@@ -103,6 +130,13 @@ class TextWaitingPrompt(WaitingPrompt):
         if not model_reference.is_known_text_model(model_name):
             return self.wp.max_length * (2.7 / 100) * context_multiplier
         model_multiplier = model_reference.get_text_model_multiplier(model_name)
-        parameter_bonus =  (max(model_multiplier, 13) / 13) ** 0.20
-        self.kudos = round(self.max_length * parameter_bonus * model_multiplier * context_multiplier / 100, 2)   
+        parameter_bonus = (max(model_multiplier, 13) / 13) ** 0.20
+        self.kudos = round(
+            self.max_length
+            * parameter_bonus
+            * model_multiplier
+            * context_multiplier
+            / 100,
+            2,
+        )
         return self.kudos

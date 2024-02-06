@@ -1,10 +1,10 @@
-
 from datetime import datetime, timedelta
 
 from horde.logger import logger
 from horde.flask import db
 from horde.enums import ImageGenState
 from sqlalchemy import Enum, func
+
 
 class TextGenerationStatistic(db.Model):
     __tablename__ = "text_gen_stats"
@@ -17,17 +17,23 @@ class TextGenerationStatistic(db.Model):
     max_context_length = db.Column(db.Integer, nullable=False)
     softprompt = db.Column(db.Integer, nullable=True)
     prompt_length = db.Column(db.Integer, nullable=False)
-    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
-    bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
-    state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True) 
+    client_agent = db.Column(
+        db.Text, default="unknown:0:unknown", nullable=False, index=True
+    )
+    bridge_agent = db.Column(
+        db.Text, default="unknown:0:unknown", nullable=False, index=True
+    )
+    state = db.Column(
+        Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True
+    )
 
 
 def record_text_statistic(procgen):
     state = ImageGenState.OK
     # Currently there's no way to record cancelled images, but maybe there will be in the future
-    if procgen.cancelled: 
+    if procgen.cancelled:
         state = ImageGenState.CANCELLED
-    elif procgen.faulted: 
+    elif procgen.faulted:
         state = ImageGenState.FAULTED
     statistic = TextGenerationStatistic(
         created=procgen.start_time,
@@ -43,18 +49,35 @@ def record_text_statistic(procgen):
     db.session.add(statistic)
     db.session.commit()
 
+
 def compile_textgen_stats_totals():
     count_query = db.session.query(TextGenerationStatistic)
-    count_minute = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).count()
-    count_hour = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).count()
-    count_day = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
-    count_month = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).count()
+    count_minute = count_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
+    ).count()
+    count_hour = count_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
+    ).count()
+    count_day = count_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
+    ).count()
+    count_month = count_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+    ).count()
     count_total = count_query.count()
     tokens_query = db.session.query(func.sum(TextGenerationStatistic.max_length))
-    tokens_minute = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).scalar()
-    tokens_hour = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).scalar()
-    tokens_day = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).scalar()
-    tokens_month = tokens_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).scalar()
+    tokens_minute = tokens_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
+    ).scalar()
+    tokens_hour = tokens_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
+    ).scalar()
+    tokens_day = tokens_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
+    ).scalar()
+    tokens_month = tokens_query.filter(
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+    ).scalar()
     tokens_total = tokens_query.scalar()
     stats_dict = {
         "minute": {
@@ -78,17 +101,28 @@ def compile_textgen_stats_totals():
             "tokens": tokens_total,
         },
     }
-    return(stats_dict)
+    return stats_dict
+
 
 def compile_textgen_stats_models():
-    query = db.session.query(
-        TextGenerationStatistic.model, func.count()
-    ).group_by(
+    query = db.session.query(TextGenerationStatistic.model, func.count()).group_by(
         TextGenerationStatistic.model
     )
     ret_dict = {
         "total": {model: count for model, count in query.all()},
-        "day": {model: count for model, count in query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).all()},
-        "month": {model: count for model, count in query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).all()},
+        "day": {
+            model: count
+            for model, count in query.filter(
+                TextGenerationStatistic.finished
+                >= datetime.utcnow() - timedelta(days=1)
+            ).all()
+        },
+        "month": {
+            model: count
+            for model, count in query.filter(
+                TextGenerationStatistic.finished
+                >= datetime.utcnow() - timedelta(days=30)
+            ).all()
+        },
     }
     return ret_dict

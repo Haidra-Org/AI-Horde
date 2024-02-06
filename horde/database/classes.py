@@ -9,13 +9,14 @@ from horde.logger import logger
 from horde import horde_instance_id
 from horde.threads import PrimaryTimedFunction
 
+
 class FakeWPRow:
-    def __init__(self,json_row):
+    def __init__(self, json_row):
         self.id = uuid.UUID(json_row["id"])
         self.things = json_row["things"]
         self.n = json_row["n"]
         self.extra_priority = json_row["extra_priority"]
-        self.created = datetime.strptime(json_row["created"],"%Y-%m-%d %H:%M:%S")
+        self.created = datetime.strptime(json_row["created"], "%Y-%m-%d %H:%M:%S")
 
 
 class Quorum(PrimaryTimedFunction):

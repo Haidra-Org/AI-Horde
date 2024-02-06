@@ -6,6 +6,7 @@ import sys
 from loguru import logger
 import torch
 
+
 class KudosModel:
     """Calculate kudos for a given horde job payload. Tiny, lightweight cpu model.
 
@@ -26,7 +27,7 @@ class KudosModel:
     BASIS_PAYLOAD = {
         "width": 512,
         "height": 512,
-        "steps": 50, # Doesn't match worker side name, (ddim_steps vs steps)
+        "steps": 50,  # Doesn't match worker side name, (ddim_steps vs steps)
         "cfg_scale": 7.5,
         "denoising_strength": 1.0,
         "control_strength": 1.0,
@@ -95,7 +96,7 @@ class KudosModel:
     _model = None
     """Static singleton instance to copy from, preventing having to load from disk each time."""
 
-    model =  None
+    model = None
     """Instance copy - use this"""
 
     def __new__(cls):
@@ -110,15 +111,14 @@ class KudosModel:
 
         if not cls._model:
             cls._model = cls.load_model(cls)
-        
+
         return super().__new__(cls)
 
     def __init__(self):
-        self.model = KudosModel.copy_model()                
+        self.model = KudosModel.copy_model()
         self.calculate_basis_time()
 
-
-    # Payload to kudos    
+    # Payload to kudos
     def calculate_kudos(self, payload, basis_adjustment=1, basis_scale=1):
         # logger.debug(payload)
         # basis_adjustment is a critical value in tuning this function.
@@ -178,16 +178,19 @@ class KudosModel:
         has_control_type = bool(payload.get("control_type", None))
 
         if has_source_image:
-            denoising_strength = payload.get("denoising_strength", 1.0)        
+            denoising_strength = payload.get("denoising_strength", 1.0)
             if has_control_type:
-                control_strength = payload.get("control_strength", payload.get("denoising_strength", 1.0))
+                control_strength = payload.get(
+                    "control_strength", payload.get("denoising_strength", 1.0)
+                )
                 denoising_strength = 1.0
 
         data.append(
             [
                 payload["height"] / 1024,
                 payload["width"] / 1024,
-                payload["steps"] / 100, # Name doesn't match worker side (ddim_steps vs steps)
+                payload["steps"]
+                / 100,  # Name doesn't match worker side (ddim_steps vs steps)
                 payload["cfg_scale"] / 30,
                 denoising_strength,
                 control_strength,
@@ -196,10 +199,12 @@ class KudosModel:
                 1.0 if payload.get("source_image", False) else 0.0,
                 1.0 if payload.get("source_mask", False) else 0.0,
             ],
-        )        
-            
+        )
+
         data_samplers.append(
-            payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
+            payload["sampler_name"]
+            if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS
+            else "k_euler",
         )
         data_control_types.append(payload.get("control_type", "None"))
         data_source_processing_types.append(payload.get("source_processing", "txt2img"))
@@ -208,37 +213,50 @@ class KudosModel:
 
         _data_floats = torch.tensor(data).float()
         _data_samplers = cls.one_hot_encode(data_samplers, KudosModel.KNOWN_SAMPLERS)
-        _data_control_types = cls.one_hot_encode(data_control_types, KudosModel.KNOWN_CONTROL_TYPES)
-        _data_source_processing_types = cls.one_hot_encode(
-            data_source_processing_types, KudosModel.KNOWN_SOURCE_PROCESSING,
+        _data_control_types = cls.one_hot_encode(
+            data_control_types, KudosModel.KNOWN_CONTROL_TYPES
         )
-        _data_post_processors = cls.one_hot_encode_combined(data_post_processors, KudosModel.KNOWN_POST_PROCESSORS)
+        _data_source_processing_types = cls.one_hot_encode(
+            data_source_processing_types,
+            KudosModel.KNOWN_SOURCE_PROCESSING,
+        )
+        _data_post_processors = cls.one_hot_encode_combined(
+            data_post_processors, KudosModel.KNOWN_POST_PROCESSORS
+        )
         return torch.cat(
-            (_data_floats, _data_samplers, _data_control_types, _data_source_processing_types, _data_post_processors),
+            (
+                _data_floats,
+                _data_samplers,
+                _data_control_types,
+                _data_source_processing_types,
+                _data_post_processors,
+            ),
             dim=1,
         )
 
-    def load_model(self, model_filename = None):
-        """Load the target model, or the default model if none is specified. 
-        If `self.model` is defined, it will be returned instead. """
+    def load_model(self, model_filename=None):
+        """Load the target model, or the default model if none is specified.
+        If `self.model` is defined, it will be returned instead."""
         if not model_filename and not self.model:
-            model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v21-206.ckpt").resolve())
+            model_filename = str(
+                pathlib.Path(__file__).parent.joinpath("kudos-v21-206.ckpt").resolve()
+            )
             logger.warning(f"Loading default kudos model {model_filename}")
 
         if self.model:
             return self.model
-        
+
         with open(model_filename, "rb") as infile:
             model = pickle.load(infile)
 
         return model
 
-    @classmethod 
-    def copy_model(cls):        
+    @classmethod
+    def copy_model(cls):
         return copy.deepcopy(cls._model)
 
     # Pass in a horde payload, get back a predicted time in seconds
-    def payload_to_time(self, payload):    
+    def payload_to_time(self, payload):
         inputs = self.payload_to_tensor(payload).squeeze()
         with torch.no_grad():
             output = self.model(inputs)
@@ -250,7 +268,6 @@ class KudosModel:
 
 
 if __name__ == "__main__":
-
     if len(sys.argv) != 2:
         logger.message("Syntax: kudos.py <model_filename>")
 
@@ -261,16 +278,25 @@ if __name__ == "__main__":
 
     # Test the basis job
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD)
-    logger.message(f"The basis job worth {job_kudos} kudos, " f"expected {KudosModel.KUDOS_BASIS} kudos")
+    logger.message(
+        f"The basis job worth {job_kudos} kudos, "
+        f"expected {KudosModel.KUDOS_BASIS} kudos"
+    )
 
     # Test fixed kudos basis adjustment
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5)
-    logger.message(f"Adjusting a job by +5 worth {job_kudos}, " f"expected {KudosModel.KUDOS_BASIS+5} kudos")
+    logger.message(
+        f"Adjusting a job by +5 worth {job_kudos}, "
+        f"expected {KudosModel.KUDOS_BASIS+5} kudos"
+    )
 
     # Test fixed kudos basis adjustment and percentage scaling
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5, 1.25)
-    logger.message(f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos")
-else:    
+    logger.message(
+        f"Adjusting a job by +5 and +25% worth {job_kudos}, "
+        f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos"
+    )
+else:
     kudos_model = KudosModel()
     # logger.info(f"Kudos basis is {KudosModel.KUDOS_BASIS}")
     # logger.info(f"Kudos time basis is {KudosModel.time_basis} seconds")
