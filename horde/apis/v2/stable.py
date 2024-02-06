@@ -1,8 +1,17 @@
 import requests
-import sys
 from datetime import datetime
-
-from .base import *
+from flask_restx import Resource, reqparse
+from flask import request
+from horde.limiter import limiter
+import horde.apis.limiter_api as lim
+from horde.database import functions as database
+from horde.patreon import patrons
+from horde import exceptions as e
+from horde.utils import hash_dictionary
+from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
+from horde.flask import cache, db, HORDE
+from horde.classes.base.user import User
+import horde.classes.base.stats as stats
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.classes.stable.interrogation import Interrogation
@@ -17,7 +26,6 @@ from horde.image import ensure_source_image_uploaded, calculate_image_tiles
 from horde.model_reference import model_reference
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 from horde.classes.base import settings
-
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 
 models = ImageModels(api)
@@ -29,13 +37,13 @@ class ImageAsyncGenerate(GenerateTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value=get_request_90min_limit_per_ip, key_func=get_request_path
+            limit_value=lim.get_request_90min_limit_per_ip, key_func=lim.get_request_path
         ),
         limiter.limit(
-            limit_value=get_request_2sec_limit_per_ip, key_func=get_request_path
+            limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path
         ),
         limiter.limit(
-            limit_value=get_request_limit_per_apikey, key_func=get_request_api_key
+            limit_value=lim.get_request_limit_per_apikey, key_func=lim.get_request_api_key
         ),
     ]
 
@@ -63,7 +71,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         try:
             super().post()
         except KeyError:
-            logger.error(f"caught missing Key.")
+            logger.error("caught missing Key.")
             print_args = self.args.copy()
             print_args["apikey"] = "REDACTED"
             logger.error(print_args)
@@ -119,7 +127,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                     )
                 if not self.params.get("special"):
                     raise e.BadRequest(
-                        f"Special models have to include a special payload"
+                        "Special models have to include a special payload"
                     )
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
@@ -130,7 +138,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             for model_name in self.args.models
         ):
             raise e.UnsupportedModel(
-                f"No current model available for this particular ControlNet for SD2.x"
+                "No current model available for this particular ControlNet for SD2.x"
             )
         if "control_type" in self.params and any(
             model_name in ["pix2pix"] for model_name in self.args.models
@@ -371,7 +379,7 @@ class ImageAsyncStatus(Resource):
         location="headers",
     )
 
-    decorators = [limiter.limit("10/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("10/minute", key_func=lim.get_request_path)]
 
     # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.expect(get_parser)
@@ -461,7 +469,7 @@ class ImageAsyncCheck(Resource):
     )
 
     # Increasing this until I can figure out how to pass original IP from reverse proxy
-    decorators = [limiter.limit("10/second", key_func=get_request_path)]
+    decorators = [limiter.limit("10/second", key_func=lim.get_request_path)]
 
     @cache.cached(timeout=1)
     @api.expect(get_parser)
@@ -624,7 +632,7 @@ class Aesthetics(Resource):
         "ratings", type=list, required=False, default=False, location="json"
     )
 
-    decorators = [limiter.limit("5/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("5/minute", key_func=lim.get_request_path)]
 
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
     @api.marshal_with(
@@ -922,7 +930,7 @@ class InterrogationStatus(Resource):
         location="headers",
     )
 
-    decorators = [limiter.limit("10/second", key_func=get_request_path)]
+    decorators = [limiter.limit("10/second", key_func=lim.get_request_path)]
 
     @api.expect(get_parser)
     # If I marshal it here, it overrides the marshalling of the child class unfortunately

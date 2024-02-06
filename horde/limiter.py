@@ -2,7 +2,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from horde.flask import HORDE
 from horde.logger import logger
-from .redis_ctrl import is_redis_up, ger_limiter_url
+from horde.redis_ctrl import is_redis_up, ger_limiter_url
 
 limiter = None
 # Very basic DOS prevention

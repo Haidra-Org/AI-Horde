@@ -1,4 +1,12 @@
-from .base import *
+from flask_restx import Resource, reqparse
+from flask import request
+from horde.limiter import limiter
+import horde.apis.limiter_api as lim
+from horde.database import functions as database
+from horde import exceptions as e
+from horde.utils import hash_dictionary
+from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
+from horde.flask import cache, db
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.database import text_functions as text_database
@@ -6,9 +14,10 @@ from horde.classes.kobold.genstats import (
     compile_textgen_stats_totals,
     compile_textgen_stats_models,
 )
-
+from horde.logger import logger
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
 from horde.model_reference import model_reference
+from horde.classes.base import settings
 
 models = TextModels(api)
 parsers = TextParsers()
@@ -18,13 +27,13 @@ class TextAsyncGenerate(GenerateTemplate):
     gentype = "text"
     decorators = [
         limiter.limit(
-            limit_value=get_request_90min_limit_per_ip, key_func=get_request_path
+            limit_value=lim.get_request_90min_limit_per_ip, key_func=lim.get_request_path
         ),
         limiter.limit(
-            limit_value=get_request_2sec_limit_per_ip, key_func=get_request_path
+            limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path
         ),
         limiter.limit(
-            limit_value=get_request_limit_per_apikey, key_func=get_request_api_key
+            limit_value=lim.get_request_limit_per_apikey, key_func=lim.get_request_api_key
         ),
     ]
 
@@ -51,8 +60,8 @@ class TextAsyncGenerate(GenerateTemplate):
         self.args = parsers.generate_parser.parse_args()
         try:
             super().post()
-        except KeyError as err:
-            logger.error(f"caught missing Key.")
+        except KeyError:
+            logger.error("caught missing Key.")
             logger.error(self.args)
             logger.error(self.args.params)
             return {"message": "Internal Server Error"}, 500
@@ -184,7 +193,7 @@ class TextAsyncStatus(Resource):
     )
 
     # If I marshal it here, it overrides the marshalling of the child class unfortunately
-    decorators = [limiter.limit("60/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]
 
     @api.expect(get_parser)
     @api.marshal_with(

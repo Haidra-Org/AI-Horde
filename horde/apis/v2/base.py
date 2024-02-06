@@ -2,11 +2,9 @@ import json
 import os
 import regex as re
 import time
-import random
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
-from sqlalchemy import literal
-from sqlalchemy import func, or_, and_
+from sqlalchemy import or_
 from flask_restx.reqparse import ParseResult
 
 from horde.database import functions as database
@@ -22,6 +20,7 @@ from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker
 import horde.classes.base.stats as stats
+import horde.apis.limiter_api as lim
 from horde.classes.base.team import Team
 from horde.classes.base.news import News
 from horde.classes.base.detection import Filter
@@ -32,14 +31,13 @@ from horde import horde_redis as hr
 from horde.patreon import patrons
 from horde.detection import prompt_checker
 from horde.r2 import upload_prompt
-from horde.consts import HORDE_VERSION, WHITELISTED_SERVICE_IPS
+from horde.consts import HORDE_VERSION
+from horde.apis.models.v2 import Models, Parsers
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
 
 api = Namespace("v2", "API Version 2")
-
-from horde.apis.models.v2 import Models, Parsers
 
 models = Models(api)
 parsers = Parsers()
@@ -107,40 +105,6 @@ handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_reque
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
 
-# Used to for the flask limiter, to limit requests per url paths
-def get_request_path():
-    # logger.info(dir(request))
-    return f"{request.remote_addr}@{request.method}@{request.path}"
-
-
-def get_request_90min_limit_per_ip():
-    if request.remote_addr in WHITELISTED_SERVICE_IPS:
-        return "300/minute"
-    return "90/minute"
-
-
-def get_request_90hour_limit_per_ip():
-    if request.remote_addr in WHITELISTED_SERVICE_IPS:
-        return "600/hour"
-    return "90/hour"
-
-
-def get_request_2sec_limit_per_ip():
-    if request.remote_addr in WHITELISTED_SERVICE_IPS:
-        return "10/second"
-    return "2/second"
-
-
-def get_request_api_key():
-    apikey = hash_api_key(request.headers.get("apikey", "0000000000"))
-    return f"{apikey}@{request.method}@{request.path}"
-
-
-def get_request_limit_per_apikey():
-    apikey = request.headers.get("apikey", "0000000000")
-    if apikey == "0000000000":
-        return "60/second"
-    return "2/second"
 
 
 def check_for_mod(api_key, operation, whitelisted_users=None):
@@ -690,9 +654,9 @@ class TransferKudos(Resource):
     )
 
     decorators = [
-        limiter.limit("1/second", key_func=get_request_api_key),
+        limiter.limit("1/second", key_func=lim.get_request_api_key),
         limiter.limit(
-            limit_value=get_request_90hour_limit_per_ip, key_func=get_request_api_key
+            limit_value=lim.get_request_90hour_limit_per_ip, key_func=lim.get_request_api_key
         ),
     ]
 
@@ -981,7 +945,7 @@ class WorkerSingle(Resource):
         location="json",
     )
 
-    decorators = [limiter.limit("30/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("30/minute", key_func=lim.get_request_path)]
 
     @api.expect(put_parser, models.input_model_worker_modify, validate=True)
     @api.marshal_with(
@@ -1216,7 +1180,7 @@ class UserSingle(Resource):
         location="headers",
     )
 
-    decorators = [limiter.limit("60/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]
 
     @api.expect(get_parser)
     @api.marshal_with(
@@ -1249,7 +1213,7 @@ class UserSingle(Resource):
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
             user_details = json.loads(cached_user)
-            if type(user_details.get("monthly_kudos", {}).get("last_received")) == str:
+            if isinstance(user_details.get("monthly_kudos", {}).get("last_received"),str):
                 user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(
                     user_details["monthly_kudos"]["last_received"]
                 )
@@ -1379,7 +1343,7 @@ class UserSingle(Resource):
     parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
-    decorators = [limiter.limit("60/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]
 
     @api.expect(parser, models.input_model_user_details, validate=True)
     @api.marshal_with(
@@ -1772,7 +1736,6 @@ class HordeModes(Resource):
             "maintenance_mode": cfg.maintenance,
             "invite_only_mode": cfg.invite_only,
         }
-        is_privileged = False
         self.args = self.get_parser.parse_args()
         if self.args.apikey:
             admin = database.find_user_by_api_key(self.args["apikey"])
@@ -1838,7 +1801,7 @@ class HordeModes(Resource):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT HordeModes")
             cfg.maintenance = self.args.maintenance
             if cfg.maintenance:
-                logger.critical(f"Horde entered maintenance mode")
+                logger.critical("Horde entered maintenance mode")
                 for wp in database.get_all_active_wps():
                     wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = cfg.maintenance
@@ -1913,7 +1876,7 @@ class Teams(Resource):
     post_parser.add_argument("name", type=str, required=True, location="json")
     post_parser.add_argument("info", type=str, required=False, location="json")
 
-    decorators = [limiter.limit("30/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("30/minute", key_func=lim.get_request_path)]
 
     @api.expect(post_parser, models.input_model_team_create, validate=True)
     @api.marshal_with(
@@ -2029,7 +1992,7 @@ class TeamSingle(Resource):
     patch_parser.add_argument("name", type=str, required=False, location="json")
     patch_parser.add_argument("info", type=str, required=False, location="json")
 
-    decorators = [limiter.limit("30/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("30/minute", key_func=lim.get_request_path)]
 
     @api.expect(patch_parser, models.input_model_team_modify, validate=True)
     @api.marshal_with(
@@ -2570,7 +2533,7 @@ class FilterRegex(Resource):
     def get(self):
         """Moderator Only: A List all filters, or filtered by the query"""
         self.args = self.get_parser.parse_args()
-        mod = check_for_mod(
+        check_for_mod(
             api_key=self.args.apikey,
             operation="GET FilterRegex",
             whitelisted_users=[],
@@ -2621,7 +2584,7 @@ class FilterSingle(Resource):
         if not filter_id.isdigit():
             raise e.ThingNotFound("Filter", filter_id)
         self.args = self.get_parser.parse_args()
-        mod = check_for_mod(
+        check_for_mod(
             api_key=self.args.apikey,
             operation="GET FilterSingle",
             whitelisted_users=[],
@@ -2823,7 +2786,7 @@ class SharedKey(Resource):
         location="json",
     )
 
-    decorators = [limiter.limit("5/minute", key_func=get_request_path)]
+    decorators = [limiter.limit("5/minute", key_func=lim.get_request_path)]
 
     @api.expect(put_parser, models.input_model_sharedkey)
     @api.marshal_with(
