@@ -1,5 +1,5 @@
 from flask_restx import fields
-from . import v2
+from horde.apis.models import v2
 
 
 class TextParsers(v2.Parsers):

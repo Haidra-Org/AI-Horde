@@ -1,6 +1,5 @@
 from flask_restx import fields
-from . import v2
-from horde.logger import logger
+from horde.apis.models import v2
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS
 
 

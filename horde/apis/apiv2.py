@@ -1,7 +1,5 @@
 from flask import Blueprint
 from flask_restx import Api
-from horde.argparser import args
-from importlib import import_module
 from horde.vars import horde_title
 
 from horde.apis.v2 import api as v2
