@@ -1,32 +1,20 @@
-import requests
-import time
 import uuid
 import json
 from datetime import datetime, timedelta
 from sqlalchemy import func, or_, and_
-from sqlalchemy.exc import DataError
-from sqlalchemy.orm import noload, joinedload, load_only
+from sqlalchemy.orm import noload
 
 from horde.classes.base.waiting_prompt import WPModels, WPAllowedWorkers
-from horde.classes.base.worker import WorkerModel
 from horde.flask import db, SQLITE_MODE
 from horde.logger import logger
-from horde.vars import thing_name, thing_divisor
-from horde import vars as hv
 from horde.classes.base.worker import WorkerPerformance
-from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 import horde.classes.base.stats as stats
-from horde.utils import hash_api_key
 from horde import horde_redis as hr
-from horde.database.classes import FakeWPRow, PrimaryTimedFunction
 from horde.database.functions import query_prioritized_wps
-from horde.enums import State
-from horde.bridge_reference import check_bridge_capability
 from horde.model_reference import model_reference
 
 
@@ -67,16 +55,16 @@ def get_sorted_text_wp_filtered_to_worker(
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.max_length <= worker.max_length,
             TextWaitingPrompt.max_context_length <= worker.max_context_length,
-            TextWaitingPrompt.active == True,
-            TextWaitingPrompt.faulted == False,
+            TextWaitingPrompt.active == True, #noqa E712
+            TextWaitingPrompt.faulted == False, #noqa E712
             TextWaitingPrompt.expiry > datetime.utcnow(),
             or_(
-                TextWaitingPrompt.safe_ip == True,
-                worker.allow_unsafe_ipaddr == True,
+                TextWaitingPrompt.safe_ip == True, #noqa E712
+                worker.allow_unsafe_ipaddr == True, #noqa E712
             ),
             or_(
-                TextWaitingPrompt.nsfw == False,
-                worker.nsfw == True,
+                TextWaitingPrompt.nsfw == False, #noqa E712
+                worker.nsfw == True, #noqa E712
             ),
             or_(
                 WPModels.model.in_(models_list),
@@ -96,10 +84,10 @@ def get_sorted_text_wp_filtered_to_worker(
             or_(
                 worker.speed
                 >= slow_speed,  # Slow speed is based on the model parameters used
-                TextWaitingPrompt.slow_workers == True,
+                TextWaitingPrompt.slow_workers == True, #noqa E712
             ),
             or_(
-                worker.maintenance == False,
+                worker.maintenance == False, #noqa E712
                 TextWaitingPrompt.user_id == worker.user_id,
             ),
         )
@@ -127,7 +115,7 @@ def get_sorted_text_wp_filtered_to_worker(
 def get_text_wp_by_id(wp_id, lite=False):
     try:
         wp_uuid = uuid.UUID(wp_id)
-    except ValueError as e:
+    except ValueError:
         logger.debug(f"Non-UUID wp_id sent: '{wp_id}'.")
         return None
     if SQLITE_MODE:
@@ -145,7 +133,7 @@ def get_text_wp_by_id(wp_id, lite=False):
 def get_text_progen_by_id(procgen_id):
     try:
         procgen_uuid = uuid.UUID(procgen_id)
-    except ValueError as e:
+    except ValueError:
         logger.debug(f"Non-UUID procgen_id sent: '{procgen_id}'.")
         return None
     if SQLITE_MODE:
@@ -157,8 +145,8 @@ def get_all_text_wps():
     return (
         db.session.query(TextWaitingPrompt)
         .filter(
-            TextWaitingPrompt.active == True,
-            TextWaitingPrompt.faulted == False,
+            TextWaitingPrompt.active == True, #noqa E712
+            TextWaitingPrompt.faulted == False, #noqa E712
             TextWaitingPrompt.expiry > datetime.utcnow(),
         )
         .all()
@@ -166,17 +154,17 @@ def get_all_text_wps():
 
 
 def get_cached_worker_performance():
-    if hr.horde_r == None:
+    if hr.horde_r is None:
         return [
             p.performance for p in db.session.query(WorkerPerformance.performance).all()
         ]
-    perf_cache = hr.horde_r.get(f"worker_performances_cache")
+    perf_cache = hr.horde_r.get("worker_performances_cache")
     if not perf_cache:
         return refresh_worker_performances_cache()
     try:
         models_ret = json.loads(perf_cache)
-    except TypeError as e:
-        logger.error(f"performance cache could not be loaded: {perf_cache}")
+    except TypeError:
+        logger.error("performance cache could not be loaded: {perf_cache}")
         return refresh_worker_performances_cache()
     if models_ret is None:
         return refresh_worker_performances_cache()
@@ -198,7 +186,7 @@ def refresh_worker_performances_cache():
     avg_perf = retrieve_worker_performances()
     try:
         hr.horde_r_setex(
-            f"worker_performances_avg_cache", timedelta(seconds=30), avg_perf
+            "worker_performances_avg_cache", timedelta(seconds=30), avg_perf
         )
     except Exception as e:
         logger.debug(

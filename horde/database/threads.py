@@ -1,6 +1,4 @@
-import time
 import json
-import uuid
 import patreon
 import os
 from datetime import datetime, timedelta
@@ -29,8 +27,7 @@ from horde.database.functions import (
 )
 from horde.vars import horde_instance_id
 from horde.argparser import args
-from horde.r2 import delete_procgen_image, delete_source_image
-from horde.argparser import args
+from horde.r2 import delete_source_image
 from horde.patreon import patrons
 from horde.enums import State
 
@@ -68,7 +65,7 @@ def assign_monthly_kudos():
         #     logger.debug(patrons.get_monthly_kudos(pid))
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
-        or_conditions.append(User.moderator == True)
+        or_conditions.append(User.moderator == True) #noqa E712
         or_conditions.append(User.id.in_(patron_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
         all_users = users.all()
@@ -210,8 +207,8 @@ def check_waiting_prompts():
                     wp_class,
                 )
                 .filter(
-                    procgen_class.generation == None,
-                    procgen_class.faulted == False,
+                    procgen_class.generation == None, #noqa E712
+                    procgen_class.faulted == False, #noqa E712
                     # cutoff_time - procgen_class.start_time > wp_class.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
                 )
                 .all()
@@ -227,7 +224,7 @@ def check_waiting_prompts():
                 db.session.query(
                     procgen_class.wp_id,
                 )
-                .filter(procgen_class.faulted == True)
+                .filter(procgen_class.faulted == True) #noqa E712
                 .group_by(procgen_class.wp_id)
                 .having(func.count(procgen_class.wp_id) > 2)
             )
@@ -235,7 +232,7 @@ def check_waiting_prompts():
             waiting_prompts = (
                 db.session.query(wp_class)
                 .filter(wp_class.id.in_(wp_ids))
-                .filter(wp_class.faulted == False)
+                .filter(wp_class.faulted == False) #noqa E712
             )
             logger.info(f"Found {waiting_prompts.count()} New faulted WPs")
             waiting_prompts.update({wp_class.faulted: True}, synchronize_session=False)
@@ -252,7 +249,7 @@ def check_interrogations():
         expired_entries = db.session.query(Interrogation).filter(
             Interrogation.expiry < cutoff_time
         )
-        expired_r_entries = expired_entries.filter(Interrogation.r2stored == True)
+        expired_r_entries = expired_entries.filter(Interrogation.r2stored == True) #noqa E712
         all_source_image_ids = [i.id for i in expired_r_entries.all()]
         for source_image_id in all_source_image_ids:
             delete_source_image(str(source_image_id))
@@ -347,9 +344,9 @@ def store_patreon_members():
             / 100,
         }
         note = json.loads(member.attribute("note"))
-        if f"stable_id" not in note:
+        if "stable_id" not in note:
             continue
-        user_id = note[f"stable_id"]
+        user_id = note["stable_id"]
         if "#" in user_id:
             user_id = user_id.split("#")[-1]
         user_id = int(user_id)
@@ -369,12 +366,12 @@ def store_patreon_members():
 def increment_extra_priority():
     """Increases the priority of every WP currently in the queue by 50 kudos"""
     with HORDE.app_context():
-        cutoff_time = datetime.utcnow()
+        # cutoff_time = datetime.utcnow()
         for wp_class in [ImageWaitingPrompt, TextWaitingPrompt]:
             wp_ids = db.session.query(wp_class.id).filter(
                 wp_class.n > 0,
-                wp_class.faulted == False,
-                wp_class.active == True,
+                wp_class.faulted == False, #noqa E712
+                wp_class.active == True, #noqa E712
                 # Commented to avoid running into a deadlock with the WP delete thread
                 # wp_class.expiry > cutoff_time,
             )
@@ -406,4 +403,4 @@ def store_compiled_filter_regex_replacements():
     with HORDE.app_context():
         replacements = retrieve_regex_replacements(10)
         # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
-        hr.horde_r_set(f"cached_regex_replacements", json.dumps(replacements))
+        hr.horde_r_set("cached_regex_replacements", json.dumps(replacements))

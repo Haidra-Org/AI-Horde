@@ -1,11 +1,5 @@
-import time
 import uuid
-import json
-import threading
-from datetime import datetime, timedelta
-from horde.argparser import args
-
-from horde.logger import logger
+from datetime import datetime
 from horde.vars import horde_instance_id
 from horde.threads import PrimaryTimedFunction
 
