@@ -1,7 +1,6 @@
 import oauthlib
 import random
 import secrets
-import patreon
 import os
 import requests
 from uuid import uuid4
@@ -14,7 +13,7 @@ from markdown import markdown
 
 from horde.database import functions as database
 from horde.classes.base import settings
-from horde.argparser import args, maintenance
+from horde.argparser import maintenance
 from horde.classes.base.user import User
 from horde.classes.base.news import News
 import horde.classes.base.stats as stats
@@ -22,9 +21,6 @@ from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
 from horde.vars import (
-    thing_name,
-    raw_thing_name,
-    thing_divisor,
     google_verification_string,
     img_url,
     horde_title,

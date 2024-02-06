@@ -1,4 +1,5 @@
 from horde.argparser import args
+from uuid import uuid4
 
 thing_names = {
     "image": "megapixelsteps",
@@ -36,3 +37,4 @@ google_verification_string = "pmLKyCEPKM5csKT9mW1ZbGLu2TX_wD0S5FCxWlmg_iI"
 img_url = f"https://raw.githubusercontent.com/db0/Stable-Horde/main/img_stable/"
 horde_title = "AI Horde"
 horde_url = "https://stablehorde.net"
+horde_instance_id = str(uuid4())

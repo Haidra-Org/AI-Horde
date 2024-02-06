@@ -2,7 +2,7 @@ import time
 import threading
 
 from horde.logger import logger
-from horde import horde_instance_id
+from horde.vars import horde_instance_id
 
 
 class PrimaryTimedFunction:

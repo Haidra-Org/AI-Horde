@@ -1,19 +1,13 @@
 import os
 import socket
-from uuid import uuid4
-
-horde_instance_id = str(uuid4())
-
 from flask_dance.contrib.discord import make_discord_blueprint
 from flask_dance.contrib.github import make_github_blueprint
 from flask_dance.contrib.google import make_google_blueprint
-
-from horde.routes import *  # I don't like this, we should be refactoring what things are being loaded
+import horde.routes #noqa F401
 from horde.apis import apiv2
-from horde.argparser import args, invite_only, raid, maintenance
-from horde.flask import HORDE, cache
+from horde.argparser import args
+from horde.flask import HORDE
 from horde.logger import logger
-from horde.limiter import limiter
 from horde.consts import HORDE_VERSION
 
 
@@ -85,4 +79,5 @@ if args.force_patreon:
 
 
 if args.test:
-    import horde.sandbox
+    from horde.sandbox import test
+    test()

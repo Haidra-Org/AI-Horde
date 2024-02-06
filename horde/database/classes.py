@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from horde.argparser import args
 
 from horde.logger import logger
-from horde import horde_instance_id
+from horde.vars import horde_instance_id
 from horde.threads import PrimaryTimedFunction
 
 

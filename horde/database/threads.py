@@ -27,7 +27,7 @@ from horde.database.functions import (
     compile_regex_filter,
     retrieve_regex_replacements,
 )
-from horde import horde_instance_id
+from horde.vars import horde_instance_id
 from horde.argparser import args
 from horde.r2 import delete_procgen_image, delete_source_image
 from horde.argparser import args
