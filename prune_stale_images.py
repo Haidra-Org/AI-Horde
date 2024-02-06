@@ -1,13 +1,9 @@
-import logging
 import boto3
 import time
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 
-from botocore.exceptions import ClientError
 from dotenv import load_dotenv
-import patreon
-import os
 from loguru import logger
 
 load_dotenv()
@@ -42,5 +38,5 @@ while True:
                     future.result()
                 logger.info(f"Image Pruner: Bucket {bucket} Deleted: {len(futures)}")
         time.sleep(30)
-    except:
+    except Exception:
         time.sleep(30)

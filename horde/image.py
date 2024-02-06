@@ -1,12 +1,11 @@
 import base64
 import requests
-import sys
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 
 from horde.logger import logger
 from horde.exceptions import ImageValidationFailed
-from horde.r2 import upload_source_image, generate_img_download_url
+from horde.r2 import upload_source_image
 
 
 def convert_b64_to_pil(source_image_b64):
@@ -17,7 +16,7 @@ def convert_b64_to_pil(source_image_b64):
         return None
     try:
         image = Image.open(BytesIO(img_bytes))
-    except UnidentifiedImageError as err:
+    except UnidentifiedImageError:
         return None
     return image
 
@@ -77,7 +76,7 @@ def convert_source_image_to_webp(source_image_b64):
         return final_image_b64
     except ImageValidationFailed as err:
         raise err
-    except Exception as err:
+    except Exception:
         raise ImageValidationFailed
 
 
@@ -92,7 +91,7 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
         return (download_url, image)
     except ImageValidationFailed as err:
         raise err
-    except Exception as err:
+    except Exception:
         raise ImageValidationFailed
 
 
@@ -121,9 +120,9 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                             )
                 try:
                     img = Image.open(BytesIO(img_data))
-                except UnidentifiedImageError as err:
+                except UnidentifiedImageError:
                     raise ImageValidationFailed("Url does not contain a valid image.")
-                except Exception as err:
+                except Exception:
                     raise ImageValidationFailed(
                         "Something went wrong when opening image."
                     )

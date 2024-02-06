@@ -1,2 +1,6 @@
 [tool.ruff]
 line-length = 500
+
+[tool.ruff.per-file-ignores]
+"horde/sandbox.py" = ["F401"]
+"server.py" = ["E402"]

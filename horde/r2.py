@@ -1,8 +1,6 @@
-import uuid
 import os
 import json
 from uuid import uuid4
-from datetime import datetime
 from horde.logger import logger
 import boto3
 from botocore.exceptions import ClientError
@@ -93,13 +91,13 @@ def generate_procgen_download_url(procgen_id, shared=False):
 
 
 def delete_procgen_image(procgen_id):
-    response = s3_client.delete_object(
+    s3_client.delete_object(
         Bucket=r2_transient_bucket, Key=f"{procgen_id}.webp"
     )
 
 
 def delete_source_image(source_image_uuid):
-    response = s3_client.delete_object(
+    s3_client.delete_object(
         Bucket=r2_source_image_bucket, Key=f"{source_image_uuid}.webp"
     )
 
@@ -109,9 +107,9 @@ def upload_image(client, bucket, image, filename, quality=100):
     image.save(image_io, format="WebP", quality=quality, exact=True)
     image_io.seek(0)
     try:
-        response = client.upload_fileobj(image_io, bucket, filename)
-    except ClientError as e:
-        logger.error(f"Error encountered while uploading {filename}: {e}")
+        client.upload_fileobj(image_io, bucket, filename)
+    except ClientError as err:
+        logger.error(f"Error encountered while uploading {filename}: {err}")
         return False
     return generate_img_download_url(filename, r2_source_image_bucket)
 
@@ -172,7 +170,7 @@ def upload_shared_generated_image(image, filename):
 
 def upload_shared_metadata(filename):
     try:
-        response = s3_client_shared.upload_file(filename, r2_permanent_bucket, filename)
+        s3_client_shared.upload_file(filename, r2_permanent_bucket, filename)
     except ClientError as e:
         logger.error(f"Error encountered while uploading metadata {filename}: {e}")
         return False
@@ -185,7 +183,7 @@ def upload_prompt(prompt_dict):
     with open(filename, "w") as f:
         f.write(json_object)
     try:
-        response = s3_client.upload_file(filename, "prompts", filename)
+        s3_client.upload_file(filename, "prompts", filename)
         os.remove(filename)
     except Exception as err:
         logger.error(f"Error encountered while uploading prompt {filename}: {err}")
@@ -221,9 +219,9 @@ def check_file(client, bucket, filename):
 
 
 def check_shared_image(filename):
-    return type(check_file(s3_client_shared, r2_transient_bucket, filename)) == dict
+    return isinstance(check_file(s3_client_shared, r2_transient_bucket, filename),dict)
 
 
 def file_exists(client, bucket, filename):
     # If the return of check_file is an int, it means it encountered an error
-    return type(check_file(client, bucket, filename)) != int
+    return not isinstance(check_file(client, bucket, filename),int)

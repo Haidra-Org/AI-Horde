@@ -16,7 +16,6 @@ from horde.classes.base import settings
 from horde.argparser import maintenance
 from horde.classes.base.user import User
 from horde.classes.base.news import News
-import horde.classes.base.stats as stats
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
@@ -37,7 +36,7 @@ dance_return_to = "/"
 @HORDE.route("/")
 # @cache.cached(timeout=300)
 def index():
-    with open(f"index_stable.md") as index_file:
+    with open("index_stable.md") as index_file:
         index = index_file.read()
     align_image = 0
     big_image = align_image
@@ -236,21 +235,21 @@ def register():
                 if not response.ok or not response.json()["success"]:
                     return render_template(
                         "recaptcha_error.html",
-                        page_title=f"Recaptcha validation Error!",
+                        page_title="Recaptcha validation Error!",
                         use_recaptcha=False,
                     )
                 ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
                 if ip_timeout:
                     return render_template(
                         "ipaddr_ban_error.html",
-                        page_title=f"IP Address Banned",
+                        page_title="IP Address Banned",
                         use_recaptcha=False,
                     )
             except Exception as err:
                 logger.error(err)
                 return render_template(
                     "recaptcha_error.html",
-                    page_title=f"Recaptcha Submit Error!",
+                    page_title="Recaptcha Submit Error!",
                     use_recaptcha=False,
                 )
         api_key = secrets.token_urlsafe(16)
@@ -298,7 +297,6 @@ def register():
 @logger.catch(reraise=True)
 @HORDE.route("/transfer", methods=["GET", "POST"])
 def transfer():
-    src_api_key = None
     src_user = None
     dest_username = None
     kudos = None

@@ -75,7 +75,7 @@ class CounterMeasures:
                     os.getenv("IP_CHECKER").format(ipaddr=ipaddr), timeout=timeout
                 )
             except Exception as err:
-                logger.error(f"Exception when requesting info from checker")
+                logger.error(f"Exception when requesting info from checker: {err}")
                 return None
             if not result.ok:
                 if result.status_code == 429:

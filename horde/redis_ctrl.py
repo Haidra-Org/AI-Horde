@@ -72,8 +72,8 @@ def get_all_redis_db_servers():
         return [
             get_redis_db_server(rs) for rs in json.loads(os.getenv("REDIS_SERVERS"))
         ]
-    except:
+    except Exception:
         logger.error(
-            f"Error setting up REDIS_SERVERS array. Falling back to loadbalancer."
+            "Error setting up REDIS_SERVERS array. Falling back to loadbalancer."
         )
         return [get_horde_db()]

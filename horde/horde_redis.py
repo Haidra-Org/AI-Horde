@@ -38,7 +38,7 @@ def horde_r_set(key, value):
         try:
             hr.set(key, value)
         except Exception as err:
-            logger.warning("Exception when writing in redis servers {hr}: {err}")
+            logger.warning(f"Exception when writing in redis servers {hr}: {err}")
     if horde_local_r:
         horde_local_r.setex(key, timedelta(10), value)
 
@@ -71,7 +71,7 @@ def horde_r_local_set_to_json(key, value):
         try:
             horde_local_r.set(key, json.dumps(value))
         except Exception as err:
-            logger.error(f"Something went wrong when setting local redis: {e}")
+            logger.error(f"Something went wrong when setting local redis: {err}")
         locks[key].release()
 
 
@@ -83,7 +83,7 @@ def horde_local_setex_to_json(key, seconds, value):
         try:
             horde_local_r.setex(key, timedelta(seconds=seconds), json.dumps(value))
         except Exception as err:
-            logger.error(f"Something went wrong when setting local redis: {e}")
+            logger.error(f"Something went wrong when setting local redis: {err}")
         locks[key].release()
 
 

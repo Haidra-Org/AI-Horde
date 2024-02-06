@@ -100,13 +100,13 @@ class ImageValidationFailed(wze.BadRequest):
 
 class SourceMaskUnnecessary(wze.BadRequest):
     def __init__(self):
-        self.specific = f"Please do not pass a source_mask unless you are sending a source_image as well"
+        self.specific = "Please do not pass a source_mask unless you are sending a source_image as well"
         self.log = "Tried to pass source_mask with txt2img"
 
 
 class UnsupportedSampler(wze.BadRequest):
     def __init__(self):
-        self.specific = f"This sampler is not supported in this mode the moment"
+        self.specific = "This sampler is not supported in this mode the moment"
         self.log = None
 
 
@@ -192,14 +192,14 @@ class WorkerMaintenance(wze.Forbidden):
 
 class TooManySameIPs(wze.Forbidden):
     def __init__(self, username):
-        self.specific = f"You are running too many workers from the same location. To prevent abuse, please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz "
+        self.specific = "You are running too many workers from the same location. To prevent abuse, please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz "
         self.log = f"User '{username} is trying to onboard too many workers from the same IP Address. Aborting!"
 
 
 class WorkerInviteOnly(wze.Forbidden):
     def __init__(self, current_workers):
         if current_workers == 0:
-            self.specific = f"This horde has been switched to worker invite-only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
+            self.specific = "This horde has been switched to worker invite-only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
         else:
             self.specific = f"This horde has been switched to worker invite-only mode and you already have {current_workers} workers. Please contact us on Discord to allow you to join more workers: https://discord.gg/aG68kk3Qpz "
         self.log = None
@@ -207,7 +207,7 @@ class WorkerInviteOnly(wze.Forbidden):
 
 class UnsafeIP(wze.Forbidden):
     def __init__(self, ipaddr):
-        self.specific = f"Due to abuse prevention, we cannot accept more workers from VPNs. Please contact us on Discord if you feel this is a mistake."
+        self.specific = "Due to abuse prevention, we cannot accept more workers from VPNs. Please contact us on Discord if you feel this is a mistake."
         self.log = f"Worker attempted to pop from unsafe IP: {ipaddr}"
 
 
@@ -234,7 +234,7 @@ class TimeoutIP(wze.Forbidden):
 
 class TooManyNewIPs(wze.Forbidden):
     def __init__(self, ipaddr):
-        self.specific = f"We are getting too many new workers from unknown IPs. To prevent abuse, please try again later. If this persists, please contact us on discord https://discord.gg/3DxrhksKzn "
+        self.specific = "We are getting too many new workers from unknown IPs. To prevent abuse, please try again later. If this persists, please contact us on discord https://discord.gg/3DxrhksKzn "
         self.log = f"Too many new IPs to check: {ipaddr}. Asked to retry"
 
 
@@ -317,7 +317,7 @@ class AbortedGen(wze.BadRequest):
 
 class RequestExpired(wze.Gone):
     def __init__(self, username):
-        self.specific = f"Prompt Request Expired"
+        self.specific = "Prompt Request Expired"
         self.log = f"Request from '{username}' took too long to complete and has been cancelled."
 
 
@@ -335,7 +335,7 @@ class NoValidWorkers(wze.BadRequest):
 
     def __init__(self, username):
         self.specific = (
-            f"No active worker found to fulfill this request. Please Try again later..."
+            "No active worker found to fulfill this request. Please Try again later..."
         )
         self.log = (
             f"No active worker found to match the request from '{username}'. Aborting!"
@@ -346,7 +346,7 @@ class MaintenanceMode(wze.BadRequest):
     retry_after = 60
 
     def __init__(self, endpoint):
-        self.specific = f"Horde has entered maintenance mode. Please try again later."
+        self.specific = "Horde has entered maintenance mode. Please try again later."
         self.log = f"Rejecting endpoint '{endpoint}' because horde in maintenance mode."
 
 

@@ -1,4 +1,3 @@
-import os
 import json
 import regex as re
 from datetime import datetime
@@ -87,7 +86,7 @@ class PromptChecker:
                 stored_replacements = []
             try:
                 stored_replacements = json.loads(cached_replacements)
-            except:
+            except Exception:
                 logger.warning(
                     "Errors when loading cached regex replacements in redis! Check threads!"
                 )

@@ -1,6 +1,6 @@
 from loguru import logger
 
-from horde.flask import HORDE, db
+from horde.flask import HORDE
 from horde.database import functions as database
 
 

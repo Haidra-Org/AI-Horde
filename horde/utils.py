@@ -10,7 +10,6 @@ from datetime import datetime
 import dateutil.relativedelta
 from profanity_check import predict
 from better_profanity import profanity
-from horde.logger import logger
 from horde.flask import SQLITE_MODE
 
 profanity.load_censor_words()
@@ -123,6 +122,6 @@ def count_parentheses(s):
 def validate_regex(regex_string):
     try:
         re.compile(regex_string, re.IGNORECASE)
-    except:
+    except Exception:
         return False
     return True
