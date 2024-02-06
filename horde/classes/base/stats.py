@@ -4,7 +4,6 @@ from sqlalchemy import func
 from horde.logger import logger
 from horde.flask import db
 from horde import vars as hv
-from horde.argparser import args
 
 
 class ModelPerformance(db.Model):

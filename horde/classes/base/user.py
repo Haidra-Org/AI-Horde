@@ -1,6 +1,5 @@
 import uuid
 import os
-import ipaddress
 
 import dateutil.relativedelta
 from datetime import datetime, timedelta
@@ -11,7 +10,6 @@ from sqlalchemy.dialects.postgresql import UUID
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
-from horde.vars import thing_name, text_thing_divisor, text_thing_name
 from horde import vars as hv
 from horde.suspicions import Suspicions, SUSPICION_LOGS
 from horde.utils import is_profane, sanitize_string, generate_client_id
@@ -22,7 +20,7 @@ from horde.discord import send_problem_user_notification
 from horde import horde_redis as hr
 from horde.countermeasures import CounterMeasures
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 
 
 class UserProblemJobs(db.Model):
@@ -40,7 +38,7 @@ class UserProblemJobs(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"Worker", back_populates="problem_jobs")
+    worker = db.relationship("Worker", back_populates="problem_jobs")
     ipaddr = db.Column(db.String(39), nullable=False, index=True)
     proxied_account = db.Column(db.String(255), nullable=True, index=True)
     # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
@@ -260,13 +258,13 @@ class User(db.Model):
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
     workers = db.relationship(
-        f"Worker", back_populates="user", cascade="all, delete-orphan"
+        "Worker", back_populates="user", cascade="all, delete-orphan"
     )
     teams = db.relationship(
-        f"Team", back_populates="owner", cascade="all, delete-orphan"
+        "Team", back_populates="owner", cascade="all, delete-orphan"
     )
     sharedkeys = db.relationship(
-        f"UserSharedKey", back_populates="user", cascade="all, delete-orphan"
+        "UserSharedKey", back_populates="user", cascade="all, delete-orphan"
     )
     suspicions = db.relationship(
         "UserSuspicions", back_populates="user", cascade="all, delete-orphan"
@@ -316,7 +314,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.TRUSTED,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -337,7 +335,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.FLAGGED,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -358,7 +356,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.MODERATOR,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -379,7 +377,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.CUSTOMIZER,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -400,7 +398,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.VPN,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -421,7 +419,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SERVICE,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -442,7 +440,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SPECIAL,
-                UserRole.value == True,
+                UserRole.value == True, #noqa E712
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -794,7 +792,7 @@ class User(db.Model):
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(
-                f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason}"
+                f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason_log}"
             )
 
     def get_suspicion_reasons(self):
@@ -973,7 +971,7 @@ class User(db.Model):
         loras = ""
         if "loras" in procgen.wp.params:
             loras = (
-                f"\nLatest LoRas: {[l['name'] for l in procgen.wp.params['loras']]}."
+                f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
             )
         # Manual exception for pawky as they won't add proxied_accounts for a while
         # And I'm tired of seeing reports from their user instead of from IPs

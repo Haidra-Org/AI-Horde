@@ -1,7 +1,7 @@
 import uuid
 
 from datetime import datetime
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import func
 
 from horde.logger import logger
@@ -9,7 +9,7 @@ from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 
 
 class Team(db.Model):
@@ -20,7 +20,7 @@ class Team(db.Model):
     owner_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    owner = db.relationship(f"User", back_populates="teams")
+    owner = db.relationship("User", back_populates="teams")
 
     contributions = db.Column(db.BigInteger, default=0, nullable=False)
     fulfilments = db.Column(db.Integer, default=0, nullable=False)
@@ -143,8 +143,8 @@ def get_all_teams():
 
 def find_team_by_id(team_id):
     try:
-        team_uuid = uuid.UUID(team_id)
-    except ValueError as e:
+        uuid.UUID(team_id)
+    except ValueError:
         logger.debug(f"Non-UUID team_id sent: '{team_id}'.")
         return None
     team = db.session.query(Team).filter_by(id=team_id).first()

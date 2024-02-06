@@ -1,4 +1,3 @@
-from horde.logger import logger
 from horde.flask import db
 
 

@@ -4,13 +4,13 @@ import json
 from datetime import datetime, timedelta
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy import JSON, func, or_
+from sqlalchemy import JSON, or_
 from sqlalchemy.sql import expression
 
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
-from horde.utils import is_profane, get_db_uuid, get_expiry_date
+from horde.utils import get_db_uuid, get_expiry_date
 
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -24,7 +24,7 @@ procgen_classes = {
 }
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 
 
 class WPAllowedWorkers(db.Model):
@@ -33,13 +33,13 @@ class WPAllowedWorkers(db.Model):
     worker_id = db.Column(
         uuid_column_type(), db.ForeignKey("workers.id"), nullable=False
     )
-    worker = db.relationship(f"Worker")
+    worker = db.relationship("Worker")
     wp_id = db.Column(
         uuid_column_type(),
         db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    wp = db.relationship(f"WaitingPrompt", back_populates="workers")
+    wp = db.relationship("WaitingPrompt", back_populates="workers")
 
 
 class WPTrickedWorkers(db.Model):
@@ -48,13 +48,13 @@ class WPTrickedWorkers(db.Model):
     worker_id = db.Column(
         uuid_column_type(), db.ForeignKey("workers.id"), nullable=False
     )
-    worker = db.relationship(f"Worker")
+    worker = db.relationship("Worker")
     wp_id = db.Column(
         uuid_column_type(),
         db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    wp = db.relationship(f"WaitingPrompt", back_populates="tricked_workers")
+    wp = db.relationship("WaitingPrompt", back_populates="tricked_workers")
 
 
 class WPModels(db.Model):
@@ -65,7 +65,7 @@ class WPModels(db.Model):
         db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    wp = db.relationship(f"WaitingPrompt", back_populates="models")
+    wp = db.relationship("WaitingPrompt", back_populates="models")
     model = db.Column(db.String(255), nullable=False)
 
 
@@ -294,10 +294,10 @@ class WaitingPrompt(db.Model):
             db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
-                procgen_class.fake == False,
+                procgen_class.fake == False, #noqa E712
                 or_(
-                    procgen_class.faulted == True,
-                    procgen_class.generation != None,
+                    procgen_class.faulted == True, #noqa E712
+                    procgen_class.generation != None, #noqa E712
                 ),
             )
             .count()
@@ -494,7 +494,7 @@ class WaitingPrompt(db.Model):
             return self.refresh_worker_cache()
         try:
             worker_cache = json.loads(worker_cache)
-        except TypeError as e:
+        except TypeError:
             logger.error(f"Worker cache could not be loaded: {worker_cache}")
             return self.refresh_worker_cache()
         if worker_cache is None:

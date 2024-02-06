@@ -5,7 +5,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime, timedelta
 
-from horde.classes.base.waiting_prompt import WPModels
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
@@ -16,7 +15,7 @@ from horde.classes.base import settings
 from horde.discord import send_pause_notification
 
 
-uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36) #FIXME # noqa E731
 
 
 class WorkerStats(db.Model):
@@ -27,7 +26,7 @@ class WorkerStats(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"Worker", back_populates="stats")
+    worker = db.relationship("Worker", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, default=0, nullable=False)
 
@@ -40,7 +39,7 @@ class WorkerPerformance(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"Worker", back_populates="performance")
+    worker = db.relationship("Worker", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
     created = db.Column(
         db.DateTime, default=datetime.utcnow
@@ -55,7 +54,7 @@ class WorkerBlackList(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"Worker", back_populates="blacklist")
+    worker = db.relationship("Worker", back_populates="blacklist")
     word = db.Column(db.String(20), primary_key=False)
 
 
@@ -67,7 +66,7 @@ class WorkerSuspicions(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"Worker", back_populates="suspicions")
+    worker = db.relationship("Worker", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
@@ -79,7 +78,7 @@ class WorkerModel(db.Model):
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship(f"Worker", back_populates="models")
+    worker = db.relationship("Worker", back_populates="models")
     model = db.Column(
         db.String(255)
     )  # TODO model should be a foreign key to a model table
@@ -175,7 +174,7 @@ class WorkerTemplate(db.Model):
             .label("speed")
         )
         return db.case(
-            [(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])],
+            [(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])], #noqa E712
             else_=performance_avg,
         )
 
@@ -610,7 +609,7 @@ class Worker(WorkerTemplate):
             return self.refresh_model_cache()
         try:
             models_ret = json.loads(model_cache)
-        except TypeError as e:
+        except TypeError:
             logger.error(f"Model cache could not be loaded: {model_cache}")
             return self.refresh_model_cache()
         if models_ret is None:
