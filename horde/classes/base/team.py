@@ -9,9 +9,7 @@ from horde.flask import db, SQLITE_MODE
 from horde import vars as hv
 from horde.utils import is_profane, get_db_uuid, sanitize_string
 
-
-def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
 
 class Team(db.Model):
@@ -19,9 +17,7 @@ class Team(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     info = db.Column(db.String(1000), default="")
     name = db.Column(db.String(100), default="", unique=True, nullable=False)
-    owner_id = db.Column(
-        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     owner = db.relationship("User", back_populates="teams")
 
     contributions = db.Column(db.BigInteger, default=0, nullable=False)
@@ -50,9 +46,7 @@ class Team(db.Model):
             all_performances.append(worker.speed)
         if len(all_performances):
             perf_avg = round(
-                sum(all_performances)
-                / len(all_performances)
-                / hv.thing_divisors["image"],
+                sum(all_performances) / len(all_performances) / hv.thing_divisors["image"],
                 1,
             )
             perf_total = round(sum(all_performances) / hv.thing_divisors["image"], 1)
@@ -154,9 +148,5 @@ def find_team_by_id(team_id):
 
 
 def find_team_by_name(team_name):
-    team = (
-        db.session.query(Team)
-        .filter(func.lower(Team.name) == func.lower(team_name))
-        .first()
-    )
+    team = db.session.query(Team).filter(func.lower(Team.name) == func.lower(team_name)).first()
     return team

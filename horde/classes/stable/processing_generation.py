@@ -96,9 +96,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             filename = f"{self.id}.webp"
             image = convert_b64_to_pil(generation)
             if not image:
-                logger.error(
-                    "Could not convert b64 image from the worker to PIL to upload!"
-                )
+                logger.error("Could not convert b64 image from the worker to PIL to upload!")
             else:
                 upload_method(image, filename)
                 # This signifies to send the download URL
@@ -118,9 +116,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
 
     def upload_generation_metadata(self):
         if not check_shared_image(f"{self.id}.webp"):
-            logger.warning(
-                f"Avoiding json metadata upload because {self.id}.webp doesn't seem to exist."
-            )
+            logger.warning(f"Avoiding json metadata upload because {self.id}.webp doesn't seem to exist.")
             return
         metadict = self.wp.get_share_metadata()
         metadict["seed"] = self.seed

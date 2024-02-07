@@ -110,6 +110,4 @@ class TextProcessingGeneration(ProcessingGeneration):
                 unreasonable_speed = max_speed_per_multiplier[params_count]
                 break
         if things_per_sec > unreasonable_speed:
-            self.worker.report_suspicion(
-                reason=Suspicions.UNREASONABLY_FAST, formats=[things_per_sec]
-            )
+            self.worker.report_suspicion(reason=Suspicions.UNREASONABLY_FAST, formats=[things_per_sec])

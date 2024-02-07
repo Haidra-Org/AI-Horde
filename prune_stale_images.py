@@ -30,9 +30,7 @@ while True:
                         if len(futures) >= 1000:
                             for future in futures:
                                 future.result()
-                            logger.info(
-                                f"Image Pruner: Bucket {bucket} Deleted: {len(futures)}"
-                            )
+                            logger.info(f"Image Pruner: Bucket {bucket} Deleted: {len(futures)}")
                             futures = []
                 for future in futures:
                     future.result()

@@ -40,18 +40,14 @@ class ImageAsyncGenerate(GenerateTemplate):
             limit_value=lim.get_request_90min_limit_per_ip,
             key_func=lim.get_request_path,
         ),
-        limiter.limit(
-            limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path
-        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
         limiter.limit(
             limit_value=lim.get_request_limit_per_apikey,
             key_func=lim.get_request_api_key,
         ),
     ]
 
-    @api.expect(
-        parsers.generate_parser, models.input_model_request_generation, validate=True
-    )
+    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(
         models.response_model_async,
         code=202,
@@ -97,11 +93,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         super().validate()
         # logger.warning(datetime.utcnow())
         # During raids, we prevent VPNs
-        if (
-            settings.mode_raid()
-            and not self.user.trusted
-            and not patrons.is_patron(self.user.id)
-        ):
+        if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
             # We allow unsafe IPs when being rate limited as they're only temporary
             if self.safe_ip is None:
@@ -114,9 +106,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         for model in self.args.models:
             if "horde_special" in model:
                 if not self.user.special:
-                    raise e.BadRequest(
-                        "Only special users can request a special model."
-                    )
+                    raise e.BadRequest("Only special users can request a special model.")
                 usermodel = model.split("::")
                 if len(usermodel) == 1:
                     raise e.BadRequest(
@@ -124,36 +114,24 @@ class ImageAsyncGenerate(GenerateTemplate):
                     )
                 user_alias = usermodel[1]
                 if self.user.get_unique_alias() != user_alias:
-                    raise e.BadRequest(
-                        f"This model can only be requested by {user_alias}"
-                    )
+                    raise e.BadRequest(f"This model can only be requested by {user_alias}")
                 if not self.params.get("special"):
-                    raise e.BadRequest(
-                        "Special models have to include a special payload"
-                    )
+                    raise e.BadRequest("Special models have to include a special payload")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(
-            model_reference.get_model_baseline(model_name).startswith(
-                "stable diffusion 2"
-            )
+            model_reference.get_model_baseline(model_name).startswith("stable diffusion 2")
             for model_name in self.args.models
         ):
-            raise e.UnsupportedModel(
-                "No current model available for this particular ControlNet for SD2.x"
-            )
-        if "control_type" in self.params and any(
-            model_name in ["pix2pix"] for model_name in self.args.models
-        ):
+            raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x")
+        if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.")
         # if self.params.get("image_is_control"):
         #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
             raise e.UnsupportedModel("Controlnet Requires a source image.")
         if any(
-            model_reference.get_model_baseline(model_name).startswith(
-                "stable_diffusion_xl"
-            )
+            model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl")
             for model_name in self.args.models
         ):
             if self.params.get("hires_fix", False) is True:
@@ -162,30 +140,20 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.BadRequest("ControlNet does not work with SDXL currently.")
         if "loras" in self.params:
             if len(self.params["loras"]) > 5:
-                raise e.BadRequest(
-                    "You cannot request more than 5 loras per generation."
-                )
+                raise e.BadRequest("You cannot request more than 5 loras per generation.")
             for lora in self.params["loras"]:
                 if lora.get("is_version") and not lora["name"].isdigit():
-                    raise e.BadRequest(
-                        "explicit LoRa version requests have to be a version ID (i.e integer)."
-                    )
+                    raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
         if "tis" in self.params and len(self.params["tis"]) > 20:
-            raise e.BadRequest(
-                "You cannot request more than 20 Textual Inversions per generation."
-            )
+            raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
-            raise e.UnsupportedModel(
-                "Invalid ControlNet parameters - cannot send inital map and return the same map"
-            )
+            raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map")
         if not self.args.source_image and any(
-            model_name in ["Stable Diffusion 2 Depth", "pix2pix"]
-            for model_name in self.args.models
+            model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models
         ):
             raise e.UnsupportedModel
         if not self.args.source_image and any(
-            model_name in model_reference.controlnet_models
-            for model_name in self.args.models
+            model_name in model_reference.controlnet_models for model_name in self.args.models
         ):
             raise e.UnsupportedModel
         # If the beta has been requested, it takes over the model list
@@ -194,9 +162,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.Forbidden("Anonymous users cannot use the SDXL_beta.")
             self.models = ["SDXL_beta::stability.ai#6901"]
             if self.params["n"] == 1:
-                raise e.BadRequest(
-                    "You need to request at least 2 images for SDXL to allow for comparison"
-                )
+                raise e.BadRequest("You need to request at least 2 images for SDXL to allow for comparison")
             # SDXL_Beta always generates 2 images
             self.params["n"] = 2
         #     if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
@@ -208,13 +174,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
             raise e.UnsupportedModel
         if self.args.params:
-            upscaler_count = len(
-                [
-                    pp
-                    for pp in self.args.params.get("post_processing", [])
-                    if pp in KNOWN_UPSCALERS
-                ]
-            )
+            upscaler_count = len([pp for pp in self.args.params.get("post_processing", []) if pp in KNOWN_UPSCALERS])
             if upscaler_count > 1:
                 raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
 
@@ -223,9 +183,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 try:
                     rounded_cfg_scale = round(cfg_scale, 2)
                     if rounded_cfg_scale != cfg_scale:
-                        raise e.BadRequest(
-                            "cfg_scale must be rounded to 2 decimal places"
-                        )
+                        raise e.BadRequest("cfg_scale must be rounded to 2 decimal places")
                 except (TypeError, ValueError):
                     logger.warning(
                         f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated."
@@ -275,17 +233,11 @@ class ImageAsyncGenerate(GenerateTemplate):
             webhook=self.args.webhook,
         )
         _, total_threads = database.count_active_workers("image")
-        needs_kudos, resolution = self.wp.require_upfront_kudos(
-            database.retrieve_totals(), total_threads
-        )
+        needs_kudos, resolution = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         required_kudos = 0
         if (self.sharedkey and self.sharedkey.kudos != -1) or needs_kudos:
             required_kudos = self.wp.extrapolate_dry_run_kudos()
-        if (
-            self.sharedkey
-            and self.sharedkey.kudos != -1
-            and required_kudos > self.sharedkey.kudos
-        ):
+        if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             self.wp.delete()
             raise e.KudosUpfront(
                 required_kudos,
@@ -349,17 +301,13 @@ class ImageAsyncGenerate(GenerateTemplate):
                 self.source_image,
                 img,
                 self.source_image_r2stored,
-            ) = ensure_source_image_uploaded(
-                self.args.source_image, f"{self.wp.id}_src", force_r2=True
-            )
+            ) = ensure_source_image_uploaded(self.args.source_image, f"{self.wp.id}_src", force_r2=True)
             if self.args.source_mask:
                 (
                     self.source_mask,
                     img,
                     self.source_mask_r2stored,
-                ) = ensure_source_image_uploaded(
-                    self.args.source_mask, f"{self.wp.id}_msk", force_r2=True
-                )
+                ) = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2=True)
             elif self.args.source_processing == "inpainting":
                 try:
                     _red, _green, _blue, _alpha = img.split()
@@ -519,9 +467,7 @@ class ImageJobPop(JobPopTemplate):
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(
-        models.response_model_job_pop, code=200, description="Generation Popped"
-    )
+    @api.marshal_with(models.response_model_job_pop, code=200, description="Generation Popped")
     @api.response(400, "Validation Error", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -587,9 +533,7 @@ class ImageJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
-    @api.marshal_with(
-        models.response_model_job_submit, code=200, description="Generation Submitted"
-    )
+    @api.marshal_with(models.response_model_job_submit, code=200, description="Generation Submitted")
     @api.response(400, "Generation Already Submitted", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -630,16 +574,12 @@ class Aesthetics(Resource):
         location="headers",
     )
     post_parser.add_argument("best", type=str, required=False, location="json")
-    post_parser.add_argument(
-        "ratings", type=list, required=False, default=False, location="json"
-    )
+    post_parser.add_argument("ratings", type=list, required=False, default=False, location="json")
 
     decorators = [limiter.limit("5/minute", key_func=lim.get_request_path)]
 
     @api.expect(post_parser, models.input_model_aesthetics_payload, validate=True)
-    @api.marshal_with(
-        models.response_model_job_submit, code=200, description="Aesthetics Submitted"
-    )
+    @api.marshal_with(models.response_model_job_submit, code=200, description="Aesthetics Submitted")
     @api.response(400, "Aesthetics Already Submitted", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(404, "Generation Request Not Found", models.response_model_error)
@@ -659,17 +599,13 @@ class Aesthetics(Resource):
                 client_agent=self.args["Client-Agent"],
             )
         if not wp.is_completed():
-            raise e.InvalidAestheticAttempt(
-                "You can only aesthetically rate completed requests!"
-            )
+            raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!")
         if not wp.shared:
             raise e.InvalidAestheticAttempt(
                 "You can only aesthetically rate requests you have opted to share publicly"
             )
         procgen_ids = [
-            str(procgen.id)
-            for procgen in wp.processing_gens
-            if not procgen.faulted and not procgen.cancelled
+            str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled
         ]
         if self.args.ratings:
             seen_ids = []
@@ -677,17 +613,13 @@ class Aesthetics(Resource):
                 if rating["id"] not in procgen_ids:
                     raise e.ProcGenNotFound(rating["id"])
                 if rating["id"] in seen_ids:
-                    raise e.InvalidAestheticAttempt(
-                        "Duplicate image ID found in your ratings. You should be ashamed!"
-                    )
+                    raise e.InvalidAestheticAttempt("Duplicate image ID found in your ratings. You should be ashamed!")
                 seen_ids.append(rating["id"])
         if self.args.best:
             if self.args.best not in procgen_ids:
                 raise e.ProcGenNotFound(self.args.best)
         if not self.args.ratings and not self.args.best:
-            raise e.InvalidAestheticAttempt(
-                "You need to either point to the best image, or aesthetic ratings."
-            )
+            raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
             raise e.InvalidAestheticAttempt(
                 "Well done! You have pointed to a single image generation as being the best one of the set. Unfortunately that doesn't help anyone. no kudos for you!"
@@ -702,9 +634,7 @@ class Aesthetics(Resource):
                 "account_age": (datetime.utcnow() - wp.user.created).total_seconds(),
                 # "usage_requests": wp.user.usage_requests, # FIXME: Use UserRecords
                 "kudos": wp.user.kudos,
-                "kudos_accumulated": wp.user.compile_kudos_details().get(
-                    "accumulated", 0
-                ),
+                "kudos_accumulated": wp.user.compile_kudos_details().get("accumulated", 0),
                 "ipaddr": request.remote_addr,
             },
         }
@@ -719,10 +649,7 @@ class Aesthetics(Resource):
             # Unless another bestof was selected (for some reason)
             if len(self.args.ratings) == 1 and len(procgen_ids) > 1:
                 if self.args.ratings[0]["rating"] >= 7:
-                    if (
-                        not self.args.best
-                        or self.args.best == self.args.ratings[0]["id"]
-                    ):
+                    if not self.args.best or self.args.best == self.args.ratings[0]["id"]:
                         aesthetic_payload["best"] = self.args.ratings[0]["id"]
                 elif self.args.best:
                     self.kudos += 15
@@ -762,18 +689,14 @@ class Aesthetics(Resource):
             )
             if not submit_req.ok:
                 if submit_req.status_code == 403:
-                    raise e.InvalidAestheticAttempt(
-                        "This generation appears already rated"
-                    )
+                    raise e.InvalidAestheticAttempt("This generation appears already rated")
                 try:
                     error_msg = submit_req.json()
                 except Exception:
                     raise e.InvalidAestheticAttempt(
                         f"Received unexpected response from rating server: {submit_req.text}"
                     )
-                raise e.InvalidAestheticAttempt(
-                    f"Rating Server returned error: {error_msg['message']}"
-                )
+                raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}")
         except requests.exceptions.ConnectionError:
             raise e.InvalidAestheticAttempt("The rating server appears to be down")
         except requests.exceptions.ReadTimeout:
@@ -792,9 +715,7 @@ class Aesthetics(Resource):
 # I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
 class Interrogate(Resource):
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument(
-        "apikey", type=str, required=True, help="A User API key", location="headers"
-    )
+    post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location="headers")
     post_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -881,9 +802,7 @@ class Interrogate(Resource):
             db.session.delete(self.interrogation)
             db.session.commit()
             raise err
-        self.interrogation.set_source_image(
-            self.source_image, self.r2stored, self.image_tiles
-        )
+        self.interrogation.set_source_image(self.source_image, self.r2stored, self.image_tiles)
         self.interrogation.set_forms(self.forms)
         ret_dict = {"id": self.interrogation.id}
         return (ret_dict, 202)
@@ -904,14 +823,8 @@ class Interrogate(Resource):
             # More concurrency for interrogations
             user_limit = self.user.get_concurrency() * 10
             if i_count + len(self.forms) > user_limit:
-                raise e.TooManyPrompts(
-                    self.username, i_count + len(self.forms), user_limit
-                )
-        if (
-            settings.mode_raid()
-            and not self.user.trusted
-            and not patrons.is_patron(self.user.id)
-        ):
+                raise e.TooManyPrompts(self.username, i_count + len(self.forms), user_limit)
+        if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
             # We allow unsafe IPs when being rate limited as they're only temporary
             if self.safe_ip is None:
@@ -1094,14 +1007,10 @@ class InterrogatePop(JobPopTemplate):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
 
-        pre_priority_user_ids = [
-            x.split("#")[-1] for x in self.priority_usernames if x != ""
-        ]
+        pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames if x != ""]
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
-        p_users_id_from_db = (
-            db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
-        )
+        p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
         if p_users_id_from_db:
             self.priority_user_ids.extend([x.id for x in p_users_id_from_db])
 
@@ -1128,17 +1037,13 @@ class InterrogatePop(JobPopTemplate):
             try:
                 can_interrogate, skipped_reason = self.worker.can_interrogate(form)
             except Exception as err:
-                logger.error(
-                    f"Error when checking interrogation for worker. Skipping: {err}."
-                )
+                logger.error(f"Error when checking interrogation for worker. Skipping: {err}.")
                 continue
             if not can_interrogate:
                 # We don't report on secret skipped reasons
                 # as they're typically countermeasures to raids
                 if skipped_reason != "secret":
-                    self.skipped[skipped_reason] = (
-                        self.skipped.get(skipped_reason, 0) + 1
-                    )
+                    self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
                 # logger.warning(datetime.utcnow())
                 continue
             # There is a chance that by the time we finished all the checks, another worker picked up the WP.
@@ -1248,9 +1153,7 @@ class InterrogateSubmit(Resource):
         if not self.user:
             raise e.InvalidAPIKey("worker submit:" + self.args["name"])
         if self.user != self.form.worker.user:
-            raise e.WrongCredentials(
-                self.user.get_unique_alias(), self.form.worker.name
-            )
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.form.worker.name)
 
 
 class ImageHordeStatsTotals(Resource):

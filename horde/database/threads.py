@@ -41,9 +41,7 @@ def get_quorum():
     quorum = hr.horde_r.get("horde_quorum")
     if not quorum:
         hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
-        logger.critical(
-            f"Quorum changed to port {args.port} with ID {horde_instance_id}"
-        )
+        logger.critical(f"Quorum changed to port {args.port} with ID {horde_instance_id}")
         # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
         return None
     if quorum == horde_instance_id:
@@ -51,9 +49,7 @@ def get_quorum():
         logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
         hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
-        logger.debug(
-            f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}"
-        )
+        logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
     return quorum
 
 
@@ -69,9 +65,7 @@ def assign_monthly_kudos():
         or_conditions.append(User.id.in_(patron_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
         all_users = users.all()
-        logger.info(
-            f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}"
-        )
+        logger.info(f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}")
         for user in all_users:
             user.receive_monthly_kudos()
 
@@ -96,9 +90,7 @@ def store_prioritized_wp_queue():
                 cached_queue = json.dumps(serialized_wp_list)
                 # We set the expiry in redis to 10 seconds, in case the primary thread dies
                 # However the primary thread is set to set the cache every 1 second
-                hr.horde_r_setex(
-                    f"{wp_type}_wp_cache", timedelta(seconds=5), cached_queue
-                )
+                hr.horde_r_setex(f"{wp_type}_wp_cache", timedelta(seconds=5), cached_queue)
             except (TypeError, OverflowError) as err:
                 logger.error(f"Failed serializing with error: {err}")
 
@@ -192,9 +184,7 @@ def check_waiting_prompts():
             (ImageWaitingPrompt, ImageProcessingGeneration),
             (TextWaitingPrompt, TextProcessingGeneration),
         ]:
-            expired_wps = db.session.query(wp_class).filter(
-                wp_class.expiry < cutoff_time
-            )
+            expired_wps = db.session.query(wp_class).filter(wp_class.expiry < cutoff_time)
             logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
             expired_wps.delete()
             db.session.commit()
@@ -246,12 +236,8 @@ def check_interrogations():
     with HORDE.app_context():
         # Cleans expired interrogations
         cutoff_time = datetime.utcnow()
-        expired_entries = db.session.query(Interrogation).filter(
-            Interrogation.expiry < cutoff_time
-        )
-        expired_r_entries = expired_entries.filter(
-            Interrogation.r2stored == True  # noqa E712
-        )  # noqa E712
+        expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < cutoff_time)
+        expired_r_entries = expired_entries.filter(Interrogation.r2stored == True)  # noqa E712
         all_source_image_ids = [i.id for i in expired_r_entries.all()]
         for source_image_id in all_source_image_ids:
             delete_source_image(str(source_image_id))
@@ -342,8 +328,7 @@ def store_patreon_members():
         member_dict = {
             "name": member.attribute("full_name"),
             "email": member.attribute("email"),
-            "entitlement_amount": member.attribute("currently_entitled_amount_cents")
-            / 100,
+            "entitlement_amount": member.attribute("currently_entitled_amount_cents") / 100,
         }
         note = json.loads(member.attribute("note"))
         if "stable_id" not in note:
@@ -358,9 +343,7 @@ def store_patreon_members():
             member_dict["sponsor_link"] = note["sponsor_link"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
-    logger.info(
-        f"patreon_cache ({len(active_members)}): {sorted(list(active_members.keys()))}"
-    )
+    logger.info(f"patreon_cache ({len(active_members)}): {sorted(list(active_members.keys()))}")
     hr.horde_r_set("patreon_cache", cached_patreons)
 
 

@@ -49,12 +49,8 @@ arg_parser.add_argument(
     type=str,
     help="Which Horde to Start. This customizes endpoints and methods",
 )
-arg_parser.add_argument(
-    "--allow_all_ips", action="store_true", help="If set, will consider all IPs safe"
-)
-arg_parser.add_argument(
-    "--quorum", action="store_true", help="If set, will forcefully grab the quorum"
-)
+arg_parser.add_argument("--allow_all_ips", action="store_true", help="If set, will consider all IPs safe")
+arg_parser.add_argument("--quorum", action="store_true", help="If set, will forcefully grab the quorum")
 arg_parser.add_argument(
     "--reload_all_caches",
     action="store_true",
@@ -70,9 +66,7 @@ arg_parser.add_argument(
     action="store_true",
     help="If set, will reload the patreon db and run the monthly awards",
 )
-arg_parser.add_argument(
-    "--disable_filters", action="store_true", help="Testing filter work"
-)
+arg_parser.add_argument("--disable_filters", action="store_true", help="Testing filter work")
 arg_parser.add_argument(
     "--force_patreon",
     action="store",
@@ -87,9 +81,7 @@ arg_parser.add_argument(
     help="If true will prevent changing the reward date when forcing patreon rewards.",
 )
 arg_parser.add_argument("--test", action="store_true", help="Test")
-arg_parser.add_argument(
-    "--color", default=False, action="store_true", help="Enabled colorized logs"
-)
+arg_parser.add_argument("--color", default=False, action="store_true", help="Enabled colorized logs")
 args = arg_parser.parse_args()
 
 maintenance = Switch()

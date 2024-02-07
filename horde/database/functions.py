@@ -74,9 +74,7 @@ def get_top_contributor():
 
 def get_top_worker():
     top_worker = None
-    top_worker = (
-        db.session.query(ImageWorker).order_by(ImageWorker.contributions.desc()).first()
-    )
+    top_worker = db.session.query(ImageWorker).order_by(ImageWorker.contributions.desc()).first()
     return top_worker
 
 
@@ -85,26 +83,19 @@ def get_active_workers(worker_type=None):
     if worker_type is None or worker_type == "image":
         active_workers += (
             db.session.query(ImageWorker)
-            .filter(
-                ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-            )
+            .filter(ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
             .all()
         )
     if worker_type is None or worker_type == "text":
         active_workers += (
             db.session.query(TextWorker)
-            .filter(
-                TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)
-            )
+            .filter(TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
             .all()
         )
     if worker_type is None or worker_type == "interrogation":
         active_workers += (
             db.session.query(InterrogationWorker)
-            .filter(
-                InterrogationWorker.last_check_in
-                > datetime.utcnow() - timedelta(seconds=300)
-            )
+            .filter(InterrogationWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
             .all()
         )
     return active_workers
@@ -160,22 +151,16 @@ def get_total_usage():
         func.sum(ImageWorker.fulfilments).label("fulfilments"),
     ).first()
     if result:
-        totals[hv.thing_names["image"]] = (
-            result.contributions if result.contributions else 0
-        )
+        totals[hv.thing_names["image"]] = result.contributions if result.contributions else 0
         totals["image_fulfilments"] = result.fulfilments if result.fulfilments else 0
     result = db.session.query(
         func.sum(TextWorker.contributions).label("contributions"),
         func.sum(TextWorker.fulfilments).label("fulfilments"),
     ).first()
     if result:
-        totals[hv.thing_names["text"]] = (
-            result.contributions if result.contributions else 0
-        )
+        totals[hv.thing_names["text"]] = result.contributions if result.contributions else 0
         totals["text_fulfilments"] = result.fulfilments if result.fulfilments else 0
-    form_result = result = db.session.query(
-        func.sum(InterrogationWorker.fulfilments).label("forms")
-    ).first()
+    form_result = result = db.session.query(func.sum(InterrogationWorker.fulfilments).label("forms")).first()
     if form_result:
         totals["forms"] = result.forms if result.forms else 0
     return totals
@@ -218,12 +203,7 @@ def find_user_by_sharedkey(shared_key):
         return None
     if SQLITE_MODE:
         sharedkey_uuid = str(sharedkey_uuid)
-    user = (
-        db.session.query(User)
-        .join(UserSharedKey)
-        .filter(UserSharedKey.id == shared_key)
-        .first()
-    )
+    user = db.session.query(User).join(UserSharedKey).filter(UserSharedKey.id == shared_key).first()
     return user
 
 
@@ -234,9 +214,7 @@ def find_sharedkey(shared_key):
         return None
     if SQLITE_MODE:
         sharedkey_uuid = str(sharedkey_uuid)
-    sharedkey = (
-        db.session.query(UserSharedKey).filter(UserSharedKey.id == shared_key).first()
-    )
+    sharedkey = db.session.query(UserSharedKey).filter(UserSharedKey.id == shared_key).first()
     return sharedkey
 
 
@@ -302,11 +280,7 @@ def get_available_models(filter_model_name: str = None):
         ):
             continue
         # If we're doing a filter, and we've already found the model type, we don't want to look in other worker versions
-        if (
-            filter_model_name
-            and available_worker_models
-            and len(available_worker_models) > 0
-        ):
+        if filter_model_name and available_worker_models and len(available_worker_models) > 0:
             continue
         available_worker_models = (
             db.session.query(
@@ -323,12 +297,8 @@ def get_available_models(filter_model_name: str = None):
             )
         )
         if filter_model_name:
-            available_worker_models = available_worker_models.filter(
-                WorkerModel.model == filter_model_name
-            )
-        available_worker_models = available_worker_models.group_by(
-            WorkerModel.model
-        ).all()
+            available_worker_models = available_worker_models.filter(WorkerModel.model == filter_model_name)
+        available_worker_models = available_worker_models.group_by(WorkerModel.model).all()
         # logger.debug(available_worker_models)
         for model_row in available_worker_models:
             model_name = model_row.model
@@ -390,15 +360,10 @@ def get_available_models(filter_model_name: str = None):
                 continue
             models_dict[model_name]["queued"] = things_per_model[model_name]
             models_dict[model_name]["jobs"] = jobs_per_model[model_name]
-            total_performance_on_model = (
-                models_dict[model_name]["count"]
-                * models_dict[model_name]["performance"]
-            )
+            total_performance_on_model = models_dict[model_name]["count"] * models_dict[model_name]["performance"]
             # We don't want a division by zero when there's no workers for this model.
             if total_performance_on_model > 0:
-                models_dict[model_name]["eta"] = int(
-                    things_per_model[model_name] / total_performance_on_model
-                )
+                models_dict[model_name]["eta"] = int(things_per_model[model_name] / total_performance_on_model)
             else:
                 models_dict[model_name]["eta"] = 10000
     return list(models_dict.values())
@@ -453,9 +418,7 @@ def transfer_kudos(source_user, dest_user, amount):
         return [0, "Nice try..."]
     if amount > source_user.kudos - source_user.get_min_kudos():
         return [0, "Not enough kudos."]
-    hr.horde_r_setex(
-        f"kudos_transfer_{source_user.id}-{dest_user.id}", timedelta(seconds=60), 1
-    )
+    hr.horde_r_setex(f"kudos_transfer_{source_user.id}-{dest_user.id}", timedelta(seconds=60), 1)
     transfer_log = KudosTransferLog(
         source_id=source_user.id,
         dest_id=dest_user.id,
@@ -465,9 +428,7 @@ def transfer_kudos(source_user, dest_user, amount):
     db.session.commit()
     source_user.modify_kudos(-amount, "gifted")
     dest_user.modify_kudos(amount, "received")
-    logger.info(
-        f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}"
-    )
+    logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
     return [amount, "OK"]
 
 
@@ -592,10 +553,7 @@ def count_totals():
     all_image_wp_counts = (
         db.session.query(
             ImageWaitingPrompt.id,
-            (
-                func.sum(ImageWaitingPrompt.n)
-                + func.count(ImageProcessingGeneration.wp_id)
-            ).label("total_count"),
+            (func.sum(ImageWaitingPrompt.n) + func.count(ImageProcessingGeneration.wp_id)).label("total_count"),
             func.sum(ImageWaitingPrompt.things).label("total_things"),
         )
         .outerjoin(
@@ -622,9 +580,7 @@ def count_totals():
         .one()
     )
     ret_dict["queued_requests"] = (
-        int(total_image_sum.total_count_sum)
-        if total_image_sum.total_count_sum is not None
-        else 0
+        int(total_image_sum.total_count_sum) if total_image_sum.total_count_sum is not None else 0
     )
     ret_dict[queued_images] = (
         round(int(total_image_sum.total_things_sum) / hv.thing_divisors["image"], 2)
@@ -634,10 +590,7 @@ def count_totals():
     all_text_wp_counts = (
         db.session.query(
             TextWaitingPrompt.id,
-            (
-                func.sum(TextWaitingPrompt.n)
-                + func.count(TextProcessingGeneration.wp_id)
-            ).label("total_count"),
+            (func.sum(TextWaitingPrompt.n) + func.count(TextProcessingGeneration.wp_id)).label("total_count"),
             func.sum(TextWaitingPrompt.things).label("total_things"),
         )
         .outerjoin(
@@ -664,9 +617,7 @@ def count_totals():
         .one()
     )
     ret_dict["queued_text_requests"] = (
-        int(total_text_sum.total_count_sum)
-        if total_text_sum.total_count_sum is not None
-        else 0
+        int(total_text_sum.total_count_sum) if total_text_sum.total_count_sum is not None else 0
     )
     ret_dict[queued_text] = (
         int(total_text_sum.total_things_sum) / hv.thing_divisors["text"]
@@ -790,9 +741,7 @@ def count_things_for_specific_model(wp_class, procgen_class, model_name):
     return things, jobs
 
 
-def get_sorted_wp_filtered_to_worker(
-    worker, models_list=None, blacklist=None, priority_user_ids=None, page=0
-):
+def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, priority_user_ids=None, page=0):
     # This is just the top 25 - Adjusted method to send ImageWorker object. Filters to add.
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
@@ -834,9 +783,7 @@ def get_sorted_wp_filtered_to_worker(
                 worker.allow_img2img == True,  # noqa E712
             ),
             or_(
-                ImageWaitingPrompt.source_processing.not_in(
-                    ["inpainting", "outpainting"]
-                ),
+                ImageWaitingPrompt.source_processing.not_in(["inpainting", "outpainting"]),
                 worker.allow_painting == True,  # noqa E712
             ),
             or_(
@@ -888,27 +835,17 @@ def get_sorted_wp_filtered_to_worker(
     )
     # logger.debug(final_wp_list)
     if priority_user_ids:
-        final_wp_list = final_wp_list.filter(
-            ImageWaitingPrompt.user_id.in_(priority_user_ids)
-        )
+        final_wp_list = final_wp_list.filter(ImageWaitingPrompt.user_id.in_(priority_user_ids))
     # logger.debug(final_wp_list)
     final_wp_list = (
-        final_wp_list.order_by(
-            ImageWaitingPrompt.extra_priority.desc(), ImageWaitingPrompt.created.asc()
-        )
+        final_wp_list.order_by(ImageWaitingPrompt.extra_priority.desc(), ImageWaitingPrompt.created.asc())
         .offset(PER_PAGE * page)
         .limit(PER_PAGE)
     )
-    return (
-        final_wp_list.populate_existing()
-        .with_for_update(skip_locked=True, of=ImageWaitingPrompt)
-        .all()
-    )
+    return final_wp_list.populate_existing().with_for_update(skip_locked=True, of=ImageWaitingPrompt).all()
 
 
-def count_skipped_image_wp(
-    worker, models_list=None, blacklist=None, priority_user_ids=None
-):
+def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_user_ids=None):
     ## Massively costly approach, doing 1 new query per count. Not sure about it.
     ret_dict = {}
     open_wp_list = (
@@ -955,9 +892,7 @@ def count_skipped_image_wp(
     if max_pixels > 0:
         ret_dict["max_pixels"] = max_pixels
     # Count skipped img2img
-    if worker.allow_img2img is False or not check_bridge_capability(
-        "img2img", worker.bridge_agent
-    ):
+    if worker.allow_img2img is False or not check_bridge_capability("img2img", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.source_image != None,  # noqa E712
         ).count()
@@ -965,13 +900,9 @@ def count_skipped_image_wp(
             if worker.allow_img2img is False:
                 ret_dict["img2img"] = skipped_wps
             else:
-                ret_dict["bridge_version"] = (
-                    ret_dict.get("bridge_version", 0) + skipped_wps
-                )
+                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
     # Count skipped inpainting
-    if worker.allow_painting is False or not check_bridge_capability(
-        "inpainting", worker.bridge_agent
-    ):
+    if worker.allow_painting is False or not check_bridge_capability("inpainting", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.source_processing.in_(["inpainting", "outpainting"]),
         ).count()
@@ -979,9 +910,7 @@ def count_skipped_image_wp(
             if worker.allow_painting is False:
                 ret_dict["painting"] = skipped_wps
             else:
-                ret_dict["bridge_version"] = (
-                    ret_dict.get("bridge_version", 0) + skipped_wps
-                )
+                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
     # Count skipped unsafe ips
     if worker.allow_unsafe_ipaddr is False:
         skipped_wps = open_wp_list.filter(
@@ -997,9 +926,7 @@ def count_skipped_image_wp(
         if skipped_wps > 0:
             ret_dict["nsfw"] = skipped_wps
     # Count skipped lora
-    if worker.allow_lora is False or not check_bridge_capability(
-        "lora", worker.bridge_agent
-    ):
+    if worker.allow_lora is False or not check_bridge_capability("lora", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key("loras"),
         ).count()
@@ -1007,9 +934,7 @@ def count_skipped_image_wp(
             if worker.allow_lora is False:
                 ret_dict["lora"] = skipped_wps
             else:
-                ret_dict["bridge_version"] = (
-                    ret_dict.get("bridge_version", 0) + skipped_wps
-                )
+                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
     # Count skipped TI
     if not check_bridge_capability("textual_inversion", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
@@ -1018,9 +943,7 @@ def count_skipped_image_wp(
         if skipped_wps > 0:
             ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
     # Count skipped PP
-    if worker.allow_post_processing is False or not check_bridge_capability(
-        "post-processing", worker.bridge_agent
-    ):
+    if worker.allow_post_processing is False or not check_bridge_capability("post-processing", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key("post-processing"),
         ).count()
@@ -1028,9 +951,7 @@ def count_skipped_image_wp(
             if worker.allow_post_processing is False:
                 ret_dict["post-processing"] = skipped_wps
             else:
-                ret_dict["bridge_version"] = (
-                    ret_dict.get("bridge_version", 0) + skipped_wps
-                )
+                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
     # TODO: Figure this out.
     # Can't figure out how to check to do something like any(pp not in available_pp for pp in params['post-processing'])
     # else:
@@ -1041,9 +962,7 @@ def count_skipped_image_wp(
     #     ).count()
     #     if skipped_wps > 0:
     #         ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
-    if worker.allow_controlnet is False or not check_bridge_capability(
-        "controlnet", worker.bridge_agent
-    ):
+    if worker.allow_controlnet is False or not check_bridge_capability("controlnet", worker.bridge_agent):
         skipped_wps = open_wp_list.filter(
             ImageWaitingPrompt.params.has_key("control_type"),
         ).count()
@@ -1071,15 +990,11 @@ def count_skipped_image_wp(
     skipped_bv = open_wp_list.filter(
         or_(
             and_(
-                ImageWaitingPrompt.params["sampler_name"].astext.not_in(
-                    available_samplers
-                ),
+                ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_samplers),
                 ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(False),
             ),
             and_(
-                ImageWaitingPrompt.params["sampler_name"].astext.not_in(
-                    available_karras_samplers
-                ),
+                ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_karras_samplers),
                 ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(True),
             ),
             and_(
@@ -1088,9 +1003,7 @@ def count_skipped_image_wp(
             ),
             and_(
                 not check_bridge_capability("return_control_map", worker.bridge_agent),
-                ImageWaitingPrompt.params["return_control_map"]
-                .astext.cast(Boolean)
-                .is_(True),
+                ImageWaitingPrompt.params["return_control_map"].astext.cast(Boolean).is_(True),
             ),
             and_(
                 not check_bridge_capability("tiling", worker.bridge_agent),
@@ -1110,9 +1023,7 @@ def count_skipped_image_wp(
     return ret_dict
 
 
-def get_sorted_forms_filtered_to_worker(
-    worker, forms_list=None, priority_user_ids=None, excluded_forms=None
-):
+def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_ids=None, excluded_forms=None):
     # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
     if forms_list is None:
         forms_list = []
@@ -1151,9 +1062,7 @@ def get_sorted_forms_filtered_to_worker(
         retrieve_limit -= len(excluded_form_ids)
         if retrieve_limit <= 0:
             retrieve_limit = 1
-        final_interrogation_query.filter(
-            InterrogationForms.id.not_in(excluded_form_ids)
-        )
+        final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
     final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
     return final_interrogation_list
 
@@ -1176,9 +1085,7 @@ def get_wp_queue_stats(wp):
     # logger.info(priority_sorted_list)
     for iter in range(len(priority_sorted_list)):
         iter_wp = priority_sorted_list[iter]
-        queued_things = round(
-            iter_wp.things * iter_wp.n / hv.thing_divisors["image"], 2
-        )
+        queued_things = round(iter_wp.things * iter_wp.n / hv.thing_divisors["image"], 2)
         things_ahead_in_queue += queued_things
         n_ahead_in_queue += iter_wp.n
         if iter_wp.id == wp.id:
@@ -1198,9 +1105,7 @@ def get_wp_by_id(wp_id, lite=False):
         wp_uuid = str(wp_uuid)
     # lite version does not pull ProcGens
     if lite:
-        query = db.session.query(ImageWaitingPrompt).options(
-            noload(ImageWaitingPrompt.processing_gens)
-        )
+        query = db.session.query(ImageWaitingPrompt).options(noload(ImageWaitingPrompt.processing_gens))
     else:
         query = db.session.query(ImageWaitingPrompt)
     return query.filter_by(id=wp_uuid).first()
@@ -1214,9 +1119,7 @@ def get_progen_by_id(procgen_id):
         return None
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
-    return (
-        db.session.query(ImageProcessingGeneration).filter_by(id=procgen_uuid).first()
-    )
+    return db.session.query(ImageProcessingGeneration).filter_by(id=procgen_uuid).first()
 
 
 def get_interrogation_by_id(i_id):
@@ -1269,11 +1172,7 @@ def get_all_active_wps():
 # TODO: Convert below three functions into a general "cached db request" (or something) class
 # Which I can reuse to cache the results of other requests
 def retrieve_worker_performances(worker_type=ImageWorker):
-    avg_perf = (
-        db.session.query(func.avg(WorkerPerformance.performance))
-        .join(worker_type)
-        .scalar()
-    )
+    avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).join(worker_type).scalar()
     if avg_perf is None:
         avg_perf = 0
     else:
@@ -1287,18 +1186,14 @@ def refresh_worker_performances_cache(request_type="image"):
         "text": retrieve_worker_performances(TextWorker),
     }
     try:
-        hr.horde_r_setex(
-            "worker_performances_avg_cache", timedelta(seconds=30), ret_dict["image"]
-        )
+        hr.horde_r_setex("worker_performances_avg_cache", timedelta(seconds=30), ret_dict["image"])
         hr.horde_r_setex(
             "text_worker_performances_avg_cache",
             timedelta(seconds=30),
             ret_dict["text"],
         )
     except Exception as err:
-        logger.debug(
-            f"Error when trying to set worker performances cache: {err}. Retrieving from DB."
-        )
+        logger.debug(f"Error when trying to set worker performances cache: {err}. Retrieving from DB.")
     return ret_dict[request_type]
 
 
@@ -1483,9 +1378,7 @@ def query_prioritized_wps(wp_type="image"):
             waiting_prompt_type.faulted == False,  # noqa E712
             waiting_prompt_type.active == True,  # noqa E712
         )
-        .order_by(
-            waiting_prompt_type.extra_priority.desc(), waiting_prompt_type.created.asc()
-        )
+        .order_by(waiting_prompt_type.extra_priority.desc(), waiting_prompt_type.created.asc())
         .all()
     )
 
@@ -1503,9 +1396,7 @@ def prune_expired_stats():
 
 
 def compile_regex_filter(filter_type):
-    all_filter_regex_query = db.session.query(Filter.regex).filter_by(
-        filter_type=filter_type
-    )
+    all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
     all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
     regex_string = "|".join(all_filter_regex)
     if not validate_regex(regex_string):
@@ -1515,9 +1406,7 @@ def compile_regex_filter(filter_type):
 
 
 def retrieve_regex_replacements(filter_type):
-    all_filter_regex_query = db.session.query(
-        Filter.regex, Filter.replacement
-    ).filter_by(filter_type=filter_type)
+    all_filter_regex_query = db.session.query(Filter.regex, Filter.replacement).filter_by(filter_type=filter_type)
     all_filter_regex_dict = [
         {
             "regex": filter.regex,

@@ -14,10 +14,7 @@ from horde.consts import KNOWN_POST_PROCESSORS
 from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
 
 
-def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-
-
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 
@@ -37,9 +34,7 @@ class InterrogationForms(db.Model):
     payload = db.Column(json_column_type, default=None)
     result = db.Column(json_column_type, default=None)
     kudos = db.Column(db.Float, default=1, nullable=False)
-    worker_id = db.Column(
-        uuid_column_type(), db.ForeignKey("workers.id"), default=None, nullable=True
-    )
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), default=None, nullable=True)
     worker = db.relationship("InterrogationWorker", back_populates="processing_forms")
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     initiated = db.Column(db.DateTime, default=None)
@@ -73,9 +68,7 @@ class InterrogationForms(db.Model):
         }
         if self.name in KNOWN_POST_PROCESSORS:
             ret_dict["r2_upload"] = generate_procgen_upload_url(str(self.id), False)
-        logger.debug(
-            [self.name in KNOWN_POST_PROCESSORS, self.name, KNOWN_POST_PROCESSORS]
-        )
+        logger.debug([self.name in KNOWN_POST_PROCESSORS, self.name, KNOWN_POST_PROCESSORS])
         logger.debug(ret_dict)
         return ret_dict
 
@@ -89,9 +82,7 @@ class InterrogationForms(db.Model):
         self.result = result
         for form_name in self.result:
             if self.result[form_name] == "R2":
-                self.result[form_name] = generate_procgen_download_url(
-                    str(self.id), False
-                )
+                self.result[form_name] = generate_procgen_download_url(str(self.id), False)
         if not self.interrogation.r2stored:
             if self.name in KNOWN_POST_PROCESSORS:
                 # Post-processed images live in R2 only for 120 minutes
@@ -203,9 +194,7 @@ class InterrogationForms(db.Model):
                     continue
                 break
             except Exception as err:
-                logger.debug(
-                    f"Exception when sending alchemy webhook: {err}. Will retry {3-riter-1} more times..."
-                )
+                logger.debug(f"Exception when sending alchemy webhook: {err}. Will retry {3-riter-1} more times...")
 
 
 class Interrogation(db.Model):
@@ -214,9 +203,7 @@ class Interrogation(db.Model):
     __tablename__ = "interrogations"
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     source_image = db.Column(db.Text, nullable=True)
-    user_id = db.Column(
-        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="interrogations")
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -226,9 +213,7 @@ class Interrogation(db.Model):
     # This is used so I know to delete up the image 30 mins after this request expires
     r2stored = db.Column(db.Boolean, default=False, nullable=False)
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
-    created = db.Column(
-        db.DateTime(timezone=False), default=datetime.utcnow, index=True
-    )
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
     extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
     webhook = db.Column(db.String(1024))
     forms = db.relationship(

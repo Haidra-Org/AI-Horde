@@ -94,9 +94,7 @@ class Parsers:
             required=False,
             location="json",
         )
-        self.generate_parser.add_argument(
-            "webhook", type=str, required=False, location="json"
-        )
+        self.generate_parser.add_argument("webhook", type=str, required=False, location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
@@ -212,21 +210,13 @@ class Models:
         self.response_model_wp_status_lite = api.model(
             "RequestStatusCheck",
             {
-                "finished": fields.Integer(
-                    description="The amount of finished jobs in this request."
-                ),
-                "processing": fields.Integer(
-                    description="The amount of still processing jobs in this request."
-                ),
+                "finished": fields.Integer(description="The amount of finished jobs in this request."),
+                "processing": fields.Integer(description="The amount of still processing jobs in this request."),
                 "restarted": fields.Integer(
                     description="The amount of jobs that timed out and had to be restarted or were reported as failed by a worker."
                 ),
-                "waiting": fields.Integer(
-                    description="The amount of jobs waiting to be picked up by a worker."
-                ),
-                "done": fields.Boolean(
-                    description="True when all jobs in this request are done. Else False."
-                ),
+                "waiting": fields.Integer(description="The amount of jobs waiting to be picked up by a worker."),
+                "done": fields.Boolean(description="True when all jobs in this request are done. Else False."),
                 "faulted": fields.Boolean(
                     default=False,
                     description="True when this request caused an internal server error and could not be completed.",
@@ -237,9 +227,7 @@ class Models:
                 "queue_position": fields.Integer(
                     description="The position in the requests queue. This position is determined by relative Kudos amounts."
                 ),
-                "kudos": fields.Float(
-                    description="The amount of total Kudos this request has consumed until now."
-                ),
+                "kudos": fields.Float(description="The amount of total Kudos this request has consumed until now."),
                 "is_possible": fields.Boolean(
                     default=True,
                     description="If False, this request will not be able to be completed with the pool of workers currently available.",
@@ -256,9 +244,7 @@ class Models:
                 ),
                 "name": fields.String(description="The Name given to this worker."),
                 "id": fields.String(description="The UUID of this worker."),
-                "online": fields.Boolean(
-                    description="True if the worker has checked-in the past 5 minutes."
-                ),
+                "online": fields.Boolean(description="True if the worker has checked-in the past 5 minutes."),
             },
         )
         self.response_model_team_details_lite = api.model(
@@ -271,12 +257,8 @@ class Models:
         self.response_model_active_model_lite = api.model(
             "ActiveModelLite",
             {
-                "name": fields.String(
-                    description="The Name of a model available by workers in this horde."
-                ),
-                "count": fields.Integer(
-                    description="How many of workers in this horde are running this model."
-                ),
+                "name": fields.String(description="The Name of a model available by workers in this horde."),
+                "count": fields.Integer(description="How many of workers in this horde are running this model."),
             },
         )
         self.response_model_generation_result = api.model(
@@ -307,9 +289,7 @@ class Models:
             "RequestStatus",
             self.response_model_wp_status_lite,
             {
-                "generations": fields.List(
-                    fields.Nested(self.response_model_generation_result)
-                ),
+                "generations": fields.List(fields.Nested(self.response_model_generation_result)),
             },
         )
         self.response_model_async = api.model(
@@ -318,9 +298,7 @@ class Models:
                 "id": fields.String(
                     description="The UUID of the request. Use this to retrieve the request status in the future."
                 ),
-                "kudos": fields.Float(
-                    description="The expected kudos consumption for this request."
-                ),
+                "kudos": fields.Float(description="The expected kudos consumption for this request."),
                 "message": fields.String(
                     default=None,
                     description="Any extra information from the horde about this request.",
@@ -333,12 +311,8 @@ class Models:
                 "prompt": fields.String(
                     description="The prompt which will be sent to the horde against which to run inference."
                 ),
-                "n": fields.Integer(
-                    example=1, description="The amount of images to generate."
-                ),
-                "seed": fields.String(
-                    description="The seed to use to generete this request."
-                ),
+                "n": fields.Integer(example=1, description="The amount of images to generate."),
+                "seed": fields.String(description="The seed to use to generete this request."),
             },
         )
         self.response_model_generations_skipped = api.model(
@@ -383,13 +357,9 @@ class Models:
         self.response_model_job_pop = api.model(
             "GenerationPayload",
             {
-                "payload": fields.Nested(
-                    self.response_model_generation_payload, skip_none=True
-                ),
+                "payload": fields.Nested(self.response_model_generation_payload, skip_none=True),
                 "id": fields.String(description="The UUID for this generation."),
-                "skipped": fields.Nested(
-                    self.response_model_generations_skipped, skip_none=True
-                ),
+                "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
             },
         )
         self.input_model_job_submit = api.model(
@@ -427,26 +397,20 @@ class Models:
         self.response_model_kudos_transfer = api.model(
             "KudosTransferred",
             {
-                "transferred": fields.Float(
-                    example=100, description="The amount of Kudos tranferred."
-                ),
+                "transferred": fields.Float(example=100, description="The amount of Kudos tranferred."),
             },
         )
         self.response_model_kudos_award = api.model(
             "KudosAwarded",
             {
-                "awarded": fields.Float(
-                    example=100, description="The amount of Kudos awarded."
-                ),
+                "awarded": fields.Float(example=100, description="The amount of Kudos awarded."),
             },
         )
 
         self.response_model_admin_maintenance = api.model(
             "MaintenanceModeSet",
             {
-                "maintenance_mode": fields.Boolean(
-                    example=True, description="The current state of maintenance_mode."
-                ),
+                "maintenance_mode": fields.Boolean(example=True, description="The current state of maintenance_mode."),
             },
         )
 
@@ -510,21 +474,13 @@ class Models:
             "WorkerDetails",
             self.response_model_worker_details_lite,
             {
-                "requests_fulfilled": fields.Integer(
-                    description="How many images this worker has generated."
-                ),
-                "kudos_rewards": fields.Float(
-                    description="How many Kudos this worker has been rewarded in total."
-                ),
-                "kudos_details": fields.Nested(
-                    self.response_model_worker_kudos_details
-                ),
+                "requests_fulfilled": fields.Integer(description="How many images this worker has generated."),
+                "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total."),
+                "kudos_details": fields.Nested(self.response_model_worker_kudos_details),
                 "performance": fields.String(
                     description="The average performance of this worker in human readable form."
                 ),
-                "threads": fields.Integer(
-                    description="How many threads this worker is running."
-                ),
+                "threads": fields.Integer(description="How many threads this worker is running."),
                 "uptime": fields.Integer(
                     description="The amount of seconds this worker has been online for this Horde."
                 ),
@@ -553,9 +509,7 @@ class Models:
                     example="username#1",
                     description="Privileged. The last known IP this worker has connected from.",
                 ),
-                "trusted": fields.Boolean(
-                    description="The worker is trusted to return valid generations."
-                ),
+                "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
                 "flagged": fields.Boolean(
                     description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process."
                 ),
@@ -567,12 +521,8 @@ class Models:
                     example=0,
                     description="How many jobs this worker has left uncompleted after it started them.",
                 ),
-                "models": fields.List(
-                    fields.String(description="Which models this worker if offering.")
-                ),
-                "forms": fields.List(
-                    fields.String(description="Which forms this worker if offering.")
-                ),
+                "models": fields.List(fields.String(description="Which models this worker if offering.")),
+                "forms": fields.List(fields.String(description="Which forms this worker if offering.")),
                 "team": fields.Nested(
                     self.response_model_team_details_lite,
                     "The Team to which this worker is dedicated.",
@@ -620,24 +570,18 @@ class Models:
                 "max_context_length": fields.Integer(
                     example=80, description="The maximum tokens this worker can read."
                 ),
-                "tokens_generated": fields.Float(
-                    description="How many tokens this worker has generated until now."
-                ),
+                "tokens_generated": fields.Float(description="How many tokens this worker has generated until now."),
             },
         )
 
         self.input_model_worker_modify = api.model(
             "ModifyWorkerInput",
             {
-                "maintenance": fields.Boolean(
-                    description="Set to true to put this worker into maintenance."
-                ),
+                "maintenance": fields.Boolean(description="Set to true to put this worker into maintenance."),
                 "maintenance_msg": fields.String(
                     description="if maintenance is True, you can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed."
                 ),
-                "paused": fields.Boolean(
-                    description="(Mods only) Set to true to pause this worker."
-                ),
+                "paused": fields.Boolean(description="(Mods only) Set to true to pause this worker."),
                 "info": fields.String(
                     description="You can optionally provide a server note which will be seen in the server details. No profanity allowed!",
                     max_length=1000,
@@ -664,13 +608,9 @@ class Models:
                 "paused": fields.Boolean(
                     description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests."
                 ),
-                "info": fields.String(
-                    description="The new state of the 'info' var for this worker."
-                ),
+                "info": fields.String(description="The new state of the 'info' var for this worker."),
                 "name": fields.String(description="The new name for this this worker."),
-                "team": fields.String(
-                    example="Direct Action", description="The new team of this worker."
-                ),
+                "team": fields.String(example="Direct Action", description="The new team of this worker."),
             },
         )
 
@@ -759,9 +699,7 @@ class Models:
                 "username": fields.String(
                     description="The owning user's unique Username. It is a combination of their chosen alias plus their ID."
                 ),
-                "kudos": fields.Integer(
-                    description="The Kudos limit assigned to this key."
-                ),
+                "kudos": fields.Integer(description="The Kudos limit assigned to this key."),
                 "expiry": fields.DateTime(
                     dt_format="rfc822",
                     description="The date at which this API key will expire.",
@@ -785,33 +723,23 @@ class Models:
         self.response_model_contrib_details = api.model(
             "ContributionsDetails",
             {
-                "megapixelsteps": fields.Float(
-                    description="How many megapixelsteps this user has generated."
-                ),
-                "fulfillments": fields.Integer(
-                    description="How many images this user has generated."
-                ),
+                "megapixelsteps": fields.Float(description="How many megapixelsteps this user has generated."),
+                "fulfillments": fields.Integer(description="How many images this user has generated."),
             },
         )
         # TODO: Obsolete
         self.response_model_use_details = api.model(
             "UsageDetails",
             {
-                "megapixelsteps": fields.Float(
-                    description="How many megapixelsteps this user has requested."
-                ),
-                "requests": fields.Integer(
-                    description="How many images this user has requested."
-                ),
+                "megapixelsteps": fields.Float(description="How many megapixelsteps this user has requested."),
+                "requests": fields.Integer(description="How many images this user has requested."),
             },
         )
 
         self.response_model_monthly_kudos = api.model(
             "MonthlyKudos",
             {
-                "amount": fields.Integer(
-                    description="How much recurring Kudos this user receives monthly."
-                ),
+                "amount": fields.Integer(description="How much recurring Kudos this user receives monthly."),
                 "last_received": fields.DateTime(
                     dt_format="rfc822",
                     description="Last date this user received monthly Kudos.",
@@ -867,24 +795,18 @@ class Models:
                 "username": fields.String(
                     description="The user's unique Username. It is a combination of their chosen alias plus their ID."
                 ),
-                "id": fields.Integer(
-                    description="The user unique ID. It is always an integer."
-                ),
+                "id": fields.Integer(description="The user unique ID. It is always an integer."),
                 "kudos": fields.Float(
                     description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations."
                 ),
                 "evaluating_kudos": fields.Float(
                     description="(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches a prespecified threshold, they automatically become trusted."
                 ),
-                "concurrency": fields.Integer(
-                    description="How many concurrent generations this user may request."
-                ),
+                "concurrency": fields.Integer(description="How many concurrent generations this user may request."),
                 "worker_invited": fields.Integer(
                     description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."
                 ),
-                "moderator": fields.Boolean(
-                    example=False, description="This user is a Horde moderator."
-                ),
+                "moderator": fields.Boolean(example=False, description="This user is a Horde moderator."),
                 "kudos_details": fields.Nested(self.response_model_user_kudos_details),
                 "worker_count": fields.Integer(
                     description="How many workers this user has created (active or inactive)."
@@ -901,9 +823,7 @@ class Models:
                         example="00000000-0000-0000-0000-000000000000",
                     )
                 ),
-                "monthly_kudos": fields.Nested(
-                    self.response_model_monthly_kudos, skip_none=True
-                ),
+                "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
                 "trusted": fields.Boolean(
                     example=False,
                     description="This user is a trusted member of the Horde.",
@@ -944,24 +864,16 @@ class Models:
                     example=60,
                     description="How many seconds since this account was created.",
                 ),
-                "usage": fields.Nested(
-                    self.response_model_use_details
-                ),  # TODO: OBSOLETE
-                "contributions": fields.Nested(
-                    self.response_model_contrib_details
-                ),  # TODO: OBSOLETE
-                "records": fields.Nested(
-                    self.response_model_user_records
-                ),  # TODO: OBSOLETE
+                "usage": fields.Nested(self.response_model_use_details),  # TODO: OBSOLETE
+                "contributions": fields.Nested(self.response_model_contrib_details),  # TODO: OBSOLETE
+                "records": fields.Nested(self.response_model_user_records),  # TODO: OBSOLETE
             },
         )
 
         self.input_model_user_details = api.model(
             "ModifyUserInput",
             {
-                "kudos": fields.Float(
-                    description="The amount of kudos to modify (can be negative)."
-                ),
+                "kudos": fields.Float(description="The amount of kudos to modify (can be negative)."),
                 "concurrency": fields.Integer(
                     description="The amount of concurrent request this user can have.",
                     min=0,
@@ -1019,9 +931,7 @@ class Models:
                     example=False,
                     description="When set to true, the replacement filter will always be applied against this user",
                 ),
-                "reset_suspicion": fields.Boolean(
-                    description="Set the user's suspicion back to 0."
-                ),
+                "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
                 "contact": fields.String(
                     example="email@example.com",
                     description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",
@@ -1040,9 +950,7 @@ class Models:
         self.response_model_user_modify = api.model(
             "ModifyUser",
             {
-                "new_kudos": fields.Float(
-                    description="The new total Kudos this user has after this request."
-                ),
+                "new_kudos": fields.Float(description="The new total Kudos this user has after this request."),
                 "concurrency": fields.Integer(
                     example=30,
                     description="The request concurrency this user has after this request.",
@@ -1055,32 +963,18 @@ class Models:
                     example=1,
                     description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde.",
                 ),
-                "moderator": fields.Boolean(
-                    example=False, description="The user's new moderator status."
-                ),
-                "public_workers": fields.Boolean(
-                    example=False, description="The user's new public_workers status."
-                ),
-                "username": fields.String(
-                    example="username#1", description="The user's new username."
-                ),
-                "monthly_kudos": fields.Integer(
-                    example=0, description="The user's new monthly kudos total."
-                ),
+                "moderator": fields.Boolean(example=False, description="The user's new moderator status."),
+                "public_workers": fields.Boolean(example=False, description="The user's new public_workers status."),
+                "username": fields.String(example="username#1", description="The user's new username."),
+                "monthly_kudos": fields.Integer(example=0, description="The user's new monthly kudos total."),
                 "trusted": fields.Boolean(description="The user's new trusted status."),
                 "flagged": fields.Boolean(description="The user's new flagged status."),
-                "customizer": fields.Boolean(
-                    description="The user's new customizer status."
-                ),
+                "customizer": fields.Boolean(description="The user's new customizer status."),
                 "vpn": fields.Boolean(description="The user's new vpn status."),
                 "service": fields.Boolean(description="The user's new service status."),
                 "special": fields.Boolean(description="The user's new special status."),
-                "new_suspicion": fields.Integer(
-                    description="The user's new suspiciousness rating."
-                ),
-                "contact": fields.String(
-                    example="email@example.com", description="The new contact details."
-                ),
+                "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
+                "contact": fields.String(example="email@example.com", description="The new contact details."),
                 "admin_comment": fields.String(
                     example="User is sus",
                     description="The new admin comment.",
@@ -1138,9 +1032,7 @@ class Models:
         self.response_model_newspiece = api.model(
             "Newspiece",
             {
-                "date_published": fields.String(
-                    description="The date this newspiece was published."
-                ),
+                "date_published": fields.String(description="The date this newspiece was published."),
                 "newspiece": fields.String(description="The actual piece of news."),
                 "importance": fields.String(
                     example="Information",
@@ -1167,9 +1059,7 @@ class Models:
         self.response_model_error = api.model(
             "RequestError",
             {
-                "message": fields.String(
-                    description="The error message for this status code."
-                ),
+                "message": fields.String(description="The error message for this status code."),
             },
         )
         self.response_model_validation_errors = api.inherit(
@@ -1177,9 +1067,7 @@ class Models:
             self.response_model_error,
             {
                 "errors": fields.Wildcard(
-                    fields.String(
-                        required=True, description="The details of the validation error"
-                    )
+                    fields.String(required=True, description="The details of the validation error")
                 ),
             },
         )
@@ -1187,18 +1075,10 @@ class Models:
             "ActiveModel",
             self.response_model_active_model_lite,
             {
-                "performance": fields.Float(
-                    description="The average speed of generation for this model."
-                ),
-                "queued": fields.Float(
-                    description="The amount waiting to be generated by this model."
-                ),
-                "jobs": fields.Float(
-                    description="The job count waiting to be generated by this model."
-                ),
-                "eta": fields.Integer(
-                    description="Estimated time in seconds for this model's queue to be cleared."
-                ),
+                "performance": fields.Float(description="The average speed of generation for this model."),
+                "queued": fields.Float(description="The amount waiting to be generated by this model."),
+                "jobs": fields.Float(description="The job count waiting to be generated by this model."),
+                "eta": fields.Integer(description="Estimated time in seconds for this model's queue to be cleared."),
                 "type": fields.String(
                     example="image",
                     description="The model type (text or image).",
@@ -1209,12 +1089,8 @@ class Models:
         self.response_model_deleted_worker = api.model(
             "DeletedWorker",
             {
-                "deleted_id": fields.String(
-                    description="The ID of the deleted worker."
-                ),
-                "deleted_name": fields.String(
-                    description="The Name of the deleted worker."
-                ),
+                "deleted_id": fields.String(description="The ID of the deleted worker."),
+                "deleted_name": fields.String(description="The Name of the deleted worker."),
             },
         )
         self.response_model_team_details = api.inherit(
@@ -1243,12 +1119,8 @@ class Models:
                     example=10,
                     description="How many workers have been dedicated to this team.",
                 ),
-                "workers": fields.List(
-                    fields.Nested(self.response_model_worker_details_lite)
-                ),
-                "models": fields.List(
-                    fields.Nested(self.response_model_active_model_lite)
-                ),
+                "workers": fields.List(fields.Nested(self.response_model_worker_details_lite)),
+                "models": fields.List(fields.Nested(self.response_model_active_model_lite)),
             },
         )
         self.input_model_team_modify = api.model(
@@ -1290,9 +1162,7 @@ class Models:
             "DeletedTeam",
             {
                 "deleted_id": fields.String(description="The ID of the deleted team."),
-                "deleted_name": fields.String(
-                    description="The Name of the deleted team."
-                ),
+                "deleted_name": fields.String(description="The Name of the deleted team."),
             },
         )
         self.response_model_team_modify = api.model(
@@ -1388,9 +1258,7 @@ class Models:
                     max=29,
                     example=10,
                 ),
-                "description": fields.String(
-                    required=False, description="Description about this regex."
-                ),
+                "description": fields.String(required=False, description="Description about this regex."),
                 "replacement": fields.String(
                     required=False,
                     default="",
@@ -1413,9 +1281,7 @@ class Models:
                     max=29,
                     example=10,
                 ),
-                "description": fields.String(
-                    required=False, description="Description about this regex."
-                ),
+                "description": fields.String(required=False, description="Description about this regex."),
                 "replacement": fields.String(
                     required=False,
                     default="",
@@ -1427,9 +1293,7 @@ class Models:
         self.response_model_filter_details = api.model(
             "FilterDetails",
             {
-                "id": fields.String(
-                    required=True, description="The UUID of this filter."
-                ),
+                "id": fields.String(required=True, description="The UUID of this filter."),
                 "regex": fields.String(
                     required=True,
                     description="The regex for this filter.",
@@ -1442,9 +1306,7 @@ class Models:
                     max=29,
                     example=10,
                 ),
-                "description": fields.String(
-                    required=False, description="Description about this regex."
-                ),
+                "description": fields.String(required=False, description="Description about this regex."),
                 "replacement": fields.String(
                     required=False,
                     default="",
@@ -1482,8 +1344,6 @@ class Models:
                     max=29,
                     example=10,
                 ),
-                "regex": fields.String(
-                    required=True, description="The full regex for this filter type."
-                ),
+                "regex": fields.String(required=True, description="The full regex for this filter type."),
             },
         )

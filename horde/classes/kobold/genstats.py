@@ -16,15 +16,9 @@ class TextGenerationStatistic(db.Model):
     max_context_length = db.Column(db.Integer, nullable=False)
     softprompt = db.Column(db.Integer, nullable=True)
     prompt_length = db.Column(db.Integer, nullable=False)
-    client_agent = db.Column(
-        db.Text, default="unknown:0:unknown", nullable=False, index=True
-    )
-    bridge_agent = db.Column(
-        db.Text, default="unknown:0:unknown", nullable=False, index=True
-    )
-    state = db.Column(
-        Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True
-    )
+    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True)
 
 
 def record_text_statistic(procgen):
@@ -54,12 +48,8 @@ def compile_textgen_stats_totals():
     count_minute = count_query.filter(
         TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
     ).count()
-    count_hour = count_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
-    ).count()
-    count_day = count_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
-    ).count()
+    count_hour = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).count()
+    count_day = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
     count_month = count_query.filter(
         TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
     ).count()
@@ -104,23 +94,19 @@ def compile_textgen_stats_totals():
 
 
 def compile_textgen_stats_models():
-    query = db.session.query(TextGenerationStatistic.model, func.count()).group_by(
-        TextGenerationStatistic.model
-    )
+    query = db.session.query(TextGenerationStatistic.model, func.count()).group_by(TextGenerationStatistic.model)
     ret_dict = {
         "total": {model: count for model, count in query.all()},
         "day": {
             model: count
             for model, count in query.filter(
-                TextGenerationStatistic.finished
-                >= datetime.utcnow() - timedelta(days=1)
+                TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
             ).all()
         },
         "month": {
             model: count
             for model, count in query.filter(
-                TextGenerationStatistic.finished
-                >= datetime.utcnow() - timedelta(days=30)
+                TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
             ).all()
         },
     }

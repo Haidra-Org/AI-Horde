@@ -71,9 +71,7 @@ class CounterMeasures:
         is_safe = CounterMeasures.get_safe(ipaddr)
         if is_safe is None:
             try:
-                result = requests.get(
-                    os.getenv("IP_CHECKER").format(ipaddr=ipaddr), timeout=timeout
-                )
+                result = requests.get(os.getenv("IP_CHECKER").format(ipaddr=ipaddr), timeout=timeout)
             except Exception as err:
                 logger.error(f"Exception when requesting info from checker: {err}")
                 return None
@@ -86,20 +84,12 @@ class CounterMeasures:
                 if probability == int(os.getenv("IP_CHECKER_LC")):
                     is_safe = CounterMeasures.set_safe(ipaddr, True)
                 else:
-                    is_safe = CounterMeasures.set_safe(
-                        ipaddr, True
-                    )  # True until I can improve my load
-                    logger.error(
-                        f"An error occurred while validating IP. Return Code: {result.text}"
-                    )
+                    is_safe = CounterMeasures.set_safe(ipaddr, True)  # True until I can improve my load
+                    logger.error(f"An error occurred while validating IP. Return Code: {result.text}")
             else:
                 probability = float(result.content)
-                is_safe = CounterMeasures.set_safe(
-                    ipaddr, probability < safety_threshold
-                )
-            logger.debug(
-                f"IP {ipaddr} has a probability of {probability}. Safe = {is_safe}"
-            )
+                is_safe = CounterMeasures.set_safe(ipaddr, probability < safety_threshold)
+            logger.debug(f"IP {ipaddr} has a probability of {probability}. Safe = {is_safe}")
         return is_safe
 
     @staticmethod
@@ -109,9 +99,7 @@ class CounterMeasures:
             global test_timeout
             test_timeout = test_timeout + test_timeout + 1
             timeout = test_timeout * 3
-            logger.debug(
-                f"Redis not available, so setting test_timeout to {test_timeout}"
-            )
+            logger.debug(f"Redis not available, so setting test_timeout to {test_timeout}")
             CounterMeasures.set_timeout(ipaddr, timeout)
             return test_timeout
         current_suspicion = ip_s_r.get(ipaddr)
@@ -180,9 +168,7 @@ class CounterMeasures:
         if not ip_t_r:
             return
         if len(ip_block.split("/")) != 2:
-            logger.warning(
-                f"Attempted to inset non-block {ip_block} IP as a block timeout"
-            )
+            logger.warning(f"Attempted to inset non-block {ip_block} IP as a block timeout")
             return
         ip_t_r.setex(f"ipblock_{ip_block}", timedelta(minutes=minutes), int(True))
 
@@ -204,9 +190,7 @@ class CounterMeasures:
         if not ip_t_r:
             return
         if len(ip_block.split("/")) != 2:
-            logger.warning(
-                f"Attempted to inset non-block {ip_block} IP as a block timeout"
-            )
+            logger.warning(f"Attempted to inset non-block {ip_block} IP as a block timeout")
             return
         ip_t_r.delete(f"ipblock_{ip_block}")
 
@@ -270,9 +254,7 @@ class CounterMeasures:
     def extract_ipv6_subnet(ipaddr, subnet_prefix_length=64):
         try:
             ip = ipaddress.IPv6Address(ipaddr)
-            network = ipaddress.IPv6Network(
-                f"{ip.exploded}/{subnet_prefix_length}", strict=False
-            )
+            network = ipaddress.IPv6Network(f"{ip.exploded}/{subnet_prefix_length}", strict=False)
             return str(network)
         except ipaddress.AddressValueError:
             return None

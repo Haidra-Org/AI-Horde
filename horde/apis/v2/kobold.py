@@ -30,18 +30,14 @@ class TextAsyncGenerate(GenerateTemplate):
             limit_value=lim.get_request_90min_limit_per_ip,
             key_func=lim.get_request_path,
         ),
-        limiter.limit(
-            limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path
-        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
         limiter.limit(
             limit_value=lim.get_request_limit_per_apikey,
             key_func=lim.get_request_api_key,
         ),
     ]
 
-    @api.expect(
-        parsers.generate_parser, models.input_model_request_generation, validate=True
-    )
+    @api.expect(parsers.generate_parser, models.input_model_request_generation, validate=True)
     @api.marshal_with(
         models.response_model_async,
         code=202,
@@ -107,23 +103,15 @@ class TextAsyncGenerate(GenerateTemplate):
                 model_multiplier = model_reference.get_text_model_multiplier(model)
                 if model_multiplier > highest_multiplier:
                     highest_multiplier = model_multiplier
-            required_kudos = (
-                round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
-            )
-        if (
-            self.sharedkey
-            and self.sharedkey.kudos != -1
-            and required_kudos > self.sharedkey.kudos
-        ):
+            required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
+        if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             self.wp.delete()
             raise e.KudosUpfront(
                 required_kudos,
                 self.username,
                 message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfill this reques ({required_kudos}).",
             )
-        needs_kudos, tokens = self.wp.require_upfront_kudos(
-            database.retrieve_totals(), total_threads
-        )
+        needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         if needs_kudos:
             if required_kudos > self.user.kudos:
                 self.wp.delete()
@@ -146,32 +134,21 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def validate(self):
         super().validate()
-        if self.params.get("max_context_length", 1024) < self.params.get(
-            "max_length", 80
-        ):
-            raise e.BadRequest(
-                "You cannot request more tokens than your context length."
-            )
-        if (
-            "sampler_order" in self.params
-            and len(set(self.params["sampler_order"])) < 7
-        ):
+        if self.params.get("max_context_length", 1024) < self.params.get("max_length", 80):
+            raise e.BadRequest("You cannot request more tokens than your context length.")
+        if "sampler_order" in self.params and len(set(self.params["sampler_order"])) < 7:
             raise e.BadRequest(
                 "When sending a custom sampler order, you need to specify all possible samplers in the order"
             )
         if "stop_sequence" in self.params:
             stop_seqs = set(self.params["stop_sequence"])
             if len(stop_seqs) > 128:
-                raise e.BadRequest(
-                    "Too many stop sequences specified (max allowed is 128)."
-                )
+                raise e.BadRequest("Too many stop sequences specified (max allowed is 128).")
             total_stop_seq_len = 0
             for seq in stop_seqs:
                 total_stop_seq_len += len(seq)
             if total_stop_seq_len > 2000:
-                raise e.BadRequest(
-                    "Your total stop sequence length exceeds the allowed limit (2000 chars)."
-                )
+                raise e.BadRequest("Your total stop sequence length exceeds the allowed limit (2000 chars).")
 
     def get_hashed_params_dict(self):
         gen_payload = self.params.copy()
@@ -274,9 +251,7 @@ class TextJobPop(JobPopTemplate):
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
-    @api.marshal_with(
-        models.response_model_job_pop, code=200, description="Generation Popped"
-    )
+    @api.marshal_with(models.response_model_job_pop, code=200, description="Generation Popped")
     @api.response(400, "Validation Error", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -322,9 +297,7 @@ class TextJobSubmit(JobSubmitTemplate):
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
-    @api.marshal_with(
-        models.response_model_job_submit, code=200, description="Generation Submitted"
-    )
+    @api.marshal_with(models.response_model_job_submit, code=200, description="Generation Submitted")
     @api.response(400, "Generation Already Submitted", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -396,9 +369,7 @@ class KoboldKudosTransfer(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("kai_id", type=int, required=True, location="json")
     post_parser.add_argument("kudos_amount", type=int, required=True, location="json")
-    post_parser.add_argument(
-        "trusted", type=bool, default=False, required=True, location="json"
-    )
+    post_parser.add_argument("trusted", type=bool, default=False, required=True, location="json")
 
     @api.expect(post_parser)
     def post(self, user_id=""):

@@ -41,9 +41,7 @@ class TextWaitingPrompt(WaitingPrompt):
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.max_length
         # The total amount of to pixelsteps requested.
-        self.total_usage = round(
-            self.max_length * self.n / hv.thing_divisors["text"], 2
-        )
+        self.total_usage = round(self.max_length * self.n / hv.thing_divisors["text"], 2)
         self.softprompt = kwargs.get("softprompt")
         self.prepare_job_payload(self.params)
 
@@ -125,11 +123,7 @@ class TextWaitingPrompt(WaitingPrompt):
         model_multiplier = model_reference.get_text_model_multiplier(model_name)
         parameter_bonus = (max(model_multiplier, 13) / 13) ** 0.20
         self.kudos = round(
-            self.max_length
-            * parameter_bonus
-            * model_multiplier
-            * context_multiplier
-            / 100,
+            self.max_length * parameter_bonus * model_multiplier * context_multiplier / 100,
             2,
         )
         return self.kudos

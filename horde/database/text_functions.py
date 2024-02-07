@@ -25,9 +25,7 @@ def convert_things_to_kudos(things, **kwargs):
     return kudos
 
 
-def get_sorted_text_wp_filtered_to_worker(
-    worker, models_list=None, priority_user_ids=None, page=0
-):
+def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
     # This is just the top 100 - Adjusted method to send Worker object. Filters to add.
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1
     # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
@@ -82,8 +80,7 @@ def get_sorted_text_wp_filtered_to_worker(
                 ),
             ),
             or_(
-                worker.speed
-                >= slow_speed,  # Slow speed is based on the model parameters used
+                worker.speed >= slow_speed,  # Slow speed is based on the model parameters used
                 TextWaitingPrompt.slow_workers == True,  # noqa E712
             ),
             or_(
@@ -93,23 +90,15 @@ def get_sorted_text_wp_filtered_to_worker(
         )
     )
     if priority_user_ids:
-        final_wp_list = final_wp_list.filter(
-            TextWaitingPrompt.user_id.in_(priority_user_ids)
-        )
+        final_wp_list = final_wp_list.filter(TextWaitingPrompt.user_id.in_(priority_user_ids))
     # logger.debug(final_wp_list)
     final_wp_list = (
-        final_wp_list.order_by(
-            TextWaitingPrompt.extra_priority.desc(), TextWaitingPrompt.created.asc()
-        )
+        final_wp_list.order_by(TextWaitingPrompt.extra_priority.desc(), TextWaitingPrompt.created.asc())
         .offset(PER_PAGE * page)
         .limit(PER_PAGE)
     )
     # logger.debug(final_wp_list.all())
-    return (
-        final_wp_list.populate_existing()
-        .with_for_update(skip_locked=True, of=TextWaitingPrompt)
-        .all()
-    )
+    return final_wp_list.populate_existing().with_for_update(skip_locked=True, of=TextWaitingPrompt).all()
 
 
 def get_text_wp_by_id(wp_id, lite=False):
@@ -122,9 +111,7 @@ def get_text_wp_by_id(wp_id, lite=False):
         wp_uuid = str(wp_uuid)
     # lite version does not pull ProcGens
     if lite:
-        query = db.session.query(TextWaitingPrompt).options(
-            noload(TextWaitingPrompt.processing_gens)
-        )
+        query = db.session.query(TextWaitingPrompt).options(noload(TextWaitingPrompt.processing_gens))
     else:
         query = db.session.query(TextWaitingPrompt)
     return query.filter_by(id=wp_uuid).first()
@@ -155,9 +142,7 @@ def get_all_text_wps():
 
 def get_cached_worker_performance():
     if hr.horde_r is None:
-        return [
-            p.performance for p in db.session.query(WorkerPerformance.performance).all()
-        ]
+        return [p.performance for p in db.session.query(WorkerPerformance.performance).all()]
     perf_cache = hr.horde_r.get("worker_performances_cache")
     if not perf_cache:
         return refresh_worker_performances_cache()
@@ -185,13 +170,9 @@ def retrieve_worker_performances():
 def refresh_worker_performances_cache():
     avg_perf = retrieve_worker_performances()
     try:
-        hr.horde_r_setex(
-            "worker_performances_avg_cache", timedelta(seconds=30), avg_perf
-        )
+        hr.horde_r_setex("worker_performances_avg_cache", timedelta(seconds=30), avg_perf)
     except Exception as e:
-        logger.debug(
-            f"Error when trying to set worker performances cache: {e}. Retrieving from DB."
-        )
+        logger.debug(f"Error when trying to set worker performances cache: {e}. Retrieving from DB.")
     return avg_perf
 
 

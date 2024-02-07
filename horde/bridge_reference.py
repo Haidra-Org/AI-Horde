@@ -31,9 +31,7 @@ BRIDGE_CAPABILITIES = {
     },
     "AI Horde Worker": {
         24: {"textual_inversion"},
-        23: {
-            "image_is_control"
-        },  # This used to be bridge version 16, but support was lost in the hordelib update
+        23: {"image_is_control"},  # This used to be bridge version 16, but support was lost in the hordelib update
         22: {"lora"},
         21: {"RealESRGAN_x2plus"},
         19: {"NMKD_Siax", "4x_AnimeSharp"},
@@ -200,9 +198,7 @@ def get_supported_samplers(bridge_agent, karras=True):
             # If karras == True, only karras samplers can be used.
             # Else, all samplers can be used
             if not karras:
-                available_samplers.update(
-                    BRIDGE_SAMPLERS[bridge_name][version]["no karras"]
-                )
+                available_samplers.update(BRIDGE_SAMPLERS[bridge_name][version]["no karras"])
     # logger.debug([available_samplers, sampler, sampler in available_samplers])
     return available_samplers
 

@@ -36,9 +36,7 @@ def ger_cache_url():
 
 
 def get_horde_db():
-    return redis.Redis(
-        host=redis_hostname, port=redis_port, db=horde_db, decode_responses=True
-    )
+    return redis.Redis(host=redis_hostname, port=redis_port, db=horde_db, decode_responses=True)
 
 
 def get_local_horde_db():
@@ -58,9 +56,7 @@ def get_ipaddr_timeout_db():
 
 
 def get_redis_db_server(server_ip):
-    return redis.Redis(
-        host=server_ip, port=redis_port, db=horde_db, decode_responses=True
-    )
+    return redis.Redis(host=server_ip, port=redis_port, db=horde_db, decode_responses=True)
 
 
 def get_all_redis_db_servers():
@@ -69,11 +65,7 @@ def get_all_redis_db_servers():
     This allows redis to transparently failover.
     """
     try:
-        return [
-            get_redis_db_server(rs) for rs in json.loads(os.getenv("REDIS_SERVERS"))
-        ]
+        return [get_redis_db_server(rs) for rs in json.loads(os.getenv("REDIS_SERVERS"))]
     except Exception:
-        logger.error(
-            "Error setting up REDIS_SERVERS array. Falling back to loadbalancer."
-        )
+        logger.error("Error setting up REDIS_SERVERS array. Falling back to loadbalancer.")
         return [get_horde_db()]

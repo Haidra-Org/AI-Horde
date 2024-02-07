@@ -46,34 +46,20 @@ handle_bad_request = api.errorhandler(e.BadRequest)(e.handle_bad_requests)
 handle_forbidden = api.errorhandler(e.Forbidden)(e.handle_bad_requests)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
 handle_corrupt_prompt = api.errorhandler(e.CorruptPrompt)(e.handle_bad_requests)
-handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(
-    e.handle_bad_requests
-)
+handle_kudos_validation_error = api.errorhandler(e.KudosValidationError)(e.handle_bad_requests)
 handle_invalid_size = api.errorhandler(e.InvalidSize)(e.handle_bad_requests)
-handle_invalid_prompt_size = api.errorhandler(e.InvalidPromptSize)(
-    e.handle_bad_requests
-)
+handle_invalid_prompt_size = api.errorhandler(e.InvalidPromptSize)(e.handle_bad_requests)
 handle_too_many_steps = api.errorhandler(e.TooManySteps)(e.handle_bad_requests)
 handle_profanity = api.errorhandler(e.Profanity)(e.handle_bad_requests)
 handle_too_long = api.errorhandler(e.TooLong)(e.handle_bad_requests)
 handle_name_conflict = api.errorhandler(e.NameAlreadyExists)(e.handle_bad_requests)
-handle_polymorphic_name_conflict = api.errorhandler(e.PolymorphicNameConflict)(
-    e.handle_bad_requests
-)
+handle_polymorphic_name_conflict = api.errorhandler(e.PolymorphicNameConflict)(e.handle_bad_requests)
 handle_invalid_api = api.errorhandler(e.InvalidAPIKey)(e.handle_bad_requests)
-handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(
-    e.handle_bad_requests
-)
-handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(
-    e.handle_bad_requests
-)
-handle_unsupported_sampler = api.errorhandler(e.UnsupportedSampler)(
-    e.handle_bad_requests
-)
+handle_image_validation_failed = api.errorhandler(e.ImageValidationFailed)(e.handle_bad_requests)
+handle_source_mask_unnecessary = api.errorhandler(e.SourceMaskUnnecessary)(e.handle_bad_requests)
+handle_unsupported_sampler = api.errorhandler(e.UnsupportedSampler)(e.handle_bad_requests)
 handle_unsupported_model = api.errorhandler(e.UnsupportedModel)(e.handle_bad_requests)
-handle_invalid_aesthetic_attempt = api.errorhandler(e.InvalidAestheticAttempt)(
-    e.handle_bad_requests
-)
+handle_invalid_aesthetic_attempt = api.errorhandler(e.InvalidAestheticAttempt)(e.handle_bad_requests)
 handle_procgen_not_found = api.errorhandler(e.ProcGenNotFound)(e.handle_bad_requests)
 handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_requests)
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
@@ -195,9 +181,7 @@ class GenerateTemplate(Resource):
             if not self.user:
                 raise e.InvalidAPIKey("generation")
             if not self.user.service and self.args["proxied_account"]:
-                raise e.BadRequest(
-                    "Only service accounts can provide a proxied_account value."
-                )
+                raise e.BadRequest("Only service accounts can provide a proxied_account value.")
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
             if self.args["prompt"] == "":
@@ -229,12 +213,8 @@ class GenerateTemplate(Resource):
                 and not self.user.trusted
                 and not patrons.is_patron(self.user.id)
             ):
-                raise e.BadRequest(
-                    "Only trusted users and patreon supporters can disable batching."
-                )
-            user_limit = self.user.get_concurrency(
-                self.args["models"], database.retrieve_available_models
-            )
+                raise e.BadRequest("Only trusted users and patreon supporters can disable batching.")
+            user_limit = self.user.get_concurrency(self.args["models"], database.retrieve_available_models)
             # logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
                 if self.user.is_anon():
@@ -257,15 +237,9 @@ class GenerateTemplate(Resource):
             if prompt_suspicion >= 2 and self.gentype != "text":
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
                 if self.args.replacement_filter:
-                    if not prompt_checker.check_prompt_replacement_length(
-                        self.args.prompt
-                    ):
-                        raise e.BadRequest(
-                            "Prompt has to be below 1000 chars when replacement filter is on"
-                        )
-                    self.args.prompt = prompt_checker.apply_replacement_filter(
-                        self.args.prompt
-                    )
+                    if not prompt_checker.check_prompt_replacement_length(self.args.prompt):
+                        raise e.BadRequest("Prompt has to be below 1000 chars when replacement filter is on")
+                    self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
                     # If it returns None, it means it replaced everything with an empty string
                     if self.args.prompt is not None:
                         prompt_replaced = True
@@ -281,9 +255,7 @@ class GenerateTemplate(Resource):
                         self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
                     raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
-            if_nsfw_model = prompt_checker.check_nsfw_model_block(
-                self.args.prompt, self.models
-            )
+            if_nsfw_model = prompt_checker.check_nsfw_model_block(self.args.prompt, self.models)
             if if_nsfw_model or self.user.flagged:
                 # For NSFW models and flagged users, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
@@ -299,9 +271,7 @@ class GenerateTemplate(Resource):
                     msg = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again."
                     if self.user.flagged and not if_nsfw_model:
                         msg = "To prevent generation of unethical images, we cannot allow this prompt."
-                    raise e.CorruptPrompt(
-                        self.username, self.user_ip, self.args.prompt, message=msg
-                    )
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message=msg)
             # Disabling as this is handled by the worker-csam-filter now
             # If I re-enable it, also make it use the prompt replacement
             # if not prompt_replaced:
@@ -353,9 +323,7 @@ class SyncGenerate(GenerateTemplate):
         If you connection is interrupted, you will not have the request UUID, so you cannot retrieve the images asynchronously.
         """
         return (
-            {
-                "message": "This functionality has been decommissioned. Please use /api/v2/generate/async instead"
-            },
+            {"message": "This functionality has been decommissioned. Please use /api/v2/generate/async instead"},
             501,
         )
         super().post()
@@ -413,9 +381,7 @@ class JobPopTemplate(Resource):
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
-        p_users_id_from_db = (
-            db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
-        )
+        p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
         if p_users_id_from_db:
             self.priority_user_ids.extend([x.id for x in p_users_id_from_db])
 
@@ -440,9 +406,7 @@ class JobPopTemplate(Resource):
                     # We don't report on secret skipped reasons
                     # as they're typically countermeasures to raids
                     if skipped_reason != "secret":
-                        self.skipped[skipped_reason] = (
-                            self.skipped.get(skipped_reason, 0) + 1
-                        )
+                        self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
                     # logger.warning(datetime.utcnow())
                     continue
                 # There is a chance that by the time we finished all the checks, another worker picked up the WP.
@@ -506,21 +470,15 @@ class JobPopTemplate(Resource):
         if self.user.is_anon():
             raise e.AnonForbidden
         self.worker_name = sanitize_string(self.args["name"])
-        self.worker = database.find_worker_by_name(
-            self.worker_name, worker_class=self.worker_class
-        )
+        self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
             raise e.PolymorphicNameConflict(self.worker_name)
         self.check_ip()
         if not self.worker:
             if is_profane(self.worker_name):
-                raise e.Profanity(
-                    self.user.get_unique_alias(), self.worker_name, "worker name"
-                )
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, "worker name")
             if is_profane(self.args.bridge_agent):
-                raise e.Profanity(
-                    self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent"
-                )
+                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent")
             colab_search = re.compile(r"colab|tpu|google", re.IGNORECASE)
             cs = colab_search.search(self.worker_name)
             if cs:
@@ -532,9 +490,7 @@ class JobPopTemplate(Resource):
                 raise e.WorkerInviteOnly(worker_count)
             # Untrusted users can only have 3 workers
             if not self.user.trusted and worker_count > 3:
-                raise e.Forbidden(
-                    "To avoid abuse, untrusted users can only have up to 3 distinct workers."
-                )
+                raise e.Forbidden("To avoid abuse, untrusted users can only have up to 3 distinct workers.")
             # Trusted users can have up to 20 workers by default unless overriden
             if worker_count > 20 and worker_count > self.user.worker_invited:
                 raise e.Forbidden(
@@ -555,11 +511,7 @@ class JobPopTemplate(Resource):
         if ip_timeout:
             raise e.TimeoutIP(self.worker_ip, ip_timeout, connect_type="Worker")
         self.safe_ip = True
-        if (
-            not self.user.trusted
-            and not self.user.vpn
-            and not patrons.is_patron(self.user.id)
-        ):
+        if not self.user.trusted and not self.user.vpn and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
             if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)
@@ -584,9 +536,7 @@ class JobSubmitTemplate(Resource):
 
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
-        things_per_sec = stats.record_fulfilment(
-            self.procgen, self.procgen.get_things_count(self.args["generation"])
-        )
+        things_per_sec = stats.record_fulfilment(self.procgen, self.procgen.get_things_count(self.args["generation"]))
         self.kudos = self.procgen.set_generation(
             generation=self.args["generation"],
             things_per_sec=things_per_sec,
@@ -602,9 +552,7 @@ class JobSubmitTemplate(Resource):
         if not self.user:
             raise e.InvalidAPIKey("worker submit:" + self.args["name"])
         if self.user != self.procgen.worker.user:
-            raise e.WrongCredentials(
-                self.user.get_unique_alias(), self.procgen.worker.name
-            )
+            raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
         self.set_generation()
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args["id"])
@@ -660,9 +608,7 @@ class TransferKudos(Resource):
     ]
 
     @api.expect(parser)
-    @api.marshal_with(
-        models.response_model_kudos_transfer, code=200, description="Kudos Transferred"
-    )
+    @api.marshal_with(models.response_model_kudos_transfer, code=200, description="Kudos Transferred")
     @api.response(400, "Validation Error", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def post(self):
@@ -707,9 +653,7 @@ class AwardKudos(Resource):
     )
 
     @api.expect(parser)
-    @api.marshal_with(
-        models.response_model_kudos_award, code=200, description="Kudos Awarded"
-    )
+    @api.marshal_with(models.response_model_kudos_award, code=200, description="Kudos Awarded")
     @api.response(400, "Validation Error", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -729,13 +673,9 @@ class AwardKudos(Resource):
             )
         dest_user = database.find_user_by_username(self.args["username"])
         if not dest_user:
-            raise e.KudosValidationError(
-                user.get_unique_alias(), "Invalid target username.", "award"
-            )
+            raise e.KudosValidationError(user.get_unique_alias(), "Invalid target username.", "award")
         if dest_user.is_anon():
-            raise e.KudosValidationError(
-                user.get_unique_alias(), "Cannot award anon. No go.", "award"
-            )
+            raise e.KudosValidationError(user.get_unique_alias(), "Cannot award anon. No go.", "award")
         # if dest_user.is_suspicious():
         #     return([0,'Target user is rejected.'])
         if dest_user.flagged:
@@ -793,20 +733,14 @@ class Workers(Resource):
             if admin and admin.moderator:
                 details_privilege = 2
         if not hr.horde_r:
-            return self.parse_worker_by_query(
-                self.get_worker_info_list(details_privilege)
-            )
+            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
         if details_privilege == 2:
             cached_workers = hr.horde_r_get("worker_cache_privileged")
         else:
             cached_workers = hr.horde_r_get("worker_cache")
         if cached_workers is None:
-            logger.warning(
-                f"No {details_privilege} worker cache found! Check caching thread!"
-            )
-            workers = self.parse_worker_by_query(
-                self.get_worker_info_list(details_privilege)
-            )
+            logger.warning(f"No {details_privilege} worker cache found! Check caching thread!")
+            workers = self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
             if details_privilege > 0:
                 hr.horde_local_setex_to_json("worker_cache_privileged", 300, workers)
             else:
@@ -986,13 +920,9 @@ class WorkerSingle(Resource):
                 raise e.AnonForbidden()
             ret = worker.set_info(self.args.info)
             if ret == "Profanity":
-                raise e.Profanity(
-                    admin.get_unique_alias(), self.args.info, "worker info"
-                )
+                raise e.Profanity(admin.get_unique_alias(), self.args.info, "worker info")
             if ret == "Too Long":
-                raise e.TooLong(
-                    admin.get_unique_alias(), len(self.args.info), 1000, "worker info"
-                )
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, "worker info")
             ret_dict["info"] = worker.info
         # Only mods can set a worker as paused
         if self.args.paused is not None:
@@ -1007,17 +937,11 @@ class WorkerSingle(Resource):
                 raise e.AnonForbidden()
             ret = worker.set_name(self.args.name)
             if ret == "Profanity":
-                raise e.Profanity(
-                    self.user.get_unique_alias(), self.args.name, "worker name"
-                )
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, "worker name")
             if ret == "Too Long":
-                raise e.TooLong(
-                    admin.get_unique_alias(), len(self.args.name), 100, "worker name"
-                )
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.name), 100, "worker name")
             if ret == "Already Exists":
-                raise e.NameAlreadyExists(
-                    admin.get_unique_alias(), worker.name, self.args.name
-                )
+                raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
             ret_dict["name"] = worker.name
         if self.args.team is not None:
             if not admin.moderator and admin != worker.user:
@@ -1055,9 +979,7 @@ class WorkerSingle(Resource):
     )
 
     @api.expect(delete_parser)
-    @api.marshal_with(
-        models.response_model_deleted_worker, code=200, description="Delete Worker"
-    )
+    @api.marshal_with(models.response_model_deleted_worker, code=200, description="Delete Worker")
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
     @api.response(404, "Worker Not Found", models.response_model_error)
@@ -1123,9 +1045,7 @@ class Users(Resource):
 
     # @cache.cached(timeout=10)
     @api.expect(get_parser)
-    @api.marshal_with(
-        models.response_model_user_details, code=200, description="Users List"
-    )
+    @api.marshal_with(models.response_model_user_details, code=200, description="Users List")
     def get(self):  # TODO - Should this be exposed?
         """A List with the details and statistic of all registered users"""
         self.args = self.get_parser.parse_args()
@@ -1193,9 +1113,7 @@ class UserSingle(Resource):
     def get(self, user_id=""):
         """Details and statistics about a specific user"""
         if not user_id.isdigit():
-            raise e.UserNotFound(
-                "Please use only the numerical part of the userID. E.g. the '1' in 'db0#1'"
-            )
+            raise e.UserNotFound("Please use only the numerical part of the userID. E.g. the '1' in 'db0#1'")
         self.args = self.get_parser.parse_args()
         details_privilege = 0
         if self.args.apikey:
@@ -1212,9 +1130,7 @@ class UserSingle(Resource):
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
             user_details = json.loads(cached_user)
-            if isinstance(
-                user_details.get("monthly_kudos", {}).get("last_received"), str
-            ):
+            if isinstance(user_details.get("monthly_kudos", {}).get("last_received"), str):
                 user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(
                     user_details["monthly_kudos"]["last_received"]
                 )
@@ -1226,20 +1142,16 @@ class UserSingle(Resource):
             if hr.horde_r:
                 cached_details = user_details.copy()
                 if "monthly_kudos" in cached_details:
-                    cached_details["monthly_kudos"] = cached_details[
-                        "monthly_kudos"
-                    ].copy()
+                    cached_details["monthly_kudos"] = cached_details["monthly_kudos"].copy()
                 if user_details.get("monthly_kudos", {}).get("last_received"):
-                    cached_details["monthly_kudos"]["last_received"] = cached_details[
-                        "monthly_kudos"
-                    ]["last_received"].isoformat()
+                    cached_details["monthly_kudos"]["last_received"] = cached_details["monthly_kudos"][
+                        "last_received"
+                    ].isoformat()
                 hr.horde_r_setex_json(cache_name, timedelta(seconds=30), cached_details)
         return user_details, 200
 
     parser = reqparse.RequestParser()
-    parser.add_argument(
-        "apikey", type=str, required=True, help="The Admin API .", location="headers"
-    )
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API .", location="headers")
     parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -1369,31 +1281,23 @@ class UserSingle(Resource):
         ret_dict = {}
         # Admin Access
         if self.args.kudos is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(
-                os.getenv("ADMINS")
-            ):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT UserSingle")
             user.modify_kudos(self.args.kudos, "admin")
             ret_dict["new_kudos"] = user.kudos
         if self.args.monthly_kudos is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(
-                os.getenv("ADMINS")
-            ):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT UserSingle")
             user.modify_monthly_kudos(self.args.monthly_kudos)
             ret_dict["monthly_kudos"] = user.monthly_kudos
         if self.args.usage_multiplier is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(
-                os.getenv("ADMINS")
-            ):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT UserSingle")
             user.usage_multiplier = self.args.usage_multiplier
             db.session.commit()
             ret_dict["usage_multiplier"] = user.usage_multiplier
         if self.args.moderator is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(
-                os.getenv("ADMINS")
-            ):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT UserSingle")
             user.set_moderator(self.args.moderator)
             ret_dict["moderator"] = user.moderator
@@ -1460,13 +1364,9 @@ class UserSingle(Resource):
                 raise e.AnonForbidden()
             ret = user.set_username(self.args.username)
             if ret == "Profanity":
-                raise e.Profanity(
-                    admin.get_unique_alias(), self.args.username, "username"
-                )
+                raise e.Profanity(admin.get_unique_alias(), self.args.username, "username")
             if ret == "Too Long":
-                raise e.TooLong(
-                    admin.get_unique_alias(), len(self.args.username), 30, "username"
-                )
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, "username")
             ret_dict["username"] = user.username
         if self.args.contact is not None:
             if not admin.moderator and admin != user:
@@ -1475,9 +1375,7 @@ class UserSingle(Resource):
                 raise e.AnonForbidden()
             ret = user.set_contact(self.args.contact)
             if ret == "Profanity":
-                raise e.Profanity(
-                    admin.get_unique_alias(), self.args.contact, "user contact"
-                )
+                raise e.Profanity(admin.get_unique_alias(), self.args.contact, "user contact")
             ret_dict["contact"] = user.contact
         if self.args.admin_comment is not None:
             if not admin.moderator:
@@ -1553,9 +1451,7 @@ class FindUser(Resource):
                 skname = ""
                 if sk.name is not None:
                     skname = f": {sk.name}"
-                user_details["username"] = (
-                    user_details["username"] + f" (Shared Key{skname})"
-                )
+                user_details["username"] = user_details["username"] + f" (Shared Key{skname})"
             if hr.horde_r:
                 hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
         return (user_details, 200)
@@ -1748,9 +1644,7 @@ class HordeModes(Resource):
         return (ret_dict, 200)
 
     parser = reqparse.RequestParser()
-    parser.add_argument(
-        "apikey", type=str, required=True, help="The Admin API key.", location="headers"
-    )
+    parser.add_argument("apikey", type=str, required=True, help="The Admin API key.", location="headers")
     parser.add_argument(
         "maintenance",
         type=bool,
@@ -1796,9 +1690,7 @@ class HordeModes(Resource):
         ret_dict = {}
         cfg = settings.get_settings()
         if self.args.maintenance is not None:
-            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(
-                os.getenv("ADMINS")
-            ):
+            if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT HordeModes")
             cfg.maintenance = self.args.maintenance
             if cfg.maintenance:
@@ -1863,9 +1755,7 @@ class Teams(Resource):
         return (teams_ret, 200)
 
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument(
-        "apikey", type=str, required=True, help="A User API key.", location="headers"
-    )
+    post_parser.add_argument("apikey", type=str, required=True, help="A User API key.", location="headers")
     post_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -1910,9 +1800,7 @@ class Teams(Resource):
             self.team_info = sanitize_string(self.team_info)
 
         if self.team:
-            raise e.NameAlreadyExists(
-                self.user.get_unique_alias(), self.team_name, self.args.name, "team"
-            )
+            raise e.NameAlreadyExists(self.user.get_unique_alias(), self.team_name, self.args.name, "team")
         if is_profane(self.team_name):
             raise e.Profanity(self.user.get_unique_alias(), self.team_name, "team name")
         if self.team_info and is_profane(self.team_info):
@@ -2029,13 +1917,9 @@ class TeamSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), "PATCH TeamSingle")
             ret = team.set_name(self.args.name)
             if ret == "Profanity":
-                raise e.Profanity(
-                    self.user.get_unique_alias(), self.args.name, "team name"
-                )
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, "team name")
             if ret == "Already Exists":
-                raise e.NameAlreadyExists(
-                    self.user.get_unique_alias(), team.name, self.args.name, "team"
-                )
+                raise e.NameAlreadyExists(self.user.get_unique_alias(), team.name, self.args.name, "team")
             ret_dict["name"] = team.name
         if not len(ret_dict):
             raise e.NoValidActions("No team modification selected!")
@@ -2059,9 +1943,7 @@ class TeamSingle(Resource):
     )
 
     @api.expect(delete_parser)
-    @api.marshal_with(
-        models.response_model_deleted_team, code=200, description="Delete Team"
-    )
+    @api.marshal_with(models.response_model_deleted_team, code=200, description="Delete Team")
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
     @api.response(404, "Team Not Found", models.response_model_error)
@@ -2090,9 +1972,7 @@ class TeamSingle(Resource):
 
 class OperationsIP(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     get_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2119,9 +1999,7 @@ class OperationsIP(Resource):
         return (CounterMeasures.get_block_timeouts(), 200)
 
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    post_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     post_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2158,9 +2036,7 @@ class OperationsIP(Resource):
         return ({"message": "OK"}, 200)
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     delete_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2198,9 +2074,7 @@ class OperationsIP(Resource):
 
 class OperationsIPSingle(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     get_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2240,9 +2114,7 @@ class OperationsIPSingle(Resource):
 
 class OperationsBlockWorkerIP(Resource):
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    put_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     put_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2275,9 +2147,7 @@ class OperationsBlockWorkerIP(Resource):
         blocked_ip = self.worker.ipaddr
         if CounterMeasures.is_ipv6(self.worker.ipaddr):
             blocked_ip = CounterMeasures.extract_ipv6_subnet(self.worker.ipaddr)
-            CounterMeasures.set_block_timeout(
-                blocked_ip, minutes=60 * 24 * self.args.days
-            )
+            CounterMeasures.set_block_timeout(blocked_ip, minutes=60 * 24 * self.args.days)
         else:
             CounterMeasures.set_timeout(blocked_ip, minutes=60 * 24 * self.args.days)
         logger.info(
@@ -2286,9 +2156,7 @@ class OperationsBlockWorkerIP(Resource):
         return ({"message": "OK"}, 200)
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     delete_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2322,17 +2190,13 @@ class OperationsBlockWorkerIP(Resource):
             blocked_ip = CounterMeasures.extract_ipv6_subnet(self.worker.ipaddr)
             CounterMeasures.delete_block_timeout(blocked_ip)
         CounterMeasures.delete_timeout(blocked_ip)
-        logger.info(
-            f"Worker {worker_id} with IP {blocked_ip} removed from IP timeout by {mod.get_unique_alias()} "
-        )
+        logger.info(f"Worker {worker_id} with IP {blocked_ip} removed from IP timeout by {mod.get_unique_alias()} ")
         return ({"message": "OK"}, 200)
 
 
 class Filters(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     get_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2386,9 +2250,7 @@ class Filters(Resource):
         return ([f.get_details() for f in filters.all()], 200)
 
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    put_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     put_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2397,12 +2259,8 @@ class Filters(Resource):
         help="The client name and version.",
         location="headers",
     )
-    put_parser.add_argument(
-        "regex", type=str, required=True, help="The filter regex.", location="json"
-    )
-    put_parser.add_argument(
-        "filter_type", type=int, required=True, help="The filter type.", location="json"
-    )
+    put_parser.add_argument("regex", type=str, required=True, help="The filter regex.", location="json")
+    put_parser.add_argument("filter_type", type=int, required=True, help="The filter type.", location="json")
     put_parser.add_argument(
         "description",
         type=str,
@@ -2421,9 +2279,7 @@ class Filters(Resource):
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(put_parser, models.input_model_filter_put, validate=True)
-    @api.marshal_with(
-        models.response_model_filter_details, code=201, description="New Filter details"
-    )
+    @api.marshal_with(models.response_model_filter_details, code=201, description="New Filter details")
     @api.response(400, "Validation Error", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -2431,9 +2287,7 @@ class Filters(Resource):
         """Moderator Only: Add a new regex filter"""
         self.args = self.put_parser.parse_args()
         mod = check_for_mod(self.args.apikey, "PUT Filter")
-        new_filter = Filter.query.filter_by(
-            regex=self.args.regex, filter_type=self.args.filter_type
-        ).first()
+        new_filter = Filter.query.filter_by(regex=self.args.regex, filter_type=self.args.filter_type).first()
         if not new_filter:
             new_filter = Filter(
                 regex=self.args.regex,
@@ -2444,15 +2298,11 @@ class Filters(Resource):
             )
             db.session.add(new_filter)
             db.session.commit()
-            logger.info(
-                f"Mod {mod.get_unique_alias()} added new filter {new_filter.id}"
-            )
+            logger.info(f"Mod {mod.get_unique_alias()} added new filter {new_filter.id}")
         return (new_filter.get_details(), 200)
 
     post_parser = reqparse.RequestParser()
-    post_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    post_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     post_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2461,9 +2311,7 @@ class Filters(Resource):
         help="The client name and version.",
         location="headers",
     )
-    post_parser.add_argument(
-        "prompt", type=str, required=True, help="The prompt to check.", location="json"
-    )
+    post_parser.add_argument("prompt", type=str, required=True, help="The prompt to check.", location="json")
     post_parser.add_argument(
         "filter_type",
         type=int,
@@ -2500,9 +2348,7 @@ class Filters(Resource):
 
 class FilterRegex(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     get_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2555,9 +2401,7 @@ class FilterRegex(Resource):
 
 class FilterSingle(Resource):
     get_parser = reqparse.RequestParser()
-    get_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    get_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     get_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2596,9 +2440,7 @@ class FilterSingle(Resource):
         return (filter.get_details(), 200)
 
     patch_parser = reqparse.RequestParser()
-    patch_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    patch_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     patch_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2607,9 +2449,7 @@ class FilterSingle(Resource):
         help="The client name and version.",
         location="headers",
     )
-    patch_parser.add_argument(
-        "regex", type=str, required=False, help="The filter regex.", location="json"
-    )
+    patch_parser.add_argument("regex", type=str, required=False, help="The filter regex.", location="json")
     patch_parser.add_argument(
         "filter_type",
         type=int,
@@ -2671,9 +2511,7 @@ class FilterSingle(Resource):
         return (filter.get_details(), 200)
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument(
-        "apikey", type=str, required=True, help="A mod API key.", location="headers"
-    )
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
     delete_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2685,9 +2523,7 @@ class FilterSingle(Resource):
 
     # decorators = [limiter.limit("20/minute")]
     @api.expect(delete_parser)
-    @api.marshal_with(
-        models.response_model_simple_response, code=200, description="Filter Deleted"
-    )
+    @api.marshal_with(models.response_model_simple_response, code=200, description="Filter Deleted")
     @api.response(400, "Validation Error", models.response_model_error)
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
@@ -2728,9 +2564,7 @@ class Heartbeat(Resource):
 
 class SharedKey(Resource):
     put_parser = reqparse.RequestParser()
-    put_parser.add_argument(
-        "apikey", type=str, required=True, help="User API key.", location="headers"
-    )
+    put_parser.add_argument("apikey", type=str, required=True, help="User API key.", location="headers")
     put_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2809,9 +2643,7 @@ class SharedKey(Resource):
         if user.is_anon():
             raise e.AnonForbidden
         if user.count_sharedkeys() > user.max_sharedkeys():
-            raise e.Forbidden(
-                f"You cannot have more than {user.max_sharedkeys()} shared keys."
-            )
+            raise e.Forbidden(f"You cannot have more than {user.max_sharedkeys()} shared keys.")
         expiry = None
         if self.args.expiry and self.args.expiry != -1:
             expiry = datetime.utcnow() + timedelta(days=self.args.expiry)
@@ -2860,9 +2692,7 @@ class SharedKeySingle(Resource):
         return sharedkey.get_details(), 200
 
     patch_parser = reqparse.RequestParser()
-    patch_parser.add_argument(
-        "apikey", type=str, required=True, help="User API key.", location="headers"
-    )
+    patch_parser.add_argument("apikey", type=str, required=True, help="User API key.", location="headers")
     patch_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
@@ -2938,11 +2768,7 @@ class SharedKeySingle(Resource):
             raise e.Forbidden(
                 f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}."
             )
-        no_valid_actions = (
-            self.args.expiry is None
-            and self.args.kudos is None
-            and self.args.name is None
-        )
+        no_valid_actions = self.args.expiry is None and self.args.kudos is None and self.args.name is None
         no_valid_limit_actions = (
             self.args.max_image_pixels is None
             and self.args.max_image_steps is None
@@ -2972,9 +2798,7 @@ class SharedKeySingle(Resource):
         return sharedkey.get_details(), 200
 
     delete_parser = reqparse.RequestParser()
-    delete_parser.add_argument(
-        "apikey", type=str, required=True, help="User API key.", location="headers"
-    )
+    delete_parser.add_argument("apikey", type=str, required=True, help="User API key.", location="headers")
     delete_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",

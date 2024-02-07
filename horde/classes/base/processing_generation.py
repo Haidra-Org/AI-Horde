@@ -10,11 +10,7 @@ from horde.utils import get_db_uuid
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 
-
-def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-
-
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 
@@ -50,9 +46,7 @@ class ProcessingGeneration(db.Model):
         db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker_id = db.Column(
-        uuid_column_type(), db.ForeignKey("workers.id"), nullable=False
-    )
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __init__(self, *args, **kwargs):
@@ -71,11 +65,7 @@ class ProcessingGeneration(db.Model):
             wp_models = self.wp.get_model_names()
             matching_models = worker_models
             if len(wp_models) != 0:
-                matching_models = [
-                    model
-                    for model in self.wp.get_model_names()
-                    if model in worker_models
-                ]
+                matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
             if len(matching_models) == 0:
                 logger.warning(
                     f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. Request Models: {wp_models}. Will use random worker model."
@@ -123,19 +113,13 @@ class ProcessingGeneration(db.Model):
             cancel_txt = " Cancelled"
         if self.fake and self.worker.user == self.wp.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
-            self.worker.record_contribution(
-                raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec
-            )
+            self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
             logger.info(
                 f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}"
             )
         else:
-            self.worker.record_contribution(
-                raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec
-            )
-            self.wp.record_usage(
-                raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos)
-            )
+            self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
+            self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos))
             log_string = f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
             log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
             logger.info(log_string)
@@ -155,9 +139,7 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def log_aborted_generation(self):
-        logger.info(
-            f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})"
-        )
+        logger.info(f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})")
 
     # Overridable function
     def get_gen_kudos(self):
@@ -231,6 +213,4 @@ class ProcessingGeneration(db.Model):
                     continue
                 break
             except Exception as err:
-                logger.debug(
-                    f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times..."
-                )
+                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times...")

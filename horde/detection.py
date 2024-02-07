@@ -66,9 +66,7 @@ class PromptChecker:
         self.weight_remover = re.compile(r"\((.*?):\d+\.\d+\)")
         self.whitespace_remover = re.compile(r"(\s(\w)){3,}\b")
         self.whitespace_converter = re.compile(r"([^\w\s]|_)")
-        self.csam_triggers = re.compile(
-            r"\b(0?[0-9]|1[0-9]|2[0-2])(?![0-9]) *years? *old"
-        )
+        self.csam_triggers = re.compile(r"\b(0?[0-9]|1[0-9]|2[0-2])(?![0-9]) *years? *old")
 
     def refresh_regex(self):
         # We don't want to be pulling the regex from redis all the time. We pull them only once per min
@@ -80,16 +78,12 @@ class PromptChecker:
         else:
             cached_replacements = horde_r_get("cached_regex_replacements")
             if not cached_replacements:
-                logger.warning(
-                    "No cached regex replacements found in redis! Check threads!"
-                )
+                logger.warning("No cached regex replacements found in redis! Check threads!")
                 stored_replacements = []
             try:
                 stored_replacements = json.loads(cached_replacements)
             except Exception:
-                logger.warning(
-                    "Errors when loading cached regex replacements in redis! Check threads!"
-                )
+                logger.warning("Errors when loading cached regex replacements in redis! Check threads!")
                 stored_replacements = []
         for id in [10, 11, 20]:
             filter_id = f"filter_{id}"
@@ -113,9 +107,7 @@ class PromptChecker:
                 }
                 for f_entry in stored_replacements
             ]
-        self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(
-            minutes=1
-        )
+        self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=1)
 
     def __call__(self, prompt, id=None):
         if args.disable_filters:
@@ -298,9 +290,7 @@ class PromptChecker:
 
         # since this prompt was already flagged, ALWAYS force some additional NEGATIVE prompts to steer the generation
         # TODO: Remove "old", "mature", "middle-aged" from existing negprompt
-        replacednegprompt = (
-            "###child, infant, underage, immature, teenager, tween" + negprompt
-        )
+        replacednegprompt = "###child, infant, underage, immature, teenager, tween" + negprompt
 
         # we also force the prompt to be normalized to avoid tricks, so nothing will escape the replacement regex
         # this means prompt weights are lost, but it is fine for textgen image prompts

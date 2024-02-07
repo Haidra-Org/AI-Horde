@@ -59,9 +59,7 @@ def is_stderr_log(record):
 
 def test_logger():
     logger.generation(
-        "This is a generation message\nIt is typically multiline\nThee Lines".encode(
-            "unicode_escape"
-        ).decode("utf-8")
+        "This is a generation message\nIt is typically multiline\nThee Lines".encode("unicode_escape").decode("utf-8")
     )
     logger.prompt("This is a prompt message")
     logger.debug("Debug Message")

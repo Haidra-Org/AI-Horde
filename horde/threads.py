@@ -19,9 +19,7 @@ class PrimaryTimedFunction:
         self.thread.daemon = True
         self.thread.start()
         if self.function:
-            logger.init_ok(
-                f"PrimaryTimedFunction for {self.function.__name__}()", status="Started"
-            )
+            logger.init_ok(f"PrimaryTimedFunction for {self.function.__name__}()", status="Started")
 
     def run(self):
         while True:
@@ -30,10 +28,7 @@ class PrimaryTimedFunction:
                 # This allows me to change the primary node on-the-fly
                 if self.cancel:
                     break
-                if (
-                    self.quorum_thread
-                    and self.quorum_thread.quorum != horde_instance_id
-                ):
+                if self.quorum_thread and self.quorum_thread.quorum != horde_instance_id:
                     time.sleep(self.interval)
                     continue
                 if self.processing:
@@ -50,9 +45,7 @@ class PrimaryTimedFunction:
                 self.processing = False
                 time.sleep(self.interval)
             except Exception as e:
-                logger.error(
-                    f"Exception caught in PrimaryTimer for method {self.function.__name__}(). Avoiding! {e}"
-                )
+                logger.error(f"Exception caught in PrimaryTimer for method {self.function.__name__}(). Avoiding! {e}")
                 self.processing = False
                 time.sleep(10)
 
@@ -62,6 +55,4 @@ class PrimaryTimedFunction:
 
     def stop(self):
         self.cancel = True
-        logger.init_ok(
-            f"PrimaryTimedFunction for {self.function.__name__}()", status="Stopped"
-        )
+        logger.init_ok(f"PrimaryTimedFunction for {self.function.__name__}()", status="Stopped")

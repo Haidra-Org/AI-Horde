@@ -197,27 +197,19 @@ class ImageModels(v2.Models):
                     title="Generation Seed",
                     description="The seed which generated this image.",
                 ),
-                "id": fields.String(
-                    title="Generation ID", description="The ID for this image."
-                ),
+                "id": fields.String(title="Generation ID", description="The ID for this image."),
                 "censored": fields.Boolean(
                     description="When true this image has been censored by the worker's safety filter."
                 ),
-                "gen_metadata": fields.List(
-                    fields.Nested(self.model_job_metadata, skip_none=True)
-                ),
+                "gen_metadata": fields.List(fields.Nested(self.model_job_metadata, skip_none=True)),
             },
         )
         self.response_model_wp_status_full = api.inherit(
             "RequestStatusStable",
             self.response_model_wp_status_lite,
             {
-                "generations": fields.List(
-                    fields.Nested(self.response_model_generation_result)
-                ),
-                "shared": fields.Boolean(
-                    description="If True, These images have been shared with LAION."
-                ),
+                "generations": fields.List(fields.Nested(self.response_model_generation_result)),
+                "shared": fields.Boolean(description="If True, These images have been shared with LAION."),
             },
         )
         self.input_model_loras = api.model(
@@ -284,19 +276,13 @@ class ImageModels(v2.Models):
                 ),
             },
         )
-        self.input_model_special_payload = api.model(
-            "ModelSpecialPayloadStable", {"*": fields.Wildcard(fields.Raw)}
-        )
+        self.input_model_special_payload = api.model("ModelSpecialPayloadStable", {"*": fields.Wildcard(fields.Raw)})
         self.root_model_generation_payload_stable = api.model(
             "ModelPayloadRootStable",
             {
-                "sampler_name": fields.String(
-                    required=False, default="k_euler_a", enum=list(KNOWN_SAMPLERS)
-                ),
+                "sampler_name": fields.String(required=False, default="k_euler_a", enum=list(KNOWN_SAMPLERS)),
                 "cfg_scale": fields.Float(required=False, default=7.5, min=0, max=100),
-                "denoising_strength": fields.Float(
-                    required=False, example=0.75, min=0.01, max=1.0
-                ),
+                "denoising_strength": fields.Float(required=False, example=0.75, min=0.01, max=1.0),
                 "seed": fields.String(
                     required=False,
                     example="The little seed that could",
@@ -373,16 +359,10 @@ class ImageModels(v2.Models):
                     default=False,
                     description="Set to True if you want the ControlNet map returned instead of a generated image.",
                 ),
-                "facefixer_strength": fields.Float(
-                    required=False, example=0.75, min=0, max=1.0
-                ),
-                "loras": fields.List(
-                    fields.Nested(self.input_model_loras, skip_none=True)
-                ),
+                "facefixer_strength": fields.Float(required=False, example=0.75, min=0, max=1.0),
+                "loras": fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
                 "tis": fields.List(fields.Nested(self.input_model_tis, skip_none=True)),
-                "special": fields.Nested(
-                    self.input_model_special_payload, skip_none=True
-                ),
+                "special": fields.Nested(self.input_model_special_payload, skip_none=True),
             },
         )
         self.response_model_generation_payload = api.inherit(
@@ -393,9 +373,7 @@ class ImageModels(v2.Models):
                     description="The prompt which will be sent to Stable Diffusion to generate an image."
                 ),
                 "ddim_steps": fields.Integer(default=30),
-                "n_iter": fields.Integer(
-                    default=1, description="The amount of images to generate."
-                ),
+                "n_iter": fields.Integer(default=1, description="The amount of images to generate."),
                 "use_nsfw_censor": fields.Boolean(
                     description="When true will apply NSFW censoring model on the generation."
                 ),
@@ -445,9 +423,7 @@ class ImageModels(v2.Models):
         self.response_model_job_pop = api.model(
             "GenerationPayloadStable",
             {
-                "payload": fields.Nested(
-                    self.response_model_generation_payload, skip_none=True
-                ),
+                "payload": fields.Nested(self.response_model_generation_payload, skip_none=True),
                 "id": fields.String(description="The UUID for this image generation."),
                 "ids": fields.List(
                     fields.String(
@@ -455,15 +431,9 @@ class ImageModels(v2.Models):
                         example="00000000-0000-0000-0000-000000000000",
                     )
                 ),
-                "skipped": fields.Nested(
-                    self.response_model_generations_skipped, skip_none=True
-                ),
-                "model": fields.String(
-                    description="Which of the available models to use for this request."
-                ),
-                "source_image": fields.String(
-                    description="The Base64-encoded webp to use for img2img."
-                ),
+                "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
+                "model": fields.String(description="Which of the available models to use for this request."),
+                "source_image": fields.String(description="The Base64-encoded webp to use for img2img."),
                 "source_processing": fields.String(
                     required=False,
                     default="img2img",
@@ -473,13 +443,9 @@ class ImageModels(v2.Models):
                 "source_mask": fields.String(
                     description="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
                 ),
-                "r2_upload": fields.String(
-                    description="The r2 upload link to use to upload this image."
-                ),
+                "r2_upload": fields.String(description="The r2 upload link to use to upload this image."),
                 "r2_uploads": fields.List(
-                    fields.String(
-                        description="The r2 upload link to use to upload this image."
-                    )
+                    fields.String(description="The r2 upload link to use to upload this image.")
                 ),
             },
         )
@@ -492,9 +458,7 @@ class ImageModels(v2.Models):
                     description="The maximum amount of pixels this worker can generate.",
                 ),
                 "blacklist": fields.List(
-                    fields.String(
-                        description="Words which, when detected will refuste to pick up any jobs."
-                    )
+                    fields.String(description="Words which, when detected will refuste to pick up any jobs.")
                 ),
                 "allow_img2img": fields.Boolean(
                     default=True,
@@ -526,9 +490,7 @@ class ImageModels(v2.Models):
             "SubmitInputStable",
             self.input_model_job_submit,
             {
-                "seed": fields.Integer(
-                    required=True, description="The seed for this generation."
-                ),
+                "seed": fields.Integer(required=True, description="The seed for this generation."),
                 "censored": fields.Boolean(
                     required=False,
                     default=False,
@@ -545,9 +507,7 @@ class ImageModels(v2.Models):
                     description="The prompt which will be sent to Stable Diffusion to generate an image.",
                     min_length=1,
                 ),
-                "params": fields.Nested(
-                    self.input_model_generation_payload, skip_none=True
-                ),
+                "params": fields.Nested(self.input_model_generation_payload, skip_none=True),
                 "nsfw": fields.Boolean(
                     default=False,
                     description="Set to true if this request is NSFW. This will skip workers which censor images.",
@@ -565,9 +525,7 @@ class ImageModels(v2.Models):
                     description="If the request is SFW, and the worker accidentally generates NSFW, it will send back a censored image.",
                 ),
                 "workers": fields.List(
-                    fields.String(
-                        description="Specify up to 5 workers which are allowed to service this request."
-                    )
+                    fields.String(description="Specify up to 5 workers which are allowed to service this request.")
                 ),
                 "worker_blacklist": fields.Boolean(
                     default=False,
@@ -575,9 +533,7 @@ class ImageModels(v2.Models):
                     description="If true, the worker list will be treated as a blacklist instead of a whitelist.",
                 ),
                 "models": fields.List(
-                    fields.String(
-                        description="Specify which models are allowed to be used for this request."
-                    )
+                    fields.String(description="Specify which models are allowed to be used for this request.")
                 ),
                 "source_image": fields.String(
                     required=False,
@@ -648,22 +604,17 @@ class ImageModels(v2.Models):
             {
                 "name": fields.String(
                     required=True,
-                    enum=["caption", "interrogation", "nsfw"]
-                    + list(KNOWN_POST_PROCESSORS.keys()),
+                    enum=["caption", "interrogation", "nsfw"] + list(KNOWN_POST_PROCESSORS.keys()),
                     description="The type of interrogation this is.",
                     unique=True,
                 ),
-                "payload": fields.Nested(
-                    self.input_model_interrogation_form_payload, skip_none=True
-                ),
+                "payload": fields.Nested(self.input_model_interrogation_form_payload, skip_none=True),
             },
         )
         self.input_interrogate_request_generation = api.model(
             "ModelInterrogationInputStable",
             {
-                "forms": fields.List(
-                    fields.Nested(self.input_model_interrogation_form)
-                ),
+                "forms": fields.List(fields.Nested(self.input_model_interrogation_form)),
                 "source_image": fields.String(
                     required=False,
                     description="The public URL of the image to interrogate.",
@@ -700,16 +651,12 @@ class ImageModels(v2.Models):
         self.response_model_interrogation_form_status = api.model(
             "InterrogationFormStatus",
             {
-                "form": fields.String(
-                    description="The name of this interrogation form."
-                ),
+                "form": fields.String(description="The name of this interrogation form."),
                 "state": fields.String(
                     title="Interrogation State",
                     description="The overall status of this interrogation.",
                 ),
-                "result": fields.Nested(
-                    self.response_model_interrogation_form_result, skip_none=True
-                ),
+                "result": fields.Nested(self.response_model_interrogation_form_result, skip_none=True),
             },
         )
         self.response_model_interrogation_status = api.model(
@@ -719,11 +666,7 @@ class ImageModels(v2.Models):
                     title="Interrogation State",
                     description="The overall status of this interrogation.",
                 ),
-                "forms": fields.List(
-                    fields.Nested(
-                        self.response_model_interrogation_form_status, skip_none=True
-                    )
-                ),
+                "forms": fields.List(fields.Nested(self.response_model_interrogation_form_status, skip_none=True)),
             },
         )
         self.input_model_interrogation_pop = api.model(
@@ -736,8 +679,7 @@ class ImageModels(v2.Models):
                 "forms": fields.List(
                     fields.String(
                         description="The type of interrogation this worker can fulfil.",
-                        enum=["caption", "interrogation", "nsfw"]
-                        + list(KNOWN_POST_PROCESSORS.keys()),
+                        enum=["caption", "interrogation", "nsfw"] + list(KNOWN_POST_PROCESSORS.keys()),
                         unique=True,
                     )
                 ),
@@ -774,18 +716,11 @@ class ImageModels(v2.Models):
                 ),
                 "form": fields.String(
                     description="The name of this interrogation form",
-                    enum=["caption", "interrogation", "nsfw."]
-                    + list(KNOWN_POST_PROCESSORS.keys()),
+                    enum=["caption", "interrogation", "nsfw."] + list(KNOWN_POST_PROCESSORS.keys()),
                 ),
-                "payload": fields.Nested(
-                    self.input_model_interrogation_form_payload, skip_none=True
-                ),
-                "source_image": fields.String(
-                    description="The URL From which the source image can be downloaded."
-                ),
-                "r2_upload": fields.String(
-                    description="The URL in which the post-processed image can be uploaded."
-                ),
+                "payload": fields.Nested(self.input_model_interrogation_form_payload, skip_none=True),
+                "source_image": fields.String(description="The URL From which the source image can be downloaded."),
+                "r2_upload": fields.String(description="The URL in which the post-processed image can be uploaded."),
             },
         )
         self.response_model_interrogation_forms_skipped = api.model(
@@ -809,14 +744,8 @@ class ImageModels(v2.Models):
         self.response_model_interrogation_pop = api.model(
             "InterrogationPopPayload",
             {
-                "forms": fields.List(
-                    fields.Nested(
-                        self.response_model_interrogation_pop_payload, skip_none=True
-                    )
-                ),
-                "skipped": fields.Nested(
-                    self.response_model_interrogation_forms_skipped, skip_none=True
-                ),
+                "forms": fields.List(fields.Nested(self.response_model_interrogation_pop_payload, skip_none=True)),
+                "skipped": fields.Nested(self.response_model_interrogation_forms_skipped, skip_none=True),
             },
         )
         self.response_model_aesthetic_rating = api.model(
@@ -864,29 +793,19 @@ class ImageModels(v2.Models):
         self.response_model_single_period_total_img_stat = api.model(
             "SinglePeriodImgStat",
             {
-                "images": fields.Integer(
-                    description="The amount of images generated during this period."
-                ),
-                "ps": fields.Integer(
-                    description="The amount of pixelsteps generated during this period."
-                ),
+                "images": fields.Integer(description="The amount of images generated during this period."),
+                "ps": fields.Integer(description="The amount of pixelsteps generated during this period."),
             },
         )
 
         self.response_model_stats_img_totals = api.model(
             "StatsImgTotals",
             {
-                "minute": fields.Nested(
-                    self.response_model_single_period_total_img_stat
-                ),
+                "minute": fields.Nested(self.response_model_single_period_total_img_stat),
                 "hour": fields.Nested(self.response_model_single_period_total_img_stat),
                 "day": fields.Nested(self.response_model_single_period_total_img_stat),
-                "month": fields.Nested(
-                    self.response_model_single_period_total_img_stat
-                ),
-                "total": fields.Nested(
-                    self.response_model_single_period_total_img_stat
-                ),
+                "month": fields.Nested(self.response_model_single_period_total_img_stat),
+                "total": fields.Nested(self.response_model_single_period_total_img_stat),
             },
         )
 

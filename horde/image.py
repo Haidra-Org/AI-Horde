@@ -103,9 +103,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                 # if not size:
                 #     raise ImageValidationFailed("Source image URL must provide a Content-Length header")
                 if int(size) / 1024 > 5000:
-                    raise ImageValidationFailed(
-                        "Provided image cannot be larger than 5Mb"
-                    )
+                    raise ImageValidationFailed("Provided image cannot be larger than 5Mb")
                 mbs = 0
                 for chunk in r.iter_content(chunk_size=1024 * 1024):
                     if chunk:
@@ -115,17 +113,13 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                             img_data += chunk
                         mbs += 1
                         if mbs > 5:
-                            raise ImageValidationFailed(
-                                "Provided image cannot be larger than 5Mb"
-                            )
+                            raise ImageValidationFailed("Provided image cannot be larger than 5Mb")
                 try:
                     img = Image.open(BytesIO(img_data))
                 except UnidentifiedImageError:
                     raise ImageValidationFailed("Url does not contain a valid image.")
                 except Exception:
-                    raise ImageValidationFailed(
-                        "Something went wrong when opening image."
-                    )
+                    raise ImageValidationFailed("Something went wrong when opening image.")
                 if force_r2:
                     logger.debug(f"uploading {img} {uuid_string}")
                     download_url = upload_source_image(img, uuid_string)
@@ -133,9 +127,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
         except Exception as err:
             if type(err) == ImageValidationFailed:
                 raise err
-            raise ImageValidationFailed(
-                "Something went wrong when retrieving image url."
-            )
+            raise ImageValidationFailed("Something went wrong when retrieving image url.")
         return (source_image_string, img, False)
     else:
         download_url, img = upload_source_image_to_r2(source_image_string, uuid_string)

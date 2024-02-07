@@ -11,8 +11,7 @@ from horde.flask import db, SQLITE_MODE
 from horde import horde_redis as hr
 
 
-def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
 
 class TextWorkerSoftprompts(db.Model):
@@ -36,9 +35,7 @@ class TextWorker(Worker):
     max_length = db.Column(db.Integer, default=80, nullable=False)
     max_context_length = db.Column(db.Integer, default=1024, nullable=False)
 
-    softprompts = db.relationship(
-        "TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan"
-    )
+    softprompts = db.relationship("TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan")
     wtype = "text"
 
     def check_in(self, max_length, max_context_length, softprompts, **kwargs):
@@ -62,9 +59,7 @@ class TextWorker(Worker):
                 json.dumps(softprompts_list),
             )
         except Exception as e:
-            logger.warning(
-                f"Error when trying to set softprompts cache: {e}. Retrieving from DB."
-            )
+            logger.warning(f"Error when trying to set softprompts cache: {e}. Retrieving from DB.")
         return softprompts_list
 
     def get_softprompt_names(self):
@@ -83,9 +78,7 @@ class TextWorker(Worker):
         return softprompts_ret
 
     def set_softprompts(self, softprompts):
-        softprompts = [
-            sanitize_string(softprompt_name[0:100]) for softprompt_name in softprompts
-        ]
+        softprompts = [sanitize_string(softprompt_name[0:100]) for softprompt_name in softprompts]
         del softprompts[200:]
         softprompts = set(softprompts)
         existing_softprompts_names = set(self.get_softprompt_names())
@@ -101,9 +94,7 @@ class TextWorker(Worker):
         db.session.query(TextWorkerSoftprompts).filter_by(worker_id=self.id).delete()
         db.session.commit()
         for softprompt_name in softprompts:
-            softprompt = TextWorkerSoftprompts(
-                worker_id=self.id, softprompt=softprompt_name
-            )
+            softprompt = TextWorkerSoftprompts(worker_id=self.id, softprompt=softprompt_name)
             db.session.add(softprompt)
         db.session.commit()
         self.refresh_softprompt_cache()
@@ -161,7 +152,5 @@ class TextWorker(Worker):
                     raise e.BadRequest(f"This model can only be hosted by {user_alias}")
             models.add(model)
         if len(models) == 0:
-            raise e.BadRequest(
-                "Unfortunately we cannot accept workers serving unrecognised models at this time"
-            )
+            raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models

@@ -60,30 +60,18 @@ def index():
         interrogation_worker_count,
         interrogation_worker_thread_count,
     ) = database.count_active_workers("interrogation")
-    image_worker_count, image_worker_thread_count = database.count_active_workers(
-        "image"
-    )
+    image_worker_count, image_worker_thread_count = database.count_active_workers("image")
     text_worker_count, text_worker_thread_count = database.count_active_workers("text")
-    avg_performance = ConvertAmount(
-        database.get_request_avg() * image_worker_thread_count
-    )
-    avg_text_performance = ConvertAmount(
-        database.get_request_avg("text") * image_worker_thread_count
-    )
+    avg_performance = ConvertAmount(database.get_request_avg() * image_worker_thread_count)
+    avg_text_performance = ConvertAmount(database.get_request_avg("text") * image_worker_thread_count)
     # We multiple with the divisor again, to get the raw amount, which we can convert to prefix accurately
-    total_image_things = ConvertAmount(
-        totals[hv.thing_names["image"]] * hv.thing_divisors["image"]
-    )
-    total_text_things = ConvertAmount(
-        totals[hv.thing_names["text"]] * hv.thing_divisors["text"]
-    )
+    total_image_things = ConvertAmount(totals[hv.thing_names["image"]] * hv.thing_divisors["image"])
+    total_text_things = ConvertAmount(totals[hv.thing_names["text"]] * hv.thing_divisors["text"])
     queued_image_things = ConvertAmount(
-        processing_totals[f"queued_{hv.thing_names['image']}"]
-        * hv.thing_divisors["image"]
+        processing_totals[f"queued_{hv.thing_names['image']}"] * hv.thing_divisors["image"]
     )
     queued_text_things = ConvertAmount(
-        processing_totals[f"queued_{hv.thing_names['text']}"]
-        * hv.thing_divisors["text"]
+        processing_totals[f"queued_{hv.thing_names['text']}"] * hv.thing_divisors["text"]
     )
     total_image_fulfillments = ConvertAmount(totals["image_fulfilments"])
     total_text_fulfillments = ConvertAmount(totals["text_fulfilments"])
@@ -97,8 +85,7 @@ def index():
         avg_text_performance=avg_text_performance.amount,
         avg_text_thing_name=avg_text_performance.prefix + hv.raw_thing_names["text"],
         total_image_things=total_image_things.amount,
-        total_total_image_things_name=total_image_things.prefix
-        + hv.raw_thing_names["image"],
+        total_total_image_things_name=total_image_things.prefix + hv.raw_thing_names["image"],
         total_text_things=total_text_things.amount,
         total_text_things_name=total_text_things.prefix + hv.raw_thing_names["text"],
         total_image_fulfillments=total_image_fulfillments.amount,
@@ -117,8 +104,7 @@ def index():
         total_text_queue=processing_totals["queued_text_requests"],
         total_forms_queue=processing_totals.get("queued_forms", 0),
         queued_image_things=queued_image_things.amount,
-        queued_image_things_name=queued_image_things.prefix
-        + hv.raw_thing_names["image"],
+        queued_image_things_name=queued_image_things.prefix + hv.raw_thing_names["image"],
         queued_text_things=queued_text_things.amount,
         queued_text_things_name=queued_text_things.prefix + hv.raw_thing_names["text"],
         maintenance_mode=maintenance.active,
@@ -229,9 +215,7 @@ def register():
             try:
                 recaptcha_response = request.form["g-recaptcha-response"]
                 payload = {"response": recaptcha_response, "secret": secret_key}
-                response = requests.post(
-                    "https://www.google.com/recaptcha/api/siteverify", payload
-                )
+                response = requests.post("https://www.google.com/recaptcha/api/siteverify", payload)
                 if not response.ok or not response.json()["success"]:
                     return render_template(
                         "recaptcha_error.html",
@@ -316,9 +300,7 @@ def transfer():
             error = "Please enter a number in the kudos field"
         # Triggered when the user submited without logging in
         elif src_user:
-            ret = database.transfer_kudos_to_username(
-                src_user, dest_username, int(amount)
-            )
+            ret = database.transfer_kudos_to_username(src_user, dest_username, int(amount))
             kudos = ret[0]
             error = ret[1]
         else:
@@ -378,16 +360,12 @@ def finish_dance():
 
 @HORDE.route("/privacy")
 def privacy():
-    return render_template(
-        "privacy_policy.html", horde_title=horde_title, horde_url=horde_url
-    )
+    return render_template("privacy_policy.html", horde_title=horde_title, horde_url=horde_url)
 
 
 @HORDE.route("/terms")
 def terms():
-    return render_template(
-        "terms_of_service.html", horde_title=horde_title, horde_url=horde_url
-    )
+    return render_template("terms_of_service.html", horde_title=horde_title, horde_url=horde_url)
 
 
 @HORDE.route("/assets/<filename>")

@@ -32,9 +32,7 @@ api.add_resource(base.Teams, "/teams")
 api.add_resource(base.TeamSingle, "/teams/<string:team_id>")
 api.add_resource(base.OperationsIP, "/operations/ipaddr")
 api.add_resource(base.OperationsIPSingle, "/operations/ipaddr/<string:ipaddr>")
-api.add_resource(
-    base.OperationsBlockWorkerIP, "/operations/block_worker_ipaddr/<string:worker_id>"
-)
+api.add_resource(base.OperationsBlockWorkerIP, "/operations/block_worker_ipaddr/<string:worker_id>")
 api.add_resource(stable.Interrogate, "/interrogate/async")
 api.add_resource(stable.InterrogationStatus, "/interrogate/status/<string:id>")
 api.add_resource(stable.InterrogatePop, "/interrogate/pop")

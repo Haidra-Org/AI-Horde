@@ -49,9 +49,7 @@ class InvalidSize(wze.BadRequest):
 
 class InvalidPromptSize(wze.BadRequest):
     def __init__(self, username):
-        self.specific = (
-            "Too large prompt. Please reduce the amount of tokens contained."
-        )
+        self.specific = "Too large prompt. Please reduce the amount of tokens contained."
         self.log = f"User '{username}' sent an invalid size. Aborting!"
 
 
@@ -69,17 +67,13 @@ class Profanity(wze.BadRequest):
 
 class TooLong(wze.BadRequest):
     def __init__(self, username, chars, limit, text_type):
-        self.specific = (
-            f"The specified {text_type} is too long. Please stay below {limit}"
-        )
+        self.specific = f"The specified {text_type} is too long. Please stay below {limit}"
         self.log = f"User '{username}' tried to submit {chars} chars for {text_type}. Aborting!"
 
 
 class NameAlreadyExists(wze.BadRequest):
     def __init__(self, username, old_name, new_name, object_type="worker"):
-        self.specific = (
-            f"The specified {object_type} name '{new_name}' is already taken!"
-        )
+        self.specific = f"The specified {object_type} name '{new_name}' is already taken!"
         self.log = f"User '{username}' tried to change {object_type} name from {old_name} to {new_name}. Aborting!"
 
 
@@ -136,16 +130,16 @@ class InvalidAPIKey(wze.Unauthorized):
         if keytype == "Shared":
             self.specific = "No user matching sent Shared Key."
         else:
-            self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
+            self.specific = (
+                "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
+            )
         self.log = f"Invalid {keytype} Key sent for {subject}"
 
 
 class WrongCredentials(wze.Forbidden):
     def __init__(self, username, worker):
         self.specific = "Wrong credentials to submit as this worker."
-        self.log = (
-            f"User '{username}' sent wrong credentials for utilizing worker {worker}"
-        )
+        self.log = f"User '{username}' sent wrong credentials for utilizing worker {worker}"
 
 
 class NotAdmin(wze.Forbidden):
@@ -283,9 +277,7 @@ class ThingNotFound(wze.NotFound):
             self.specific = message
         else:
             self.specific = f"{thing_type.capitalize()} with ID '{thing_id}' not found."
-        self.log = (
-            f"Attempted to retrieve {thing_type} with non-existent ID '{thing_id}'"
-        )
+        self.log = f"Attempted to retrieve {thing_type} with non-existent ID '{thing_id}'"
 
 
 class UserNotFound(wze.NotFound):
@@ -294,25 +286,19 @@ class UserNotFound(wze.NotFound):
             self.specific = message
         else:
             self.specific = f"User with {lookup_type} '{user_id}' not found."
-        self.log = (
-            f"Attempted to retrieve user with non-existent {lookup_type} '{user_id}'"
-        )
+        self.log = f"Attempted to retrieve user with non-existent {lookup_type} '{user_id}'"
 
 
 class DuplicateGen(wze.BadRequest):
     def __init__(self, worker, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} already submitted."
-        self.log = (
-            f"Worker '{worker}' attempted to provide duplicate generation for {gen_id}"
-        )
+        self.log = f"Worker '{worker}' attempted to provide duplicate generation for {gen_id}"
 
 
 class AbortedGen(wze.BadRequest):
     def __init__(self, worker, gen_id):
         self.specific = f"Processing Generation with ID {gen_id} took too long to process and has been aborted! Please check your worker speed and do not onboard worker which generate slower than 1 it/s!"
-        self.log = (
-            f"Worker '{worker}' attempted to provide aborted generation for {gen_id}."
-        )
+        self.log = f"Worker '{worker}' attempted to provide aborted generation for {gen_id}."
 
 
 class RequestExpired(wze.Gone):
@@ -327,19 +313,17 @@ class TooManyPrompts(wze.TooManyRequests):
             self.specific = f"Parallel requests ({count}) exceeded user limit ({concurrency}). Please try again later or request to increase your concurrency."
         else:
             self.specific = msg
-        self.log = f"User '{username}' has already requested too many parallel requests ({count}/{concurrency}). Aborting!"
+        self.log = (
+            f"User '{username}' has already requested too many parallel requests ({count}/{concurrency}). Aborting!"
+        )
 
 
 class NoValidWorkers(wze.BadRequest):
     retry_after = 600
 
     def __init__(self, username):
-        self.specific = (
-            "No active worker found to fulfill this request. Please Try again later..."
-        )
-        self.log = (
-            f"No active worker found to match the request from '{username}'. Aborting!"
-        )
+        self.specific = "No active worker found to fulfill this request. Please Try again later..."
+        self.log = f"No active worker found to match the request from '{username}'. Aborting!"
 
 
 class MaintenanceMode(wze.BadRequest):

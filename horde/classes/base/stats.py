@@ -64,14 +64,8 @@ def get_things_per_min(thing_type="image"):
 
 
 def get_model_avg(model_name):
-    model_performances_count = (
-        db.session.query(ModelPerformance).filter_by(model=model_name).count()
-    )
+    model_performances_count = db.session.query(ModelPerformance).filter_by(model=model_name).count()
     if model_performances_count == 0:
         return 0
-    avg = (
-        db.session.query(func.avg(ModelPerformance.performance))
-        .filter_by(model=model_name)
-        .scalar()
-    )
+    avg = db.session.query(func.avg(ModelPerformance.performance)).filter_by(model=model_name).scalar()
     return round(avg, 1)

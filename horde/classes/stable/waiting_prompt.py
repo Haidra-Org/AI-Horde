@@ -31,16 +31,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         "polymorphic_identity": "image",
     }
     # TODO: Find a way to index width*height
-    width = db.Column(
-        db.Integer, default=512, nullable=False, server_default=expression.literal(512)
-    )
-    height = db.Column(
-        db.Integer, default=512, nullable=False, server_default=expression.literal(512)
-    )
+    width = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
+    height = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
     source_image = db.Column(db.Text, default=None)
-    source_processing = db.Column(
-        db.String(10), default="img2img", nullable=False, server_default="img2img"
-    )
+    source_processing = db.Column(db.String(10), default="img2img", nullable=False, server_default="img2img")
     source_mask = db.Column(db.Text, default=None)
     censor_nsfw = db.Column(
         db.Boolean,
@@ -192,9 +186,7 @@ class ImageWaitingPrompt(WaitingPrompt):
                 "model": procgen.model,
                 "ids": [g.id for g in procgen_list],
             }
-            if self.source_image and check_bridge_capability(
-                "img2img", procgen.worker.bridge_agent
-            ):
+            if self.source_image and check_bridge_capability("img2img", procgen.worker.bridge_agent):
                 if check_bridge_capability("r2_source", procgen.worker.bridge_agent):
                     prompt_payload["source_image"] = self.source_image
                 else:
@@ -203,25 +195,16 @@ class ImageWaitingPrompt(WaitingPrompt):
                         prompt_payload["source_image"] = convert_pil_to_b64(src_img, 50)
                 prompt_payload["source_processing"] = self.source_processing
                 if self.source_mask:
-                    if check_bridge_capability(
-                        "r2_source", procgen.worker.bridge_agent
-                    ):
+                    if check_bridge_capability("r2_source", procgen.worker.bridge_agent):
                         prompt_payload["source_mask"] = self.source_mask
                     else:
                         src_msk = download_source_mask(self.id)
                         if src_msk:
-                            prompt_payload["source_mask"] = convert_pil_to_b64(
-                                src_msk, 50
-                            )
+                            prompt_payload["source_mask"] = convert_pil_to_b64(src_msk, 50)
             # We always ask the workers to upload the generation to R2 instead of sending it back as b64
             # If they send it back as b64 anyway, we upload it outselves
-            prompt_payload["r2_upload"] = generate_procgen_upload_url(
-                str(procgen.id), self.shared
-            )
-            prompt_payload["r2_uploads"] = [
-                generate_procgen_upload_url(str(p.id), self.shared)
-                for p in procgen_list
-            ]
+            prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
+            prompt_payload["r2_uploads"] = [generate_procgen_upload_url(str(p.id), self.shared) for p in procgen_list]
         else:
             prompt_payload = {}
             self.faulted = True
@@ -295,22 +278,17 @@ class ImageWaitingPrompt(WaitingPrompt):
         #
         legacy_kudos_cost = 0
         result = pow(
-            (self.params.get("width", 512) * self.params.get("height", 512))
-            - (64 * 64),
+            (self.params.get("width", 512) * self.params.get("height", 512)) - (64 * 64),
             1.75,
         ) / pow((1024 * 1024) - (64 * 64), 1.75)
         # We need to calculate the steps, without affecting the actual steps requested
         # because some samplers are effectively doubling their steps
         steps = self.params.get("steps")
-        legacy_kudos_cost = round(
-            (0.1232 * steps) + result * (0.1232 * steps * 8.75), 2
-        )
+        legacy_kudos_cost = round((0.1232 * steps) + result * (0.1232 * steps * 8.75), 2)
         # For each post processor in requested, we increase the cost by 20%
         for post_processor in self.gen_payload.get("post_processing", []):
             legacy_kudos_cost = round(legacy_kudos_cost * 1.2, 2)
-        if self.gen_payload.get("control_type") and not self.gen_payload.get(
-            "return_control_map", False
-        ):
+        if self.gen_payload.get("control_type") and not self.gen_payload.get("return_control_map", False):
             legacy_kudos_cost = round(legacy_kudos_cost * 3, 2)
 
         #
@@ -321,20 +299,14 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_params = self.params.copy()
             ## IMPORTANT: When adjusting this, also adjust ImageAsyncGenerate.get_hashed_params_dict()
             # That's normally not in the params
-            model_params["source_processing"] = (
-                self.source_processing if self.source_image else "txt2img"
-            )
+            model_params["source_processing"] = self.source_processing if self.source_image else "txt2img"
             model_params["source_image"] = True if self.source_image else False
             model_params["source_mask"] = True if self.source_mask else False
             self.kudos = kudos_model.calculate_kudos(model_params)
         except Exception as e:
-            logger.error(
-                f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}"
-            )
+            logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
             self.kudos = legacy_kudos_cost
-        logger.debug(
-            f"Old Kudos {legacy_kudos_cost} / New Kudos {self.kudos} for {self.id}"
-        )
+        logger.debug(f"Old Kudos {legacy_kudos_cost} / New Kudos {self.kudos} for {self.id}")
         kudos_difference = abs(legacy_kudos_cost - self.kudos)
         if kudos_difference > (legacy_kudos_cost * 0.5):
             logger.debug(
@@ -364,16 +336,12 @@ class ImageWaitingPrompt(WaitingPrompt):
         if (
             max_res < 768
             and len(self.models) >= 1
-            and any(
-                model_reference.get_model_baseline(mn) == "stable_diffusion_2"
-                for mn in model_names
-            )
+            and any(model_reference.get_model_baseline(mn) == "stable_diffusion_2" for mn in model_names)
         ):
             max_res = 768
         # We allow everyone to use SDXL up to 1024
         if max_res < 1024 and any(
-            model_reference.get_model_baseline(mn) == "stable_diffusion_xl"
-            for mn in model_names
+            model_reference.get_model_baseline(mn) == "stable_diffusion_xl" for mn in model_names
         ):
             max_res = 1024
         if max_res > 1024:

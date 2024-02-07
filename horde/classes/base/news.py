@@ -218,9 +218,7 @@ class News:
         },
         {
             "date_published": "2023-02-14",
-            "newspiece": (
-                "You can now use an almost unlimited prompt size thanks to the work of ResidentChief!"
-            ),
+            "newspiece": ("You can now use an almost unlimited prompt size thanks to the work of ResidentChief!"),
             "tags": ["text2img", "img2img", "ResidentChief"],
             "importance": "Information",
         },
@@ -260,9 +258,7 @@ class News:
         },
         {
             "date_published": "2023-01-23",
-            "newspiece": (
-                "The horde now has a [Blender Plugin](https://github.com/benrugg/AI-Render)!"
-            ),
+            "newspiece": ("The horde now has a [Blender Plugin](https://github.com/benrugg/AI-Render)!"),
             "tags": ["plugin", "blender"],
             "importance": "Information",
         },

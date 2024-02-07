@@ -13,9 +13,7 @@ class ImageGenerationStatisticPP(db.Model):
         db.ForeignKey("image_gen_stats.id", ondelete="CASCADE"),
         nullable=False,
     )
-    imgstat = db.relationship(
-        "ImageGenerationStatistic", back_populates="post_processors"
-    )
+    imgstat = db.relationship("ImageGenerationStatistic", back_populates="post_processors")
     pp = db.Column(db.String(40), nullable=False)
 
 
@@ -73,15 +71,9 @@ class ImageGenerationStatistic(db.Model):
     hires_fix = db.Column(db.Boolean, nullable=False)
     tiling = db.Column(db.Boolean, nullable=False)
     nsfw = db.Column(db.Boolean, nullable=False)
-    state = db.Column(
-        Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True
-    )
-    client_agent = db.Column(
-        db.Text, default="unknown:0:unknown", nullable=False, index=True
-    )
-    bridge_agent = db.Column(
-        db.Text, default="unknown:0:unknown", nullable=False, index=True
-    )
+    state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True)
+    client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     post_processors = db.relationship(
         "ImageGenerationStatisticPP",
         back_populates="imgstat",
@@ -155,17 +147,13 @@ def record_image_statistic(procgen):
     loras = procgen.wp.params.get("loras", [])
     if len(loras) > 0:
         for lora in loras:
-            new_lora_entry = ImageGenerationStatisticLora(
-                imgstat_id=statistic.id, lora=lora["name"]
-            )
+            new_lora_entry = ImageGenerationStatisticLora(imgstat_id=statistic.id, lora=lora["name"])
             db.session.add(new_lora_entry)
         db.session.commit()
     tis = procgen.wp.params.get("tis", [])
     if len(tis) > 0:
         for ti in tis:
-            new_ti_entry = ImageGenerationStatisticTI(
-                imgstat_id=statistic.id, ti=ti["name"]
-            )
+            new_ti_entry = ImageGenerationStatisticTI(imgstat_id=statistic.id, ti=ti["name"])
             db.session.add(new_ti_entry)
         db.session.commit()
 
@@ -178,32 +166,18 @@ def compile_imagegen_stats_totals():
     count_hour = count_query.filter(
         ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
     ).count()
-    count_day = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
-    ).count()
+    count_day = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
     count_month = count_query.filter(
         ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
     ).count()
     count_total = count_query.count()
     ps_query = db.session.query(
-        func.sum(
-            ImageGenerationStatistic.width
-            * ImageGenerationStatistic.height
-            * ImageGenerationStatistic.steps
-        )
+        func.sum(ImageGenerationStatistic.width * ImageGenerationStatistic.height * ImageGenerationStatistic.steps)
     )
-    ps_minute = ps_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
-    ).scalar()
-    ps_hour = ps_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
-    ).scalar()
-    ps_day = ps_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
-    ).scalar()
-    ps_month = ps_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
-    ).scalar()
+    ps_minute = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).scalar()
+    ps_hour = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).scalar()
+    ps_day = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).scalar()
+    ps_month = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).scalar()
     ps_total = ps_query.scalar()
     stats_dict = {
         "minute": {
@@ -231,23 +205,19 @@ def compile_imagegen_stats_totals():
 
 
 def compile_imagegen_stats_models():
-    query = db.session.query(ImageGenerationStatistic.model, func.count()).group_by(
-        ImageGenerationStatistic.model
-    )
+    query = db.session.query(ImageGenerationStatistic.model, func.count()).group_by(ImageGenerationStatistic.model)
     return {
         "total": {model: count for model, count in query.all()},
         "day": {
             model: count
             for model, count in query.filter(
-                ImageGenerationStatistic.finished
-                >= datetime.utcnow() - timedelta(days=1)
+                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
             ).all()
         },
         "month": {
             model: count
             for model, count in query.filter(
-                ImageGenerationStatistic.finished
-                >= datetime.utcnow() - timedelta(days=30)
+                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
             ).all()
         },
     }

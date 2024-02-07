@@ -17,9 +17,7 @@ r2_permanent_account = os.getenv(
 )
 r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
 r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
-r2_source_image_bucket = os.getenv(
-    "R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images"
-)
+r2_source_image_bucket = os.getenv("R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images")
 
 s3_client = boto3.client("s3", endpoint_url=r2_transient_account)
 s3_client_shared = boto3.client(
@@ -52,9 +50,7 @@ def generate_presigned_url(client, client_method, method_parameters, expires_in=
     :return: The presigned URL.
     """
     try:
-        url = client.generate_presigned_url(
-            ClientMethod=client_method, Params=method_parameters, ExpiresIn=expires_in
-        )
+        url = client.generate_presigned_url(ClientMethod=client_method, Params=method_parameters, ExpiresIn=expires_in)
     except ClientError:
         logger.exception(
             f"Couldn't get a presigned URL for client method {client_method}",
@@ -95,9 +91,7 @@ def delete_procgen_image(procgen_id):
 
 
 def delete_source_image(source_image_uuid):
-    s3_client.delete_object(
-        Bucket=r2_source_image_bucket, Key=f"{source_image_uuid}.webp"
-    )
+    s3_client.delete_object(Bucket=r2_source_image_bucket, Key=f"{source_image_uuid}.webp")
 
 
 def upload_image(client, bucket, image, filename, quality=100):
@@ -127,9 +121,7 @@ def download_image(client, bucket, key):
 
 def download_procgen_image(procgen_id, shared=False):
     if shared:
-        return download_image(
-            s3_client_shared, r2_permanent_bucket, f"{procgen_id}.webp"
-        )
+        return download_image(s3_client_shared, r2_permanent_bucket, f"{procgen_id}.webp")
     else:
         return download_image(s3_client, r2_transient_bucket, f"{procgen_id}.webp")
 
@@ -190,15 +182,11 @@ def upload_prompt(prompt_dict):
 
 
 def generate_img_download_url(filename, bucket=r2_transient_bucket):
-    return generate_presigned_url(
-        s3_client, "get_object", {"Bucket": bucket, "Key": filename}, 1800
-    )
+    return generate_presigned_url(s3_client, "get_object", {"Bucket": bucket, "Key": filename}, 1800)
 
 
 def generate_img_upload_url(filename, bucket=r2_transient_bucket):
-    return generate_presigned_url(
-        s3_client, "put_object", {"Bucket": bucket, "Key": filename}, 1800
-    )
+    return generate_presigned_url(s3_client, "put_object", {"Bucket": bucket, "Key": filename}, 1800)
 
 
 def generate_uuid_img_upload_url(img_uuid, imgtype):

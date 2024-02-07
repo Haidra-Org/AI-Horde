@@ -180,17 +180,14 @@ class KudosModel:
         if has_source_image:
             denoising_strength = payload.get("denoising_strength", 1.0)
             if has_control_type:
-                control_strength = payload.get(
-                    "control_strength", payload.get("denoising_strength", 1.0)
-                )
+                control_strength = payload.get("control_strength", payload.get("denoising_strength", 1.0))
                 denoising_strength = 1.0
 
         data.append(
             [
                 payload["height"] / 1024,
                 payload["width"] / 1024,
-                payload["steps"]
-                / 100,  # Name doesn't match worker side (ddim_steps vs steps)
+                payload["steps"] / 100,  # Name doesn't match worker side (ddim_steps vs steps)
                 payload["cfg_scale"] / 30,
                 denoising_strength,
                 control_strength,
@@ -202,9 +199,7 @@ class KudosModel:
         )
 
         data_samplers.append(
-            payload["sampler_name"]
-            if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS
-            else "k_euler",
+            payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
         )
         data_control_types.append(payload.get("control_type", "None"))
         data_source_processing_types.append(payload.get("source_processing", "txt2img"))
@@ -213,16 +208,12 @@ class KudosModel:
 
         _data_floats = torch.tensor(data).float()
         _data_samplers = cls.one_hot_encode(data_samplers, KudosModel.KNOWN_SAMPLERS)
-        _data_control_types = cls.one_hot_encode(
-            data_control_types, KudosModel.KNOWN_CONTROL_TYPES
-        )
+        _data_control_types = cls.one_hot_encode(data_control_types, KudosModel.KNOWN_CONTROL_TYPES)
         _data_source_processing_types = cls.one_hot_encode(
             data_source_processing_types,
             KudosModel.KNOWN_SOURCE_PROCESSING,
         )
-        _data_post_processors = cls.one_hot_encode_combined(
-            data_post_processors, KudosModel.KNOWN_POST_PROCESSORS
-        )
+        _data_post_processors = cls.one_hot_encode_combined(data_post_processors, KudosModel.KNOWN_POST_PROCESSORS)
         return torch.cat(
             (
                 _data_floats,
@@ -238,9 +229,7 @@ class KudosModel:
         """Load the target model, or the default model if none is specified.
         If `self.model` is defined, it will be returned instead."""
         if not model_filename and not self.model:
-            model_filename = str(
-                pathlib.Path(__file__).parent.joinpath("kudos-v21-206.ckpt").resolve()
-            )
+            model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v21-206.ckpt").resolve())
             logger.warning(f"Loading default kudos model {model_filename}")
 
         if self.model:
@@ -278,23 +267,16 @@ if __name__ == "__main__":
 
     # Test the basis job
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD)
-    logger.message(
-        f"The basis job worth {job_kudos} kudos, "
-        f"expected {KudosModel.KUDOS_BASIS} kudos"
-    )
+    logger.message(f"The basis job worth {job_kudos} kudos, " f"expected {KudosModel.KUDOS_BASIS} kudos")
 
     # Test fixed kudos basis adjustment
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5)
-    logger.message(
-        f"Adjusting a job by +5 worth {job_kudos}, "
-        f"expected {KudosModel.KUDOS_BASIS+5} kudos"
-    )
+    logger.message(f"Adjusting a job by +5 worth {job_kudos}, " f"expected {KudosModel.KUDOS_BASIS+5} kudos")
 
     # Test fixed kudos basis adjustment and percentage scaling
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5, 1.25)
     logger.message(
-        f"Adjusting a job by +5 and +25% worth {job_kudos}, "
-        f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos"
+        f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos"
     )
 else:
     kudos_model = KudosModel()

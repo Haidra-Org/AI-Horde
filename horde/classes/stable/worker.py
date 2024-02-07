@@ -58,9 +58,7 @@ class ImageWorker(Worker):
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
         # logger.warning(datetime.utcnow())
-        if waiting_prompt.source_image and not check_bridge_capability(
-            "img2img", self.bridge_agent
-        ):
+        if waiting_prompt.source_image and not check_bridge_capability("img2img", self.bridge_agent):
             return [False, "img2img"]
         # logger.warning(datetime.utcnow())
         if waiting_prompt.source_processing != "img2img":
@@ -81,30 +79,27 @@ class ImageWorker(Worker):
         ):
             return [False, "bridge_version"]
         # logger.warning(datetime.utcnow())
-        if len(
-            waiting_prompt.gen_payload.get("post_processing", [])
-        ) >= 1 and not check_bridge_capability("post-processing", self.bridge_agent):
+        if len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1 and not check_bridge_capability(
+            "post-processing", self.bridge_agent
+        ):
             return [False, "bridge_version"]
         for pp in KNOWN_POST_PROCESSORS:
-            if pp in waiting_prompt.gen_payload.get(
-                "post_processing", []
-            ) and not check_bridge_capability(pp, self.bridge_agent):
+            if pp in waiting_prompt.gen_payload.get("post_processing", []) and not check_bridge_capability(
+                pp, self.bridge_agent
+            ):
                 return [False, "bridge_version"]
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, "img2img"]
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
         if not waiting_prompt.source_image and (
-            self.models == ["stable_diffusion_inpainting"]
-            or waiting_prompt.models == ["stable_diffusion_inpainting"]
+            self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]
         ):
             return [False, "models"]
-        if waiting_prompt.params.get("tiling") and not check_bridge_capability(
-            "tiling", self.bridge_agent
-        ):
+        if waiting_prompt.params.get("tiling") and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, "bridge_version"]
-        if waiting_prompt.params.get(
-            "return_control_map"
-        ) and not check_bridge_capability("return_control_map", self.bridge_agent):
+        if waiting_prompt.params.get("return_control_map") and not check_bridge_capability(
+            "return_control_map", self.bridge_agent
+        ):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("control_type"):
             if not check_bridge_capability("controlnet", self.bridge_agent):
@@ -113,13 +108,11 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not self.allow_controlnet:
                 return [False, "bridge_version"]
-        if waiting_prompt.params.get("hires_fix") and not check_bridge_capability(
-            "hires_fix", self.bridge_agent
-        ):
+        if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
-        if waiting_prompt.params.get(
-            "clip_skip", 1
-        ) > 1 and not check_bridge_capability("clip_skip", self.bridge_agent):
+        if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
+            "clip_skip", self.bridge_agent
+        ):
             return [False, "bridge_version"]
         if any(
             lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])
@@ -136,10 +129,7 @@ class ImageWorker(Worker):
             #    return [False, 'untrusted']
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
                 return [False, "untrusted"]
-        if (
-            not self.allow_post_processing
-            and len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1
-        ):
+        if not self.allow_post_processing and len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1:
             return [False, "post-processing"]
         # When the worker requires upfront kudos, the user has to have the required kudos upfront
         # But we allowe prioritized and trusted users to bypass this
@@ -160,15 +150,9 @@ class ImageWorker(Worker):
         ret_dict = super().get_details(details_privilege)
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
-        ret_dict["img2img"] = (
-            self.allow_img2img
-            if check_bridge_capability("img2img", self.bridge_agent)
-            else False
-        )
+        ret_dict["img2img"] = self.allow_img2img if check_bridge_capability("img2img", self.bridge_agent) else False
         ret_dict["painting"] = (
-            self.allow_painting
-            if check_bridge_capability("inpainting", self.bridge_agent)
-            else False
+            self.allow_painting if check_bridge_capability("inpainting", self.bridge_agent) else False
         )
         ret_dict["post-processing"] = self.allow_post_processing
         ret_dict["controlnet"] = self.allow_controlnet
@@ -191,13 +175,9 @@ class ImageWorker(Worker):
             elif self.user.customizer:
                 models.add(model)
             else:
-                logger.debug(
-                    f"Rejecting unknown model '{model}' from {self.name} ({self.id})"
-                )
+                logger.debug(f"Rejecting unknown model '{model}' from {self.name} ({self.id})")
         if len(models) == 0:
-            raise e.BadRequest(
-                "Unfortunately we cannot accept workers serving unrecognised models at this time"
-            )
+            raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models
 
     def get_bridge_kudos_multiplier(self):

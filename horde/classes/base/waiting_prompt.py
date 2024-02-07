@@ -24,18 +24,13 @@ procgen_classes = {
 }
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
-
-
-def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
 
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(
-        uuid_column_type(), db.ForeignKey("workers.id"), nullable=False
-    )
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("Worker")
     wp_id = db.Column(
         uuid_column_type(),
@@ -48,9 +43,7 @@ class WPAllowedWorkers(db.Model):
 class WPTrickedWorkers(db.Model):
     __tablename__ = "wp_tricked_workers"
     id = db.Column(db.Integer, primary_key=True)
-    worker_id = db.Column(
-        uuid_column_type(), db.ForeignKey("workers.id"), nullable=False
-    )
+    worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("Worker")
     wp_id = db.Column(
         uuid_column_type(),
@@ -87,12 +80,8 @@ class WaitingPrompt(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user = db.relationship("User", back_populates="waiting_prompts")
 
-    params = db.Column(
-        MutableDict.as_mutable(json_column_type), default={}, nullable=False
-    )
-    gen_payload = db.Column(
-        MutableDict.as_mutable(json_column_type), default={}, nullable=False
-    )
+    params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
+    gen_payload = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -102,9 +91,7 @@ class WaitingPrompt(db.Model):
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
-    kudos = db.Column(
-        db.Float, default=0, nullable=False, server_default=expression.literal(0)
-    )
+    kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     # The amount of jobs still to do
     n = db.Column(db.Integer, default=0, nullable=False, index=True)
     # This stores the original amount of jobs requested
@@ -137,15 +124,11 @@ class WaitingPrompt(db.Model):
         passive_deletes=True,
         cascade="all, delete-orphan",
     )
-    models = db.relationship(
-        "WPModels", back_populates="wp", cascade="all, delete-orphan"
-    )
+    models = db.relationship("WPModels", back_populates="wp", cascade="all, delete-orphan")
 
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 
-    created = db.Column(
-        db.DateTime(timezone=False), default=datetime.utcnow, index=True
-    )
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -189,9 +172,7 @@ class WaitingPrompt(db.Model):
         # and rewarding requests which bundle multiple jobs into the same payload
         # Instead of splitting them into multiples.
         horde_tax = 1
-        self.record_usage(
-            raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True
-        )
+        self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
         # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
 
@@ -369,9 +350,7 @@ class WaitingPrompt(db.Model):
         # Then we need to adjust the parallelization accordingly
         if queued_n < active_worker_thread_count:
             active_worker_thread_count = queued_n
-        avg_things_per_sec = (
-            request_avg / hv.thing_divisors[self.wp_type]
-        ) * active_worker_thread_count
+        avg_things_per_sec = (request_avg / hv.thing_divisors[self.wp_type]) * active_worker_thread_count
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
         # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
@@ -484,9 +463,7 @@ class WaitingPrompt(db.Model):
                 json.dumps(worker_string_ids),
             )
         except Exception as err:
-            logger.debug(
-                f"Error when trying to set workers cache: {err}. Retrieving from DB."
-            )
+            logger.debug(f"Error when trying to set workers cache: {err}. Retrieving from DB.")
         return worker_ids
 
     def get_worker_ids(self):

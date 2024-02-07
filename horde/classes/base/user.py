@@ -20,9 +20,7 @@ from horde.discord import send_problem_user_notification
 from horde import horde_redis as hr
 from horde.countermeasures import CounterMeasures
 
-
-def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
 
 class UserProblemJobs(db.Model):
@@ -45,17 +43,13 @@ class UserProblemJobs(db.Model):
     proxied_account = db.Column(db.String(255), nullable=True, index=True)
     # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
     job_id = db.Column(uuid_column_type(), nullable=False)
-    created = db.Column(
-        db.DateTime, default=datetime.utcnow, nullable=False, index=True
-    )
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class UserStats(db.Model):
     __tablename__ = "user_stats"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(
-        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="stats")
     action = db.Column(db.String(20), nullable=False, index=True)
     value = db.Column(db.BigInteger, nullable=False)
@@ -65,9 +59,7 @@ class UserStats(db.Model):
 class UserSuspicions(db.Model):
     __tablename__ = "user_suspicions"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(
-        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
@@ -83,9 +75,7 @@ class UserRecords(db.Model):
         ),
     )
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(
-        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="records")
     # contribution, usage, fulfillment, request
     record_type = db.Column(Enum(UserRecordTypes), nullable=False, index=True)
@@ -176,9 +166,7 @@ class UserSharedKey(db.Model):
             if self.kudos < 0:
                 self.kudos = 0
         self.utilized = round(self.utilized + kudos, 2)
-        logger.debug(
-            f"Utilized {kudos} from shared key {self.id}. {self.kudos} remaining."
-        )
+        logger.debug(f"Utilized {kudos} from shared key {self.id}. {self.kudos} remaining.")
         db.session.commit()
 
     def is_valid(self):
@@ -241,9 +229,7 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=False, nullable=False)
     oauth_id = db.Column(db.String(50), unique=True, nullable=False, index=True)
     api_key = db.Column(db.String(100), unique=True, nullable=False, index=True)
-    client_id = db.Column(
-        db.String(50), unique=True, default=generate_client_id, nullable=False
-    )
+    client_id = db.Column(db.String(50), unique=True, default=generate_client_id, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
@@ -259,36 +245,16 @@ class User(db.Model):
     public_workers = db.Column(db.Boolean, default=False, nullable=False)
     concurrency = db.Column(db.Integer, default=30, nullable=False)
 
-    workers = db.relationship(
-        "Worker", back_populates="user", cascade="all, delete-orphan"
-    )
-    teams = db.relationship(
-        "Team", back_populates="owner", cascade="all, delete-orphan"
-    )
-    sharedkeys = db.relationship(
-        "UserSharedKey", back_populates="user", cascade="all, delete-orphan"
-    )
-    suspicions = db.relationship(
-        "UserSuspicions", back_populates="user", cascade="all, delete-orphan"
-    )
-    records = db.relationship(
-        "UserRecords", back_populates="user", cascade="all, delete-orphan"
-    )
-    roles = db.relationship(
-        "UserRole", back_populates="user", cascade="all, delete-orphan"
-    )
-    stats = db.relationship(
-        "UserStats", back_populates="user", cascade="all, delete-orphan"
-    )
-    problem_jobs = db.relationship(
-        "UserProblemJobs", back_populates="user", cascade="all, delete-orphan"
-    )
-    waiting_prompts = db.relationship(
-        "WaitingPrompt", back_populates="user", cascade="all, delete-orphan"
-    )
-    interrogations = db.relationship(
-        "Interrogation", back_populates="user", cascade="all, delete-orphan"
-    )
+    workers = db.relationship("Worker", back_populates="user", cascade="all, delete-orphan")
+    teams = db.relationship("Team", back_populates="owner", cascade="all, delete-orphan")
+    sharedkeys = db.relationship("UserSharedKey", back_populates="user", cascade="all, delete-orphan")
+    suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
+    records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
+    roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
+    stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
+    problem_jobs = db.relationship("UserProblemJobs", back_populates="user", cascade="all, delete-orphan")
+    waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
+    interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
 
     ## TODO: Figure out how to make the below work
@@ -305,9 +271,7 @@ class User(db.Model):
 
     @hybrid_property
     def trusted(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.TRUSTED
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.TRUSTED).first()
         return user_role is not None and user_role.value
 
     @trusted.expression
@@ -326,9 +290,7 @@ class User(db.Model):
 
     @hybrid_property
     def flagged(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.FLAGGED
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.FLAGGED).first()
         return user_role is not None and user_role.value
 
     @flagged.expression
@@ -347,9 +309,7 @@ class User(db.Model):
 
     @hybrid_property
     def moderator(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.MODERATOR
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.MODERATOR).first()
         return user_role is not None and user_role.value
 
     @moderator.expression
@@ -368,9 +328,7 @@ class User(db.Model):
 
     @hybrid_property
     def customizer(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.CUSTOMIZER
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.CUSTOMIZER).first()
         return user_role is not None and user_role.value
 
     @customizer.expression
@@ -389,9 +347,7 @@ class User(db.Model):
 
     @hybrid_property
     def vpn(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.VPN
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.VPN).first()
         return user_role is not None and user_role.value
 
     @vpn.expression
@@ -410,9 +366,7 @@ class User(db.Model):
 
     @hybrid_property
     def service(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.SERVICE
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.SERVICE).first()
         return user_role is not None and user_role.value
 
     @service.expression
@@ -431,9 +385,7 @@ class User(db.Model):
 
     @hybrid_property
     def special(self) -> bool:
-        user_role = UserRole.query.filter_by(
-            user_id=self.id, user_role=UserRoleTypes.SPECIAL
-        ).first()
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.SPECIAL).first()
         return user_role is not None and user_role.value
 
     @special.expression
@@ -572,9 +524,7 @@ class User(db.Model):
 
     def update_user_record(self, record_type, record, increment_value):
         record_details = (
-            db.session.query(UserRecords)
-            .filter_by(user_id=self.id, record_type=record_type, record=record)
-            .first()
+            db.session.query(UserRecords).filter_by(user_id=self.id, record_type=record_type, record=record).first()
         )
         if not record_details:
             record_details = UserRecords(
@@ -592,15 +542,11 @@ class User(db.Model):
     def record_usage(self, raw_things, kudos, usage_type):
         self.last_active = datetime.utcnow()
         self.modify_kudos(-kudos, "accumulated")
-        self.update_user_record(
-            record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1
-        )
+        self.update_user_record(record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1)
         self.update_user_record(
             record_type=UserRecordTypes.USAGE,
             record=usage_type,
-            increment_value=raw_things
-            * self.usage_multiplier
-            / hv.thing_divisors[usage_type],
+            increment_value=raw_things * self.usage_multiplier / hv.thing_divisors[usage_type],
         )
 
     def record_contributions(self, raw_things, kudos, contrib_type):
@@ -655,9 +601,7 @@ class User(db.Model):
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
         # If they already had some, we give the difference but don't change the date
-        logger.info(
-            f"Modifying monthly kudos of {self.get_unique_alias()} by {monthly_kudos}"
-        )
+        logger.info(f"Modifying monthly kudos of {self.get_unique_alias()} by {monthly_kudos}")
         if monthly_kudos > 0:
             self.modify_kudos(monthly_kudos, "recurring")
         if not self.monthly_kudos_last_received:
@@ -671,17 +615,13 @@ class User(db.Model):
         logger.info(f"Checking {self.get_unique_alias()} for monthly kudos...")
         kudos_amount = self.calculate_monthly_kudos()
         if kudos_amount == 0:
-            logger.warning(
-                f"receive_monthly_kudos() received 0 kudos account {self.get_unique_alias()}"
-            )
+            logger.warning(f"receive_monthly_kudos() received 0 kudos account {self.get_unique_alias()}")
             return
         if force:
             has_month_passed = True
         elif self.monthly_kudos_last_received:
             has_month_passed = (
-                datetime.utcnow()
-                > self.monthly_kudos_last_received
-                + dateutil.relativedelta.relativedelta(months=+1)
+                datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
             )
         else:
             # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
@@ -692,13 +632,10 @@ class User(db.Model):
             )
             # Not committing as it'll happen in modify_kudos() anyway
             if not self.monthly_kudos_last_received:
-                self.monthly_kudos_last_received = (
-                    datetime.utcnow() + dateutil.relativedelta.relativedelta(months=+1)
-                )
+                self.monthly_kudos_last_received = datetime.utcnow() + dateutil.relativedelta.relativedelta(months=+1)
             elif not prevent_date_change:
                 self.monthly_kudos_last_received = (
-                    self.monthly_kudos_last_received
-                    + dateutil.relativedelta.relativedelta(months=+1)
+                    self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
                 )
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(
@@ -713,21 +650,12 @@ class User(db.Model):
         return base_amount
 
     def modify_kudos(self, kudos, action="accumulated"):
-        logger.debug(
-            f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}"
-        )
+        logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
         self.ensure_kudos_positive()
-        kudos_details = (
-            db.session.query(UserStats)
-            .filter_by(user_id=self.id)
-            .filter_by(action=action)
-            .first()
-        )
+        kudos_details = db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
         if not kudos_details:
-            kudos_details = UserStats(
-                user_id=self.id, action=action, value=round(kudos, 2)
-            )
+            kudos_details = UserStats(user_id=self.id, action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
@@ -774,17 +702,14 @@ class User(db.Model):
         # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
         return allowed_concurrency
 
-    def report_suspicion(
-        self, amount=1, reason=Suspicions.USERNAME_PROFANITY, formats=None
-    ):
+    def report_suspicion(self, amount=1, reason=Suspicions.USERNAME_PROFANITY, formats=None):
         if not formats:
             formats = []
         # Anon is never considered suspicious
         if self.is_anon():
             return
         if (
-            reason
-            not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED]
+            reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED]
             and int(reason) in self.get_suspicion_reasons()
         ):
             return
@@ -793,9 +718,7 @@ class User(db.Model):
         db.session.commit()
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
-            logger.warning(
-                f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason_log}"
-            )
+            logger.warning(f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason_log}")
 
     def get_suspicion_reasons(self):
         return set([s.suspicion_id for s in self.suspicions])
@@ -839,10 +762,7 @@ class User(db.Model):
             if worker.ipaddr == ipaddr:
                 ipcount += 1
         if self.trusted:
-            if (
-                ipcount > self.SAME_IP_TRUSTED_WORKER_THRESHOLD
-                and ipcount > self.worker_invited
-            ):
+            if ipcount > self.SAME_IP_TRUSTED_WORKER_THRESHOLD and ipcount > self.worker_invited:
                 return True
         elif ipcount > self.SAME_IP_WORKER_THRESHOLD and ipcount > self.worker_invited:
             return True
@@ -882,10 +802,7 @@ class User(db.Model):
             if rtype not in records_dict:
                 records_dict[rtype] = {}
             record_key = r.record
-            if (
-                r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION}
-                and r.record in hv.thing_names
-            ):
+            if r.record_type in {UserRecordTypes.USAGE, UserRecordTypes.CONTRIBUTION} and r.record in hv.thing_names:
                 record_key = hv.thing_names[r.record]
             records_dict[rtype][record_key] = r.value
         return records_dict
@@ -982,8 +899,7 @@ class User(db.Model):
                 proxied_account=procgen.wp.proxied_account,
             )
             user_hourly = user_count_q.filter(
-                UserProblemJobs.created
-                > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
             ).count()
             if user_hourly > HOURLY_THRESHOLD:
                 if hr.horde_r_get(f"user_{redis_id}_hourly_problem_notified"):
@@ -994,13 +910,10 @@ class User(db.Model):
                     f"Latest IP: {ipaddr}.\n"
                     f"Latest Prompt: {prompt}.{loras}"
                 )
-                hr.horde_r_setex(
-                    f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1
-                )
+                hr.horde_r_setex(f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
             user_daily = user_count_q.filter(
-                UserProblemJobs.created
-                > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
+                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
             ).count()
             if user_daily > DAILY_THRESHOLD:
                 # We don't want to spam notifications
@@ -1012,14 +925,11 @@ class User(db.Model):
                     f"Latest IP: {ipaddr}.\n"
                     f"Latest Prompt: {prompt}.{loras}"
                 )
-                hr.horde_r_setex(
-                    f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1
-                )
+                hr.horde_r_setex(f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1)
                 return
         ip_count_q = UserProblemJobs.query.filter_by(ipaddr=ipaddr)
         ip_hourly = ip_count_q.filter(
-            UserProblemJobs.created
-            > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
         ).count()
         if ip_hourly > HOURLY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_hourly_problem_notified"):
@@ -1030,13 +940,10 @@ class User(db.Model):
                 f"Latest User: {latest_user}.\n"
                 f"Latest Prompt: {prompt}.{loras}"
             )
-            hr.horde_r_setex(
-                f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1
-            )
+            hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
             return
         ip_daily = ip_count_q.filter(
-            UserProblemJobs.created
-            > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
         ).count()
         if ip_daily > DAILY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_daily_problem_notified"):
@@ -1047,7 +954,5 @@ class User(db.Model):
                 f"Latest User: {latest_user}.\n"
                 f"Latest Prompt: {prompt}.{loras}"
             )
-            hr.horde_r_setex(
-                f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1
-            )
+            hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)
             return
