@@ -34,7 +34,7 @@ classifiers = [
 "Bug Tracker" = "https://github.com/Haidra-Org/AI-Horde"
 
 [tool.ruff]
-line-length = 119
+line-length = 140
 select = [
   "A",
   "I",
@@ -44,10 +44,10 @@ select = [
   "UP",
   "YTT",
   #"B",
-  "C4",
+  #"C4",
   "PIE",
-  "RET",
-  "SIM",
+  #"RET",
+  #"SIM",
   "COM",
   # "D",
   #"ANN"
@@ -70,7 +70,7 @@ ignore = [
 
 
 [tool.black]
-line-length = 119
+line-length = 140
 include = '\.pyi?$'
 
 [tool.ruff.per-file-ignores]

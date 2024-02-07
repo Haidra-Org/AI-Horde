@@ -28,7 +28,7 @@ class ImageWorker(Worker):
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
-        if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072:
+        if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072: #FIXME #noqa SIM102
             if not self.user.trusted:
                 self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
@@ -44,7 +44,8 @@ class ImageWorker(Worker):
             paused_string = "(Paused) "
         db.session.commit()
         logger.trace(
-            f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels",
+            f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} "
+            f"at {self.max_pixels} max pixels",
         )
 
     def calculate_uptime_reward(self):
@@ -118,9 +119,9 @@ class ImageWorker(Worker):
             self.bridge_agent,
         ):
             return [False, "bridge_version"]
-        if any(
-            lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])
-        ) and not check_bridge_capability("lora_versions", self.bridge_agent):
+        if any(lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])) and not check_bridge_capability(
+            "lora_versions", self.bridge_agent,
+        ):
             return [False, "bridge_version"]
         if waiting_prompt.source_processing != "img2img" and not self.allow_painting:
             return [False, "painting"]
@@ -128,7 +129,7 @@ class ImageWorker(Worker):
             return [False, "unsafe_ip"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
-        if not self.user.trusted:
+        if not self.user.trusted: # FIXME #noqa SIM102
             # if waiting_prompt.user.is_anon():
             #    return [False, 'untrusted']
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
@@ -155,9 +156,7 @@ class ImageWorker(Worker):
         ret_dict["max_pixels"] = self.max_pixels
         ret_dict["megapixelsteps_generated"] = self.contributions
         ret_dict["img2img"] = self.allow_img2img if check_bridge_capability("img2img", self.bridge_agent) else False
-        ret_dict["painting"] = (
-            self.allow_painting if check_bridge_capability("inpainting", self.bridge_agent) else False
-        )
+        ret_dict["painting"] = self.allow_painting if check_bridge_capability("inpainting", self.bridge_agent) else False
         ret_dict["post-processing"] = self.allow_post_processing
         ret_dict["controlnet"] = self.allow_controlnet
         ret_dict["lora"] = self.allow_lora
@@ -174,9 +173,7 @@ class ImageWorker(Worker):
                 if self.user.get_unique_alias() != user_alias:
                     raise e.BadRequest(f"This model can only be hosted by {user_alias}")
                 models.add(model)
-            elif model in model_reference.stable_diffusion_names:
-                models.add(model)
-            elif self.user.customizer:
+            elif model in model_reference.stable_diffusion_names or self.user.customizer:
                 models.add(model)
             else:
                 logger.debug(f"Rejecting unknown model '{model}' from {self.name} ({self.id})")

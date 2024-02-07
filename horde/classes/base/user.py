@@ -522,9 +522,7 @@ class User(db.Model):
         return f"{self.username}#{self.id}"
 
     def update_user_record(self, record_type, record, increment_value):
-        record_details = (
-            db.session.query(UserRecords).filter_by(user_id=self.id, record_type=record_type, record=record).first()
-        )
+        record_details = db.session.query(UserRecords).filter_by(user_id=self.id, record_type=record_type, record=record).first()
         if not record_details:
             record_details = UserRecords(
                 user_id=self.id,
@@ -619,11 +617,10 @@ class User(db.Model):
         if force:
             has_month_passed = True
         elif self.monthly_kudos_last_received:
-            has_month_passed = (
-                datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
-            )
+            has_month_passed = datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
         else:
-            # If the user is supposed to receive Kudos, but doesn't have a last received date, it means it is a moderator who hasn't received it the first time
+            # If the user is supposed to receive Kudos, but doesn't have a last received date, 
+            # it means it is a moderator who hasn't received it the first time
             has_month_passed = True
         if has_month_passed:
             logger.info(
@@ -633,9 +630,7 @@ class User(db.Model):
             if not self.monthly_kudos_last_received:
                 self.monthly_kudos_last_received = datetime.utcnow() + dateutil.relativedelta.relativedelta(months=+1)
             elif not prevent_date_change:
-                self.monthly_kudos_last_received = (
-                    self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
-                )
+                self.monthly_kudos_last_received = self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(
                 f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos. Their new total is {self.kudos}",
@@ -686,9 +681,7 @@ class User(db.Model):
             models_dict = {}
         if not self.is_anon() or len(models_requested) == 0:
             return self.concurrency
-        return (
-            self.concurrency
-        )  # FIXME: For this to work, each model_dict needs to contain a list of worker ids in the "workers" key
+        return self.concurrency  # FIXME: For this to work, each model_dict needs to contain a list of worker ids in the "workers" key
         found_workers = []
         for model_name in models_requested:
             model_dict = models_dict.get(model_name)
@@ -707,10 +700,7 @@ class User(db.Model):
         # Anon is never considered suspicious
         if self.is_anon():
             return
-        if (
-            reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED]
-            and int(reason) in self.get_suspicion_reasons()
-        ):
+        if reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED] and int(reason) in self.get_suspicion_reasons():
             return
         new_suspicion = UserSuspicions(user_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)

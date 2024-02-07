@@ -103,7 +103,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         if "seed_variation" in self.params:
             self.seed_variation = self.params.pop("seed_variation")
             # I set the seed_to_int now, because it's anyway going to be incremented by the seed_variation
-            # I am not doing it in get_job_payload() because there seems to be a race condition in where even though I set self.gen_payload["seed"] to seed_to_int()
+            # I am not doing it in get_job_payload() because there seems to be a race condition
+            # in where even though I set self.gen_payload["seed"] to seed_to_int()
             # It then crashes in self.gen_payload["seed"] += self.seed_variation trying to None + Int
             if self.seed is None:
                 self.seed = self.seed_to_int(self.seed)
@@ -228,8 +229,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
         logger.info(
-            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} ({self.ipaddr}) ({self.client_agent}): "
-            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} == {self.total_usage} Total MPs for {self.kudos} kudos.",
+            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} "
+            f"({self.ipaddr}) ({self.client_agent}): "
+            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} "
+            f"== {self.total_usage} Total MPs for {self.kudos} kudos.",
         )
 
     def seed_to_int(self, s=None):
@@ -340,9 +343,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         ):
             max_res = 768
         # We allow everyone to use SDXL up to 1024
-        if max_res < 1024 and any(
-            model_reference.get_model_baseline(mn) == "stable_diffusion_xl" for mn in model_names
-        ):
+        if max_res < 1024 and any(model_reference.get_model_baseline(mn) == "stable_diffusion_xl" for mn in model_names):
             max_res = 1024
         if max_res > 1024:
             max_res = 1024

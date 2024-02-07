@@ -235,7 +235,8 @@ class WaitingPrompt(db.Model):
             # For batched requests, we need all procgens to use the same model
             model = new_gen.model
             logger.info(
-                f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {current_n} gens left",
+                f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
+                f"('{worker.name}' / {worker.ipaddr}) - {current_n} gens left",
             )
             gens_list.append(new_gen)
             if self.faulted:
@@ -251,7 +252,8 @@ class WaitingPrompt(db.Model):
         db.session.add(new_trick)
         db.session.commit()
         logger.info(
-            f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left",
+            f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
+            f"('{worker.name}' / {worker.ipaddr}) - {self.n} gens left",
         )
         return self.get_pop_payload([new_gen], payload)
 
@@ -343,7 +345,8 @@ class WaitingPrompt(db.Model):
 
         queue_pos, queued_things, queued_n = wp_queue_stats
         # We increment the priority by 1, because it starts at -1
-        # This means when all our requests are currently processing or done, with nothing else in the queue, we'll show queue position 0 which is appropriate.
+        # This means when all our requests are currently processing or done, with nothing else in the queue,
+        # we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
         # If there's fewer requests than the number of active workers
         # Then we need to adjust the parallelization accordingly
@@ -352,7 +355,8 @@ class WaitingPrompt(db.Model):
         avg_things_per_sec = (request_avg / hv.thing_divisors[self.wp_type]) * active_worker_thread_count
         # Is this is 0, it means one of two things:
         # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
-        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero, but it's not used anyway as it will just divide 0/1
+        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero,
+        # but it's not used anyway as it will just divide 0/1
         if avg_things_per_sec == 0:
             avg_things_per_sec = 1
         wait_time = queued_things / avg_things_per_sec

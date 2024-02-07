@@ -84,8 +84,7 @@ class NameAlreadyExists(wze.BadRequest):
 class PolymorphicNameConflict(wze.BadRequest):
     def __init__(self, name, object_type="worker"):
         self.specific = (
-            f"The specified name '{name}' is already taken by a different type "
-            f"of {object_type}. Please choose a different name!"
+            f"The specified name '{name}' is already taken by a different type " f"of {object_type}. Please choose a different name!"
         )
         self.log = None
 
@@ -93,10 +92,7 @@ class PolymorphicNameConflict(wze.BadRequest):
 class ImageValidationFailed(wze.BadRequest):
     def __init__(
         self,
-        message=(
-            "Please ensure the source image payload is either "
-            "a URL containing an image or a valid base64 encoded image."
-        ),
+        message=("Please ensure the source image payload is either " "a URL containing an image or a valid base64 encoded image."),
     ):
         self.specific = f"Image validation failed. {message}"
         self.log = "Source image validation failed"
@@ -140,9 +136,7 @@ class InvalidAPIKey(wze.Unauthorized):
         if keytype == "Shared":
             self.specific = "No user matching sent Shared Key."
         else:
-            self.specific = (
-                "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
-            )
+            self.specific = "No user matching sent API Key. Have you remembered to register at https://stablehorde.net/register ?"
         self.log = f"Invalid {keytype} Key sent for {subject}"
 
 
@@ -349,9 +343,7 @@ class TooManyPrompts(wze.TooManyRequests):
             )
         else:
             self.specific = msg
-        self.log = (
-            f"User '{username}' has already requested too many parallel requests ({count}/{concurrency}). Aborting!"
-        )
+        self.log = f"User '{username}' has already requested too many parallel requests ({count}/{concurrency}). Aborting!"
 
 
 class NoValidWorkers(wze.BadRequest):

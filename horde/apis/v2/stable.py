@@ -122,8 +122,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(
-            model_reference.get_model_baseline(model_name).startswith("stable diffusion 2")
-            for model_name in self.args.models
+            model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models
         ):
             raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x")
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
@@ -132,10 +131,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
             raise e.UnsupportedModel("Controlnet Requires a source image.")
-        if any(
-            model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl")
-            for model_name in self.args.models
-        ):
+        if any(model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl") for model_name in self.args.models):
             if self.params.get("hires_fix", False) is True:
                 raise e.BadRequest("hires fix does not work with SDXL currently.")
             if "control_type" in self.params:
@@ -150,13 +146,9 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map")
-        if not self.args.source_image and any(
-            model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models
-        ):
+        if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel
-        if not self.args.source_image and any(
-            model_name in model_reference.controlnet_models for model_name in self.args.models
-        ):
+        if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
             raise e.UnsupportedModel
         # If the beta has been requested, it takes over the model list
         if "SDXL_beta::stability.ai#6901" in self.models:
@@ -606,9 +598,7 @@ class Aesthetics(Resource):
             raise e.InvalidAestheticAttempt(
                 "You can only aesthetically rate requests you have opted to share publicly",
             )
-        procgen_ids = [
-            str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled
-        ]
+        procgen_ids = [str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
         if self.args.ratings:
             seen_ids = []
             for rating in self.args.ratings:

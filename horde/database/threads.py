@@ -42,7 +42,8 @@ def get_quorum():
     if not quorum:
         hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
         logger.critical(f"Quorum changed to port {args.port} with ID {horde_instance_id}")
-        # We return None which will make other threads sleep one iteration to ensure no other node raced us to the quorum
+        # We return None which will make other threads sleep
+        # one iteration to ensure no other node raced us to the quorum
         return None
     if quorum == horde_instance_id:
         hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
@@ -199,7 +200,9 @@ def check_waiting_prompts():
                 .filter(
                     procgen_class.generation == None,  # noqa E712
                     procgen_class.faulted == False,  # noqa E712
-                    # cutoff_time - procgen_class.start_time > wp_class.job_ttl, # How do we calculate this in the query? Maybe I need to set an expiry time iun procgen as well better?
+                    # cutoff_time - procgen_class.start_time > wp_class.job_ttl,
+                    # How do we calculate this in the query? Maybe I need to
+                    # set an expiry time iun procgen as well better?
                 )
                 .all()
             )
@@ -219,11 +222,7 @@ def check_waiting_prompts():
                 .having(func.count(procgen_class.wp_id) > 2)
             )
             wp_ids = [wp_id[0] for wp_id in wp_ids]
-            waiting_prompts = (
-                db.session.query(wp_class)
-                .filter(wp_class.id.in_(wp_ids))
-                .filter(wp_class.faulted == False)  # noqa E712
-            )
+            waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted == False)  # noqa E712
             logger.info(f"Found {waiting_prompts.count()} New faulted WPs")
             waiting_prompts.update({wp_class.faulted: True}, synchronize_session=False)
             db.session.commit()
@@ -274,7 +273,9 @@ def store_available_models():
 
 @logger.catch(reraise=True)
 def store_totals():
-    """Stores the calculated totals as json. This is never expired to avoid ending up with massive operations in case the thread dies"""
+    """Stores the calculated totals as json.
+    This is never expired to avoid ending up with massive operations in case the thread dies
+    """
     with HORDE.app_context():
         json_totals = json.dumps(count_totals())
         try:
@@ -343,7 +344,7 @@ def store_patreon_members():
             member_dict["sponsor_link"] = note["sponsor_link"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
-    logger.info(f"patreon_cache ({len(active_members)}): {sorted(list(active_members.keys()))}")
+    logger.info(f"patreon_cache ({len(active_members)}): {sorted(active_members.keys())}")
     hr.horde_r_set("patreon_cache", cached_patreons)
 
 
@@ -374,12 +375,12 @@ def store_compiled_filter_regex():
     """Compiles each filter as a final regex and stores it in redit"""
     with HORDE.app_context():
         for filter_id in [10, 11, 20]:
-            filter = compile_regex_filter(filter_id)
+            rfilter = compile_regex_filter(filter_id)
             # Empty string means compilation error
-            if filter == "":
+            if rfilter == "":
                 continue
             # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
-            hr.horde_r_set(f"filter_{filter_id}", filter)
+            hr.horde_r_set(f"filter_{filter_id}", rfilter)
 
 
 @logger.catch(reraise=True)

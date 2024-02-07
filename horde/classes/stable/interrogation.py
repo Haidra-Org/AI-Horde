@@ -124,7 +124,8 @@ class InterrogationForms(db.Model):
             kudos_burn += 1
         self.interrogation.record_usage(kudos=self.kudos + kudos_burn)
         logger.info(
-            f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}",
+            f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, "
+            f"delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}",
         )
 
     def abort(self):
@@ -188,7 +189,8 @@ class InterrogationForms(db.Model):
                 req = requests.post(self.interrogation.webhook, json=data, timeout=3)
                 if not req.ok:
                     logger.debug(
-                        f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...",
+                        f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. "
+                        f"Will retry {3-riter-1} more times...",
                     )
                     continue
                 break
@@ -284,12 +286,7 @@ class Interrogation(db.Model):
 
     def start_interrogation(self, worker):
         # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
-        myself_refresh = (
-            db.session.query(Interrogation)
-            .filter(Interrogation.id == self.id, Interrogation.n > 0)
-            .with_for_update()
-            .first()
-        )
+        myself_refresh = db.session.query(Interrogation).filter(Interrogation.id == self.id, Interrogation.n > 0).with_for_update().first()
         if not myself_refresh:
             return None
         myself_refresh.n -= 1

@@ -232,9 +232,7 @@ class News:
         },
         {
             "date_published": "2023-02-03",
-            "newspiece": (
-                "The horde now supports pix2pix. All you have to do is use img2img as normal and select the pix2pix model!"
-            ),
+            "newspiece": ("The horde now supports pix2pix. All you have to do is use img2img as normal and select the pix2pix model!"),
             "tags": ["img2img", "ResidentChief"],
             "importance": "Information",
         },

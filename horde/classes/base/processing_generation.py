@@ -120,7 +120,9 @@ class ProcessingGeneration(db.Model):
         else:
             self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
             self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos))
-            log_string = f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
+            log_string = (
+                f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
+            )
             log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
             logger.info(log_string)
 

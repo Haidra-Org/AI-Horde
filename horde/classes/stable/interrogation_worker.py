@@ -71,8 +71,7 @@ class InterrogationWorker(WorkerTemplate):
             if (
                 not interrogation_form.interrogation.user.trusted
                 and interrogation_form.interrogation.user.get_unique_alias() not in self.prioritized_users
-                and user_actual_kudos
-                < interrogation_form.kudos + 1  # All forms take +1 kudos than they give to the worker
+                and user_actual_kudos < interrogation_form.kudos + 1  # All forms take +1 kudos than they give to the worker
             ):
                 return False, "kudos"
         return True, None
@@ -84,9 +83,7 @@ class InterrogationWorker(WorkerTemplate):
         self.modify_kudos(kudos, "interrogated")
         self.fulfilments += 1
         # TODO: Switch to use desc() and offset to ensure we don't have performances left over
-        performances = (
-            db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
-        )
+        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
             db.session.delete(performances.first())
         new_performance = WorkerPerformance(worker_id=self.id, performance=seconds_taken)

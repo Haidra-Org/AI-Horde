@@ -47,7 +47,8 @@ class TextWorker(Worker):
         if self.paused:
             paused_string = "(Paused) "
         logger.trace(
-            f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_context_length} max content length.",
+            f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} "
+            f"at {self.max_length} max tokens and {self.max_context_length} max content length.",
         )
 
     def refresh_softprompt_cache(self):

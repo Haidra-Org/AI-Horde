@@ -87,11 +87,11 @@ class PromptChecker:
             except Exception:
                 logger.warning("Errors when loading cached regex replacements in redis! Check threads!")
                 stored_replacements = []
-        for id in [10, 11, 20]:
-            filter_id = f"filter_{id}"
+        for _id in [10, 11, 20]:
+            filter_id = f"filter_{_id}"
             if SQLITE_MODE:
                 with HORDE.app_context():
-                    stored_filter = compile_regex_filter(id)
+                    stored_filter = compile_regex_filter(_id)
             else:
                 stored_filter = horde_r_get(filter_id)
             # Ensure we don't get catch-all regex
@@ -111,7 +111,7 @@ class PromptChecker:
             ]
         self.next_refresh = datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=1)
 
-    def __call__(self, prompt, id=None):
+    def __call__(self, prompt, _id=None):
         if args.disable_filters:
             return 0, []
         self.refresh_regex()
@@ -124,7 +124,7 @@ class PromptChecker:
         for filters in [self.filters1, self.filters2]:
             for filter_id in filters:
                 # This allows to check only a specific filter ID
-                if id and filter_id != f"filter_{id}":
+                if _id and filter_id != f"filter_{_id}":
                     continue
                 # We only need 1 of the filters in the group to match to increase suspicion
                 # Suspicion does not increase further for more filters in the same group
@@ -172,7 +172,8 @@ class PromptChecker:
                         "👩‍👧",
                         "👩‍👧‍👦",
                         "👩‍👦‍👦",
-                        "👩‍👧‍👧" "🤱",
+                        "👩‍👧‍👧",
+                        "🤱",
                         "🤱🏻",
                         "🤱🏼",
                         "🤱🏽",
@@ -304,7 +305,8 @@ class PromptChecker:
         if prompt.strip() == "":
             return None
 
-        # at this point all the matching stuff will be filtered out of the prompt. reconstruct sanitized prompt and return
+        # at this point all the matching stuff will be filtered out of the prompt.
+        # reconstruct sanitized prompt and return
         logger.debug(prompt + replacednegprompt)
         return prompt + replacednegprompt
 
@@ -321,8 +323,7 @@ class PromptChecker:
             prompt = prompt.replace(trim_match, replacement)
         prompt = re.sub(r"\s+", " ", prompt)
         # Remove all accents
-        prompt = unidecode(prompt)
-        return prompt
+        return unidecode(prompt)
 
 
 prompt_checker = PromptChecker()

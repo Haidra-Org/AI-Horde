@@ -65,7 +65,8 @@ class TextWaitingPrompt(WaitingPrompt):
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
         logger.info(
-            f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens",
+            f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: "
+            f"token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens",
         )
 
     def calculate_extra_kudos_burn(self, kudos):

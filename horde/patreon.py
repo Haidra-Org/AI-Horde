@@ -27,10 +27,7 @@ class PatreonCache(PrimaryTimedFunction):
             if exact_entitlement is not None:
                 if self.patrons[pid]["entitlement_amount"] == exact_entitlement:
                     matching_patrons[pid] = self.patrons[pid]
-            elif (
-                self.patrons[pid]["entitlement_amount"] >= min_entitlement
-                and self.patrons[pid]["entitlement_amount"] <= max_entitlement
-            ):
+            elif self.patrons[pid]["entitlement_amount"] >= min_entitlement and self.patrons[pid]["entitlement_amount"] <= max_entitlement:
                 matching_patrons[pid] = self.patrons[pid]
         return matching_patrons
 

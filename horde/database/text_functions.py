@@ -22,8 +22,7 @@ from horde.model_reference import model_reference
 # Should be overriden
 def convert_things_to_kudos(things, **kwargs):
     # The baseline for a standard generation of 512x512, 50 steps is 10 kudos
-    kudos = round(things, 2)
-    return kudos
+    return round(things, 2)
 
 
 def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
@@ -161,11 +160,8 @@ def get_cached_worker_performance():
 # Which I can reuse to cache the results of other requests
 def retrieve_worker_performances():
     avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).scalar()
-    if avg_perf is None:
-        avg_perf = 0
-    else:
-        avg_perf = round(avg_perf, 2)
-    return avg_perf
+    avg_perf = 0 if avg_perf is None else round(avg_perf, 2)
+    return avg_perf #noqa RET504
 
 
 def refresh_worker_performances_cache():

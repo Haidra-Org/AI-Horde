@@ -80,17 +80,9 @@ def get_top_worker():
 def get_active_workers(worker_type=None):
     active_workers = []
     if worker_type is None or worker_type == "image":
-        active_workers += (
-            db.session.query(ImageWorker)
-            .filter(ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
-            .all()
-        )
+        active_workers += db.session.query(ImageWorker).filter(ImageWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)).all()
     if worker_type is None or worker_type == "text":
-        active_workers += (
-            db.session.query(TextWorker)
-            .filter(TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
-            .all()
-        )
+        active_workers += db.session.query(TextWorker).filter(TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)).all()
     if worker_type is None or worker_type == "interrogation":
         active_workers += (
             db.session.query(InterrogationWorker)
@@ -109,11 +101,7 @@ def count_active_workers(worker_class="image"):
         WorkerClass = InterrogationWorker
     if worker_class == "text":
         WorkerClass = TextWorker
-    active_workers = (
-        db.session.query(WorkerClass)
-        .filter(WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300))
-        .count()
-    )
+    active_workers = db.session.query(WorkerClass).filter(WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)).count()
     active_workers_threads = (
         db.session.query(func.sum(WorkerClass.threads).label("threads"))
         .filter(WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300))
@@ -315,10 +303,7 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]["performance"] = stats.get_model_avg(model_name)
             models_dict[model_name]["workers"] = []
 
-        if filter_model_name:
-            known_models = [filter_model_name]
-        else:
-            known_models = list(model_reference.stable_diffusion_names)
+        known_models = [filter_model_name] if filter_model_name else list(model_reference.stable_diffusion_names)
         ophan_models = (
             db.session.query(
                 WPModels.model,
@@ -580,13 +565,9 @@ def count_totals():
         .select_from(all_image_wp_counts)
         .one()
     )
-    ret_dict["queued_requests"] = (
-        int(total_image_sum.total_count_sum) if total_image_sum.total_count_sum is not None else 0
-    )
+    ret_dict["queued_requests"] = int(total_image_sum.total_count_sum) if total_image_sum.total_count_sum is not None else 0
     ret_dict[queued_images] = (
-        round(int(total_image_sum.total_things_sum) / hv.thing_divisors["image"], 2)
-        if total_image_sum.total_things_sum is not None
-        else 0
+        round(int(total_image_sum.total_things_sum) / hv.thing_divisors["image"], 2) if total_image_sum.total_things_sum is not None else 0
     )
     all_text_wp_counts = (
         db.session.query(
@@ -617,13 +598,9 @@ def count_totals():
         .select_from(all_text_wp_counts)
         .one()
     )
-    ret_dict["queued_text_requests"] = (
-        int(total_text_sum.total_count_sum) if total_text_sum.total_count_sum is not None else 0
-    )
+    ret_dict["queued_text_requests"] = int(total_text_sum.total_count_sum) if total_text_sum.total_count_sum is not None else 0
     ret_dict[queued_text] = (
-        int(total_text_sum.total_things_sum) / hv.thing_divisors["text"]
-        if total_text_sum.total_things_sum is not None
-        else 0
+        int(total_text_sum.total_things_sum) / hv.thing_divisors["text"] if total_text_sum.total_things_sum is not None else 0
     )
     ret_dict[queued_forms] = (
         db.session.query(
@@ -1064,8 +1041,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_i
         if retrieve_limit <= 0:
             retrieve_limit = 1
         final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
-    final_interrogation_list = final_interrogation_query.limit(retrieve_limit).all()
-    return final_interrogation_list
+    return final_interrogation_query.limit(retrieve_limit).all()
 
 
 # Returns the queue position of the provided WP based on kudos
@@ -1174,11 +1150,8 @@ def get_all_active_wps():
 # Which I can reuse to cache the results of other requests
 def retrieve_worker_performances(worker_type=ImageWorker):
     avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).join(worker_type).scalar()
-    if avg_perf is None:
-        avg_perf = 0
-    else:
-        avg_perf = round(avg_perf, 2)
-    return avg_perf
+    avg_perf = 0 if avg_perf is None else round(avg_perf, 2)
+    return avg_perf # noqa RET504
 
 
 def refresh_worker_performances_cache(request_type="image"):
@@ -1207,8 +1180,7 @@ def get_request_avg(request_type="image"):
         perf_cache = hr.horde_r_get("text_worker_performances_avg_cache")
     if not perf_cache:
         return refresh_worker_performances_cache(request_type)
-    perf_cache = float(perf_cache)
-    return perf_cache
+    return float(perf_cache)
 
 
 def wp_has_valid_workers(wp):
@@ -1398,7 +1370,7 @@ def prune_expired_stats():
 
 def compile_regex_filter(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex).filter_by(filter_type=filter_type)
-    all_filter_regex = [filter.regex for filter in all_filter_regex_query.all()]
+    all_filter_regex = [rfilter.regex for rfilter in all_filter_regex_query.all()]
     regex_string = "|".join(all_filter_regex)
     if not validate_regex(regex_string):
         logger.error("Error when checking compiled regex!. Avoiding cache store")
@@ -1408,20 +1380,15 @@ def compile_regex_filter(filter_type):
 
 def retrieve_regex_replacements(filter_type):
     all_filter_regex_query = db.session.query(Filter.regex, Filter.replacement).filter_by(filter_type=filter_type)
-    all_filter_regex_dict = [
+    return [
         {
-            "regex": filter.regex,
-            "replacement": filter.replacement,
+            "regex": rfilter.regex,
+            "replacement": rfilter.replacement,
         }
-        for filter in all_filter_regex_query.all()
-        if validate_regex(filter.regex)
+        for rfilter in all_filter_regex_query.all()
+        if validate_regex(rfilter.regex)
     ]
-    return all_filter_regex_dict
-
 
 def get_all_users(sort="kudos", offset=0):
-    if sort == "age":
-        user_order_by = User.created.asc()
-    else:
-        user_order_by = User.kudos.desc()
+    user_order_by = User.created.asc() if sort == "age" else User.kudos.desc()
     return db.session.query(User).order_by(user_order_by).offset(offset).limit(25).all()

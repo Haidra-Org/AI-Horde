@@ -158,10 +158,7 @@ class CounterMeasures:
 
     @staticmethod
     def is_whitelisted_vpn(ipaddr):
-        for iprange in WHITELISTED_VPN_IPS:
-            if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(iprange):
-                return True
-        return False
+        return any(ipaddress.ip_address(ipaddr) in ipaddress.ip_network(iprange) for iprange in WHITELISTED_VPN_IPS)
 
     @staticmethod
     def set_block_timeout(ip_block, minutes):

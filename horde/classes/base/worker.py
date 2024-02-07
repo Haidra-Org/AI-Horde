@@ -139,9 +139,7 @@ class WorkerTemplate(db.Model):
 
     @hybrid_property
     def speed(self) -> int:
-        performance_avg = (
-            db.session.query(func.avg(WorkerPerformance.performance)).filter_by(worker_id=self.id).scalar()
-        )
+        performance_avg = db.session.query(func.avg(WorkerPerformance.performance)).filter_by(worker_id=self.id).scalar()
         if performance_avg:
             return performance_avg
         # We return a baseline speed if the workers hasn't fulfilled anything
@@ -150,11 +148,7 @@ class WorkerTemplate(db.Model):
 
     @speed.expression
     def speed(cls):
-        performance_avg = (
-            db.select(func.avg(WorkerPerformance.performance))
-            .where(WorkerPerformance.worker_id == cls.id)
-            .label("speed")
-        )
+        performance_avg = db.select(func.avg(WorkerPerformance.performance)).where(WorkerPerformance.worker_id == cls.id).label("speed")
         return db.case(
             [(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])],  # noqa E712
             else_=performance_avg,
@@ -183,10 +177,7 @@ class WorkerTemplate(db.Model):
         if not formats:
             formats = []
         # Unreasonable Fast can be added multiple times and it increases suspicion each time
-        if (
-            reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED]
-            and int(reason) in self.get_suspicion_reasons()
-        ):
+        if reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED] and int(reason) in self.get_suspicion_reasons():
             return
         new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)
@@ -329,9 +320,7 @@ class WorkerTemplate(db.Model):
         self.fulfilments += 1
         if self.team and self.wtype == "image":
             self.team.record_contribution(converted_amount, kudos)
-        performances = (
-            db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
-        )
+        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
             # Ensure we don't forget anything
             subquery = (

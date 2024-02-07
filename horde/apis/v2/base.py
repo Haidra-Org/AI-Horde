@@ -208,12 +208,7 @@ class GenerateTemplate(Resource):
             n = 1
             if self.args.params:
                 n = self.args.params.get("n", 1)
-            if (
-                n > 1
-                and self.args["disable_batching"] is True
-                and not self.user.trusted
-                and not patrons.is_patron(self.user.id)
-            ):
+            if n > 1 and self.args["disable_batching"] is True and not self.user.trusted and not patrons.is_patron(self.user.id):
                 raise e.BadRequest("Only trusted users and patreon supporters can disable batching.")
             user_limit = self.user.get_concurrency(self.args["models"], database.retrieve_available_models)
             # logger.warning(datetime.utcnow())
@@ -1151,9 +1146,7 @@ class UserSingle(Resource):
                 if "monthly_kudos" in cached_details:
                     cached_details["monthly_kudos"] = cached_details["monthly_kudos"].copy()
                 if user_details.get("monthly_kudos", {}).get("last_received"):
-                    cached_details["monthly_kudos"]["last_received"] = cached_details["monthly_kudos"][
-                        "last_received"
-                    ].isoformat()
+                    cached_details["monthly_kudos"]["last_received"] = cached_details["monthly_kudos"]["last_received"].isoformat()
                 hr.horde_r_setex_json(cache_name, timedelta(seconds=30), cached_details)
         return user_details, 200
 
@@ -2497,12 +2490,7 @@ class FilterSingle(Resource):
         filter = Filter.query.filter_by(id=filter_id).first()
         if not filter:
             raise e.ThingNotFound("Filter", filter_id)
-        if (
-            not self.args.filter_type
-            and not self.args.regex
-            and not self.args.description
-            and not self.args.replacement
-        ):
+        if not self.args.filter_type and not self.args.regex and not self.args.description and not self.args.replacement:
             raise e.NoValidActions("No filter patching selected!")
         filter.user_id = (mod.id,)
         if self.args.filter_type:
@@ -2777,9 +2765,7 @@ class SharedKeySingle(Resource):
             )
         no_valid_actions = self.args.expiry is None and self.args.kudos is None and self.args.name is None
         no_valid_limit_actions = (
-            self.args.max_image_pixels is None
-            and self.args.max_image_steps is None
-            and self.args.max_text_tokens is None
+            self.args.max_image_pixels is None and self.args.max_image_steps is None and self.args.max_text_tokens is None
         )
 
         if no_valid_actions and no_valid_limit_actions:
