@@ -161,7 +161,7 @@ def get_cached_worker_performance():
 def retrieve_worker_performances():
     avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).scalar()
     avg_perf = 0 if avg_perf is None else round(avg_perf, 2)
-    return avg_perf #noqa RET504
+    return avg_perf  # noqa RET504
 
 
 def refresh_worker_performances_cache():

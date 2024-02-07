@@ -68,7 +68,8 @@ class ProcessingGeneration(db.Model):
                 matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
             if len(matching_models) == 0:
                 logger.warning(
-                    f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. Request Models: {wp_models}. Will use random worker model.",
+                    f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. "
+                    f"Request Models: {wp_models}. Will use random worker model.",
                 )
                 matching_models = worker_models
             random.shuffle(matching_models)
@@ -115,7 +116,8 @@ class ProcessingGeneration(db.Model):
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
             self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
             logger.info(
-                f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id}",
+                f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: "
+                f"{self.worker.name} for wp {self.wp.id}",
             )
         else:
             self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
@@ -210,7 +212,8 @@ class ProcessingGeneration(db.Model):
                 req = requests.post(self.wp.webhook, json=data, timeout=3)
                 if not req.ok:
                     logger.debug(
-                        f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...",
+                        f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
+                        f"Will retry {3-riter-1} more times...",
                     )
                     continue
                 break

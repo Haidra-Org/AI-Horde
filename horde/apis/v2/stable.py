@@ -88,7 +88,11 @@ class ImageAsyncGenerate(GenerateTemplate):
         return ret_dict, 202
 
     def get_size_too_big_message(self):
-        return "Warning: No available workers can fulfill this request. It will expire in 20 minutes unless a worker appears. Please confider reducing its size of the request or choosing a different model."
+        return (
+            "Warning: No available workers can fulfill this request. "
+            "It will expire in 20 minutes unless a worker appears. "
+            "Please confider reducing its size of the request or choosing a different model."
+        )
 
     def validate(self):
         # logger.warning(datetime.utcnow())
@@ -161,8 +165,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.params["n"] = 2
         #     if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
         #         raise e.UnsupportedModel
-        # if not any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models) and self.params.get("sampler_name") in ["dpmsolver"]:
-        #     raise e.UnsupportedSampler
         if len(self.args["prompt"].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
         if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
@@ -236,7 +238,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.KudosUpfront(
                 required_kudos,
                 self.username,
-                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfill this request ({required_kudos}).",
+                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
+                f"to fulfill this request ({required_kudos}).",
             )
         if needs_kudos is True:
             if required_kudos > self.user.kudos:
@@ -244,7 +247,10 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.KudosUpfront(
                     required_kudos,
                     self.username,
-                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} or over 50 steps (10 steps for LCM work, 25 for k_heun, dpmpp_sde, and dpm_2*), the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil.",
+                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} "
+                    "or over 50 steps (10 steps for LCM work, 25 for k_heun, dpmpp_sde, and dpm_2*), "
+                    "the client needs to already have the required kudos. "
+                    f"This request requires {required_kudos} kudos to fulfil.",
                 )
         if self.wp.params["steps"] >= 300:
             print_args = self.args.copy()
@@ -434,7 +440,8 @@ class ImageAsyncCheck(Resource):
         ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
         if ip_timeout and self.args["Client-Agent"] == "unknown:0:unknown":
             raise e.Forbidden(
-                message="Your IP address has been blocked due to using an unknown client which is sending too many garbage requests. Please contact us on discord.",
+                message="Your IP address has been blocked due to using an unknown client "
+                "which is sending too many garbage requests. Please contact us on discord.",
                 log=f"Check request via IP {request.remote_addr} on unknown client blocked.",
             )
         wp = database.get_wp_by_id(id)
@@ -614,7 +621,8 @@ class Aesthetics(Resource):
             raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
             raise e.InvalidAestheticAttempt(
-                "Well done! You have pointed to a single image generation as being the best one of the set. Unfortunately that doesn't help anyone. no kudos for you!",
+                "Well done! You have pointed to a single image generation as being the best one of the set. "
+                "Unfortunately that doesn't help anyone. no kudos for you!",
             )
         aesthetic_payload = {
             "set": id,
@@ -661,7 +669,8 @@ class Aesthetics(Resource):
                     if self.args.best:
                         if self.args.best not in bestofs:
                             raise e.InvalidAestheticAttempt(
-                                "What are you even doing? How could the best image you selected not be one of those with the highest aesthetic rating?",
+                                "What are you even doing? How could the best image you "
+                                "selected not be one of those with the highest aesthetic rating?",
                             )
                         aesthetic_payload["best"] = self.args.best
                 if len(bestofs) == 1:
@@ -704,7 +713,8 @@ class Aesthetics(Resource):
         return ({"reward": self.kudos}, 200)
 
 
-# I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
+# I have to put it outside the class as I can't figure out how to
+# extend the argparser and also pass it to the @api.expect decorator inside the class
 class Interrogate(Resource):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument("apikey", type=str, required=True, help="A User API key", location="headers")
@@ -789,7 +799,8 @@ class Interrogate(Resource):
             self.image_tiles = calculate_image_tiles(img)
             if self.image_tiles > 255:
                 raise e.ImageValidationFailed(
-                    f"Image is too large ({self.image_tiles} tiles) and would cause horde alchemists to run out of VRAM trying to process it.",
+                    f"Image is too large ({self.image_tiles} tiles) and would cause horde "
+                    "alchemists to run out of VRAM trying to process it.",
                 )
         except Exception as err:
             db.session.delete(self.interrogation)

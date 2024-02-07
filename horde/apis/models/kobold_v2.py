@@ -108,11 +108,17 @@ class TextModels(v2.Models):
                 "n": fields.Integer(example=1, min=1, max=20),
                 "frmtadsnsp": fields.Boolean(
                     example=False,
-                    description="Input formatting option. When enabled, adds a leading space to your input if there is no trailing whitespace at the end of the previous action.",
+                    description=(
+                        "Input formatting option. When enabled, adds a leading space to your input "
+                        "if there is no trailing whitespace at the end of the previous action."
+                    ),
                 ),
                 "frmtrmblln": fields.Boolean(
                     example=False,
-                    description="Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines in the output with one newline.",
+                    description=(
+                        "Output formatting option. When enabled, replaces all occurrences of two or more consecutive newlines "
+                        "in the output with one newline."
+                    ),
                 ),
                 "frmtrmspch": fields.Boolean(
                     example=False,
@@ -120,7 +126,11 @@ class TextModels(v2.Models):
                 ),
                 "frmttriminc": fields.Boolean(
                     example=False,
-                    description="Output formatting option. When enabled, removes some characters from the end of the output such that the output doesn't end in the middle of a sentence. If the output is less than one sentence long, does nothing.",
+                    description=(
+                        "Output formatting option. When enabled, removes some characters from the end of the output such "
+                        "that the output doesn't end in the middle of a sentence. "
+                        "If the output is less than one sentence long, does nothing."
+                    ),
                 ),
                 "max_context_length": fields.Integer(
                     min=80,
@@ -139,9 +149,17 @@ class TextModels(v2.Models):
                 "rep_pen_slope": fields.Float(description="Repetition penalty slope.", min=0, max=10),
                 "singleline": fields.Boolean(
                     example=False,
-                    description="Output formatting option. When enabled, removes everything after the first line of the output, including the newline.",
+                    description=(
+                        "Output formatting option. When enabled, removes everything after the first line of the output, "
+                        "including the newline."
+                    ),
                 ),
-                # 'soft_prompt': fields.String(description="Soft prompt to use when generating. If set to the empty string or any other string containing no non-whitespace characters, uses no soft prompt."),
+                # "soft_prompt": fields.String(
+                #     description=(
+                #         "Soft prompt to use when generating. If set to the empty string or any other string containing "
+                #         "no non-whitespace characters, uses no soft prompt."
+                #     )
+                # ),
                 "temperature": fields.Float(description="Temperature value.", min=0, max=5.0),
                 "tfs": fields.Float(description="Tail free sampling value.", min=0.0, max=1.0),
                 "top_a": fields.Float(description="Top-a sampling value.", min=0.0, max=1.0),
@@ -157,7 +175,10 @@ class TextModels(v2.Models):
                 ),
                 "stop_sequence": fields.List(
                     fields.String(
-                        description="An array of string sequences whereby the model will stop generating further tokens. The returned text WILL contain the stop sequence.",
+                        description=(
+                            "An array of string sequences whereby the model will stop generating further tokens. "
+                            "The returned text WILL contain the stop sequence."
+                        ),
                     ),
                 ),
                 "min_p": fields.Float(description="Min-p sampling value.", min=0.0, default=0.0, max=1.0),
@@ -193,15 +214,24 @@ class TextModels(v2.Models):
             {
                 "max_context_length": fields.Integer(
                     example=0,
-                    description="How many waiting requests were skipped because they demanded a higher max_context_length than what this worker provides.",
+                    description=(
+                        "How many waiting requests were skipped because they demanded a higher max_context_length "
+                        "than what this worker provides."
+                    ),
                 ),
                 "max_length": fields.Integer(
                     example=0,
-                    description="How many waiting requests were skipped because they demanded more generated tokens that what this worker can provide.",
+                    description=(
+                        "How many waiting requests were skipped because they demanded "
+                        "more generated tokens that what this worker can provide."
+                    ),
                 ),
                 "matching_softprompt": fields.Integer(
                     example=0,
-                    description="How many waiting requests were skipped because they demanded an available soft-prompt which this worker does not have.",
+                    description=(
+                        "How many waiting requests were skipped because they demanded an available soft-prompt "
+                        "which this worker does not have."
+                    ),
                 ),
             },
         )
@@ -252,7 +282,10 @@ class TextModels(v2.Models):
                 ),
                 "trusted_workers": fields.Boolean(
                     default=False,
-                    description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!",
+                    description=(
+                        "When true, only trusted workers will serve this request. "
+                        "When False, Evaluating workers will also be used which can increase speed but adds more risk!"
+                    ),
                 ),
                 "slow_workers": fields.Boolean(
                     default=True,
@@ -274,14 +307,23 @@ class TextModels(v2.Models):
                     description="When true, the endpoint will simply return the cost of the request in kudos and exit.",
                 ),
                 "proxied_account": fields.String(
-                    description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.",
+                    description=(
+                        "If using a service account as a proxy, provide this value to identify the actual account "
+                        "from which this request is coming from."
+                    ),
                 ),
                 "disable_batching": fields.Boolean(
                     default=False,
-                    description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons.",
+                    description=(
+                        "When true, This request will not use batching. This will allow you to retrieve accurate seeds. "
+                        "Feature is restricted to Trusted users and Patreons."
+                    ),
                 ),
                 "webhook": fields.String(
-                    description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID.",
+                    description=(
+                        "Provide a URL where the AI Horde will send a POST call after each delivered generation. "
+                        "The request will include the details of the job as well as the request ID."
+                    ),
                 ),
             },
         )

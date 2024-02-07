@@ -28,7 +28,7 @@ class ImageWorker(Worker):
 
     def check_in(self, max_pixels, **kwargs):
         super().check_in(**kwargs)
-        if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072: #FIXME #noqa SIM102
+        if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072:  # FIXME #noqa SIM102
             if not self.user.trusted:
                 self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
@@ -120,7 +120,8 @@ class ImageWorker(Worker):
         ):
             return [False, "bridge_version"]
         if any(lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])) and not check_bridge_capability(
-            "lora_versions", self.bridge_agent,
+            "lora_versions",
+            self.bridge_agent,
         ):
             return [False, "bridge_version"]
         if waiting_prompt.source_processing != "img2img" and not self.allow_painting:
@@ -129,7 +130,7 @@ class ImageWorker(Worker):
             return [False, "unsafe_ip"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
-        if not self.user.trusted: # FIXME #noqa SIM102
+        if not self.user.trusted:  # FIXME #noqa SIM102
             # if waiting_prompt.user.is_anon():
             #    return [False, 'untrusted']
             if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:

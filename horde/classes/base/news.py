@@ -5,49 +5,63 @@ class News:
     HORDE_NEWS = [
         {
             "date_published": "2024-02-03",
-            "newspiece": "Webhooks are here. You can [now specify a webhook URL](https://github.com/Haidra-Org/AI-Horde/blob/main/README_integration.md#webhooks) "
-            "which the horde will POST to when your generations are ready",
+            "newspiece": (
+                "Webhooks are here. You can [now specify a webhook URL]"
+                "(https://github.com/Haidra-Org/AI-Horde/blob/main/README_integration.md#webhooks) "
+                "which the horde will POST to when your generations are ready"
+            ),
             "tags": ["webhooks", "db0"],
             "importance": "Information",
         },
         {
             "date_published": "2024-01-13",
-            "newspiece": "We have now [added batching](https://dbzer0.com/blog/ludicrous-speed/) to the AI Horde!"
-            "This means that if your frontend is handling this properly, sending requests for multiple images should fulfill much faster overall."
-            "However this can have an impact on the resulting seed. If you need to have an accurate seed, for now you can use disable_batching.",
+            "newspiece": (
+                "We have now [added batching](https://dbzer0.com/blog/ludicrous-speed/) to the AI Horde!"
+                "This means that if your frontend is handling this properly, "
+                "sending requests for multiple images should fulfill much faster overall."
+                "However this can have an impact on the resulting seed. If you need to have an accurate seed, "
+                "for now you can use disable_batching."
+            ),
             "tags": ["dreamer", "db0", "batching", "seed"],
             "importance": "Information",
         },
         {
             "date_published": "2024-01-07",
-            "newspiece": "The new generation of the AI Horde worker is out. The [Horde Worker reGen](https://github.com/Haidra-Org/horde-worker-reGen)!"
-            "It should have always the latest version of comfyUI, which allows us access to all the latest features of Stable Diffusion"
-            "Every worker should work on switching ASAP, as the new worker can support SDXL models as well as LCM payloads!",
+            "newspiece": (
+                "The new generation of the AI Horde worker is out. "
+                "The [Horde Worker reGen](https://github.com/Haidra-Org/horde-worker-reGen)!"
+                "It should have always the latest version of comfyUI, which allows us access "
+                "to all the latest features of Stable Diffusion"
+                "Every worker should work on switching ASAP, as the new worker can support SDXL models "
+                "as well as LCM payloads!"
+            ),
             "tags": ["dreamer", "tazlin"],
             "importance": "Workers",
         },
         {
             "date_published": "2023-11-26",
-            "newspiece": "The AI Horde now supports different LoRa versions from each LoRa. Happy Winter Solstice!",
+            "newspiece": "The AI Horde now supports different LoRa versions from each LoRa. " "Happy Winter Solstice!",
             "tags": ["lora"],
             "importance": "Information",
         },
         {
             "date_published": "2023-11-23",
-            "newspiece": "The AI Horde will receive [an NLNet Grant!](https://dbzer0.com/blog/ai-horde-to-receive-nlnet-grant/)",
+            "newspiece": "The AI Horde will receive " "[an NLNet Grant!](https://dbzer0.com/blog/ai-horde-to-receive-nlnet-grant/)",
             "tags": ["devlog", "funding"],
             "importance": "Information",
         },
         {
             "date_published": "2023-09-03",
-            "newspiece": "The AI Horde is officially [one year old!](https://dbzer0.com/blog/year-one-of-the-ai-horde/)",
+            "newspiece": "The AI Horde is officially " "[one year old!](https://dbzer0.com/blog/year-one-of-the-ai-horde/)",
             "tags": ["devlog"],
             "importance": "Information",
         },
         {
             "date_published": "2023-08-30",
-            "newspiece": "Textual Inversions support has now been merged into the main worker branch! "
-            "Read the [devlog](https://dbzer0.com/blog/the-ai-horde-now-seamlessly-provides-all-civitai-textual-inversions/)",
+            "newspiece": (
+                "Textual Inversions support has now been merged into the main worker branch! "
+                "Read the [devlog](https://dbzer0.com/blog/the-ai-horde-now-seamlessly-provides-all-civitai-textual-inversions/)"
+            ),
             "tags": ["devlog", "TI", "text2img"],
             "importance": "Information",
         },
@@ -71,128 +85,166 @@ class News:
         },
         {
             "date_published": "2023-06-01",
-            "newspiece": "LoRas support has now been merged into the main worker branch! "
-            "All kudos to [Jug](https://github.com/jug-dev/) and [Tazlin](https://github.com/tazlin/) for their invaluable efforts! "
-            "Read the [devlog](https://dbzer0.com/blog/the-ai-horde-now-seamlessly-provides-all-civitai-loras/)",
+            "newspiece": (
+                "LoRas support has now been merged into the main worker branch! "
+                "All kudos to [Jug](https://github.com/jug-dev/) and "
+                "[Tazlin](https://github.com/tazlin/) for their invaluable efforts! "
+                "Read the [devlog](https://dbzer0.com/blog/the-ai-horde-now-seamlessly-provides-all-civitai-loras/)"
+            ),
             "tags": ["devlog", "lora", "text2img"],
             "importance": "Workers",
         },
         {
             "date_published": "2023-05-30",
-            "newspiece": "Early support for LoRa has been added to the AI Horde with a few workers providing it. "
-            "UIs are still adding it, with [Lucid Creations](https://dbzer0.itch.io/lucid-creations/devlog/537949/1170-loras), ArtBot and the Krita plugin already supporting it."
-            "Try it out and let us know how it works for you.",
+            "newspiece": (
+                "Early support for LoRa has been added to the AI Horde with a few workers providing it. "
+                "UIs are still adding it, with [Lucid Creations](https://dbzer0.itch.io/lucid-creations/devlog/537949/1170-loras), "
+                "ArtBot and the Krita plugin already supporting it."
+                "Try it out and let us know how it works for you."
+            ),
             "tags": ["UI", "lora", "text2img"],
             "importance": "Information",
         },
         {
             "date_published": "2023-05-25",
-            "newspiece": "I wanted to point out a very cool voice-2-text-2-voice AI Horde integration: [ProtoReplicant](https://github.com/OpenReplicant/ProtoReplicant). "
-            "It converts your voice into text which it then sends to an LLM model, and finally converts the resulting text into voice and plays it back."
-            "Here's the new [Discord integration channel](https://discordapp.com/channels/781145214752129095/1111189841120596008)",
+            "newspiece": (
+                "I wanted to point out a very cool voice-2-text-2-voice AI Horde integration: "
+                "[ProtoReplicant](https://github.com/OpenReplicant/ProtoReplicant). "
+                "It converts your voice into text which it then sends to an LLM model, "
+                "and finally converts the resulting text into voice and plays it back."
+                "Here's the new [Discord integration channel](https://discordapp.com/channels/781145214752129095/1111189841120596008)"
+            ),
             "tags": ["UI", "voice", "llm"],
             "importance": "Integration",
         },
         {
             "date_published": "2023-05-22",
-            "newspiece": "A new AI Horde integration has been created. A Telegram bot by the name of [Imaginarium](https://t.me/ImaginariumAIbot). "
-            "Here's the new [Discord integration channel](https://discordapp.com/channels/781145214752129095/1109825249933000714)",
+            "newspiece": (
+                "A new AI Horde integration has been created. "
+                "A Telegram bot by the name of [Imaginarium](https://t.me/ImaginariumAIbot). "
+                "Here's the new [Discord integration channel](https://discordapp.com/channels/781145214752129095/1109825249933000714)"
+            ),
             "tags": ["bot", "telegram"],
             "importance": "Integration",
         },
         {
             "date_published": "2023-05-14",
-            "newspiece": "The AI Horde has finally moved to the [hordelib](https://pypi.org/project/hordelib/) library. "
-            "Which is powered by the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) inference backend. "
-            "[Read the Devlog](https://dbzer0.com/blog/the-ai-horde-worker-moves-to-a-completely-new-inference-backend/)!",
+            "newspiece": (
+                "The AI Horde has finally moved to the [hordelib](https://pypi.org/project/hordelib/) library. "
+                "Which is powered by the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) inference backend. "
+                "[Read the Devlog](https://dbzer0.com/blog/the-ai-horde-worker-moves-to-a-completely-new-inference-backend/)!"
+            ),
             "tags": ["devlog", "backend", "Jug", "Tazlin", "dreamer", "alchemist"],
             "importance": "Information",
         },
         {
             "date_published": "2023-05-11",
-            "newspiece": "With the upcoming deployment of the [hordelib](https://pypi.org/project/hordelib/)-based worker. "
-            "[Jug](https://github.com/jug-dev/) has looked into creating a more efficient model to determine generation kudos "
-            "instead of reusing the numbers I hallucinated one day. "
-            "He used what we know best and we trained an explicit model to calculate kudos, based on the performance of his own GPU on the comfy branch "
-            "This new calculation should be much more accurate in terms of things like controlnet and resolution impact. "
-            "The good news is that the new comfy branch this seems to reduce kudos costs for high resolutions accross the board. "
-            "Note: Due to the current worker (based on nataili) being slightly lower quality at the benefit of speed, and thus getting a boost due to the new kudos model, "
-            "we have implemented a 25% reduction for its rewards to bring it up to line with its actual performance.",
+            "newspiece": (
+                "With the upcoming deployment of the [hordelib](https://pypi.org/project/hordelib/)-based worker. "
+                "[Jug](https://github.com/jug-dev/) has looked into creating a more efficient model to determine generation kudos "
+                "instead of reusing the numbers I hallucinated one day. "
+                "He used what we know best and we trained an explicit model to calculate kudos, "
+                "based on the performance of his own GPU on the comfy branch "
+                "This new calculation should be much more accurate in terms of things like controlnet and resolution impact. "
+                "The good news is that the new comfy branch this seems to reduce kudos costs for high resolutions accross the board. "
+                "Note: Due to the current worker (based on nataili) being slightly lower quality "
+                "at the benefit of speed, and thus getting a boost due to the new kudos model, "
+                "we have implemented a 25% reduction for its rewards to bring it up to line with its actual performance."
+            ),
             "tags": ["kudos", "dreamer", "Jug"],
             "importance": "Workers",
         },
         {
             "date_published": "2023-05-09",
-            "newspiece": "A new feature appeared on the Horde. "
-            "You can now create [API keys you can share with others](https://dbzer0.com/blog/key-sharing/) to use your own priority.",
+            "newspiece": (
+                "A new feature appeared on the Horde. "
+                "You can now create [API keys you can share with others](https://dbzer0.com/blog/key-sharing/) to use your own priority."
+            ),
             "tags": ["apikey", "shared key"],
             "importance": "Information",
         },
         {
             "date_published": "2023-05-05",
-            "newspiece": "You can now run an AI Horde worker inside a docker container. "
-            "http://ghcr.io/db0/ai-horde-worker:main "
-            "Our README [contains information on how to configure it](https://github.com/db0/AI-Horde-Worker/blob/main/README.md#docker) "
-            "All kudos to [Gus Puffy#8887](https://github.com/guspuffygit)",
+            "newspiece": (
+                "You can now run an AI Horde worker inside a docker container. "
+                "http://ghcr.io/db0/ai-horde-worker:main "
+                "Our README [contains information on how to configure it]"
+                "(https://github.com/db0/AI-Horde-Worker/blob/main/README.md#docker) "
+                "All kudos to [Gus Puffy#8887](https://github.com/guspuffygit)"
+            ),
             "tags": ["docker", "dreamer"],
             "importance": "Workers",
         },
         {
             "date_published": "2023-04-23",
-            "newspiece": "The Command Line Interface for the AI Horde has now been extended to support Image Generation, Text Generation and Image Alchemy. "
-            "It has been split into three files and is now available in its own repository: "
-            "https://github.com/db0/AI-Horde-CLI",
+            "newspiece": (
+                "The Command Line Interface for the AI Horde has now been extended to support Image Generation, "
+                "Text Generation and Image Alchemy. "
+                "It has been split into three files and is now available in its own repository: "
+                "https://github.com/db0/AI-Horde-CLI"
+            ),
             "tags": ["cli"],
             "importance": "Information",
         },
         {
             "date_published": "2023-04-16",
-            "newspiece": "The AI Horde has received its first patreon sponsorship "
-            "Many thanks to [pawkygame VR](https://discord.gg/Zbe63QTU9X) for their support!",
+            "newspiece": (
+                "The AI Horde has received its first patreon sponsorship "
+                "Many thanks to [pawkygame VR](https://discord.gg/Zbe63QTU9X) for their support!"
+            ),
             "tags": ["sponsor", "patreon"],
             "importance": "Information",
         },
         {
             "date_published": "2023-03-23",
-            "newspiece": "Inpainting is re-enabled that to the work of [ResidentChief](https://github.com/ResidentChief)! "
-            "Now also have support for multiple inpainting models.",
+            "newspiece": (
+                "Inpainting is re-enabled that to the work of [ResidentChief](https://github.com/ResidentChief)! "
+                "Now also have support for multiple inpainting models."
+            ),
             "tags": ["inpainting", "ResidentChief"],
             "importance": "Information",
         },
         {
             "date_published": "2023-03-19",
-            "newspiece": "The AI Horde Interrogator Worker has now been renamed to 'Alchemist' "
-            "The Horde alchemist can now run all the post-processors, along with all the interrogation forms. "
-            "This means that if you have an existing image you wish to face-fix or upscale, you can just do that "
-            "by requesting it via alchemy. "
-            "For now, the alchemist does not support extracting ControlNet intermediate images, but this will be coming soon. "
-            "The endpoints remain as `api/v2interrogation/` for now but I plan to rename them in v3.",
+            "newspiece": (
+                "The AI Horde Interrogator Worker has now been renamed to 'Alchemist' "
+                "The Horde alchemist can now run all the post-processors, along with all the interrogation forms. "
+                "This means that if you have an existing image you wish to face-fix or upscale, you can just do that "
+                "by requesting it via alchemy. "
+                "For now, the alchemist does not support extracting ControlNet intermediate images, but this will be coming soon. "
+                "The endpoints remain as `api/v2interrogation/` for now but I plan to rename them in v3."
+            ),
             "tags": ["upscale", "post-processing", "alchemy"],
             "importance": "Information",
         },
         {
             "date_published": "2023-03-15",
-            "newspiece": "the AI Horde now supports the DDIM sampler and the RealESRGAN_x4plus_anime_6B upscaler! "
-            "Keep in mind that you cannot use two upscalers at the same time. "
-            "All kudos to [ResidentChief](https://github.com/ResidentChief)!",
+            "newspiece": (
+                "the AI Horde now supports the DDIM sampler and the RealESRGAN_x4plus_anime_6B upscaler! "
+                "Keep in mind that you cannot use two upscalers at the same time. "
+                "All kudos to [ResidentChief](https://github.com/ResidentChief)!"
+            ),
             "tags": ["upscale", "post-processing", "ResidentChief", "samplers"],
             "importance": "Information",
         },
         {
             "date_published": "2023-03-13",
-            "newspiece": "A new option `replacement_filter` is available for image generations. "
-            "When set to True and a potential CSAM prompt is detected, "
-            "all underage context will be transparently replaced or removed "
-            "and some extra negative prompts will be added to the negative prompt."
-            "When set to False (default) or the prompt size is over 500 chars "
-            "The previous behaviour will be used, where the prompt is rejected and an IP timeout will be put in place. "
-            "This feature should make sending text generations to be turned into images a less frustrating experience.",
+            "newspiece": (
+                "A new option `replacement_filter` is available for image generations. "
+                "When set to True and a potential CSAM prompt is detected, "
+                "all underage context will be transparently replaced or removed "
+                "and some extra negative prompts will be added to the negative prompt."
+                "When set to False (default) or the prompt size is over 500 chars "
+                "The previous behaviour will be used, where the prompt is rejected and an IP timeout will be put in place. "
+                "This feature should make sending text generations to be turned into images a less frustrating experience."
+            ),
             "tags": ["csam", "text2text", "text2img"],
             "importance": "Information",
         },
         {
             "date_published": "2023-03-10",
-            "newspiece": "We now have an AI-driven anti-CSAM filter as well. Read about it on [the main developer's blog](https://dbzer0.com/blog/ai-powered-anti-csam-filter-for-stable-diffusion/).",
+            "newspiece": "We now have an AI-driven anti-CSAM filter as well. "
+            "Read about it on [the main developer's blog](https://dbzer0.com/blog/ai-powered-anti-csam-filter-for-stable-diffusion/).",
             "tags": ["csam"],
             "importance": "Information",
         },
@@ -211,7 +263,8 @@ class News:
         {
             "date_published": "2023-02-21",
             "newspiece": (
-                "The Horde now supports ControlNet on all models! All kudos go to [hlky](https://github.com/hlky) who again weaved the dark magic!"
+                "The Horde now supports ControlNet on all models! All kudos go to "
+                "[hlky](https://github.com/hlky) who again weaved the dark magic!"
             ),
             "tags": ["controlnet", "img2img", "hlky"],
             "importance": "Information",
@@ -225,7 +278,8 @@ class News:
         {
             "date_published": "2023-02-09",
             "newspiece": (
-                "You can now select to generate a higher-sized image using hires_fix, which uses the composition of stable diffusion at 512x512 which tends to be more consistent."
+                "You can now select to generate a higher-sized image using hires_fix, "
+                "which uses the composition of stable diffusion at 512x512 which tends to be more consistent."
             ),
             "tags": ["text2img", "img2img", "ResidentChief"],
             "importance": "Information",
@@ -239,7 +293,8 @@ class News:
         {
             "date_published": "2023-01-24",
             "newspiece": (
-                'We now support sending tiling requests! Send `"tiling":true` into your payload params to request an image that seamlessly tiles.'
+                'We now support sending tiling requests! Send `"tiling":true"` '
+                "into your payload params to request an image that seamlessly tiles."
             ),
             "tags": ["text2img", "img2img", "ResidentChief"],
             "importance": "Information",
@@ -247,9 +302,12 @@ class News:
         {
             "date_published": "2023-01-23",
             "newspiece": (
-                "I have tightened the rules around NSFW models. As they seem to be straying into 'unethical' territory even when not explicitly prompted, "
-                "I am forced to tighten the safety controls around them. From now on, otherwise generic terms for young people like `girl` ,`boy` etc "
-                "Cannot be used on those models. Please either use terms like `woman` or `man` or switch to a non-NSFW model instead."
+                "I have tightened the rules around NSFW models. "
+                "As they seem to be straying into 'unethical' territory even when not explicitly prompted, "
+                "I am forced to tighten the safety controls around them. From now on, "
+                "otherwise generic terms for young people like `girl` ,`boy` etc "
+                "Cannot be used on those models. Please either use terms like `woman` "
+                "or `man` or switch to a non-NSFW model instead."
             ),
             "tags": ["countermeasures", "nsfw"],
             "importance": "Information",
@@ -263,7 +321,8 @@ class News:
         {
             "date_published": "2023-01-18",
             "newspiece": (
-                "We now have a [New Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord), courtesy of Zelda_Fan#0225. Check out [their other bot](https://slashbot.de/) as well! "
+                "We now have a [New Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord), "
+                "courtesy of Zelda_Fan#0225. Check out [their other bot](https://slashbot.de/) as well! "
                 "Only downside is that if you were already logged in to the old bot, you will need to /login again."
             ),
             "importance": "Information",
@@ -279,8 +338,10 @@ class News:
         {
             "date_published": "2023-01-12",
             "newspiece": (
-                "We plan to be replacing our official discord bot with [new a new codebase](https://github.com/ZeldaFan0225/Stable_Horde_Discord) based on the work of Zelda_Fan#0225. "
-                "Once we do, be aware that the controls will be slightly different and you will have to log-in again with your API key."
+                "We plan to be replacing our official discord bot with "
+                "[new a new codebase](https://github.com/ZeldaFan0225/Stable_Horde_Discord) based on the work of Zelda_Fan#0225. "
+                "Once we do, be aware that the controls will be slightly different "
+                "and you will have to log-in again with your API key."
             ),
             "importance": "Upcoming",
         },
@@ -288,22 +349,31 @@ class News:
             "date_published": "2023-01-11",
             "newspiece": (
                 "The Stable Horde has its first browser extension! "
-                "[GenAlt](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn) is an accessibility plugin to help people with bad eyesight always find alt text for images."
-                "The extension relies on the Stable Horde's newly added image interrogation capabilities to generate captions which are then serves as the image's alt text."
+                "[GenAlt](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn) "
+                "is an accessibility plugin to help people with bad eyesight always find alt text for images."
+                "The extension relies on the Stable Horde's newly added image interrogation "
+                "capabilities to generate captions which are then serves as the image's alt text."
             ),
             "importance": "Information",
         },
         {
             "date_published": "2023-01-04",
-            "newspiece": "We are proud to announce that we have [initiated a collaboration with LAION](https://dbzer0.com/blog/a-collaboration-begins-between-stable-horde-and-laion/) to help them improve their dataset!",
+            "newspiece": (
+                "We are proud to announce that we have "
+                "[initiated a collaboration with LAION](https://dbzer0.com/blog/a-collaboration-begins-between-stable-horde-and-laion/) "
+                "to help them improve their dataset!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2023-01-06",
             "newspiece": (
-                "The amount of kudos consumed when generating images [has been slightly adjusted](https://dbzer0.com/blog/sharing-is-caring/). "
-                "To simulate the resource costs of the horde, each image generation request will now burn +3 kudos. Those will not go to the generating worker! "
-                "However we also have a new opt-in feature: You can choose to share your text2img generations with [LAION](https://laion.ai/). "
+                "The amount of kudos consumed when generating images "
+                "[has been slightly adjusted](https://dbzer0.com/blog/sharing-is-caring/). "
+                "To simulate the resource costs of the horde, "
+                "each image generation request will now burn +3 kudos. Those will not go to the generating worker! "
+                "However we also have a new opt-in feature: You can choose to share your "
+                "text2img generations with [LAION](https://laion.ai/). "
                 "If you do, this added cost will be just +1 kudos. "
                 "We have also updated our Terms of Service to make this more obvious."
             ),
@@ -311,47 +381,81 @@ class News:
         },
         {
             "date_published": "2023-01-05",
-            "newspiece": "[Worker now have a WebUI](https://dbzer0.com/blog/the-ai-horde-worker-has-a-control-ui/) which they can use to configure themselves. Use it by running `worker-webui.sh/cmd`",
+            "newspiece": (
+                "[Worker now have a WebUI](https://dbzer0.com/blog/the-ai-horde-worker-has-a-control-ui/) "
+                "which they can use to configure themselves. Use it by running `worker-webui.sh/cmd`"
+            ),
             "importance": "Workers",
         },
         {
             "date_published": "2023-01-04",
-            "newspiece": "[You can now interrogate images](https://dbzer0.com/blog/image-interrogations-are-now-available-on-the-stable-horde/) (AKA img2txt) to retrieve information about them such as captions and whether they are NSFW. Check the api/v2/interrogate endpoint documentation.",
+            "newspiece": (
+                "[You can now interrogate images]"
+                "(https://dbzer0.com/blog/image-interrogations-are-now-available-on-the-stable-horde/) "
+                "(AKA img2txt) to retrieve information about them such as captions and whether they are NSFW. "
+                "Check the api/v2/interrogate endpoint documentation."
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2023-01-01",
-            "newspiece": "Stable Horde can now be used on the automatic1111 Web UI via [an external script](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)",
+            "newspiece": (
+                "Stable Horde can now be used on the automatic1111 Web UI via "
+                "[an external script](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-12-30",
-            "newspiece": "Stable Horde now supports depth2img! To use it you need to send a source image and select the `Stable Difffusion 2 Depth` model",
+            "newspiece": (
+                "Stable Horde now supports depth2img! "
+                "To use it you need to send a source image and select the `Stable Difffusion 2 Depth` model"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-12-28",
-            "newspiece": "Stable Horde workers can now opt-in to loading post-processors. Check your bridge_data.py for options. This should help workers who started being more unstable due to the PP requirements.",
+            "newspiece": (
+                "Stable Horde workers can now opt-in to loading post-processors. "
+                "Check your bridge_data.py for options. This should help workers who started being "
+                "more unstable due to the PP requirements."
+            ),
             "importance": "Workers",
         },
         {
             "date_published": "2022-12-24",
-            "newspiece": "Stable Horde has now support for [CodeFormer](https://shangchenzhou.com/projects/CodeFormer/). Simply use 'CodeFormers' for your postprocessor (case sensitive). This will fix any faces in the image. Be aware that due to the processing cost of this model, the kudos requirement will be 50% higher!  Note: The inbuilt upscaler has been disabled",
+            "newspiece": (
+                "Stable Horde has now support for "
+                "[CodeFormer](https://shangchenzhou.com/projects/CodeFormer/). "
+                "Simply use 'CodeFormers' for your postprocessor (case sensitive). "
+                "This will fix any faces in the image. Be aware that due to the processing cost of this model, "
+                "the kudos requirement will be 50% higher!  Note: The inbuilt upscaler has been disabled"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-12-08",
-            "newspiece": "The Stable Horde workers now support dynamically swapping models. This means that models will always switch to support the most in demand models every minute, allowing us to support demand much better!",
+            "newspiece": (
+                "The Stable Horde workers now support dynamically swapping models. "
+                "This means that models will always switch to support the most in demand models every minute, "
+                "allowing us to support demand much better!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-11-28",
-            "newspiece": "The Horde has undertaken a massive code refactoring to allow me to move to a proper SQL DB. This will finally allow me to scale the frontend systems horizontally and allow for way more capacity!",
+            "newspiece": (
+                "The Horde has undertaken a massive code refactoring to allow me to move to a proper SQL DB. "
+                "This will finally allow me to scale the frontend systems horizontally and allow for way more capacity!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-11-24",
-            "newspiece": "Due to the massive increase in demand from the Horde, we have to limit the amount of concurrent anonymous requests we can serve. We will revert this once our infrastructure can scale better.",
+            "newspiece": (
+                "Due to the massive increase in demand from the Horde, we have to limit the amount of concurrent anonymous "
+                "requests we can serve. We will revert this once our infrastructure can scale better."
+            ),
             "importance": "Crisis",
         },
         {
@@ -361,22 +465,36 @@ class News:
         },
         {
             "date_published": "2022-11-22",
-            "newspiece": "A new Stable Horde Bot has been deployed, this time for Mastodon. You can find [the stablehorde_generator}(https://sigmoid.social/@stablehorde_generator) as well as our [official Stable Horde account](https://sigmoid.social/@stablehorde) on sigmoid.social",
+            "newspiece": (
+                "A new Stable Horde Bot has been deployed, this time for Mastodon. "
+                "You can find [the stablehorde_generator}(https://sigmoid.social/@stablehorde_generator) as well as our "
+                "[official Stable Horde account](https://sigmoid.social/@stablehorde) on sigmoid.social"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-11-22",
-            "newspiece": "We now have [support for the Unreal Engine](https://github.com/Mystfit/Unreal-StableDiffusionTools/releases/tag/v0.5.0) via a community-provided plugin",
+            "newspiece": (
+                "We now have [support for the Unreal Engine]"
+                "(https://github.com/Mystfit/Unreal-StableDiffusionTools/releases/tag/v0.5.0) via a community-provided plugin"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-11-18",
-            "newspiece": "The stable horde [now supports post-processing](https://www.patreon.com/posts/post-processing-74815675) on images automatically",
+            "newspiece": (
+                "The stable horde [now supports post-processing](https://www.patreon.com/posts/post-processing-74815675) "
+                "on images automatically"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-11-05",
-            "newspiece": "Due to suddenly increased demand, we have adjusted how much requests accounts can request before needing to have the kudos upfront. More than 50 steps will require kudos and the max resolution will be adjusted based on the current horde demand.",
+            "newspiece": (
+                "Due to suddenly increased demand, we have adjusted how much requests accounts "
+                "can request before needing to have the kudos upfront. "
+                "More than 50 steps will require kudos and the max resolution will be adjusted based on the current horde demand."
+            ),
             "importance": "Information",
         },
         {
@@ -386,22 +504,33 @@ class News:
         },
         {
             "date_published": "2022-11-02",
-            "newspiece": "The horde can now generate images up to 3072x3072 and 500 steps! However you need to already have the kudos to burn to do so!",
+            "newspiece": (
+                "The horde can now generate images up to 3072x3072 and 500 steps! "
+                "However you need to already have the kudos to burn to do so!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-10-29",
-            "newspiece": "Inpainting is now available on the stable horde! Many kudos to [blueturtle](https://github.com/blueturtleai) for the support!",
+            "newspiece": (
+                "Inpainting is now available on the stable horde! "
+                "Many kudos to [blueturtle](https://github.com/blueturtleai) for the support!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-10-25",
-            "newspiece": "Another [Discord Bot for Stable Horde integration](https://github.com/ZeldaFan0225/Stable_Horde_Discord) has appeared!",
+            "newspiece": (
+                "Another [Discord Bot for Stable Horde integration](https://github.com/ZeldaFan0225/Stable_Horde_Discord) " "has appeared!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-10-24",
-            "newspiece": "The Stable Horde Client has been renamed to [Lucid Creations](https://dbzer0.itch.io/lucid-creations) and has a new version and UI out which supports multiple models and img2img!",
+            "newspiece": (
+                "The Stable Horde Client has been renamed to [Lucid Creations](https://dbzer0.itch.io/lucid-creations) "
+                "and has a new version and UI out which supports multiple models and img2img!"
+            ),
             "importance": "Information",
         },
         {
@@ -446,12 +575,19 @@ class News:
         },
         {
             "date_published": "2022-10-10",
-            "newspiece": "You can now contribute a worker to the horde [via google colab](https://colab.research.google.com/github/harrisonvanderbyl/ravenbot-ai/blob/master/Horde.ipynb). Just fill-in your API key and run!",
+            "newspiece": (
+                "You can now contribute a worker to the horde "
+                "[via google colab](https://colab.research.google.com/github/harrisonvanderbyl/ravenbot-ai/blob/master/Horde.ipynb). "
+                "Just fill-in your API key and run!"
+            ),
             "importance": "Information",
         },
         {
             "date_published": "2022-10-06",
-            "newspiece": "We have a [new installation video](https://youtu.be/wJrp5lpByCc) for both the Stable Horde Client and the Stable horde worker.",
+            "newspiece": (
+                "We have a [new installation video](https://youtu.be/wJrp5lpByCc) "
+                "for both the Stable Horde Client and the Stable horde worker."
+            ),
             "importance": "Information",
         },
         {
@@ -461,7 +597,10 @@ class News:
         },
         {
             "date_published": "2022-10-10",
-            "newspiece": "The [discord rewards bot](https://www.patreon.com/posts/new-kind-of-73097166) has been unleashed. Reward good contributions to the horde directly from the chat!",
+            "newspiece": (
+                "The [discord rewards bot](https://www.patreon.com/posts/new-kind-of-73097166) "
+                "has been unleashed. Reward good contributions to the horde directly from the chat!"
+            ),
             "importance": "Information",
         },
         {

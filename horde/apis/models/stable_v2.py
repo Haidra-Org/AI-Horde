@@ -34,7 +34,11 @@ class ImageParsers(v2.Parsers):
             "source_mask",
             type=str,
             required=False,
-            help="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel.",
+            help=(
+                "If img_processing is set to 'inpainting' or 'outpainting', "
+                "this parameter can be optionally provided as the mask of the areas to inpaint. "
+                "If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
+            ),
             location="json",
         )
         self.generate_parser.add_argument(
@@ -58,7 +62,10 @@ class ImageParsers(v2.Parsers):
             type=bool,
             default=False,
             required=False,
-            help="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True.",
+            help=(
+                "If True, The image will be shared with LAION for improving their dataset. "
+                "This will also reduce your kudos consumption by 2. For anonymous users, this is always True."
+            ),
             location="json",
         )
         self.generate_parser.add_argument(
@@ -219,7 +226,10 @@ class ImageModels(v2.Models):
                 "name": fields.String(
                     required=True,
                     example="Magnagothica",
-                    description="The exact name or CivitAI Model Page ID of the LoRa. If is_version is true, this should be the CivitAI version ID.",
+                    description=(
+                        "The exact name or CivitAI Model Page ID of the LoRa. "
+                        "If is_version is true, this should be the CivitAI version ID."
+                    ),
                     unique=True,
                     min_length=1,
                     max_length=255,
@@ -242,12 +252,19 @@ class ImageModels(v2.Models):
                     required=False,
                     min_length=1,
                     max_length=30,
-                    description="If set, will try to discover a trigger for this LoRa which matches or is similar to this string and inject it into the prompt. If 'any' is specified it will be pick the first trigger.",
+                    description=(
+                        "If set, will try to discover a trigger for this LoRa which matches or is similar to this string "
+                        "and inject it into the prompt. "
+                        "If 'any' is specified it will be pick the first trigger."
+                    ),
                 ),
                 "is_version": fields.Boolean(
                     required=False,
                     default=False,
-                    description="If true, will consider the LoRa ID as a CivitAI version ID and search accordingly. Ensure the name is an integer.",
+                    description=(
+                        "If true, will consider the LoRa ID as a CivitAI version ID and search accordingly. "
+                        "Ensure the name is an integer."
+                    ),
                 ),
             },
         )
@@ -266,7 +283,11 @@ class ImageModels(v2.Models):
                     required=False,
                     default=None,
                     enum=["prompt", "negprompt"],
-                    description="If set, Will automatically add this TI filename to the prompt or negative prompt accordingly using the provided strength. If this is set to None, then the user will have to manually add the embed to the prompt themselves.",
+                    description=(
+                        "If set, Will automatically add this TI filename to the prompt or negative prompt "
+                        "accordingly using the provided strength. "
+                        "If this is set to None, then the user will have to manually add the embed to the prompt themselves."
+                    ),
                 ),
                 "strength": fields.Float(
                     required=False,
@@ -442,7 +463,11 @@ class ImageModels(v2.Models):
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
-                    description="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel.",
+                    description=(
+                        "If img_processing is set to 'inpainting' or 'outpainting', "
+                        "this parameter can be optionally provided as the mask of the areas to inpaint. "
+                        "If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
+                    ),
                 ),
                 "r2_upload": fields.String(description="The r2 upload link to use to upload this image."),
                 "r2_uploads": fields.List(
@@ -515,7 +540,10 @@ class ImageModels(v2.Models):
                 ),
                 "trusted_workers": fields.Boolean(
                     default=False,
-                    description="When true, only trusted workers will serve this request. When False, Evaluating workers will also be used which can increase speed but adds more risk!",
+                    description=(
+                        "When true, only trusted workers will serve this request. "
+                        "When False, Evaluating workers will also be used which can increase speed but adds more risk!"
+                    ),
                 ),
                 "slow_workers": fields.Boolean(
                     default=True,
@@ -547,7 +575,11 @@ class ImageModels(v2.Models):
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
-                    description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel.",
+                    description=(
+                        "If source_processing is set to 'inpainting' or 'outpainting', "
+                        "this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. "
+                        "If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
+                    ),
                 ),
                 "r2": fields.Boolean(
                     default=True,
@@ -555,7 +587,10 @@ class ImageModels(v2.Models):
                 ),
                 "shared": fields.Boolean(
                     default=False,
-                    description="If True, The image will be shared with LAION for improving their dataset. This will also reduce your kudos consumption by 2. For anonymous users, this is always True.",
+                    description=(
+                        "If True, The image will be shared with LAION for improving their dataset. "
+                        "This will also reduce your kudos consumption by 2. For anonymous users, this is always True."
+                    ),
                 ),
                 "replacement_filter": fields.Boolean(
                     default=True,
@@ -566,18 +601,27 @@ class ImageModels(v2.Models):
                     description="When true, the endpoint will simply return the cost of the request in kudos and exit.",
                 ),
                 "proxied_account": fields.String(
-                    description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.",
+                    description=(
+                        "If using a service account as a proxy, provide this value to identify the actual account "
+                        "from which this request is coming from."
+                    ),
                 ),
                 "disable_batching": fields.Boolean(
                     default=False,
-                    description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons.",
+                    description=(
+                        "When true, This request will not use batching. This will allow you to retrieve accurate seeds. "
+                        "Feature is restricted to Trusted users and Patreons."
+                    ),
                 ),
                 "webhook": fields.String(
                     required=False,
                     max_length=1024,
                     min_length=10,
                     example="https://haidra.net/00000000-0000-0000-0000-000000000000",
-                    description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID.",
+                    description=(
+                        "Provide a URL where the AI Horde will send a POST call after each delivered generation. "
+                        "The request will include the details of the job as well as the request ID."
+                    ),
                 ),
             },
         )
@@ -592,7 +636,9 @@ class ImageModels(v2.Models):
                     description="The average performance of the workers in this team, in megapixelsteps per second.",
                 ),
                 "speed": fields.Float(
-                    description="The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second.",
+                    description=(
+                        "The total expected speed of this team when all workers are working in parallel, " "in megapixelsteps per second."
+                    ),
                 ),
             },
         )
@@ -630,7 +676,10 @@ class ImageModels(v2.Models):
                     max_length=1024,
                     min_length=10,
                     example="https://haidra.net/00000000-0000-0000-0000-000000000000",
-                    description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID.",
+                    description=(
+                        "Provide a URL where the AI Horde will send a POST call after each delivered generation. "
+                        "The request will include the details of the job as well as the request ID."
+                    ),
                 ),
             },
         )
@@ -699,7 +748,9 @@ class ImageModels(v2.Models):
                 ),
                 "threads": fields.Integer(
                     default=1,
-                    description="How many threads this worker is running. This is used to accurately the current power available in the horde.",
+                    description=(
+                        "How many threads this worker is running. " "This is used to accurately the current power available in the horde."
+                    ),
                     min=1,
                     max=100,
                 ),
@@ -739,7 +790,10 @@ class ImageModels(v2.Models):
                 ),
                 "bridge_version": fields.Integer(
                     example=0,
-                    description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).",
+                    description=(
+                        "How many waiting requests were skipped because they require a higher version of the bridge "
+                        "than this worker is running (upgrade if you see this in your skipped list)."
+                    ),
                     min=0,
                 ),
             },
@@ -769,7 +823,14 @@ class ImageModels(v2.Models):
                 ),
                 "artifacts": fields.Integer(
                     required=False,
-                    description="The artifacts rating for this image.\n0 for flawless generation that perfectly fits to the prompt.\n1 for small, hardly recognizable flaws.\n2 small flaws that can easily be spotted, but don not harm the aesthetic experience.\n3 for flaws that look obviously wrong, but only mildly harm the aesthetic experience.\n4 for flaws that look obviously wrong & significantly harm the aesthetic experience.\n5 for flaws that make the image look like total garbage.",
+                    description=(
+                        "The artifacts rating for this image.\n0 for flawless generation that perfectly fits to the prompt.\n"
+                        "1 for small, hardly recognizable flaws.\n"
+                        "2 small flaws that can easily be spotted, but don not harm the aesthetic experience.\n"
+                        "3 for flaws that look obviously wrong, but only mildly harm the aesthetic experience.\n"
+                        "4 for flaws that look obviously wrong & significantly harm the aesthetic experience.\n"
+                        "5 for flaws that make the image look like total garbage."
+                    ),
                     example=1,
                     min=0,
                     max=5,
@@ -782,7 +843,10 @@ class ImageModels(v2.Models):
                 "best": fields.String(
                     required=False,
                     example="6038971e-f0b0-4fdd-a3bb-148f561f815e",
-                    description="The UUID of the best image in this generation batch (only used when 2+ images generated). If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied.",
+                    description=(
+                        "The UUID of the best image in this generation batch (only used when 2+ images generated). "
+                        "If 2+ aesthetic ratings are also provided, then they take precedence if they're not tied."
+                    ),
                     min_length=36,
                     max_length=36,
                 ),

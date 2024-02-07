@@ -1151,7 +1151,7 @@ def get_all_active_wps():
 def retrieve_worker_performances(worker_type=ImageWorker):
     avg_perf = db.session.query(func.avg(WorkerPerformance.performance)).join(worker_type).scalar()
     avg_perf = 0 if avg_perf is None else round(avg_perf, 2)
-    return avg_perf # noqa RET504
+    return avg_perf  # noqa RET504
 
 
 def refresh_worker_performances_cache(request_type="image"):
@@ -1388,6 +1388,7 @@ def retrieve_regex_replacements(filter_type):
         for rfilter in all_filter_regex_query.all()
         if validate_regex(rfilter.regex)
     ]
+
 
 def get_all_users(sort="kudos", offset=0):
     user_order_by = User.created.asc() if sort == "age" else User.kudos.desc()

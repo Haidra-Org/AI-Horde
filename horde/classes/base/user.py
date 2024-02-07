@@ -619,7 +619,7 @@ class User(db.Model):
         elif self.monthly_kudos_last_received:
             has_month_passed = datetime.utcnow() > self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
         else:
-            # If the user is supposed to receive Kudos, but doesn't have a last received date, 
+            # If the user is supposed to receive Kudos, but doesn't have a last received date,
             # it means it is a moderator who hasn't received it the first time
             has_month_passed = True
         if has_month_passed:

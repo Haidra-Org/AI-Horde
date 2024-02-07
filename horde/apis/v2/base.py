@@ -103,7 +103,8 @@ def check_for_mod(api_key, operation, whitelisted_users=None):
     return mod
 
 
-# I have to put it outside the class as I can't figure out how to extend the argparser and also pass it to the @api.expect decorator inside the class
+# I have to put it outside the class as I can't figure out how to extend the argparser
+# and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
     gentype = "template"
 
@@ -218,7 +219,11 @@ class GenerateTemplate(Resource):
                         self.username,
                         wp_count + n,
                         user_limit,
-                        msg=f"Too many anonymous requests on using the AI Horde currently ({wp_count + n}/{user_limit}). Please consider getting a personal API key at https://aihorde.net/register which will also provide higher priority.",
+                        msg=(
+                            "Too many anonymous requests on using the AI Horde currently "
+                            f"({wp_count + n}/{user_limit}). Please consider getting a personal API key at https://aihorde.net/register "
+                            "which will also provide higher priority."
+                        ),
                     )
                 else:
                     raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
@@ -266,7 +271,10 @@ class GenerateTemplate(Resource):
                     prompt_replaced = True
                 # This will only trigger if the prompt after replacements is an empty string
                 if not prompt_replaced:
-                    msg = "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. Please select another model and try again."
+                    msg = (
+                        "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. "
+                        "Please select another model and try again."
+                    )
                     if self.user.flagged and not if_nsfw_model:
                         msg = "To prevent generation of unethical images, we cannot allow this prompt."
                     raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message=msg)
@@ -279,10 +287,15 @@ class GenerateTemplate(Resource):
             #             self.username,
             #             self.user_ip,
             #             self.args.prompt,
-            #             message = f"The trigger '{csam_trigger_check}' has been detected to generate unethical images on its own and as such has had to be prevented from use. Thank you for understanding.")
+            #             message = (f"The trigger '{csam_trigger_check}' has been detected to generate "
+            #                       "unethical images on its own and as such has had to be prevented from use. "
+            #                        "Thank you for understanding.")
 
     def get_size_too_big_message(self):
-        return "Warning: No available workers can fulfill this request. It will expire in 20 minutes. Please confider reducing its size of the request."
+        return (
+            "Warning: No available workers can fulfill this request. "
+            "It will expire in 20 minutes. Please confider reducing its size of the request."
+        )
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
@@ -516,8 +529,10 @@ class JobPopTemplate(Resource):
             if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)
             if self.safe_ip is False:
-                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users. They will have to explicitly request it via discord
-                # EDIT # Below line commented for now, which means we do not allow any untrusted workers at all from untrusted users
+                # Outside of a raid, we allow 1 worker in unsafe IPs from untrusted users.
+                # They will have to explicitly request it via discord
+                # EDIT # Below line commented for now, which means we do not allow
+                # any untrusted workers at all from untrusted users
                 # if not raid.active and database.count_workers_in_ipaddr(self.worker_ip) == 0:
                 #     self.safe_ip = True
                 # if a raid is ongoing, we do not inform the suspicious IPs we detected them
@@ -848,7 +863,10 @@ class WorkerSingle(Resource):
         "maintenance_msg",
         type=str,
         required=False,
-        help="if maintenance is True, You can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed.",
+        help=(
+            "if maintenance is True, You can optionally provide a message to be used instead of the default maintenance message, "
+            "so that the owner is informed."
+        ),
         location="json",
     )
     put_parser.add_argument(
@@ -896,7 +914,8 @@ class WorkerSingle(Resource):
     def put(self, worker_id=""):
         """Put the worker into maintenance or pause mode
         Maintenance can be set by the owner of the serve or an admin.
-        When in maintenance, the worker will receive a 503 request when trying to retrieve new requests. Use this to avoid disconnecting your worker in the middle of a generation
+        When in maintenance, the worker will receive a 503 request when trying to retrieve new requests.
+        Use this to avoid disconnecting your worker in the middle of a generation
         Paused can be set only by the admins of this Horde.
         When in paused mode, the worker will not be given any requests to generate.
         """
@@ -1234,14 +1253,20 @@ class UserSingle(Resource):
         "customizer",
         type=bool,
         required=False,
-        help="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference.",
+        help=(
+            "When set to true, the user will be able to serve custom Stable Diffusion models "
+            "which do not exist in the Official AI Horde Model Reference."
+        ),
         location="json",
     )
     parser.add_argument(
         "vpn",
         type=bool,
         required=False,
-        help="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.",
+        help=(
+            "When set to true, the user will be able to onboard workers behind a VPN. "
+            "This should be used as a temporary solution until the user is trusted."
+        ),
         location="json",
     )
     parser.add_argument("service", type=bool, required=False, location="json")
@@ -1256,7 +1281,7 @@ class UserSingle(Resource):
     parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
-    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]
+    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)] #FIXME: required? #noqa PIE794
 
     @api.expect(parser, models.input_model_user_details, validate=True)
     @api.marshal_with(
@@ -1652,7 +1677,6 @@ class HordeModes(Resource):
         help="Start or stop maintenance mode.",
         location="json",
     )
-    # parser.add_argument("shutdown", type=int, required=False, help="Initiate a graceful shutdown of the horde in this amount of seconds. Will put horde in maintenance if not already set.", location="json")
     parser.add_argument(
         "invite_only",
         type=bool,

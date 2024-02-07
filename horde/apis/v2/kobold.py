@@ -110,7 +110,8 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e.KudosUpfront(
                 required_kudos,
                 self.username,
-                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) to fulfill this reques ({required_kudos}).",
+                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
+                f"to fulfill this reques ({required_kudos}).",
             )
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         if needs_kudos:
@@ -119,7 +120,9 @@ class TextAsyncGenerate(GenerateTemplate):
                 raise e.KudosUpfront(
                     required_kudos,
                     self.username,
-                    message=f"Due to heavy demand, for requests over {tokens} tokens, the client needs to already have the required kudos. This request requires {required_kudos} kudos to fulfil.",
+                    message=f"Due to heavy demand, for requests over {tokens} tokens, "
+                    "the client needs to already have the required kudos. "
+                    f"This request requires {required_kudos} kudos to fulfil.",
                 )
 
         if self.sharedkey:
@@ -131,7 +134,10 @@ class TextAsyncGenerate(GenerateTemplate):
                 raise e.BadRequest(fail_message)
 
     def get_size_too_big_message(self):
-        return "Warning: No available workers can fulfill this request. It will expire in 20 minutes. Consider reducing the amount of tokens to generate."
+        return (
+            "Warning: No available workers can fulfill this request. It will expire in 20 minutes. "
+            "Consider reducing the amount of tokens to generate."
+        )
 
     def validate(self):
         super().validate()

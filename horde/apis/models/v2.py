@@ -61,7 +61,10 @@ class Parsers:
             type=bool,
             default=True,
             required=False,
-            help="Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up.",
+            help=(
+                "Marks that this request expects or allows NSFW content. "
+                "Only workers with the nsfw flag active will pick this request up."
+            ),
             location="json",
         )
         self.generate_parser.add_argument(
@@ -84,7 +87,10 @@ class Parsers:
             "proxied_account",
             type=str,
             required=False,
-            help="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.",
+            help=(
+                "If using a service account as a proxy, provide this value to identify "
+                "the actual account from which this request is coming from."
+            ),
             location="json",
         )
         self.generate_parser.add_argument(
@@ -327,29 +333,43 @@ class Models:
                     min=0,
                 ),
                 "nsfw": fields.Integer(
-                    description="How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide.",
+                    description=(
+                        "How many waiting requests were skipped because "
+                        "they demanded a nsfw generation which this worker does not provide."
+                    ),
                     min=0,
                 ),
                 "blacklist": fields.Integer(
-                    description="How many waiting requests were skipped because they demanded a generation with a word that this worker does not accept.",
+                    description=(
+                        "How many waiting requests were skipped because "
+                        "they demanded a generation with a word that this worker does not accept."
+                    ),
                     min=0,
                 ),
                 "untrusted": fields.Integer(
-                    description="How many waiting requests were skipped because they demanded a trusted worker which this worker is not.",
+                    description=("How many waiting requests were skipped because they demanded a trusted worker which this worker is not."),
                     min=0,
                 ),
                 "models": fields.Integer(
                     example=0,
-                    description="How many waiting requests were skipped because they demanded a different model than what this worker provides.",
+                    description=(
+                        "How many waiting requests were skipped because they demanded a different model than what this worker provides."
+                    ),
                     min=0,
                 ),
                 "bridge_version": fields.Integer(
                     example=0,
-                    description="How many waiting requests were skipped because they require a higher version of the bridge than this worker is running (upgrade if you see this in your skipped list).",
+                    description=(
+                        "How many waiting requests were skipped because they require a higher version of the bridge "
+                        "than this worker is running (upgrade if you see this in your skipped list)."
+                    ),
                     min=0,
                 ),
                 "kudos": fields.Integer(
-                    description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos.",
+                    description=(
+                        "How many waiting requests were skipped because the user "
+                        "didn't have enough kudos when this worker requires upfront kudos."
+                    ),
                 ),
             },
         )
@@ -452,14 +472,19 @@ class Models:
                 ),
                 "threads": fields.Integer(
                     default=1,
-                    description="How many threads this worker is running. This is used to accurately the current power available in the horde.",
+                    description=(
+                        "How many threads this worker is running. This is used to accurately the current power available in the horde."
+                    ),
                     min=1,
                     max=50,
                 ),
                 "require_upfront_kudos": fields.Boolean(
                     example=False,
                     default=False,
-                    description="If True, this worker will only pick up requests where the owner has the required kudos to consume already available.",
+                    description=(
+                        "If True, this worker will only pick up requests where the owner "
+                        "has the required kudos to consume already available."
+                    ),
                 ),
                 "amount": fields.Integer(
                     default=1,
@@ -511,7 +536,9 @@ class Models:
                 ),
                 "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
                 "flagged": fields.Boolean(
-                    description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process.",
+                    description=(
+                        "The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process."
+                    ),
                 ),
                 "suspicious": fields.Integer(
                     example=0,
@@ -529,7 +556,7 @@ class Models:
                 ),
                 "contact": fields.String(
                     example="email@example.com",
-                    description="(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies.",
+                    description=("(Privileged) Contact details for the horde admins to reach the owner of this worker in emergencies."),
                     min_length=5,
                     max_length=500,
                 ),
@@ -580,11 +607,16 @@ class Models:
             {
                 "maintenance": fields.Boolean(description="Set to true to put this worker into maintenance."),
                 "maintenance_msg": fields.String(
-                    description="if maintenance is True, you can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed.",
+                    description=(
+                        "if maintenance is True, you can optionally provide a message to be used "
+                        "instead of the default maintenance message, so that the owner is informed."
+                    ),
                 ),
                 "paused": fields.Boolean(description="(Mods only) Set to true to pause this worker."),
                 "info": fields.String(
-                    description="You can optionally provide a server note which will be seen in the server details. No profanity allowed!",
+                    description=(
+                        "You can optionally provide a server note which will be seen in the server details. No profanity allowed!"
+                    ),
                     max_length=1000,
                 ),
                 "name": fields.String(
@@ -594,7 +626,10 @@ class Models:
                 ),
                 "team": fields.String(
                     example="0bed257b-e57c-4327-ac64-40cdfb1ac5e6",
-                    description="The team towards which this worker contributes kudos.  It an empty string ('') is passed, it will leave the worker without a team. No profanity allowed!",
+                    description=(
+                        "The team towards which this worker contributes kudos.  "
+                        "It an empty string ('') is passed, it will leave the worker without a team. No profanity allowed!"
+                    ),
                     max_length=36,
                 ),
             },
@@ -604,10 +639,15 @@ class Models:
             "ModifyWorker",
             {
                 "maintenance": fields.Boolean(
-                    description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests.",
+                    description=(
+                        "The new state of the 'maintenance' var for this worker. "
+                        "When True, this worker will not pick up any new requests."
+                    ),
                 ),
                 "paused": fields.Boolean(
-                    description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests.",
+                    description=(
+                        "The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests."
+                    ),
                 ),
                 "info": fields.String(description="The new state of the 'info' var for this worker."),
                 "name": fields.String(description="The new name for this this worker."),
@@ -653,7 +693,10 @@ class Models:
                     max=50000000,
                     default=5000,
                     required=False,
-                    description="The Kudos limit assigned to this key. If -1, then anyone with this key can use an unlimited amount of kudos from this account.",
+                    description=(
+                        "The Kudos limit assigned to this key. "
+                        "If -1, then anyone with this key can use an unlimited amount of kudos from this account."
+                    ),
                 ),
                 "expiry": fields.Integer(
                     min=-1,
@@ -798,14 +841,23 @@ class Models:
                 ),
                 "id": fields.Integer(description="The user unique ID. It is always an integer."),
                 "kudos": fields.Float(
-                    description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations.",
+                    description=(
+                        "The amount of Kudos this user has. "
+                        "The amount of Kudos determines the priority when requesting image generations."
+                    ),
                 ),
                 "evaluating_kudos": fields.Float(
-                    description="(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches a prespecified threshold, they automatically become trusted.",
+                    description=(
+                        "(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. "
+                        "When this number reaches a prespecified threshold, they automatically become trusted."
+                    ),
                 ),
                 "concurrency": fields.Integer(description="How many concurrent generations this user may request."),
                 "worker_invited": fields.Integer(
-                    description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde.",
+                    description=(
+                        "Whether this user has been invited to join a worker to the horde and how many of them. "
+                        "When 0, this user cannot add (new) workers to the horde."
+                    ),
                 ),
                 "moderator": fields.Boolean(example=False, description="This user is a Horde moderator."),
                 "kudos_details": fields.Nested(self.response_model_user_kudos_details),
@@ -886,7 +938,7 @@ class Models:
                     max=10,
                 ),
                 "worker_invited": fields.Integer(
-                    description="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode.",
+                    description=("Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode."),
                 ),
                 "moderator": fields.Boolean(
                     example=False,
@@ -910,15 +962,23 @@ class Models:
                 ),
                 "flagged": fields.Boolean(
                     example=False,
-                    description="When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance.",
+                    description=(
+                        "When set to true, the user cannot tranfer kudos and all their workers are put into permanent maintenance."
+                    ),
                 ),
                 "customizer": fields.Boolean(
                     example=False,
-                    description="When set to true, the user will be able to serve custom Stable Diffusion models which do not exist in the Official AI Horde Model Reference.",
+                    description=(
+                        "When set to true, the user will be able to serve custom Stable Diffusion models "
+                        "which do not exist in the Official AI Horde Model Reference."
+                    ),
                 ),
                 "vpn": fields.Boolean(
                     example=False,
-                    description="When set to true, the user will be able to onboard workers behind a VPN. This should be used as a temporary solution until the user is trusted.",
+                    description=(
+                        "When set to true, the user will be able to onboard workers behind a VPN. "
+                        "This should be used as a temporary solution until the user is trusted."
+                    ),
                 ),
                 "service": fields.Boolean(
                     example=False,
@@ -935,7 +995,10 @@ class Models:
                 "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
                 "contact": fields.String(
                     example="email@example.com",
-                    description="Contact details for the horde admins to reach the user in case of emergency. This is only visible to horde moderators.",
+                    description=(
+                        "Contact details for the horde admins to reach the user in case of emergency. "
+                        "This is only visible to horde moderators."
+                    ),
                     min_length=5,
                     max_length=500,
                 ),
@@ -962,7 +1025,10 @@ class Models:
                 ),
                 "worker_invited": fields.Integer(
                     example=1,
-                    description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde.",
+                    description=(
+                        "Whether this user has been invited to join a worker to the horde and how many of them. "
+                        "When 0, this user cannot add (new) workers to the horde."
+                    ),
                 ),
                 "moderator": fields.Boolean(example=False, description="The user's new moderator status."),
                 "public_workers": fields.Boolean(example=False, description="The user's new public_workers status."),
@@ -1046,7 +1112,10 @@ class Models:
             "HordeModes",
             {
                 "maintenance_mode": fields.Boolean(
-                    description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue.",
+                    description=(
+                        "When True, this Horde will not accept new requests for image generation,"
+                        " but will finish processing the ones currently in the queue."
+                    ),
                 ),
                 "invite_only_mode": fields.Boolean(
                     description="When True, this Horde will not only accept worker explicitly invited to join.",
