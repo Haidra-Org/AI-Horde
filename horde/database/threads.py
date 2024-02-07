@@ -250,7 +250,7 @@ def check_interrogations():
             Interrogation.expiry < cutoff_time
         )
         expired_r_entries = expired_entries.filter(
-            Interrogation.r2stored == True # noqa E712
+            Interrogation.r2stored == True  # noqa E712
         )  # noqa E712
         all_source_image_ids = [i.id for i in expired_r_entries.all()]
         for source_image_id in all_source_image_ids:

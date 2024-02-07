@@ -24,8 +24,10 @@ procgen_classes = {
 }
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
+
+
 def uuid_column_type():
-    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  
+    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 
 class WPAllowedWorkers(db.Model):

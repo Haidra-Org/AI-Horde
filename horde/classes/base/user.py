@@ -48,7 +48,7 @@ class UserProblemJobs(db.Model):
     created = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False, index=True
     )
-    
+
 
 class UserStats(db.Model):
     __tablename__ = "user_stats"
