@@ -156,6 +156,7 @@ BRIDGE_SAMPLERS = {  # TODO: Refactor along with schedulers
 }
 
 
+@logger.catch(reraise=True)
 def parse_bridge_agent(bridge_agent):
     try:
         bridge_name, bridge_version, _ = bridge_agent.split(":", 2)
@@ -171,6 +172,7 @@ def parse_bridge_agent(bridge_agent):
     return bridge_name, bridge_semver
 
 
+@logger.catch(reraise=True)
 def check_bridge_capability(capability, bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
     if bridge_name not in BRIDGE_CAPABILITIES:
@@ -185,6 +187,7 @@ def check_bridge_capability(capability, bridge_agent):
     return capability in total_capabilities
 
 
+@logger.catch(reraise=True)
 def get_supported_samplers(bridge_agent, karras=True):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
     if bridge_name not in BRIDGE_SAMPLERS:
@@ -204,10 +207,12 @@ def get_supported_samplers(bridge_agent, karras=True):
     return available_samplers
 
 
+@logger.catch(reraise=True)
 def check_sampler_capability(sampler, bridge_agent, karras=True):
     return sampler in get_supported_samplers(bridge_agent, karras)
 
 
+@logger.catch(reraise=True)
 def get_supported_pp(bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
     if bridge_name not in BRIDGE_SAMPLERS:
@@ -224,6 +229,7 @@ def get_supported_pp(bridge_agent):
     return available_pp
 
 
+@logger.catch(reraise=True)
 def get_latest_version(bridge_name):
     latest_semver = None
     for version in BRIDGE_CAPABILITIES[bridge_name]:
@@ -235,12 +241,14 @@ def get_latest_version(bridge_name):
     return latest_semver
 
 
+@logger.catch(reraise=True)
 def is_latest_bridge_version(bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
     latest_version = get_latest_version(bridge_name)
     return latest_version.compare(bridge_version) <= 0
 
 
+@logger.catch(reraise=True)
 def is_official_bridge_version(bridge_agent):
     bridge_name, _ = parse_bridge_agent(bridge_agent)
     return bridge_name in ["AI Horde Worker reGen", "AI Horde Worker"]
