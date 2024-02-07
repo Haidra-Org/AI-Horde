@@ -15,9 +15,8 @@ from horde.classes.base import settings
 from horde.discord import send_pause_notification
 
 
-uuid_column_type = (
-    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-)  # FIXME # noqa E731
+def uuid_column_type():
+    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 
 class WorkerStats(db.Model):

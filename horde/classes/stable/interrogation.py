@@ -14,9 +14,10 @@ from horde.consts import KNOWN_POST_PROCESSORS
 from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
 
 
-uuid_column_type = (
-    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-)  # FIXME # noqa E731
+def uuid_column_type():
+    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+
+
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 

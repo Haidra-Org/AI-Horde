@@ -24,9 +24,8 @@ procgen_classes = {
 }
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
-uuid_column_type = (
-    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-)  # FIXME # noqa E731
+def uuid_column_type():
+    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  
 
 
 class WPAllowedWorkers(db.Model):

@@ -20,9 +20,9 @@ from horde.discord import send_problem_user_notification
 from horde import horde_redis as hr
 from horde.countermeasures import CounterMeasures
 
-uuid_column_type = (
-    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-)  # FIXME # noqa E731
+
+def uuid_column_type():
+    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
 
 
 class UserProblemJobs(db.Model):
@@ -48,7 +48,7 @@ class UserProblemJobs(db.Model):
     created = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False, index=True
     )
-
+    
 
 class UserStats(db.Model):
     __tablename__ = "user_stats"

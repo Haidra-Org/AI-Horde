@@ -508,6 +508,8 @@ def count_waiting_requests(user, models=None, request_type="image"):
     if request_type == "text":
         wp_class = TextWaitingPrompt
 
+    
+
     if not models:
         models = []
     if len(models):

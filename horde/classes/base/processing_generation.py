@@ -10,9 +10,11 @@ from horde.utils import get_db_uuid
 from horde.logger import logger
 from horde.flask import db, SQLITE_MODE
 
-uuid_column_type = (
-    lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
-)  # FIXME # noqa E731
+
+def uuid_column_type():
+    return UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)
+
+
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
 
