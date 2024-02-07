@@ -1,23 +1,24 @@
-from flask_restx import Resource, reqparse
 from flask import request
-from horde.limiter import limiter
+from flask_restx import Resource, reqparse
+
 import horde.apis.limiter_api as lim
-from horde.database import functions as database
 from horde import exceptions as e
-from horde.utils import hash_dictionary
+from horde.apis.models.kobold_v2 import TextModels, TextParsers
 from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
-from horde.flask import cache, db
+from horde.classes.base import settings
+from horde.classes.kobold.genstats import (
+    compile_textgen_stats_models,
+    compile_textgen_stats_totals,
+)
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
+from horde.database import functions as database
 from horde.database import text_functions as text_database
-from horde.classes.kobold.genstats import (
-    compile_textgen_stats_totals,
-    compile_textgen_stats_models,
-)
+from horde.flask import cache, db
+from horde.limiter import limiter
 from horde.logger import logger
-from horde.apis.models.kobold_v2 import TextModels, TextParsers
 from horde.model_reference import model_reference
-from horde.classes.base import settings
+from horde.utils import hash_dictionary
 
 models = TextModels(api)
 parsers = TextParsers()
@@ -138,7 +139,7 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("You cannot request more tokens than your context length.")
         if "sampler_order" in self.params and len(set(self.params["sampler_order"])) < 7:
             raise e.BadRequest(
-                "When sending a custom sampler order, you need to specify all possible samplers in the order"
+                "When sending a custom sampler order, you need to specify all possible samplers in the order",
             )
         if "stop_sequence" in self.params:
             stop_seqs = set(self.params["stop_sequence"])
@@ -381,7 +382,7 @@ class KoboldKudosTransfer(Resource):
             raise e.UserNotFound(user_id)
         self.args = self.post_parser.parse_args()
         logger.warning(
-            f"{user.get_unique_alias()} Started {self.args.kudos_amount}Kudos Transfer from KAI ID {self.args.kai_id}"
+            f"{user.get_unique_alias()} Started {self.args.kudos_amount}Kudos Transfer from KAI ID {self.args.kai_id}",
         )
         if user.trusted is False and self.args.trusted is True:
             user.set_trusted(self.args.trusted)

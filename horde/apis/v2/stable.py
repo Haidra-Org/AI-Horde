@@ -1,32 +1,34 @@
-import requests
 from datetime import datetime
-from flask_restx import Resource, reqparse
+
+import requests
 from flask import request
-from horde.limiter import limiter
+from flask_restx import Resource, reqparse
+
 import horde.apis.limiter_api as lim
-from horde.database import functions as database
-from horde.patreon import patrons
-from horde import exceptions as e
-from horde.utils import hash_dictionary
-from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
-from horde.flask import cache, db, HORDE
-from horde.classes.base.user import User
 import horde.classes.base.stats as stats
-from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
-from horde.classes.stable.worker import ImageWorker
+from horde import exceptions as e
+from horde.apis.models.stable_v2 import ImageModels, ImageParsers
+from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
+from horde.classes.base import settings
+from horde.classes.base.user import User
+from horde.classes.stable.genstats import (
+    compile_imagegen_stats_models,
+    compile_imagegen_stats_totals,
+)
 from horde.classes.stable.interrogation import Interrogation
 from horde.classes.stable.interrogation_worker import InterrogationWorker
-from horde.countermeasures import CounterMeasures
-from horde.logger import logger
-from horde.classes.stable.genstats import (
-    compile_imagegen_stats_totals,
-    compile_imagegen_stats_models,
-)
-from horde.image import ensure_source_image_uploaded, calculate_image_tiles
-from horde.model_reference import model_reference
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.classes.stable.worker import ImageWorker
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
-from horde.classes.base import settings
-from horde.apis.models.stable_v2 import ImageModels, ImageParsers
+from horde.countermeasures import CounterMeasures
+from horde.database import functions as database
+from horde.flask import HORDE, cache, db
+from horde.image import calculate_image_tiles, ensure_source_image_uploaded
+from horde.limiter import limiter
+from horde.logger import logger
+from horde.model_reference import model_reference
+from horde.patreon import patrons
+from horde.utils import hash_dictionary
 
 models = ImageModels(api)
 parsers = ImageParsers()
@@ -110,7 +112,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 usermodel = model.split("::")
                 if len(usermodel) == 1:
                     raise e.BadRequest(
-                        "Special models must always include the username, in the form of 'horde_special::user#id'"
+                        "Special models must always include the username, in the form of 'horde_special::user#id'",
                     )
                 user_alias = usermodel[1]
                 if self.user.get_unique_alias() != user_alias:
@@ -186,7 +188,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                         raise e.BadRequest("cfg_scale must be rounded to 2 decimal places")
                 except (TypeError, ValueError):
                     logger.warning(
-                        f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated."
+                        f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated.",
                     )
                     raise e.BadRequest("cfg_scale must be a valid number")
 
@@ -194,7 +196,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.BadRequest(
                 "This Client-Agent appears badly designed and is causing too many warnings. "
                 "First ensure it provides a proper name and contact details. "
-                "Then contact us on Discord to discuss the issue it's creating."
+                "Then contact us on Discord to discuss the issue it's creating.",
             )
 
     # We split this into its own function, so that it may be overriden
@@ -258,7 +260,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             logger.warning(
                 f"High step count detected! "
                 f"User: {self.username}. Balance: {self.user.kudos}. Required: {required_kudos}. Upfront: {needs_kudos}. "
-                f"Args: {print_args}"
+                f"Args: {print_args}",
             )
             # else:
             #     logger.warning(f"{self.username} requested generation {self.wp.id} requiring upfront kudos: {required_kudos}")
@@ -313,7 +315,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                     _red, _green, _blue, _alpha = img.split()
                 except ValueError:
                     raise e.ImageValidationFailed(
-                        "Inpainting requests must either include a mask, or an alpha channel."
+                        "Inpainting requests must either include a mask, or an alpha channel.",
                     )
         self.wp.activate(self.source_image, self.source_mask)
 
@@ -602,7 +604,7 @@ class Aesthetics(Resource):
             raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!")
         if not wp.shared:
             raise e.InvalidAestheticAttempt(
-                "You can only aesthetically rate requests you have opted to share publicly"
+                "You can only aesthetically rate requests you have opted to share publicly",
             )
         procgen_ids = [
             str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled
@@ -622,7 +624,7 @@ class Aesthetics(Resource):
             raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
             raise e.InvalidAestheticAttempt(
-                "Well done! You have pointed to a single image generation as being the best one of the set. Unfortunately that doesn't help anyone. no kudos for you!"
+                "Well done! You have pointed to a single image generation as being the best one of the set. Unfortunately that doesn't help anyone. no kudos for you!",
             )
         aesthetic_payload = {
             "set": id,
@@ -669,7 +671,7 @@ class Aesthetics(Resource):
                     if self.args.best:
                         if self.args.best not in bestofs:
                             raise e.InvalidAestheticAttempt(
-                                "What are you even doing? How could the best image you selected not be one of those with the highest aesthetic rating?"
+                                "What are you even doing? How could the best image you selected not be one of those with the highest aesthetic rating?",
                             )
                         aesthetic_payload["best"] = self.args.best
                 if len(bestofs) == 1:
@@ -694,7 +696,7 @@ class Aesthetics(Resource):
                     error_msg = submit_req.json()
                 except Exception:
                     raise e.InvalidAestheticAttempt(
-                        f"Received unexpected response from rating server: {submit_req.text}"
+                        f"Received unexpected response from rating server: {submit_req.text}",
                     )
                 raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}")
         except requests.exceptions.ConnectionError:
@@ -706,7 +708,7 @@ class Aesthetics(Resource):
                 raise err
             logger.error(f"Error when submitting Aesthetic: {err}")
             raise e.InvalidAestheticAttempt(
-                "Oops, Something went wrong when submitting the request. Please contact us."
+                "Oops, Something went wrong when submitting the request. Please contact us.",
             )
         wp.user.modify_kudos(self.kudos, "awarded")
         return ({"reward": self.kudos}, 200)
@@ -791,12 +793,12 @@ class Interrogate(Resource):
         # If anything goes wrong when uploading an image, we don't want to leave garbage around
         try:
             self.source_image, img, self.r2stored = ensure_source_image_uploaded(
-                self.args.source_image, str(self.interrogation.id)
+                self.args.source_image, str(self.interrogation.id),
             )
             self.image_tiles = calculate_image_tiles(img)
             if self.image_tiles > 255:
                 raise e.ImageValidationFailed(
-                    f"Image is too large ({self.image_tiles} tiles) and would cause horde alchemists to run out of VRAM trying to process it."
+                    f"Image is too large ({self.image_tiles} tiles) and would cause horde alchemists to run out of VRAM trying to process it.",
                 )
         except Exception as err:
             db.session.delete(self.interrogation)
@@ -994,7 +996,7 @@ class InterrogatePop(JobPopTemplate):
             self.priority_usernames = self.args.priority_usernames
             if any("#" not in user_id for user_id in self.priority_usernames):
                 raise e.BadRequest(
-                    "Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'"
+                    "Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
                 )
         self.forms = []
         if self.args.forms:

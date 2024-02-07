@@ -1,7 +1,8 @@
+import json
 import os
 import socket
+
 import redis
-import json
 
 from horde.logger import logger
 

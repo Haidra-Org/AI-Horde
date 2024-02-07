@@ -1,15 +1,17 @@
 import json
-import regex as re
 from datetime import datetime
+
 import dateutil.relativedelta
-from horde.logger import logger
-from horde.horde_redis import horde_r_get
-from horde.flask import HORDE, SQLITE_MODE  # Local Testing
-from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
-from horde.model_reference import model_reference
-from unidecode import unidecode
-from horde.argparser import args
 import emoji
+import regex as re
+from unidecode import unidecode
+
+from horde.argparser import args
+from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
+from horde.flask import HORDE, SQLITE_MODE  # Local Testing
+from horde.horde_redis import horde_r_get
+from horde.logger import logger
+from horde.model_reference import model_reference
 
 
 class PromptChecker:
@@ -317,7 +319,7 @@ class PromptChecker:
             trim_match = match.group(0).strip()
             replacement = re.sub(r"\s+", "", trim_match)
             prompt = prompt.replace(trim_match, replacement)
-        prompt = re.sub("\s+", " ", prompt)
+        prompt = re.sub(r"\s+", " ", prompt)
         # Remove all accents
         prompt = unidecode(prompt)
         return prompt

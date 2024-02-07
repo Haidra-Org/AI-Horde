@@ -1,4 +1,5 @@
 from flask_restx import fields
+
 from horde.apis.models import v2
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS
 
@@ -199,7 +200,7 @@ class ImageModels(v2.Models):
                 ),
                 "id": fields.String(title="Generation ID", description="The ID for this image."),
                 "censored": fields.Boolean(
-                    description="When true this image has been censored by the worker's safety filter."
+                    description="When true this image has been censored by the worker's safety filter.",
                 ),
                 "gen_metadata": fields.List(fields.Nested(self.model_job_metadata, skip_none=True)),
             },
@@ -370,12 +371,12 @@ class ImageModels(v2.Models):
             self.root_model_generation_payload_stable,
             {
                 "prompt": fields.String(
-                    description="The prompt which will be sent to Stable Diffusion to generate an image."
+                    description="The prompt which will be sent to Stable Diffusion to generate an image.",
                 ),
                 "ddim_steps": fields.Integer(default=30),
                 "n_iter": fields.Integer(default=1, description="The amount of images to generate."),
                 "use_nsfw_censor": fields.Boolean(
-                    description="When true will apply NSFW censoring model on the generation."
+                    description="When true will apply NSFW censoring model on the generation.",
                 ),
             },
         )
@@ -398,25 +399,25 @@ class ImageModels(v2.Models):
             self.response_model_generations_skipped,
             {
                 "max_pixels": fields.Integer(
-                    description="How many waiting requests were skipped because they demanded a higher size than this worker provides."
+                    description="How many waiting requests were skipped because they demanded a higher size than this worker provides.",
                 ),
                 "unsafe_ip": fields.Integer(
-                    description="How many waiting requests were skipped because they came from an unsafe IP."
+                    description="How many waiting requests were skipped because they came from an unsafe IP.",
                 ),
                 "img2img": fields.Integer(
-                    description="How many waiting requests were skipped because they requested img2img."
+                    description="How many waiting requests were skipped because they requested img2img.",
                 ),
                 "painting": fields.Integer(
-                    description="How many waiting requests were skipped because they requested inpainting/outpainting."
+                    description="How many waiting requests were skipped because they requested inpainting/outpainting.",
                 ),
                 "post-processing": fields.Integer(
-                    description="How many waiting requests were skipped because they requested post-processing."
+                    description="How many waiting requests were skipped because they requested post-processing.",
                 ),
                 "lora": fields.Integer(
-                    description="How many waiting requests were skipped because they requested loras."
+                    description="How many waiting requests were skipped because they requested loras.",
                 ),
                 "controlnet": fields.Integer(
-                    description="How many waiting requests were skipped because they requested a controlnet."
+                    description="How many waiting requests were skipped because they requested a controlnet.",
                 ),
             },
         )
@@ -429,7 +430,7 @@ class ImageModels(v2.Models):
                     fields.String(
                         description="The UUID for this image generation.",
                         example="00000000-0000-0000-0000-000000000000",
-                    )
+                    ),
                 ),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
                 "model": fields.String(description="Which of the available models to use for this request."),
@@ -441,11 +442,11 @@ class ImageModels(v2.Models):
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
-                    description="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
+                    description="If img_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel.",
                 ),
                 "r2_upload": fields.String(description="The r2 upload link to use to upload this image."),
                 "r2_uploads": fields.List(
-                    fields.String(description="The r2 upload link to use to upload this image.")
+                    fields.String(description="The r2 upload link to use to upload this image."),
                 ),
             },
         )
@@ -458,7 +459,7 @@ class ImageModels(v2.Models):
                     description="The maximum amount of pixels this worker can generate.",
                 ),
                 "blacklist": fields.List(
-                    fields.String(description="Words which, when detected will refuste to pick up any jobs.")
+                    fields.String(description="Words which, when detected will refuste to pick up any jobs."),
                 ),
                 "allow_img2img": fields.Boolean(
                     default=True,
@@ -525,7 +526,7 @@ class ImageModels(v2.Models):
                     description="If the request is SFW, and the worker accidentally generates NSFW, it will send back a censored image.",
                 ),
                 "workers": fields.List(
-                    fields.String(description="Specify up to 5 workers which are allowed to service this request.")
+                    fields.String(description="Specify up to 5 workers which are allowed to service this request."),
                 ),
                 "worker_blacklist": fields.Boolean(
                     default=False,
@@ -533,7 +534,7 @@ class ImageModels(v2.Models):
                     description="If true, the worker list will be treated as a blacklist instead of a whitelist.",
                 ),
                 "models": fields.List(
-                    fields.String(description="Specify which models are allowed to be used for this request.")
+                    fields.String(description="Specify which models are allowed to be used for this request."),
                 ),
                 "source_image": fields.String(
                     required=False,
@@ -546,7 +547,7 @@ class ImageModels(v2.Models):
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
-                    description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
+                    description="If source_processing is set to 'inpainting' or 'outpainting', this parameter can be optionally provided as the  Base64-encoded webp mask of the areas to inpaint. If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel.",
                 ),
                 "r2": fields.Boolean(
                     default=True,
@@ -565,7 +566,7 @@ class ImageModels(v2.Models):
                     description="When true, the endpoint will simply return the cost of the request in kudos and exit.",
                 ),
                 "proxied_account": fields.String(
-                    description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."
+                    description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.",
                 ),
                 "disable_batching": fields.Boolean(
                     default=False,
@@ -585,19 +586,19 @@ class ImageModels(v2.Models):
             self.response_model_team_details,
             {
                 "contributions": fields.Float(
-                    description="How many megapixelsteps the workers in this team have been rewarded while part of this team."
+                    description="How many megapixelsteps the workers in this team have been rewarded while part of this team.",
                 ),
                 "performance": fields.Float(
-                    description="The average performance of the workers in this team, in megapixelsteps per second."
+                    description="The average performance of the workers in this team, in megapixelsteps per second.",
                 ),
                 "speed": fields.Float(
-                    description="The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second."
+                    description="The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second.",
                 ),
             },
         )
         # Intentionally left blank to allow to add payloads later
         self.input_model_interrogation_form_payload = api.model(
-            "ModelInterrogationFormPayloadStable", {"*": fields.Wildcard(fields.String)}
+            "ModelInterrogationFormPayloadStable", {"*": fields.Wildcard(fields.String)},
         )
         self.input_model_interrogation_form = api.model(
             "ModelInterrogationFormStable",
@@ -636,7 +637,7 @@ class ImageModels(v2.Models):
             "RequestInterrogationResponse",
             {
                 "id": fields.String(
-                    description="The UUID of the request. Use this to retrieve the request status in the future."
+                    description="The UUID of the request. Use this to retrieve the request status in the future.",
                 ),
                 "message": fields.String(
                     default=None,
@@ -646,7 +647,7 @@ class ImageModels(v2.Models):
         )
         # Intentionally left blank to allow to add payloads later
         self.response_model_interrogation_form_result = api.model(
-            "InterrogationFormResult", {"*": fields.Wildcard(fields.Raw)}
+            "InterrogationFormResult", {"*": fields.Wildcard(fields.Raw)},
         )
         self.response_model_interrogation_form_status = api.model(
             "InterrogationFormStatus",
@@ -674,14 +675,14 @@ class ImageModels(v2.Models):
             {
                 "name": fields.String(description="The Name of the Worker."),
                 "priority_usernames": fields.List(
-                    fields.String(description="Users with priority to use this worker.")
+                    fields.String(description="Users with priority to use this worker."),
                 ),
                 "forms": fields.List(
                     fields.String(
                         description="The type of interrogation this worker can fulfil.",
                         enum=["caption", "interrogation", "nsfw"] + list(KNOWN_POST_PROCESSORS.keys()),
                         unique=True,
-                    )
+                    ),
                 ),
                 "amount": fields.Integer(
                     default=1,
@@ -712,7 +713,7 @@ class ImageModels(v2.Models):
             "InterrogationPopFormPayload",
             {
                 "id": fields.String(
-                    description="The UUID of the interrogation form. Use this to post the results in the future."
+                    description="The UUID of the interrogation form. Use this to post the results in the future.",
                 ),
                 "form": fields.String(
                     description="The name of this interrogation form",
@@ -816,7 +817,7 @@ class ImageModels(v2.Models):
                     fields.Integer(
                         required=True,
                         description="The amount of requests fulfilled for this model.",
-                    )
+                    ),
                 ),
             },
         )

@@ -1,4 +1,5 @@
 from flask_restx import fields
+
 from horde.apis.models import v2
 
 
@@ -115,7 +116,7 @@ class TextModels(v2.Models):
                 ),
                 "frmtrmspch": fields.Boolean(
                     example=False,
-                    description="Output formatting option. When enabled, removes #/@%}{+=~|\^<> from the output.",
+                    description=r"Output formatting option. When enabled, removes #/@%}{+=~|\^<> from the output.",
                 ),
                 "frmttriminc": fields.Boolean(
                     example=False,
@@ -148,7 +149,7 @@ class TextModels(v2.Models):
                 "top_p": fields.Float(description="Top-p sampling value.", min=0.001, max=1.0),
                 "typical": fields.Float(description="Typical sampling value.", min=0.0, max=1.0),
                 "sampler_order": fields.List(
-                    fields.Integer(description="Array of integers representing the sampler order to be used.")
+                    fields.Integer(description="Array of integers representing the sampler order to be used."),
                 ),
                 "use_default_badwordsids": fields.Boolean(
                     example=True,
@@ -156,8 +157,8 @@ class TextModels(v2.Models):
                 ),
                 "stop_sequence": fields.List(
                     fields.String(
-                        description="An array of string sequences whereby the model will stop generating further tokens. The returned text WILL contain the stop sequence."
-                    )
+                        description="An array of string sequences whereby the model will stop generating further tokens. The returned text WILL contain the stop sequence.",
+                    ),
                 ),
                 "min_p": fields.Float(description="Min-p sampling value.", min=0.0, default=0.0, max=1.0),
                 "dynatemp_range": fields.Float(
@@ -182,7 +183,7 @@ class TextModels(v2.Models):
             },
         )
         self.input_model_generation_payload = api.inherit(
-            "ModelGenerationInputKobold", self.root_model_generation_payload_kobold, {}
+            "ModelGenerationInputKobold", self.root_model_generation_payload_kobold, {},
         )
         self.response_model_generations_skipped = api.inherit(
             "NoValidRequestFoundKobold",
@@ -211,7 +212,7 @@ class TextModels(v2.Models):
                     fields.String(
                         description="The UUID for this text generation.",
                         example="00000000-0000-0000-0000-000000000000",
-                    )
+                    ),
                 ),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
                 "softprompt": fields.String(description="The soft prompt requested for this generation."),
@@ -232,8 +233,8 @@ class TextModels(v2.Models):
                 ),
                 "softprompts": fields.List(
                     fields.String(
-                        description="The available softprompt files on this worker for the currently running model."
-                    )
+                        description="The available softprompt files on this worker for the currently running model.",
+                    ),
                 ),
             },
         )
@@ -256,7 +257,7 @@ class TextModels(v2.Models):
                     description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.",
                 ),
                 "workers": fields.List(
-                    fields.String(description="Specify up to 5 workers which are allowed to service this request.")
+                    fields.String(description="Specify up to 5 workers which are allowed to service this request."),
                 ),
                 "worker_blacklist": fields.Boolean(
                     default=False,
@@ -264,21 +265,21 @@ class TextModels(v2.Models):
                     description="If true, the worker list will be treated as a blacklist instead of a whitelist.",
                 ),
                 "models": fields.List(
-                    fields.String(description="Specify which models are allowed to be used for this request.")
+                    fields.String(description="Specify which models are allowed to be used for this request."),
                 ),
                 "dry_run": fields.Boolean(
                     default=False,
                     description="When true, the endpoint will simply return the cost of the request in kudos and exit.",
                 ),
                 "proxied_account": fields.String(
-                    description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from."
+                    description="If using a service account as a proxy, provide this value to identify the actual account from which this request is coming from.",
                 ),
                 "disable_batching": fields.Boolean(
                     default=False,
                     description="When true, This request will not use batching. This will allow you to retrieve accurate seeds. Feature is restricted to Trusted users and Patreons.",
                 ),
                 "webhook": fields.String(
-                    description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID."
+                    description="Provide a URL where the AI Horde will send a POST call after each delivered generation. The request will include the details of the job as well as the request ID.",
                 ),
             },
         )
@@ -310,13 +311,13 @@ class TextModels(v2.Models):
             self.response_model_team_details,
             {
                 "contributions": fields.Float(
-                    description="How many tokens the workers in this team have been rewarded while part of this team."
+                    description="How many tokens the workers in this team have been rewarded while part of this team.",
                 ),
                 "performance": fields.Float(
-                    description="The average performance of the workers in this team, in tokens per second."
+                    description="The average performance of the workers in this team, in tokens per second.",
                 ),
                 "total_speed": fields.Float(
-                    description="The total expected speed of this team when all workers are working parallel, in tokens per second."
+                    description="The total expected speed of this team when all workers are working parallel, in tokens per second.",
                 ),
             },
         )
@@ -347,7 +348,7 @@ class TextModels(v2.Models):
                     fields.Integer(
                         required=True,
                         description="The amount of requests fulfilled for this model.",
-                    )
+                    ),
                 ),
             },
         )

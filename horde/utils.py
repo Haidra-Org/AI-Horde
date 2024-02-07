@@ -1,15 +1,17 @@
-import uuid
-import bleach
-import secrets
 import hashlib
+import json
 import os
 import random
-import regex as re
-import json
+import secrets
+import uuid
 from datetime import datetime
+
+import bleach
 import dateutil.relativedelta
-from profanity_check import predict
+import regex as re
 from better_profanity import profanity
+from profanity_check import predict
+
 from horde.flask import SQLITE_MODE
 
 profanity.load_censor_words()

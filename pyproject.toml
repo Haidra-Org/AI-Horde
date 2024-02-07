@@ -50,7 +50,8 @@ select = [
   "SIM",
   "COM",
   # "D",
-  "ANN"]
+  #"ANN"
+  ]
 ignore = [
   "ANN101",
   "ANN102",

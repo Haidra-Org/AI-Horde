@@ -1,6 +1,7 @@
 import semver
-from horde.logger import logger
+
 from horde.consts import KNOWN_POST_PROCESSORS
+from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {

@@ -1,11 +1,13 @@
-import os
 import json
+import os
+from io import BytesIO
 from uuid import uuid4
-from horde.logger import logger
+
 import boto3
 from botocore.exceptions import ClientError
 from PIL import Image
-from io import BytesIO
+
+from horde.logger import logger
 
 r2_transient_account = os.getenv(
     "R2_TRANSIENT_ACCOUNT",

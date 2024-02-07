@@ -1,38 +1,39 @@
 import json
 import os
-import regex as re
 import time
 from datetime import datetime, timedelta
-from sqlalchemy.exc import IntegrityError, InvalidRequestError
-from sqlalchemy import or_
-from flask_restx.reqparse import ParseResult
 
-from horde.database import functions as database
-from horde.classes.base import settings
+import regex as re
 from flask import request
 from flask_restx import Namespace, Resource, reqparse
-from horde.flask import cache, db, HORDE
-from horde.limiter import limiter
-from horde.logger import logger
-from horde.argparser import args
+from flask_restx.reqparse import ParseResult
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
+
+import horde.apis.limiter_api as lim
+import horde.classes.base.stats as stats
 from horde import exceptions as e
+from horde import horde_redis as hr
+from horde.apis.models.v2 import Models, Parsers
+from horde.argparser import args
+from horde.classes.base import settings
+from horde.classes.base.detection import Filter
+from horde.classes.base.news import News
+from horde.classes.base.team import Team
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker
-import horde.classes.base.stats as stats
-import horde.apis.limiter_api as lim
-from horde.classes.base.team import Team
-from horde.classes.base.news import News
-from horde.classes.base.detection import Filter
-from horde.suspicions import Suspicions
-from horde.utils import is_profane, sanitize_string, hash_api_key, hash_dictionary
-from horde.countermeasures import CounterMeasures
-from horde import horde_redis as hr
-from horde.patreon import patrons
-from horde.detection import prompt_checker
-from horde.r2 import upload_prompt
 from horde.consts import HORDE_VERSION
-from horde.apis.models.v2 import Models, Parsers
+from horde.countermeasures import CounterMeasures
+from horde.database import functions as database
+from horde.detection import prompt_checker
+from horde.flask import HORDE, cache, db
+from horde.limiter import limiter
+from horde.logger import logger
+from horde.patreon import patrons
+from horde.r2 import upload_prompt
+from horde.suspicions import Suspicions
+from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -260,7 +261,7 @@ class GenerateTemplate(Resource):
                 # For NSFW models and flagged users, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
                 self.args.prompt = prompt_checker.nsfw_model_prompt_replace(
-                    self.args.prompt, self.models, already_replaced=prompt_replaced
+                    self.args.prompt, self.models, already_replaced=prompt_replaced,
                 )
                 if self.args.prompt is None:
                     prompt_replaced = False
@@ -366,7 +367,7 @@ class JobPopTemplate(Resource):
             self.priority_usernames = self.args.priority_usernames
             if any("#" not in user_id for user_id in self.priority_usernames):
                 raise e.BadRequest(
-                    "Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'"
+                    "Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
                 )
         self.models = []
         if self.args.models:
@@ -432,7 +433,7 @@ class JobPopTemplate(Resource):
     def get_sorted_wp(self, priority_user_ids=None):
         """Extendable class to retrieve the sorted WP list for this worker"""
         return database.get_sorted_wp_filtered_to_worker(
-            self.worker, priority_user_ids=priority_user_ids, page=self.wp_page
+            self.worker, priority_user_ids=priority_user_ids, page=self.wp_page,
         )
 
     # Making it into its own function to allow extension
@@ -465,7 +466,7 @@ class JobPopTemplate(Resource):
             raise e.InvalidAPIKey("prompt pop")
         if self.user.flagged:
             raise e.WorkerMaintenance(
-                "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn"
+                "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn",
             )
         if self.user.is_anon():
             raise e.AnonForbidden
@@ -483,7 +484,7 @@ class JobPopTemplate(Resource):
             cs = colab_search.search(self.worker_name)
             if cs:
                 raise e.BadRequest(
-                    f"To avoid unwanted attention, please do not use '{cs.group()}' in your worker names."
+                    f"To avoid unwanted attention, please do not use '{cs.group()}' in your worker names.",
                 )
             worker_count = self.user.count_workers()
             if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
@@ -494,7 +495,7 @@ class JobPopTemplate(Resource):
             # Trusted users can have up to 20 workers by default unless overriden
             if worker_count > 20 and worker_count > self.user.worker_invited:
                 raise e.Forbidden(
-                    "To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust."
+                    "To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust.",
                 )
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
@@ -618,7 +619,7 @@ class TransferKudos(Resource):
         if not user:
             raise e.InvalidAPIKey("kudos transfer to: " + self.args["username"])
         ret = database.transfer_kudos_from_apikey_to_username(
-            self.args["apikey"], self.args["username"], self.args["amount"]
+            self.args["apikey"], self.args["username"], self.args["amount"],
         )
         kudos = ret[0]
         error = ret[1]
@@ -1009,7 +1010,7 @@ class WorkerSingle(Resource):
             worker.delete()
         except (IntegrityError, InvalidRequestError):
             raise e.Locked(
-                "Could not delete the worker at this point as it's referenced by a job it completed. Please try again after 20 mins."
+                "Could not delete the worker at this point as it's referenced by a job it completed. Please try again after 20 mins.",
             )
         return (ret_dict, 200)
 
@@ -1132,7 +1133,7 @@ class UserSingle(Resource):
             user_details = json.loads(cached_user)
             if isinstance(user_details.get("monthly_kudos", {}).get("last_received"), str):
                 user_details["monthly_kudos"]["last_received"] = datetime.fromisoformat(
-                    user_details["monthly_kudos"]["last_received"]
+                    user_details["monthly_kudos"]["last_received"],
                 )
         else:
             user = database.find_user_by_id(user_id)
@@ -2107,7 +2108,7 @@ class OperationsIPSingle(Resource):
                 {
                     "ipaddr": ipaddr,
                     "seconds": direct_timeout,
-                }
+                },
             )
         return timeouts, 200
 
@@ -2151,7 +2152,7 @@ class OperationsBlockWorkerIP(Resource):
         else:
             CounterMeasures.set_timeout(blocked_ip, minutes=60 * 24 * self.args.days)
         logger.info(
-            f"Worker {worker_id} with IP {blocked_ip} set into {self.args.days} days IP timeout by {mod.get_unique_alias()} "
+            f"Worker {worker_id} with IP {blocked_ip} set into {self.args.days} days IP timeout by {mod.get_unique_alias()} ",
         )
         return ({"message": "OK"}, 200)
 
@@ -2243,7 +2244,7 @@ class Filters(Resource):
                 or_(
                     Filter.regex.contains(self.args.contains),
                     Filter.description.contains(self.args.contains),
-                )
+                ),
             )
         if self.args.filter_type:
             filters = filters.filter(Filter.filter_type == self.args.filter_type)
@@ -2394,7 +2395,7 @@ class FilterRegex(Resource):
                 {
                     "filter_type": id,
                     "regex": prompt_checker.regex[filter_id],
-                }
+                },
             )
         return (return_list, 200)
 
@@ -2766,7 +2767,7 @@ class SharedKeySingle(Resource):
             raise e.InvalidAPIKey("patch sharedkey")
         if sharedkey.user_id != user.id:
             raise e.Forbidden(
-                f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}."
+                f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.",
             )
         no_valid_actions = self.args.expiry is None and self.args.kudos is None and self.args.name is None
         no_valid_limit_actions = (
@@ -2826,7 +2827,7 @@ class SharedKeySingle(Resource):
             raise e.InvalidAPIKey("delete sharedkey")
         if sharedkey.user_id != user.id:
             raise e.Forbidden(
-                f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}."
+                f"Shared Key {sharedkey.id} belongs to {sharedkey.user.get_unique_alias()} and not to {user.get_unique_alias()}.",
             )
         db.session.delete(sharedkey)
         db.session.commit()

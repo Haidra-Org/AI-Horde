@@ -1,17 +1,18 @@
-from horde.logger import logger
-from horde.database import functions as database
-import horde.classes.base.stats as stats
-from horde.flask import HORDE
-import sys
-from horde.patreon import patrons
-from horde.detection import prompt_checker
 import pprint
-from horde.discord import send_pause_notification, send_problem_user_notification
+import sys
+
+import horde.classes.base.stats as stats
 from horde.classes.stable.worker import ImageWorker
-from horde.suspicions import Suspicions
-from horde.database import threads as threads
-from horde.model_reference import model_reference
 from horde.countermeasures import CounterMeasures
+from horde.database import functions as database
+from horde.database import threads as threads
+from horde.detection import prompt_checker
+from horde.discord import send_pause_notification, send_problem_user_notification
+from horde.flask import HORDE
+from horde.logger import logger
+from horde.model_reference import model_reference
+from horde.patreon import patrons
+from horde.suspicions import Suspicions
 
 
 def test():

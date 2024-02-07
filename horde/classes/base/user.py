@@ -1,24 +1,23 @@
-import uuid
 import os
-
-import dateutil.relativedelta
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
-from sqlalchemy import Enum, UniqueConstraint
-from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.dialects.postgresql import UUID
 
-from horde.logger import logger
-from horde.flask import db, SQLITE_MODE
-from horde import vars as hv
-from horde.suspicions import Suspicions, SUSPICION_LOGS
-from horde.utils import is_profane, sanitize_string, generate_client_id
-from horde.patreon import patrons
-from horde.enums import UserRecordTypes, UserRoleTypes
-from horde.utils import get_db_uuid
-from horde.discord import send_problem_user_notification
+import dateutil.relativedelta
+from sqlalchemy import Enum, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.hybrid import hybrid_property
+
 from horde import horde_redis as hr
+from horde import vars as hv
 from horde.countermeasures import CounterMeasures
+from horde.discord import send_problem_user_notification
+from horde.enums import UserRecordTypes, UserRoleTypes
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
+from horde.patreon import patrons
+from horde.suspicions import SUSPICION_LOGS, Suspicions
+from horde.utils import generate_client_id, get_db_uuid, is_profane, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -628,7 +627,7 @@ class User(db.Model):
             has_month_passed = True
         if has_month_passed:
             logger.info(
-                f"Preparing to assign {kudos_amount} monthly kudos to {self.get_unique_alias()}. Current total {self.kudos}"
+                f"Preparing to assign {kudos_amount} monthly kudos to {self.get_unique_alias()}. Current total {self.kudos}",
             )
             # Not committing as it'll happen in modify_kudos() anyway
             if not self.monthly_kudos_last_received:
@@ -639,7 +638,7 @@ class User(db.Model):
                 )
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(
-                f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos. Their new total is {self.kudos}"
+                f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos. Their new total is {self.kudos}",
             )
 
     def calculate_monthly_kudos(self):
@@ -825,7 +824,7 @@ class User(db.Model):
             "pseudonymous": self.is_pseudonymous(),
             "worker_count": self.count_workers(),
             "account_age": (datetime.utcnow() - self.created).total_seconds(),
-            "service": self.service
+            "service": self.service,
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }
@@ -899,7 +898,7 @@ class User(db.Model):
                 proxied_account=procgen.wp.proxied_account,
             )
             user_hourly = user_count_q.filter(
-                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1),
             ).count()
             if user_hourly > HOURLY_THRESHOLD:
                 if hr.horde_r_get(f"user_{redis_id}_hourly_problem_notified"):
@@ -908,12 +907,12 @@ class User(db.Model):
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                     f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
                     f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}.{loras}"
+                    f"Latest Prompt: {prompt}.{loras}",
                 )
                 hr.horde_r_setex(f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
             user_daily = user_count_q.filter(
-                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1)
+                UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1),
             ).count()
             if user_daily > DAILY_THRESHOLD:
                 # We don't want to spam notifications
@@ -923,13 +922,13 @@ class User(db.Model):
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
                     f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                     f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}.{loras}"
+                    f"Latest Prompt: {prompt}.{loras}",
                 )
                 hr.horde_r_setex(f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1)
                 return
         ip_count_q = UserProblemJobs.query.filter_by(ipaddr=ipaddr)
         ip_hourly = ip_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1),
         ).count()
         if ip_hourly > HOURLY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_hourly_problem_notified"):
@@ -938,12 +937,12 @@ class User(db.Model):
                 f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}.{loras}"
+                f"Latest Prompt: {prompt}.{loras}",
             )
             hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
             return
         ip_daily = ip_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1)
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1),
         ).count()
         if ip_daily > DAILY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_daily_problem_notified"):
@@ -952,7 +951,7 @@ class User(db.Model):
                 f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}.{loras}"
+                f"Latest Prompt: {prompt}.{loras}",
             )
             hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)
             return

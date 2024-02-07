@@ -3,27 +3,27 @@ import random
 
 from sqlalchemy.sql import expression
 
-from horde.logger import logger
 from horde import vars as hv
-from horde.flask import db
-from horde.utils import get_random_seed
+from horde.bridge_reference import check_bridge_capability
 from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.classes.stable.kudos import KudosModel
+from horde.consts import (
+    HEAVY_POST_PROCESSORS,
+    KNOWN_LCM_LORA_IDS,
+    KNOWN_LCM_LORA_VERSIONS,
+    KNOWN_POST_PROCESSORS,
+    SECOND_ORDER_SAMPLERS,
+)
+from horde.flask import db
+from horde.image import convert_pil_to_b64
+from horde.logger import logger
+from horde.model_reference import model_reference
 from horde.r2 import (
-    generate_procgen_upload_url,
     download_source_image,
     download_source_mask,
+    generate_procgen_upload_url,
 )
-from horde.image import convert_pil_to_b64
-from horde.bridge_reference import check_bridge_capability
-from horde.consts import (
-    KNOWN_POST_PROCESSORS,
-    KNOWN_LCM_LORA_VERSIONS,
-    KNOWN_LCM_LORA_IDS,
-    SECOND_ORDER_SAMPLERS,
-    HEAVY_POST_PROCESSORS,
-)
-from horde.classes.stable.kudos import KudosModel
-from horde.model_reference import model_reference
+from horde.utils import get_random_seed
 
 
 class ImageWaitingPrompt(WaitingPrompt):
@@ -229,7 +229,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             proxied_account = f":{self.proxied_account}"
         logger.info(
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} ({self.ipaddr}) ({self.client_agent}): "
-            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} == {self.total_usage} Total MPs for {self.kudos} kudos."
+            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} == {self.total_usage} Total MPs for {self.kudos} kudos.",
         )
 
     def seed_to_int(self, s=None):
@@ -310,7 +310,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         kudos_difference = abs(legacy_kudos_cost - self.kudos)
         if kudos_difference > (legacy_kudos_cost * 0.5):
             logger.debug(
-                f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}"
+                f"Kudos difference is more than 50% of the legacy cost ({legacy_kudos_cost}) for {self.id} difference={kudos_difference}",
             )
         # If they're requesting LoRas, we're adding 3 extra kudos per lora requested
         # To make up for time lost downloading
@@ -416,7 +416,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.source_image:
             source_processing = self.source_processing
         logger.warning(
-            f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs"
+            f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
         )
 
     def get_status(self, **kwargs):

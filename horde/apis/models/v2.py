@@ -213,7 +213,7 @@ class Models:
                 "finished": fields.Integer(description="The amount of finished jobs in this request."),
                 "processing": fields.Integer(description="The amount of still processing jobs in this request."),
                 "restarted": fields.Integer(
-                    description="The amount of jobs that timed out and had to be restarted or were reported as failed by a worker."
+                    description="The amount of jobs that timed out and had to be restarted or were reported as failed by a worker.",
                 ),
                 "waiting": fields.Integer(description="The amount of jobs waiting to be picked up by a worker."),
                 "done": fields.Boolean(description="True when all jobs in this request are done. Else False."),
@@ -222,10 +222,10 @@ class Models:
                     description="True when this request caused an internal server error and could not be completed.",
                 ),
                 "wait_time": fields.Integer(
-                    description="The expected amount to wait (in seconds) to generate all jobs in this request."
+                    description="The expected amount to wait (in seconds) to generate all jobs in this request.",
                 ),
                 "queue_position": fields.Integer(
-                    description="The position in the requests queue. This position is determined by relative Kudos amounts."
+                    description="The position in the requests queue. This position is determined by relative Kudos amounts.",
                 ),
                 "kudos": fields.Float(description="The amount of total Kudos this request has consumed until now."),
                 "is_possible": fields.Boolean(
@@ -296,7 +296,7 @@ class Models:
             "RequestAsync",
             {
                 "id": fields.String(
-                    description="The UUID of the request. Use this to retrieve the request status in the future."
+                    description="The UUID of the request. Use this to retrieve the request status in the future.",
                 ),
                 "kudos": fields.Float(description="The expected kudos consumption for this request."),
                 "message": fields.String(
@@ -309,7 +309,7 @@ class Models:
             "ModelPayload",
             {
                 "prompt": fields.String(
-                    description="The prompt which will be sent to the horde against which to run inference."
+                    description="The prompt which will be sent to the horde against which to run inference.",
                 ),
                 "n": fields.Integer(example=1, description="The amount of images to generate."),
                 "seed": fields.String(description="The seed to use to generete this request."),
@@ -349,7 +349,7 @@ class Models:
                     min=0,
                 ),
                 "kudos": fields.Integer(
-                    description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos."
+                    description="How many waiting requests were skipped because the user didn't have enough kudos when this worker requires upfront kudos.",
                 ),
             },
         )
@@ -418,10 +418,10 @@ class Models:
             "WorkerKudosDetails",
             {
                 "generated": fields.Float(
-                    description="How much Kudos this worker has received for generating images."
+                    description="How much Kudos this worker has received for generating images.",
                 ),
                 "uptime": fields.Integer(
-                    description="How much Kudos this worker has received for staying online longer."
+                    description="How much Kudos this worker has received for staying online longer.",
                 ),
             },
         )
@@ -430,7 +430,7 @@ class Models:
             {
                 "name": fields.String(description="The Name of the Worker."),
                 "priority_usernames": fields.List(
-                    fields.String(description="Users with priority to use this worker.")
+                    fields.String(description="Users with priority to use this worker."),
                 ),
                 "nsfw": fields.Boolean(
                     default=False,
@@ -441,7 +441,7 @@ class Models:
                         description="Which models this worker is serving.",
                         min_length=3,
                         max_length=255,
-                    )
+                    ),
                 ),
                 "bridge_agent": fields.String(
                     required=False,
@@ -478,11 +478,11 @@ class Models:
                 "kudos_rewards": fields.Float(description="How many Kudos this worker has been rewarded in total."),
                 "kudos_details": fields.Nested(self.response_model_worker_kudos_details),
                 "performance": fields.String(
-                    description="The average performance of this worker in human readable form."
+                    description="The average performance of this worker in human readable form.",
                 ),
                 "threads": fields.Integer(description="How many threads this worker is running."),
                 "uptime": fields.Integer(
-                    description="The amount of seconds this worker has been online for this Horde."
+                    description="The amount of seconds this worker has been online for this Horde.",
                 ),
                 "maintenance_mode": fields.Boolean(
                     example=False,
@@ -511,7 +511,7 @@ class Models:
                 ),
                 "trusted": fields.Boolean(description="The worker is trusted to return valid generations."),
                 "flagged": fields.Boolean(
-                    description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process."
+                    description="The worker's owner has been flagged for suspicious activity. This worker will not be given any jobs to process.",
                 ),
                 "suspicious": fields.Integer(
                     example=0,
@@ -545,7 +545,7 @@ class Models:
                     description="The maximum pixels in resolution this worker can generate.",
                 ),
                 "megapixelsteps_generated": fields.Float(
-                    description="How many megapixelsteps this worker has generated until now."
+                    description="How many megapixelsteps this worker has generated until now.",
                 ),
                 "img2img": fields.Boolean(
                     default=None,
@@ -568,7 +568,7 @@ class Models:
                     description="The maximum tokens this worker can generate.",
                 ),
                 "max_context_length": fields.Integer(
-                    example=80, description="The maximum tokens this worker can read."
+                    example=80, description="The maximum tokens this worker can read.",
                 ),
                 "tokens_generated": fields.Float(description="How many tokens this worker has generated until now."),
             },
@@ -579,7 +579,7 @@ class Models:
             {
                 "maintenance": fields.Boolean(description="Set to true to put this worker into maintenance."),
                 "maintenance_msg": fields.String(
-                    description="if maintenance is True, you can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed."
+                    description="if maintenance is True, you can optionally provide a message to be used instead of the default maintenance message, so that the owner is informed.",
                 ),
                 "paused": fields.Boolean(description="(Mods only) Set to true to pause this worker."),
                 "info": fields.String(
@@ -603,10 +603,10 @@ class Models:
             "ModifyWorker",
             {
                 "maintenance": fields.Boolean(
-                    description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests."
+                    description="The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests.",
                 ),
                 "paused": fields.Boolean(
-                    description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests."
+                    description="The new state of the 'paused' var for this worker. When True, this worker will not be given any new requests.",
                 ),
                 "info": fields.String(description="The new state of the 'info' var for this worker."),
                 "name": fields.String(description="The new name for this this worker."),
@@ -697,7 +697,7 @@ class Models:
             {
                 "id": fields.String(description="The SharedKey ID."),
                 "username": fields.String(
-                    description="The owning user's unique Username. It is a combination of their chosen alias plus their ID."
+                    description="The owning user's unique Username. It is a combination of their chosen alias plus their ID.",
                 ),
                 "kudos": fields.Integer(description="The Kudos limit assigned to this key."),
                 "expiry": fields.DateTime(
@@ -705,16 +705,16 @@ class Models:
                     description="The date at which this API key will expire.",
                 ),
                 "utilized": fields.Integer(
-                    description="How much kudos has been utilized via this shared key until now."
+                    description="How much kudos has been utilized via this shared key until now.",
                 ),
                 "max_image_pixels": fields.Integer(
-                    description="The maximum amount of image pixels this key can generate per job. -1 means unlimited."
+                    description="The maximum amount of image pixels this key can generate per job. -1 means unlimited.",
                 ),
                 "max_image_steps": fields.Integer(
-                    description="The maximum amount of image steps this key can use per job. -1 means unlimited."
+                    description="The maximum amount of image steps this key can use per job. -1 means unlimited.",
                 ),
                 "max_text_tokens": fields.Integer(
-                    description="The maximum amount of text tokens this key can generate per job. -1 means unlimited."
+                    description="The maximum amount of text tokens this key can generate per job. -1 means unlimited.",
                 ),
             },
         )
@@ -793,35 +793,35 @@ class Models:
             "UserDetails",
             {
                 "username": fields.String(
-                    description="The user's unique Username. It is a combination of their chosen alias plus their ID."
+                    description="The user's unique Username. It is a combination of their chosen alias plus their ID.",
                 ),
                 "id": fields.Integer(description="The user unique ID. It is always an integer."),
                 "kudos": fields.Float(
-                    description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations."
+                    description="The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations.",
                 ),
                 "evaluating_kudos": fields.Float(
-                    description="(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches a prespecified threshold, they automatically become trusted."
+                    description="(Privileged) The amount of Evaluating Kudos this untrusted user has from generations and uptime. When this number reaches a prespecified threshold, they automatically become trusted.",
                 ),
                 "concurrency": fields.Integer(description="How many concurrent generations this user may request."),
                 "worker_invited": fields.Integer(
-                    description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde."
+                    description="Whether this user has been invited to join a worker to the horde and how many of them. When 0, this user cannot add (new) workers to the horde.",
                 ),
                 "moderator": fields.Boolean(example=False, description="This user is a Horde moderator."),
                 "kudos_details": fields.Nested(self.response_model_user_kudos_details),
                 "worker_count": fields.Integer(
-                    description="How many workers this user has created (active or inactive)."
+                    description="How many workers this user has created (active or inactive).",
                 ),
                 "worker_ids": fields.List(
                     fields.String(
                         description="Privileged or public when the user has explicitly allows it to be public.",
                         example="00000000-0000-0000-0000-000000000000",
-                    )
+                    ),
                 ),
                 "sharedkey_ids": fields.List(
                     fields.String(
                         description="(Privileged) The list of shared key IDs created by this user.",
                         example="00000000-0000-0000-0000-000000000000",
-                    )
+                    ),
                 ),
                 "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
                 "trusted": fields.Boolean(
@@ -885,7 +885,7 @@ class Models:
                     max=10,
                 ),
                 "worker_invited": fields.Integer(
-                    description="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode."
+                    description="Set to the amount of workers this user is allowed to join to the horde when in worker invite-only mode.",
                 ),
                 "moderator": fields.Boolean(
                     example=False,
@@ -896,7 +896,7 @@ class Models:
                     description="Set to true to make this user display their worker IDs.",
                 ),
                 "monthly_kudos": fields.Integer(
-                    description="When specified, will start assigning the user monthly kudos, starting now!"
+                    description="When specified, will start assigning the user monthly kudos, starting now!",
                 ),
                 "username": fields.String(
                     description="When specified, will change the username. No profanity allowed!",
@@ -988,43 +988,43 @@ class Models:
             "HordePerformance",
             {
                 "queued_requests": fields.Integer(
-                    description="The amount of waiting and processing image requests currently in this Horde."
+                    description="The amount of waiting and processing image requests currently in this Horde.",
                 ),
                 "queued_text_requests": fields.Integer(
-                    description="The amount of waiting and processing text requests currently in this Horde."
+                    description="The amount of waiting and processing text requests currently in this Horde.",
                 ),
                 "worker_count": fields.Integer(
-                    description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes."
+                    description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes.",
                 ),
                 "text_worker_count": fields.Integer(
-                    description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes."
+                    description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes.",
                 ),
                 "thread_count": fields.Integer(
-                    description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes."
+                    description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes.",
                 ),
                 "text_thread_count": fields.Integer(
-                    description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes."
+                    description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes.",
                 ),
                 "queued_megapixelsteps": fields.Float(
-                    description="The amount of megapixelsteps in waiting and processing requests currently in this Horde."
+                    description="The amount of megapixelsteps in waiting and processing requests currently in this Horde.",
                 ),
                 "past_minute_megapixelsteps": fields.Float(
-                    description="How many megapixelsteps this Horde generated in the last minute."
+                    description="How many megapixelsteps this Horde generated in the last minute.",
                 ),
                 "queued_forms": fields.Float(
-                    description="The amount of image interrogations waiting and processing currently in this Horde."
+                    description="The amount of image interrogations waiting and processing currently in this Horde.",
                 ),
                 "interrogator_count": fields.Integer(
-                    description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes."
+                    description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes.",
                 ),
                 "interrogator_thread_count": fields.Integer(
-                    description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes."
+                    description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes.",
                 ),
                 "queued_tokens": fields.Float(
-                    description="The amount of tokens in waiting and processing requests currently in this Horde."
+                    description="The amount of tokens in waiting and processing requests currently in this Horde.",
                 ),
                 "past_minute_tokens": fields.Float(
-                    description="How many tokens this Horde generated in the last minute."
+                    description="How many tokens this Horde generated in the last minute.",
                 ),
             },
         )
@@ -1045,13 +1045,13 @@ class Models:
             "HordeModes",
             {
                 "maintenance_mode": fields.Boolean(
-                    description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue."
+                    description="When True, this Horde will not accept new requests for image generation, but will finish processing the ones currently in the queue.",
                 ),
                 "invite_only_mode": fields.Boolean(
-                    description="When True, this Horde will not only accept worker explicitly invited to join."
+                    description="When True, this Horde will not only accept worker explicitly invited to join.",
                 ),
                 "raid_mode": fields.Boolean(
-                    description="When True, this Horde will not always provide full information in order to throw off attackers."
+                    description="When True, this Horde will not always provide full information in order to throw off attackers.",
                 ),
             },
         )
@@ -1067,7 +1067,7 @@ class Models:
             self.response_model_error,
             {
                 "errors": fields.Wildcard(
-                    fields.String(required=True, description="The details of the validation error")
+                    fields.String(required=True, description="The details of the validation error"),
                 ),
             },
         )
@@ -1103,13 +1103,13 @@ class Models:
                     default=None,
                 ),
                 "requests_fulfilled": fields.Integer(
-                    description="How many images this team's workers have generated."
+                    description="How many images this team's workers have generated.",
                 ),
                 "kudos": fields.Float(
-                    description="How many Kudos the workers in this team have been rewarded while part of this team."
+                    description="How many Kudos the workers in this team have been rewarded while part of this team.",
                 ),
                 "uptime": fields.Integer(
-                    description="The total amount of time workers have stayed online while on this team."
+                    description="The total amount of time workers have stayed online while on this team.",
                 ),
                 "creator": fields.String(
                     example="db0#1",
@@ -1330,7 +1330,7 @@ class Models:
                     fields.String(
                         required=True,
                         description="Which words in the prompt matched the filters.",
-                    )
+                    ),
                 ),
             },
         )

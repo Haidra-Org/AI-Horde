@@ -1,8 +1,8 @@
-from horde.threads import PrimaryTimedFunction
-from horde.database.classes import Quorum
 import horde.database.threads as threads
 from horde.argparser import args
+from horde.database.classes import Quorum
 from horde.logger import logger
+from horde.threads import PrimaryTimedFunction
 
 # Threads
 quorum = Quorum(1, threads.get_quorum)

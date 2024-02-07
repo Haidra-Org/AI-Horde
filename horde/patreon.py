@@ -1,6 +1,7 @@
 import json
-from horde.logger import logger
+
 from horde import horde_redis as hr
+from horde.logger import logger
 from horde.threads import PrimaryTimedFunction
 
 
@@ -79,7 +80,7 @@ class PatreonCache(PrimaryTimedFunction):
                 {
                     "name": p.get("alias", p["name"]),
                     "url": p.get("sponsor_link"),
-                }
+                },
             )
         return sponsors
 

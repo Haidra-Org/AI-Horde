@@ -1,18 +1,17 @@
-import requests
 import json
-
 from datetime import datetime, timedelta
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy import Enum, JSON
 
-from horde.logger import logger
-from horde.flask import db, SQLITE_MODE
-from horde.utils import get_expiry_date, get_interrogation_form_expiry_date, get_db_uuid
-from horde.enums import State
+import requests
+from sqlalchemy import JSON, Enum
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+
 from horde import horde_redis as hr
 from horde.consts import KNOWN_POST_PROCESSORS
+from horde.enums import State
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
 from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
-
+from horde.utils import get_db_uuid, get_expiry_date, get_interrogation_form_expiry_date
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
@@ -125,7 +124,7 @@ class InterrogationForms(db.Model):
             kudos_burn += 1
         self.interrogation.record_usage(kudos=self.kudos + kudos_burn)
         logger.info(
-            f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}"
+            f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}",
         )
 
     def abort(self):
@@ -146,7 +145,7 @@ class InterrogationForms(db.Model):
 
     def log_aborted_interrogation(self):
         logger.info(
-            f"Aborted Stale Interrogation {self.id} ({self.name}) from by worker: {self.worker.name} ({self.worker.id})"
+            f"Aborted Stale Interrogation {self.id} ({self.name}) from by worker: {self.worker.name} ({self.worker.id})",
         )
 
     def is_completed(self):
@@ -189,7 +188,7 @@ class InterrogationForms(db.Model):
                 req = requests.post(self.interrogation.webhook, json=data, timeout=3)
                 if not req.ok:
                     logger.debug(
-                        f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times..."
+                        f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. Will retry {3-riter-1} more times...",
                     )
                     continue
                 break
@@ -297,7 +296,7 @@ class Interrogation(db.Model):
         db.session.commit()
         self.refresh()
         logger.audit(
-            f"Interrogation with ID {self.id} popped by worker {worker.id} ('{worker.name}' / {worker.ipaddr})"
+            f"Interrogation with ID {self.id} popped by worker {worker.id} ('{worker.name}' / {worker.ipaddr})",
         )
         return self.get_pop_payload()
 

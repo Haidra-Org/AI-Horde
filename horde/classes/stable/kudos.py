@@ -3,8 +3,8 @@ import pathlib
 import pickle
 import sys
 
-from loguru import logger
 import torch
+from loguru import logger
 
 
 class KudosModel:
@@ -276,7 +276,7 @@ if __name__ == "__main__":
     # Test fixed kudos basis adjustment and percentage scaling
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5, 1.25)
     logger.message(
-        f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos"
+        f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos",
     )
 else:
     kudos_model = KudosModel()

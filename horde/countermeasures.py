@@ -1,17 +1,18 @@
-import os
-import requests
 import ipaddress
+import os
+from datetime import timedelta
 
-from horde.logger import logger
+import requests
+
 from horde.argparser import args
+from horde.consts import WHITELISTED_SERVICE_IPS, WHITELISTED_VPN_IPS
+from horde.logger import logger
 from horde.redis_ctrl import (
-    is_redis_up,
     get_ipaddr_db,
     get_ipaddr_suspicion_db,
     get_ipaddr_timeout_db,
+    is_redis_up,
 )
-from datetime import timedelta
-from horde.consts import WHITELISTED_SERVICE_IPS, WHITELISTED_VPN_IPS
 
 ip_r = None
 logger.init("IP Address Cache", status="Connecting")
@@ -176,7 +177,7 @@ class CounterMeasures:
     def retrieve_block_timeout(ipaddr):
         """Checks if the IP is in a block timeout"""
         if not ip_t_r:
-            return
+            return None
         for ip_block_key in ip_t_r.scan_iter("ipblock_*"):
             ip_range = ip_block_key.decode().split("_", 1)[1]
             if ipaddress.ip_address(ipaddr) in ipaddress.ip_network(ip_range):
@@ -204,7 +205,7 @@ class CounterMeasures:
                 {
                     "ipaddr": ip_range,
                     "seconds": ip_t_r.ttl(ip_block_key),
-                }
+                },
             )
         return ip_blocks
 

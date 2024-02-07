@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 
-from horde.flask import db
-from horde.enums import ImageGenState
 from sqlalchemy import Enum, func
+
+from horde.enums import ImageGenState
+from horde.flask import db
 
 
 class ImageGenerationStatisticPP(db.Model):
@@ -140,7 +141,7 @@ def record_image_statistic(procgen):
     # So I set it up on an external table to be able to expand
     if procgen.wp.params.get("control_type", None):
         new_cn_entry = ImageGenerationStatisticCN(
-            imgstat_id=statistic.id, control_type=procgen.wp.params["control_type"]
+            imgstat_id=statistic.id, control_type=procgen.wp.params["control_type"],
         )
         db.session.add(new_cn_entry)
         db.session.commit()
@@ -161,18 +162,18 @@ def record_image_statistic(procgen):
 def compile_imagegen_stats_totals():
     count_query = db.session.query(ImageGenerationStatistic)
     count_minute = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
+        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1),
     ).count()
     count_hour = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
+        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1),
     ).count()
     count_day = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
     count_month = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
     ).count()
     count_total = count_query.count()
     ps_query = db.session.query(
-        func.sum(ImageGenerationStatistic.width * ImageGenerationStatistic.height * ImageGenerationStatistic.steps)
+        func.sum(ImageGenerationStatistic.width * ImageGenerationStatistic.height * ImageGenerationStatistic.steps),
     )
     ps_minute = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).scalar()
     ps_hour = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).scalar()
@@ -211,13 +212,13 @@ def compile_imagegen_stats_models():
         "day": {
             model: count
             for model, count in query.filter(
-                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
+                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1),
             ).all()
         },
         "month": {
             model: count
             for model, count in query.filter(
-                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
             ).all()
         },
     }

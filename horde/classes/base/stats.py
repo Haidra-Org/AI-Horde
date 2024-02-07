@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
+
 from sqlalchemy import func
 
-from horde.logger import logger
-from horde.flask import db
 from horde import vars as hv
+from horde.flask import db
+from horde.logger import logger
 
 
 class ModelPerformance(db.Model):
@@ -12,7 +13,7 @@ class ModelPerformance(db.Model):
     model = db.Column(db.String(255), index=True)
     performance = db.Column(db.Float)
     created = db.Column(
-        db.DateTime(timezone=False), default=datetime.utcnow
+        db.DateTime(timezone=False), default=datetime.utcnow,
     )  # Maybe index this, but I'm not actually sure how big this table is
 
 

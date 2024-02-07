@@ -1,8 +1,8 @@
-import boto3
 import time
-from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
+import boto3
 from dotenv import load_dotenv
 from loguru import logger
 

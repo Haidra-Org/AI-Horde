@@ -1,35 +1,35 @@
 import json
-import patreon
 import os
 from datetime import datetime, timedelta
 
+import patreon
 from sqlalchemy import func, or_
 
 from horde import horde_redis as hr
+from horde.argparser import args
 from horde.classes.base.user import User
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.stable.processing_generation import ImageProcessingGeneration
-from horde.classes.kobold.processing_generation import TextProcessingGeneration
-from horde.classes.stable.interrogation import Interrogation, InterrogationForms
-from horde.flask import HORDE, db, SQLITE_MODE
-from horde.logger import logger
 from horde.database.functions import (
-    query_prioritized_wps,
+    compile_regex_filter,
+    count_totals,
     get_active_workers,
     get_available_models,
-    count_totals,
     prune_expired_stats,
-    compile_regex_filter,
+    query_prioritized_wps,
     retrieve_regex_replacements,
 )
-from horde.vars import horde_instance_id
-from horde.argparser import args
-from horde.r2 import delete_source_image
-from horde.patreon import patrons
 from horde.enums import State
+from horde.flask import HORDE, SQLITE_MODE, db
+from horde.logger import logger
+from horde.patreon import patrons
+from horde.r2 import delete_source_image
+from horde.vars import horde_instance_id
 
 
 @logger.catch(reraise=True)
@@ -310,7 +310,7 @@ def store_patreon_members():
                     "email",
                     "currently_entitled_amount_cents",
                     "note",
-                ]
+                ],
             },
         )
         members += members_response.data()

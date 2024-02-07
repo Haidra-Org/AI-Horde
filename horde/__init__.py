@@ -1,15 +1,16 @@
 import os
 import socket
+
 from flask_dance.contrib.discord import make_discord_blueprint
 from flask_dance.contrib.github import make_github_blueprint
 from flask_dance.contrib.google import make_google_blueprint
+
 import horde.routes  # noqa F401
 from horde.apis import apiv2
 from horde.argparser import args
+from horde.consts import HORDE_VERSION
 from horde.flask import HORDE
 from horde.logger import logger
-from horde.consts import HORDE_VERSION
-
 
 HORDE.register_blueprint(apiv2)
 

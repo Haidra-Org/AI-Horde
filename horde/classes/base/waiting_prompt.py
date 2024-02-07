@@ -1,21 +1,20 @@
-import uuid
 import json
-
+import uuid
 from datetime import datetime, timedelta
-from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+
 from sqlalchemy import JSON, or_
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.sql import expression
 
-from horde.logger import logger
-from horde.flask import db, SQLITE_MODE
-from horde import vars as hv
-from horde.utils import get_db_uuid, get_expiry_date
-
-from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.classes.stable.processing_generation import ImageProcessingGeneration
-from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde import horde_redis as hr
+from horde import vars as hv
+from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
+from horde.utils import get_db_uuid, get_expiry_date
 
 procgen_classes = {
     "template": ProcessingGeneration,
@@ -236,7 +235,7 @@ class WaitingPrompt(db.Model):
             # For batched requests, we need all procgens to use the same model
             model = new_gen.model
             logger.info(
-                f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {current_n} gens left"
+                f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {current_n} gens left",
             )
             gens_list.append(new_gen)
             if self.faulted:
@@ -252,7 +251,7 @@ class WaitingPrompt(db.Model):
         db.session.add(new_trick)
         db.session.commit()
         logger.info(
-            f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left"
+            f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} ('{worker.name}' / {worker.ipaddr}) - {self.n} gens left",
         )
         return self.get_pop_payload([new_gen], payload)
 
@@ -407,7 +406,7 @@ class WaitingPrompt(db.Model):
     def log_faulted_prompt(self):
         """Extendable function to log why a request was aborted"""
         logger.warning(
-            f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs"
+            f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
         )
 
     def delete(self):

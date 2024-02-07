@@ -1,6 +1,6 @@
 import horde.apis.v2.base as base
-import horde.apis.v2.stable as stable
 import horde.apis.v2.kobold as kobold
+import horde.apis.v2.stable as stable
 from horde.apis.v2.base import api
 
 api.add_resource(stable.ImageAsyncGenerate, "/generate/async")

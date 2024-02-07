@@ -1,20 +1,21 @@
-import uuid
 import json
+import uuid
 from datetime import datetime, timedelta
-from sqlalchemy import func, or_, and_
+
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import noload
 
-from horde.classes.base.waiting_prompt import WPModels, WPAllowedWorkers
-from horde.flask import db, SQLITE_MODE
-from horde.logger import logger
+import horde.classes.base.stats as stats
+from horde import horde_redis as hr
+from horde.classes.base.waiting_prompt import WPAllowedWorkers, WPModels
 from horde.classes.base.worker import WorkerPerformance
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.processing_generation import TextProcessingGeneration
-import horde.classes.base.stats as stats
-from horde import horde_redis as hr
 from horde.database.functions import query_prioritized_wps
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
 from horde.model_reference import model_reference
 
 
@@ -183,10 +184,10 @@ def query_prioritized_text_wps():
 def prune_expired_stats():
     # clear up old requests (older than 5 mins)
     db.session.query(stats.FulfillmentPerformance).filter(
-        stats.FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
+        stats.FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60),
     ).delete(synchronize_session=False)
     db.session.query(stats.ModelPerformance).filter(
-        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=1)
+        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=1),
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned Expired Stats")

@@ -1,16 +1,16 @@
-from horde.logger import logger
-from horde.flask import db
-from horde.classes.base.worker import Worker
-from horde.suspicions import Suspicions
+from horde import exceptions as e
 from horde.bridge_reference import (
     check_bridge_capability,
     check_sampler_capability,
     is_latest_bridge_version,
     is_official_bridge_version,
 )
-from horde.model_reference import model_reference
-from horde import exceptions as e
+from horde.classes.base.worker import Worker
 from horde.consts import KNOWN_POST_PROCESSORS
+from horde.flask import db
+from horde.logger import logger
+from horde.model_reference import model_reference
+from horde.suspicions import Suspicions
 
 
 class ImageWorker(Worker):
@@ -44,7 +44,7 @@ class ImageWorker(Worker):
             paused_string = "(Paused) "
         db.session.commit()
         logger.trace(
-            f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels"
+            f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} at {self.max_pixels} max pixels",
         )
 
     def calculate_uptime_reward(self):
@@ -80,12 +80,12 @@ class ImageWorker(Worker):
             return [False, "bridge_version"]
         # logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1 and not check_bridge_capability(
-            "post-processing", self.bridge_agent
+            "post-processing", self.bridge_agent,
         ):
             return [False, "bridge_version"]
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get("post_processing", []) and not check_bridge_capability(
-                pp, self.bridge_agent
+                pp, self.bridge_agent,
             ):
                 return [False, "bridge_version"]
         if waiting_prompt.source_image and not self.allow_img2img:
@@ -98,7 +98,7 @@ class ImageWorker(Worker):
         if waiting_prompt.params.get("tiling") and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("return_control_map") and not check_bridge_capability(
-            "return_control_map", self.bridge_agent
+            "return_control_map", self.bridge_agent,
         ):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("control_type"):
@@ -111,7 +111,7 @@ class ImageWorker(Worker):
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
-            "clip_skip", self.bridge_agent
+            "clip_skip", self.bridge_agent,
         ):
             return [False, "bridge_version"]
         if any(

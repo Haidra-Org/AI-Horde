@@ -1,6 +1,7 @@
-from dotenv import load_dotenv
-import os
 import logging
+import os
+
+from dotenv import load_dotenv
 
 profile = os.environ.get("PROFILE")
 

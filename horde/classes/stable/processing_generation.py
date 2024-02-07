@@ -1,21 +1,21 @@
-import os
 import json
+import os
 
-from horde.logger import logger
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.genstats import record_image_statistic
-from horde.r2 import (
-    generate_procgen_download_url,
-    upload_shared_metadata,
-    check_shared_image,
-    upload_generated_image,
-    upload_shared_generated_image,
-    download_procgen_image,
-    upload_prompt,
-)
 from horde.flask import db
 from horde.image import convert_b64_to_pil, convert_pil_to_b64
+from horde.logger import logger
 from horde.model_reference import model_reference
+from horde.r2 import (
+    check_shared_image,
+    download_procgen_image,
+    generate_procgen_download_url,
+    upload_generated_image,
+    upload_prompt,
+    upload_shared_generated_image,
+    upload_shared_metadata,
+)
 
 
 class ImageProcessingGeneration(ProcessingGeneration):
@@ -60,7 +60,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
         logger.info(
             f"Aborted Stale Generation {self.id} of wp {str(self.wp_id)} "
             f"({self.wp.width}x{self.wp.height}x{self.wp.params['steps']}@{self.wp.params['sampler_name']})"
-            f" from by worker: {self.worker.name} ({self.worker.id})"
+            f" from by worker: {self.worker.name} ({self.worker.id})",
         )
 
     def set_generation(self, generation, things_per_sec, **kwargs):
@@ -87,7 +87,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             return -1
         if generation != "R2":
             logger.warning(
-                f"Worker {self.worker.name} ({self.worker.id}) with bridge agent {self.worker.bridge_agent} returned a b64. Converting..."
+                f"Worker {self.worker.name} ({self.worker.id}) with bridge agent {self.worker.bridge_agent} returned a b64. Converting...",
             )
             if self.wp.shared:
                 upload_method = upload_shared_generated_image

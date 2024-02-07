@@ -1,10 +1,11 @@
 import base64
-import requests
 from io import BytesIO
+
+import requests
 from PIL import Image, UnidentifiedImageError
 
-from horde.logger import logger
 from horde.exceptions import ImageValidationFailed
+from horde.logger import logger
 from horde.r2 import upload_source_image
 
 
@@ -71,7 +72,7 @@ def convert_source_image_to_webp(source_image_b64):
         image.save(buffer, format="WebP", quality=quality, exact=True)
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
         logger.debug(
-            f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars"
+            f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars",
         )
         return final_image_b64
     except ImageValidationFailed as err:

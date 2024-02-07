@@ -1,11 +1,10 @@
 import uuid
-
 from datetime import datetime
+
 from sqlalchemy.dialects.postgresql import UUID
 
-from horde.flask import db, SQLITE_MODE
+from horde.flask import SQLITE_MODE, db
 from horde.utils import get_expiry_date
-
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 

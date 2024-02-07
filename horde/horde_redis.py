@@ -1,15 +1,15 @@
-from datetime import timedelta
 import json
+from datetime import timedelta
 from threading import Lock
 
+from horde.logger import logger
 from horde.redis_ctrl import (
+    get_all_redis_db_servers,
     get_horde_db,
-    is_redis_up,
     get_local_horde_db,
     is_local_redis_up,
-    get_all_redis_db_servers,
+    is_redis_up,
 )
-from horde.logger import logger
 
 locks = {}
 

@@ -1,9 +1,11 @@
 import math
+
 from sqlalchemy.sql import expression
-from horde.logger import logger
+
 from horde import vars as hv
-from horde.flask import db
 from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.flask import db
+from horde.logger import logger
 from horde.model_reference import model_reference
 
 
@@ -63,7 +65,7 @@ class TextWaitingPrompt(WaitingPrompt):
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
         logger.info(
-            f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens"
+            f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: token:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens",
         )
 
     def calculate_extra_kudos_burn(self, kudos):
@@ -75,7 +77,7 @@ class TextWaitingPrompt(WaitingPrompt):
         if self.source_image:
             source_processing = self.source_processing
         logger.warning(
-            f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs"
+            f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
         )
 
     def get_status(self, **kwargs):

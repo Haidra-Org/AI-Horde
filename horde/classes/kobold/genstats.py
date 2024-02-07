@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 
-from horde.flask import db
-from horde.enums import ImageGenState
 from sqlalchemy import Enum, func
+
+from horde.enums import ImageGenState
+from horde.flask import db
 
 
 class TextGenerationStatistic(db.Model):
@@ -46,26 +47,26 @@ def record_text_statistic(procgen):
 def compile_textgen_stats_totals():
     count_query = db.session.query(TextGenerationStatistic)
     count_minute = count_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1),
     ).count()
     count_hour = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).count()
     count_day = count_query.filter(TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
     count_month = count_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
     ).count()
     count_total = count_query.count()
     tokens_query = db.session.query(func.sum(TextGenerationStatistic.max_length))
     tokens_minute = tokens_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1),
     ).scalar()
     tokens_hour = tokens_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1),
     ).scalar()
     tokens_day = tokens_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1),
     ).scalar()
     tokens_month = tokens_query.filter(
-        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+        TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
     ).scalar()
     tokens_total = tokens_query.scalar()
     stats_dict = {
@@ -100,13 +101,13 @@ def compile_textgen_stats_models():
         "day": {
             model: count
             for model, count in query.filter(
-                TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)
+                TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1),
             ).all()
         },
         "month": {
             model: count
             for model, count in query.filter(
-                TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)
+                TextGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
             ).all()
         },
     }

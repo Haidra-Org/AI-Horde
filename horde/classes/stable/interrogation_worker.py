@@ -1,11 +1,12 @@
 from sqlalchemy import func
-from horde.logger import logger
-from horde.flask import db
+
 from horde.classes.base.worker import (
-    WorkerTemplate,
     WorkerPerformance,
+    WorkerTemplate,
     uuid_column_type,
 )
+from horde.flask import db
+from horde.logger import logger
 
 # from horde.suspicions import Suspicions
 
@@ -45,7 +46,7 @@ class InterrogationWorker(WorkerTemplate):
             paused_string = "(Paused) "
         db.session.commit()
         logger.trace(
-            f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names} @ {self.max_power} max tiles"
+            f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names} @ {self.max_power} max tiles",
         )
 
     def calculate_uptime_reward(self):

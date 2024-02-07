@@ -1,11 +1,11 @@
 import math
 
-from horde.logger import logger
+from horde import vars as hv
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
+from horde.logger import logger
 from horde.model_reference import model_reference
-from horde import vars as hv
 from horde.suspicions import Suspicions
 
 
@@ -57,7 +57,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         logger.info(
             f"Aborted Stale Generation {self.id} of wp {str(self.wp_id)} "
             f"(for {self.get_things_count()} tokens and {self.wp.max_context_length} content length) "
-            f" from by worker: {self.worker.name} ({self.worker.id})"
+            f" from by worker: {self.worker.name} ({self.worker.id})",
         )
 
     def set_generation(self, generation, things_per_sec, **kwargs):

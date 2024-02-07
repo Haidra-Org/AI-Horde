@@ -1,33 +1,33 @@
-import oauthlib
+import os
 import random
 import secrets
-import os
-import requests
 from uuid import uuid4
 
-from flask import render_template, redirect, url_for, request, send_from_directory
+import oauthlib
+import requests
+from flask import redirect, render_template, request, send_from_directory, url_for
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from flask_dance.contrib.google import google
 from markdown import markdown
 
-from horde.database import functions as database
-from horde.classes.base import settings
+from horde import vars as hv
 from horde.argparser import maintenance
-from horde.classes.base.user import User
+from horde.classes.base import settings
 from horde.classes.base.news import News
+from horde.classes.base.user import User
+from horde.countermeasures import CounterMeasures
+from horde.database import functions as database
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
-from horde.utils import ConvertAmount, is_profane, sanitize_string, hash_api_key
+from horde.patreon import patrons
+from horde.utils import ConvertAmount, hash_api_key, is_profane, sanitize_string
 from horde.vars import (
     google_verification_string,
-    img_url,
     horde_title,
     horde_url,
+    img_url,
 )
-from horde import vars as hv
-from horde.patreon import patrons
-from horde.countermeasures import CounterMeasures
 
 dance_return_to = "/"
 
@@ -68,10 +68,10 @@ def index():
     total_image_things = ConvertAmount(totals[hv.thing_names["image"]] * hv.thing_divisors["image"])
     total_text_things = ConvertAmount(totals[hv.thing_names["text"]] * hv.thing_divisors["text"])
     queued_image_things = ConvertAmount(
-        processing_totals[f"queued_{hv.thing_names['image']}"] * hv.thing_divisors["image"]
+        processing_totals[f"queued_{hv.thing_names['image']}"] * hv.thing_divisors["image"],
     )
     queued_text_things = ConvertAmount(
-        processing_totals[f"queued_{hv.thing_names['text']}"] * hv.thing_divisors["text"]
+        processing_totals[f"queued_{hv.thing_names['text']}"] * hv.thing_divisors["text"],
     )
     total_image_fulfillments = ConvertAmount(totals["image_fulfilments"])
     total_text_fulfillments = ConvertAmount(totals["text_fulfilments"])
@@ -305,7 +305,7 @@ def transfer():
             error = ret[1]
         else:
             ret = database.transfer_kudos_from_apikey_to_username(
-                request.form["src_api_key"], dest_username, int(amount)
+                request.form["src_api_key"], dest_username, int(amount),
             )
             kudos = ret[0]
             error = ret[1]

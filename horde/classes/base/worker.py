@@ -1,19 +1,18 @@
 import json
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
-from datetime import datetime, timedelta
 
-from horde.logger import logger
-from horde.flask import db, SQLITE_MODE
-from horde import vars as hv
-from horde.suspicions import SUSPICION_LOGS, Suspicions
-from horde.utils import is_profane, get_db_uuid, sanitize_string
 from horde import horde_redis as hr
+from horde import vars as hv
 from horde.classes.base import settings
 from horde.discord import send_pause_notification
-
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
+from horde.suspicions import SUSPICION_LOGS, Suspicions
+from horde.utils import get_db_uuid, is_profane, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -42,7 +41,7 @@ class WorkerPerformance(db.Model):
     worker = db.relationship("Worker", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
     created = db.Column(
-        db.DateTime, default=datetime.utcnow
+        db.DateTime, default=datetime.utcnow,
     )  # TODO maybe index here, but I'm not sure how big this table is
 
 
@@ -199,7 +198,7 @@ class WorkerTemplate(db.Model):
             send_pause_notification(
                 f"Worker {self.name} ({self.id}) automatically set to paused.\n"
                 f"Last suspicion log: {reason.name}.\n"
-                f"Total Suspicion {self.get_suspicion()}"
+                f"Total Suspicion {self.get_suspicion()}",
             )
         db.session.commit()
 
@@ -286,7 +285,7 @@ class WorkerTemplate(db.Model):
                 self.modify_kudos(kudos, "uptime")
                 self.user.record_uptime(kudos)
                 logger.debug(
-                    f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds."
+                    f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.",
                 )
                 self.last_reward_uptime = self.uptime
         else:
@@ -342,7 +341,7 @@ class WorkerTemplate(db.Model):
                 .subquery()
             )
             db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(
-                WorkerPerformance.id.notin_(subquery)
+                WorkerPerformance.id.notin_(subquery),
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)

@@ -1,37 +1,36 @@
+import json
 import time
 import uuid
-import json
 from datetime import datetime, timedelta
-from sqlalchemy import func, or_, and_, not_, Boolean
+
+from sqlalchemy import Boolean, and_, func, not_, or_
 from sqlalchemy.orm import noload
 
-from horde.classes.base.waiting_prompt import WPModels, WPAllowedWorkers
-from horde.classes.base.worker import WorkerModel
-from horde.flask import db, SQLITE_MODE
-from horde.logger import logger
-from horde import vars as hv
-from horde.classes.base.worker import WorkerPerformance
-from horde.classes.stable.worker import ImageWorker
-from horde.classes.kobold.worker import TextWorker
-from horde.classes.base.user import User, UserRecords, UserSharedKey, KudosTransferLog
-from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
-from horde.classes.stable.processing_generation import ImageProcessingGeneration
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.processing_generation import TextProcessingGeneration
 import horde.classes.base.stats as stats
-from horde.classes.stable.interrogation import Interrogation, InterrogationForms
-from horde.classes.base.detection import Filter
-from horde.classes.stable.interrogation_worker import InterrogationWorker
-from horde.utils import hash_api_key, validate_regex
 from horde import horde_redis as hr
-from horde.database.classes import FakeWPRow
-from horde.enums import State
+from horde import vars as hv
 from horde.bridge_reference import (
     check_bridge_capability,
     get_supported_samplers,
 )
-
+from horde.classes.base.detection import Filter
+from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
+from horde.classes.base.waiting_prompt import WPAllowedWorkers, WPModels
+from horde.classes.base.worker import WorkerModel, WorkerPerformance
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.worker import TextWorker
+from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+from horde.classes.stable.interrogation_worker import InterrogationWorker
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.classes.stable.worker import ImageWorker
+from horde.database.classes import FakeWPRow
+from horde.enums import State
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
 from horde.model_reference import model_reference
+from horde.utils import hash_api_key, validate_regex
 
 ALLOW_ANONYMOUS = True
 WORKER_CLASS_MAP = {
@@ -348,7 +347,7 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]["workers"] = []
         if filter_model_name:
             things_per_model, jobs_per_model = count_things_for_specific_model(
-                wp_class, procgen_class, filter_model_name
+                wp_class, procgen_class, filter_model_name,
             )
         else:
             things_per_model, jobs_per_model = count_things_per_model(wp_class)
@@ -881,7 +880,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
                 ImageWaitingPrompt.worker_blacklist.is_(True),
                 WPAllowedWorkers.worker_id == worker.id,
             ),
-        )
+        ),
     ).count()
     if skipped_workers > 0:
         ret_dict["worker_id"] = skipped_workers
@@ -1079,7 +1078,7 @@ def get_wp_queue_stats(wp):
     # In case the primary thread has borked, we fall back to the DB
     if priority_sorted_list is None:
         logger.warning(
-            "Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!"
+            "Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!",
         )
         priority_sorted_list = query_prioritized_wps(wp.wp_type)
     # logger.info(priority_sorted_list)
@@ -1386,10 +1385,10 @@ def query_prioritized_wps(wp_type="image"):
 def prune_expired_stats():
     # clear up old requests (older than 5 mins)
     db.session.query(stats.FulfillmentPerformance).filter(
-        stats.FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60)
+        stats.FulfillmentPerformance.created < datetime.utcnow() - timedelta(seconds=60),
     ).delete(synchronize_session=False)
     db.session.query(stats.ModelPerformance).filter(
-        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=1)
+        stats.ModelPerformance.created < datetime.utcnow() - timedelta(hours=1),
     ).delete(synchronize_session=False)
     db.session.commit()
     logger.debug("Pruned Expired Stats")

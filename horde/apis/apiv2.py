@@ -1,8 +1,8 @@
 from flask import Blueprint
 from flask_restx import Api
-from horde.vars import horde_title
 
 from horde.apis.v2 import api as v2
+from horde.vars import horde_title
 
 blueprint = Blueprint("apiv2", __name__, url_prefix="/api")
 api = Api(

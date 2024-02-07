@@ -1,15 +1,15 @@
-from datetime import timedelta
-from sqlalchemy.dialects.postgresql import UUID
 import json
+from datetime import timedelta
 
-from horde.logger import logger
-from horde.classes.base.worker import Worker
-from horde.model_reference import model_reference
+from sqlalchemy.dialects.postgresql import UUID
+
 from horde import exceptions as e
-from horde.utils import sanitize_string
-from horde.flask import db, SQLITE_MODE
 from horde import horde_redis as hr
-
+from horde.classes.base.worker import Worker
+from horde.flask import SQLITE_MODE, db
+from horde.logger import logger
+from horde.model_reference import model_reference
+from horde.utils import sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -47,7 +47,7 @@ class TextWorker(Worker):
         if self.paused:
             paused_string = "(Paused) "
         logger.trace(
-            f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_context_length} max content length."
+            f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} at {self.max_length} max tokens and {self.max_context_length} max content length.",
         )
 
     def refresh_softprompt_cache(self):
@@ -89,7 +89,7 @@ class TextWorker(Worker):
                 existing_softprompts_names,
                 softprompts,
                 existing_softprompts_names == softprompts,
-            ]
+            ],
         )
         db.session.query(TextWorkerSoftprompts).filter_by(worker_id=self.id).delete()
         db.session.commit()

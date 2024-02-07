@@ -1,7 +1,7 @@
 from loguru import logger
 
-from horde.flask import HORDE
 from horde.database import functions as database
+from horde.flask import HORDE
 
 
 @logger.catch(reraise=True)
