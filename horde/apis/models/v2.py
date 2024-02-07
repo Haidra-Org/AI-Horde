@@ -568,7 +568,8 @@ class Models:
                     description="The maximum tokens this worker can generate.",
                 ),
                 "max_context_length": fields.Integer(
-                    example=80, description="The maximum tokens this worker can read.",
+                    example=80,
+                    description="The maximum tokens this worker can read.",
                 ),
                 "tokens_generated": fields.Float(description="How many tokens this worker has generated until now."),
             },

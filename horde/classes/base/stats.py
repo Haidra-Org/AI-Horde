@@ -13,7 +13,8 @@ class ModelPerformance(db.Model):
     model = db.Column(db.String(255), index=True)
     performance = db.Column(db.Float)
     created = db.Column(
-        db.DateTime(timezone=False), default=datetime.utcnow,
+        db.DateTime(timezone=False),
+        default=datetime.utcnow,
     )  # Maybe index this, but I'm not actually sure how big this table is
 
 

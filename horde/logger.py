@@ -77,7 +77,10 @@ def test_logger():
     sys.exit()
 
 
-logfmt = "<level>{level: <10}</level> | <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <green>{name}</green>:<green>{function}</green>:<green>{line}</green> - <level>{message}</level>"
+logfmt = (
+    "<level>{level: <10}</level> | <green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+    "<green>{name}</green>:<green>{function}</green>:<green>{line}</green> - <level>{message}</level>"
+)
 genfmt = "<level>{level: <10}</level> @ <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>"
 initfmt = "<magenta>INIT      </magenta> | <level>{extra[status]: <14}</level> | <magenta>{message}</magenta>"
 msgfmt = "<level>{level: <10}</level> | <level>{message}</level>"

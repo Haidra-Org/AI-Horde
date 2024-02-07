@@ -598,7 +598,8 @@ class ImageModels(v2.Models):
         )
         # Intentionally left blank to allow to add payloads later
         self.input_model_interrogation_form_payload = api.model(
-            "ModelInterrogationFormPayloadStable", {"*": fields.Wildcard(fields.String)},
+            "ModelInterrogationFormPayloadStable",
+            {"*": fields.Wildcard(fields.String)},
         )
         self.input_model_interrogation_form = api.model(
             "ModelInterrogationFormStable",
@@ -647,7 +648,8 @@ class ImageModels(v2.Models):
         )
         # Intentionally left blank to allow to add payloads later
         self.response_model_interrogation_form_result = api.model(
-            "InterrogationFormResult", {"*": fields.Wildcard(fields.Raw)},
+            "InterrogationFormResult",
+            {"*": fields.Wildcard(fields.Raw)},
         )
         self.response_model_interrogation_form_status = api.model(
             "InterrogationFormStatus",

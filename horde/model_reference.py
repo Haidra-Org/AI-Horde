@@ -17,7 +17,7 @@ class ModelReference(PrimaryTimedFunction):
         """Retrieves to nataili and text model reference and stores in it a var"""
         # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
         # We don't want to report on any random model name a client might request
-        for iter in range(10):
+        for _riter in range(10):
             try:
                 self.reference = requests.get(
                     "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json",
@@ -45,7 +45,7 @@ class ModelReference(PrimaryTimedFunction):
                 break
             except Exception as e:
                 logger.error(f"Error when downloading nataili models list: {e}")
-        for iter in range(10):
+        for _riter in range(10):
             try:
                 self.text_reference = requests.get(
                     "https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json",

@@ -347,7 +347,9 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]["workers"] = []
         if filter_model_name:
             things_per_model, jobs_per_model = count_things_for_specific_model(
-                wp_class, procgen_class, filter_model_name,
+                wp_class,
+                procgen_class,
+                filter_model_name,
             )
         else:
             things_per_model, jobs_per_model = count_things_per_model(wp_class)
@@ -1082,14 +1084,14 @@ def get_wp_queue_stats(wp):
         )
         priority_sorted_list = query_prioritized_wps(wp.wp_type)
     # logger.info(priority_sorted_list)
-    for iter in range(len(priority_sorted_list)):
-        iter_wp = priority_sorted_list[iter]
+    for riter in range(len(priority_sorted_list)):
+        iter_wp = priority_sorted_list[riter]
         queued_things = round(iter_wp.things * iter_wp.n / hv.thing_divisors["image"], 2)
         things_ahead_in_queue += queued_things
         n_ahead_in_queue += iter_wp.n
         if iter_wp.id == wp.id:
             things_ahead_in_queue = round(things_ahead_in_queue, 2)
-            return (iter, things_ahead_in_queue, n_ahead_in_queue)
+            return (riter, things_ahead_in_queue, n_ahead_in_queue)
     # -1 means the WP is done and not in the queue
     return (-1, 0, 0)
 

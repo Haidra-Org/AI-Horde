@@ -50,9 +50,9 @@ def index():
 [Terms of Service](/terms)"""
     news = ""
     sorted_news = News().sorted_news()
-    for iter in range(len(sorted_news)):
-        news += f"* {sorted_news[iter]['newspiece']}\n"
-        if iter > 1:
+    for riter in range(len(sorted_news)):
+        news += f"* {sorted_news[riter]['newspiece']}\n"
+        if riter > 1:
             break
     totals = database.get_total_usage()
     processing_totals = database.retrieve_totals()
@@ -305,7 +305,9 @@ def transfer():
             error = ret[1]
         else:
             ret = database.transfer_kudos_from_apikey_to_username(
-                request.form["src_api_key"], dest_username, int(amount),
+                request.form["src_api_key"],
+                dest_username,
+                int(amount),
             )
             kudos = ret[0]
             error = ret[1]

@@ -793,7 +793,8 @@ class Interrogate(Resource):
         # If anything goes wrong when uploading an image, we don't want to leave garbage around
         try:
             self.source_image, img, self.r2stored = ensure_source_image_uploaded(
-                self.args.source_image, str(self.interrogation.id),
+                self.args.source_image,
+                str(self.interrogation.id),
             )
             self.image_tiles = calculate_image_tiles(img)
             if self.image_tiles > 255:

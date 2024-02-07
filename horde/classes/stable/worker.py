@@ -80,12 +80,14 @@ class ImageWorker(Worker):
             return [False, "bridge_version"]
         # logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1 and not check_bridge_capability(
-            "post-processing", self.bridge_agent,
+            "post-processing",
+            self.bridge_agent,
         ):
             return [False, "bridge_version"]
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get("post_processing", []) and not check_bridge_capability(
-                pp, self.bridge_agent,
+                pp,
+                self.bridge_agent,
             ):
                 return [False, "bridge_version"]
         if waiting_prompt.source_image and not self.allow_img2img:
@@ -98,7 +100,8 @@ class ImageWorker(Worker):
         if waiting_prompt.params.get("tiling") and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("return_control_map") and not check_bridge_capability(
-            "return_control_map", self.bridge_agent,
+            "return_control_map",
+            self.bridge_agent,
         ):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("control_type"):
@@ -111,7 +114,8 @@ class ImageWorker(Worker):
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
-            "clip_skip", self.bridge_agent,
+            "clip_skip",
+            self.bridge_agent,
         ):
             return [False, "bridge_version"]
         if any(

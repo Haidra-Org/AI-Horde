@@ -261,7 +261,9 @@ class GenerateTemplate(Resource):
                 # For NSFW models and flagged users, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
                 self.args.prompt = prompt_checker.nsfw_model_prompt_replace(
-                    self.args.prompt, self.models, already_replaced=prompt_replaced,
+                    self.args.prompt,
+                    self.models,
+                    already_replaced=prompt_replaced,
                 )
                 if self.args.prompt is None:
                     prompt_replaced = False
@@ -433,7 +435,9 @@ class JobPopTemplate(Resource):
     def get_sorted_wp(self, priority_user_ids=None):
         """Extendable class to retrieve the sorted WP list for this worker"""
         return database.get_sorted_wp_filtered_to_worker(
-            self.worker, priority_user_ids=priority_user_ids, page=self.wp_page,
+            self.worker,
+            priority_user_ids=priority_user_ids,
+            page=self.wp_page,
         )
 
     # Making it into its own function to allow extension
@@ -619,7 +623,9 @@ class TransferKudos(Resource):
         if not user:
             raise e.InvalidAPIKey("kudos transfer to: " + self.args["username"])
         ret = database.transfer_kudos_from_apikey_to_username(
-            self.args["apikey"], self.args["username"], self.args["amount"],
+            self.args["apikey"],
+            self.args["username"],
+            self.args["amount"],
         )
         kudos = ret[0]
         error = ret[1]

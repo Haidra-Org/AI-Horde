@@ -114,8 +114,7 @@ def download_image(client, bucket, key):
     try:
         response = client.get_object(Bucket=bucket, Key=key)
         img = response["Body"].read()
-        img = Image.open(BytesIO(img))
-        return img
+        return Image.open(BytesIO(img))
     except ClientError as e:
         logger.error(f"Error encountered while downloading {key}: {e}")
         return None
@@ -124,8 +123,7 @@ def download_image(client, bucket, key):
 def download_procgen_image(procgen_id, shared=False):
     if shared:
         return download_image(s3_client_shared, r2_permanent_bucket, f"{procgen_id}.webp")
-    else:
-        return download_image(s3_client, r2_transient_bucket, f"{procgen_id}.webp")
+    return download_image(s3_client, r2_transient_bucket, f"{procgen_id}.webp")
 
 
 def download_source_image(wp_id, shared=False):

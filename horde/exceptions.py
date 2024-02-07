@@ -26,7 +26,10 @@ class CorruptPrompt(wze.BadRequest):
         if message:
             self.specific = message
         else:
-            self.specific = "This prompt appears to violate our terms of service and will be reported. Please contact us if you think this is an error."
+            self.specific = (
+                "This prompt appears to violate our terms of service and will be reported. "
+                "Please contact us if you think this is an error."
+            )
         self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
 
 
@@ -80,14 +83,20 @@ class NameAlreadyExists(wze.BadRequest):
 
 class PolymorphicNameConflict(wze.BadRequest):
     def __init__(self, name, object_type="worker"):
-        self.specific = f"The specified name '{name}' is already taken by a different type of {object_type}. Please choose a different name!"
+        self.specific = (
+            f"The specified name '{name}' is already taken by a different type "
+            f"of {object_type}. Please choose a different name!"
+        )
         self.log = None
 
 
 class ImageValidationFailed(wze.BadRequest):
     def __init__(
         self,
-        message="Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image.",
+        message=(
+            "Please ensure the source image payload is either "
+            "a URL containing an image or a valid base64 encoded image."
+        ),
     ):
         self.specific = f"Image validation failed. {message}"
         self.log = "Source image validation failed"
@@ -187,29 +196,48 @@ class WorkerMaintenance(wze.Forbidden):
 
 class TooManySameIPs(wze.Forbidden):
     def __init__(self, username):
-        self.specific = "You are running too many workers from the same location. To prevent abuse, please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz "
+        self.specific = (
+            "You are running too many workers from the same location. To prevent abuse, "
+            "please contact us on Discord to allow you to join more workers from the same IP: https://discord.gg/aG68kk3Qpz"
+        )
         self.log = f"User '{username} is trying to onboard too many workers from the same IP Address. Aborting!"
 
 
 class WorkerInviteOnly(wze.Forbidden):
     def __init__(self, current_workers):
         if current_workers == 0:
-            self.specific = "This horde has been switched to worker invite-only mode. Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
+            self.specific = (
+                "This horde has been switched to worker invite-only mode. "
+                "Please contact us on Discord to allow you to join your worker: https://discord.gg/aG68kk3Qpz "
+            )
         else:
-            self.specific = f"This horde has been switched to worker invite-only mode and you already have {current_workers} workers. Please contact us on Discord to allow you to join more workers: https://discord.gg/aG68kk3Qpz "
+            self.specific = (
+                "This horde has been switched to worker invite-only mode and "
+                f"you already have {current_workers} workers. "
+                "Please contact us on Discord to allow you to join more workers: https://discord.gg/aG68kk3Qpz "
+            )
         self.log = None
 
 
 class UnsafeIP(wze.Forbidden):
     def __init__(self, ipaddr):
-        self.specific = "Due to abuse prevention, we cannot accept more workers from VPNs. Please contact us on Discord if you feel this is a mistake."
+        self.specific = (
+            "Due to abuse prevention, we cannot accept more workers from VPNs. "
+            "Please contact us on Discord if you feel this is a mistake."
+        )
         self.log = f"Worker attempted to pop from unsafe IP: {ipaddr}"
 
 
 class TimeoutIP(wze.Forbidden):
     def __init__(self, ipaddr, ttl, connect_type="Client"):
-        base_message = "Due to abuse prevention, your IP address has been put into timeout for {ttl} more seconds. Please try again later, or contact us on discord if you think this was an error."
-        non_atomic_message = "Due to abuse prevention, your IP address has been put into timeout. Please try again later, or contact us on discord if you think this was an error."
+        base_message = (
+            "Due to abuse prevention, your IP address has been put into timeout for {ttl} more seconds. "
+            "Please try again later, or contact us on discord if you think this was an error."
+        )
+        non_atomic_message = (
+            "Due to abuse prevention, your IP address has been put into timeout. "
+            "Please try again later, or contact us on discord if you think this was an error."
+        )
 
         try:
             ttl = int(ttl)
@@ -217,9 +245,7 @@ class TimeoutIP(wze.Forbidden):
             logger.warning(f"Invalid TTL value: {ttl} during timeout IP for {ipaddr}")
             ttl = None
 
-        if ttl is None:
-            self.specific = non_atomic_message
-        elif ttl > (60 * 60 * 24 * 4):
+        if ttl is None or ttl > (60 * 60 * 24 * 4):
             self.specific = non_atomic_message
         else:
             self.specific = base_message.format(ttl=ttl)
@@ -229,7 +255,10 @@ class TimeoutIP(wze.Forbidden):
 
 class TooManyNewIPs(wze.Forbidden):
     def __init__(self, ipaddr):
-        self.specific = "We are getting too many new workers from unknown IPs. To prevent abuse, please try again later. If this persists, please contact us on discord https://discord.gg/3DxrhksKzn "
+        self.specific = (
+            "We are getting too many new workers from unknown IPs. To prevent abuse, please try again later. "
+            "If this persists, please contact us on discord https://discord.gg/3DxrhksKzn"
+        )
         self.log = f"Too many new IPs to check: {ipaddr}. Asked to retry"
 
 
@@ -298,7 +327,10 @@ class DuplicateGen(wze.BadRequest):
 
 class AbortedGen(wze.BadRequest):
     def __init__(self, worker, gen_id):
-        self.specific = f"Processing Generation with ID {gen_id} took too long to process and has been aborted! Please check your worker speed and do not onboard worker which generate slower than 1 it/s!"
+        self.specific = (
+            f"Processing Generation with ID {gen_id} took too long to process and has been aborted! "
+            "Please check your worker speed and do not onboard worker which generate slower than 1 it/s!"
+        )
         self.log = f"Worker '{worker}' attempted to provide aborted generation for {gen_id}."
 
 
@@ -311,7 +343,10 @@ class RequestExpired(wze.Gone):
 class TooManyPrompts(wze.TooManyRequests):
     def __init__(self, username, count, concurrency, msg=None):
         if msg is None:
-            self.specific = f"Parallel requests ({count}) exceeded user limit ({concurrency}). Please try again later or request to increase your concurrency."
+            self.specific = (
+                f"Parallel requests ({count}) exceeded user limit ({concurrency}). "
+                "Please try again later or request to increase your concurrency."
+            )
         else:
             self.specific = msg
         self.log = (

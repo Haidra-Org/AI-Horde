@@ -41,7 +41,8 @@ class WorkerPerformance(db.Model):
     worker = db.relationship("Worker", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
     created = db.Column(
-        db.DateTime, default=datetime.utcnow,
+        db.DateTime,
+        default=datetime.utcnow,
     )  # TODO maybe index here, but I'm not sure how big this table is
 
 

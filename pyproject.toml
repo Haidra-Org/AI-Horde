@@ -43,7 +43,7 @@ select = [
   "F",
   "UP",
   "YTT",
-  "B",
+  #"B",
   "C4",
   "PIE",
   "RET",

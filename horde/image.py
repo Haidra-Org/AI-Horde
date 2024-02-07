@@ -72,7 +72,9 @@ def convert_source_image_to_webp(source_image_b64):
         image.save(buffer, format="WebP", quality=quality, exact=True)
         final_image_b64 = base64.b64encode(buffer.getvalue()).decode("utf8")
         logger.debug(
-            f"Received img2img source of {width}*{height}. Started {round(len(source_image_b64) / 1000)} base64 kilochars. Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars",
+            f"Received img2img source of {width}*{height}. "
+            f"Started {round(len(source_image_b64) / 1000)} base64 kilochars. "
+            f"Ended with quality {quality} = {round(len(final_image_b64) / 1000)} base64 kilochars",
         )
         return final_image_b64
     except ImageValidationFailed as err:
@@ -82,7 +84,9 @@ def convert_source_image_to_webp(source_image_b64):
 
 
 def upload_source_image_to_r2(source_image_b64, uuid_string):
-    """Convert source images to webp and uploads it to r2, to avoid wasting bandwidth, while still supporting all types"""
+    """Convert source images to webp and uploads it to r2,
+    to avoid wasting bandwidth, while still supporting all types
+    """
     try:
         if source_image_b64 is None:
             return (None, None)
@@ -130,9 +134,8 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                 raise err
             raise ImageValidationFailed("Something went wrong when retrieving image url.")
         return (source_image_string, img, False)
-    else:
-        download_url, img = upload_source_image_to_r2(source_image_string, uuid_string)
-        return (download_url, img, True)
+    download_url, img = upload_source_image_to_r2(source_image_string, uuid_string)
+    return (download_url, img, True)
 
 
 def calculate_image_tiles(image):

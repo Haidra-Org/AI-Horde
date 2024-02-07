@@ -183,7 +183,9 @@ class TextModels(v2.Models):
             },
         )
         self.input_model_generation_payload = api.inherit(
-            "ModelGenerationInputKobold", self.root_model_generation_payload_kobold, {},
+            "ModelGenerationInputKobold",
+            self.root_model_generation_payload_kobold,
+            {},
         )
         self.response_model_generations_skipped = api.inherit(
             "NoValidRequestFoundKobold",

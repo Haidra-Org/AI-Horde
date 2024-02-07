@@ -65,13 +65,12 @@ class PatreonCache(PrimaryTimedFunction):
             return 900_000
         if eamount == 24:
             return 600_000
-        elif eamount == 10:
+        if eamount == 10:
             return 150_000
-        elif eamount < 10:
+        if eamount < 10:
             return eamount * 10_000
-        else:
-            logger.warning(f"Found patron '{user_id}' with non-standard entitlement: {eamount}")
-            return 0
+        logger.warning(f"Found patron '{user_id}' with non-standard entitlement: {eamount}")
+        return 0
 
     def get_sponsors(self):
         sponsors = []
@@ -86,7 +85,8 @@ class PatreonCache(PrimaryTimedFunction):
 
 
 patrons = PatreonCache(3600, None)
-# We call it now to ensure the cache if full when the monthly kudos assignment is done because the thread take a second longer to fire than the import
+# We call it now to ensure the cache if full when the monthly kudos assignment
+# is done because the thread take a second longer to fire than the import
 if hr.horde_r:
     patrons.call_function()
     # logger.debug(json.dumps(patrons.patrons, indent=4))

@@ -141,7 +141,8 @@ def record_image_statistic(procgen):
     # So I set it up on an external table to be able to expand
     if procgen.wp.params.get("control_type", None):
         new_cn_entry = ImageGenerationStatisticCN(
-            imgstat_id=statistic.id, control_type=procgen.wp.params["control_type"],
+            imgstat_id=statistic.id,
+            control_type=procgen.wp.params["control_type"],
         )
         db.session.add(new_cn_entry)
         db.session.commit()

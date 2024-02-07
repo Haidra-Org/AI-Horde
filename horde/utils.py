@@ -64,8 +64,7 @@ class ConvertAmount:
 def get_db_uuid():
     if SQLITE_MODE:
         return str(uuid.uuid4())
-    else:
-        return uuid.uuid4()
+    return uuid.uuid4()
 
 
 def generate_client_id():
@@ -73,15 +72,12 @@ def generate_client_id():
 
 
 def sanitize_string(text):
-    santxt = bleach.clean(text).lstrip().rstrip()
-    return santxt
+    return bleach.clean(text).lstrip().rstrip()
 
 
 def hash_api_key(unhashed_api_key):
-    salt = os.getenv("secret_key", "s0m3s3cr3t")  # Note default here, just so it can run without env file
-    hashed_key = hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
-    # logger.warning([os.getenv("secret_key", "s0m3s3cr3t"), hashed_key,unhashed_api_key])
-    return hashed_key
+    salt = os.getenv("secret_key", "s0m3s3cr3t")  # Note default here, just so it can run without env file #noqa SIM112
+    return hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()
 
 
 def hash_dictionary(dictionary):
@@ -90,8 +86,7 @@ def hash_dictionary(dictionary):
     # Create a hash object
     hash_object = hashlib.sha256(json_string.encode())
     # Get the hexadecimal representation of the hash
-    hash_hex = hash_object.hexdigest()
-    return hash_hex
+    return hash_object.hexdigest()
 
 
 def get_expiry_date():
