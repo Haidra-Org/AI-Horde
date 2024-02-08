@@ -23,7 +23,6 @@ def test_simple_image_gen() -> None:
         "loras": [{"name": "247778", "is_version": True}],
     }    
     async_req = requests.post('https://dev.aihorde.net/api/v2/generate/async', json = async_dict, headers = headers)
-    print(async_req)
     assert async_req.ok
     submit_results = async_req.json()
     req_id = submit_results['id']
