@@ -190,11 +190,10 @@ def check_bridge_capability(capability, bridge_agent):
 @logger.catch(reraise=True)
 def get_supported_samplers(bridge_agent, karras=True):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
-    logger.debug([bridge_agent,bridge_name, bridge_version])
     if bridge_name not in BRIDGE_SAMPLERS:
         # When it's an unknown worker agent we treat it like AI Horde Worker
         bridge_name = "AI Horde Worker"
-        bridge_version = 23
+        bridge_version = semver.Version.parse("23.0.0", True)
     available_samplers = set()
     for version in BRIDGE_SAMPLERS[bridge_name]:
         checked_semver = semver.Version.parse(str(version), True)

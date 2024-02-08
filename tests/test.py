@@ -1,6 +1,7 @@
 import requests
 
 CIVERSION = "0.1.1"
+HORDE_URL = "dev.stablehorde.net"
 
 def test_simple_image_gen() -> None:
     headers = {
@@ -22,7 +23,7 @@ def test_simple_image_gen() -> None:
         "models": ["Fustercluck", "AlbedoBase XL (SDXL)"],
         "loras": [{"name": "247778", "is_version": True}],
     }    
-    async_req = requests.post('https://dev.aihorde.net/api/v2/generate/async', json = async_dict, headers = headers)
+    async_req = requests.post(f'https://{HORDE_URL}/api/v2/generate/async', json = async_dict, headers = headers)
     assert async_req.ok
     submit_results = async_req.json()
     req_id = submit_results['id']
@@ -39,7 +40,7 @@ def test_simple_image_gen() -> None:
         "allow_controlnet": True,
         "allow_lora": True        
     }
-    pop_req = requests.post('https://dev.aihorde.net/api/v2/generate/pop', json = pop_dict, headers = headers)
+    pop_req = requests.post(f'https://{HORDE_URL}/api/v2/generate/pop', json = pop_dict, headers = headers)
     print(pop_req)
     assert pop_req.ok
     pop_results = pop_req.json()
@@ -51,11 +52,11 @@ def test_simple_image_gen() -> None:
         "state": "ok",
         "seed": 0,
     }
-    submit_req = requests.post('https://dev.aihorde.net/api/v2/generate/pop', json = submit_dict, headers = headers)
+    submit_req = requests.post(f'https://{HORDE_URL}/api/v2/generate/pop', json = submit_dict, headers = headers)
     assert submit_req.ok
     submit_results = pop_req.json()
     assert submit_results["kudos"] > 0
-    retrieve_req = requests.get(f'https://dev.aihorde.net/api/v2/generate/status/{req_id}', headers = headers)
+    retrieve_req = requests.get(f'https://{HORDE_URL}/api/v2/generate/status/{req_id}', headers = headers)
     assert retrieve_req.ok
     retrieve_req = async_req.json()
     print(retrieve_req)
