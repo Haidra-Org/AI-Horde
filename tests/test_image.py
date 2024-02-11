@@ -31,7 +31,7 @@ def test_simple_image_gen() -> None:
     req_id = async_results['id']
     # print(async_results)
     pop_dict = {
-        "name": "CI/CD Fake Worker",
+        "name": "CICD Fake Dreamer",
         "models": ["Fustercluck", "AlbedoBase XL (SDXL)"],
         "bridge_agent": f"AI Horde Worker reGen:4.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "amount": 10,
@@ -68,13 +68,11 @@ def test_simple_image_gen() -> None:
     gen = retrieve_results['generations'][0]
     assert len(gen['gen_metadata']) == 0
     assert gen['seed'] == "0"
-    assert gen['worker_name'] == "CI/CD Fake Worker"
+    assert gen['worker_name'] == "CICD Fake Dreamer"
     assert gen['model'] in TEST_MODELS
     assert gen['state'] == 'ok'
     assert retrieve_results['kudos'] > 1
     assert retrieve_results['done'] is True
 
 if __name__ == "__main__":
-    # retrieve_req = requests.get(f'https://{HORDE_URL}/api/v2/generate/status/6b2e9602-472f-41cd-9cd7-bb2bb5062919')
-    # print(retrieve_req.text)
     test_simple_image_gen()

@@ -173,7 +173,7 @@ class InterrogationForms(db.Model):
             "state": self.state.name.lower(),
             "result": self.result,
             "worker_id": self.worker_id,
-            "worker_name": self.worker.name,
+            "worker_name": self.worker.name if self.worker else None,
         }
 
     def send_webhook(self, kudos):
