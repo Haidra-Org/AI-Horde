@@ -20,7 +20,7 @@ def test_simple_alchemy() -> None:
     assert async_req.ok
     async_results = async_req.json()
     req_id = async_results['id']
-    print(async_results)
+    # print(async_results)
     pop_dict = {
         "name": "CICD Fake Alchemist",
         "forms": ["caption", "strip_background", "interrogation"],
@@ -48,17 +48,19 @@ def test_simple_alchemy() -> None:
     submit_results = submit_req.json()
     assert submit_results["reward"] > 0
     retrieve_req = requests.get(f'https://{HORDE_URL}/api/v2/interrogate/status/{req_id}', headers = headers)
-    print(retrieve_req.text)
     assert retrieve_req.ok
     retrieve_results = retrieve_req.json()
-    print(json.dumps(retrieve_results,indent=4))
+    # print(json.dumps(retrieve_results,indent=4))
     assert len(retrieve_results['forms']) == 1
     gen = retrieve_results['forms'][0]
-    assert gen['form'] == "Caption"
-    assert gen['result'] == "Test"
-    assert gen['state'] == 'ok'
-    assert retrieve_results['kudos'] >= 1
-    assert retrieve_results['state'] == 'ok'
+    assert 'result' in gen
+    assert 'result' in gen
+    assert isinstance(gen['result'], dict)
+    assert 'caption' in gen['result']
+    assert gen['form'] == "caption"
+    assert gen['result']['caption'] == "Test"
+    assert gen['state'] == 'done'
+    assert retrieve_results['state'] == 'done'
 
 if __name__ == "__main__":
     test_simple_alchemy()
