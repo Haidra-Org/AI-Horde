@@ -19,7 +19,7 @@ from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
 from horde.classes.base.news import News
-from horde.classes.base.team import Team
+from horde.classes.base.team import Team, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker
@@ -1774,7 +1774,7 @@ class Teams(Resource):
         """A List with the details of all teams"""
         teams_ret = []
         # I could do this with a comprehension, but this is clearer to understand
-        for team in database.get_all_teams():
+        for team in get_all_teams():
             teams_ret.append(team.get_details())
         return (teams_ret, 200)
 
