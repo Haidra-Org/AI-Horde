@@ -1,66 +1,65 @@
 HORDE_VERSION = "4.30.0"
 
 WHITELISTED_SERVICE_IPS = {
-    "212.227.227.178", # Turing Bot
-    "5.189.169.230", # Discord Bot
+    "212.227.227.178",  # Turing Bot
+    "5.189.169.230",  # Discord Bot
 }
 
 # And their extra kudos adjustments based on how expensive to process they are and/or how much extra horde resources they consume
 KNOWN_POST_PROCESSORS = {
-    "GFPGAN": 1, 
-    "RealESRGAN_x4plus": 1.05, 
-    "RealESRGAN_x2plus": 1.05, 
+    "GFPGAN": 1,
+    "RealESRGAN_x4plus": 1.05,
+    "RealESRGAN_x2plus": 1.05,
     "RealESRGAN_x4plus_anime_6B": 1.05,
     "NMKD_Siax": 1.05,
-    "4x_AnimeSharp": 1.05, 
-    "CodeFormers": 1, 
+    "4x_AnimeSharp": 1.05,
+    "CodeFormers": 1,
     "strip_background": 1,
 }
 
 KNOWN_UPSCALERS = [
-    "RealESRGAN_x4plus", 
-    "RealESRGAN_x2plus", 
-    "RealESRGAN_x4plus_anime_6B", 
+    "RealESRGAN_x4plus",
+    "RealESRGAN_x2plus",
+    "RealESRGAN_x4plus_anime_6B",
     "NMKD_Siax",
-    "4x_AnimeSharp"
+    "4x_AnimeSharp",
 ]
 
 # These are postprocessors which require some juice,
 # So we want to reduce the batch amount when used
 HEAVY_POST_PROCESSORS = {
-    "RealESRGAN_x4plus", 
-    "RealESRGAN_x4plus_anime_6B", 
+    "RealESRGAN_x4plus",
+    "RealESRGAN_x4plus_anime_6B",
     "NMKD_Siax",
-    "4x_AnimeSharp"
-    "CodeFormers", 
+    "4x_AnimeSharp" "CodeFormers",
 }
 
 
 KNOWN_SAMPLERS = {
-    "k_lms", 
-    "k_heun", 
-    "k_euler", 
-    "k_euler_a", 
-    "k_dpm_2", 
-    "k_dpm_2_a", 
-    "k_dpm_fast", 
-    "k_dpm_adaptive", 
-    "k_dpmpp_2s_a", 
-    "k_dpmpp_2m", 
-    "dpmsolver", 
-    "k_dpmpp_sde", 
+    "k_lms",
+    "k_heun",
+    "k_euler",
+    "k_euler_a",
+    "k_dpm_2",
+    "k_dpm_2_a",
+    "k_dpm_fast",
+    "k_dpm_adaptive",
+    "k_dpmpp_2s_a",
+    "k_dpmpp_2m",
+    "dpmsolver",
+    "k_dpmpp_sde",
     "DDIM",
-    "lcm"
+    "lcm",
 }
 
 # These samplers perform double the steps per image
 # As such we need to take it into account for the upfront kudos requirements
 SECOND_ORDER_SAMPLERS = [
-    "k_heun", 
-    "k_dpm_2", 
-    "k_dpm_2_a", 
-    "k_dpmpp_2s_a", 
-    "k_dpmpp_sde"
+    "k_heun",
+    "k_dpm_2",
+    "k_dpm_2_a",
+    "k_dpmpp_2s_a",
+    "k_dpmpp_sde",
 ]
 
 KNOWN_LCM_LORA_VERSIONS = {
@@ -78,7 +77,7 @@ KNOWN_LCM_LORA_IDS = {
 }
 
 WHITELISTED_VPN_IPS = [
-    "212.227.227.178/32", # Turing Bot
+    "212.227.227.178/32",  # Turing Bot
     "141.144.197.64/32",
     # Digital Ocean / Paperspace
     "172.83.13.4/32",

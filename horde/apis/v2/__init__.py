@@ -1,6 +1,6 @@
 import horde.apis.v2.base as base
-import horde.apis.v2.stable as stable
 import horde.apis.v2.kobold as kobold
+import horde.apis.v2.stable as stable
 from horde.apis.v2.base import api
 
 api.add_resource(stable.ImageAsyncGenerate, "/generate/async")
@@ -23,7 +23,7 @@ api.add_resource(base.WorkerSingle, "/workers/<string:worker_id>")
 api.add_resource(base.TransferKudos, "/kudos/transfer")
 api.add_resource(base.AwardKudos, "/kudos/award")
 api.add_resource(base.HordeModes, "/status/modes")
-api.add_resource(stable.HordeLoad, "/status/performance")
+api.add_resource(base.HordeLoad, "/status/performance")
 api.add_resource(base.Models, "/status/models")
 api.add_resource(base.ModelSingle, "/status/models/<string:model_name>")
 api.add_resource(base.HordeNews, "/status/news")
@@ -36,7 +36,7 @@ api.add_resource(base.OperationsBlockWorkerIP, "/operations/block_worker_ipaddr/
 api.add_resource(stable.Interrogate, "/interrogate/async")
 api.add_resource(stable.InterrogationStatus, "/interrogate/status/<string:id>")
 api.add_resource(stable.InterrogatePop, "/interrogate/pop")
-#TODO APIv2 Merge with status as a POST this part of /interrogate/<string:id>
+# TODO APIv2 Merge with status as a POST this part of /interrogate/<string:id>
 api.add_resource(stable.InterrogateSubmit, "/interrogate/submit")
 api.add_resource(base.Filters, "/filters")
 api.add_resource(base.FilterRegex, "/filters/regex")

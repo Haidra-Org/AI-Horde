@@ -1,16 +1,15 @@
 from flask import Blueprint
 from flask_restx import Api
-from horde.argparser import args
-from importlib import import_module
-from horde.vars import horde_title
 
 from horde.apis.v2 import api as v2
+from horde.vars import horde_title
 
-blueprint = Blueprint('apiv2', __name__, url_prefix='/api')
-api = Api(blueprint,
-    version='2.0', 
-    title=f'{horde_title}',
-    description=f'The API documentation for the {horde_title}',
+blueprint = Blueprint("apiv2", __name__, url_prefix="/api")
+api = Api(
+    blueprint,
+    version="2.0",
+    title=f"{horde_title}",
+    description=f"The API documentation for the {horde_title}",
     contact_email="mail@dbzer0.com",
     default="v2",
     default_label="Latest Version",

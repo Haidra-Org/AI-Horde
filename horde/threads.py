@@ -1,8 +1,9 @@
-import time
 import threading
+import time
 
 from horde.logger import logger
-from horde import horde_instance_id
+from horde.vars import horde_instance_id
+
 
 class PrimaryTimedFunction:
     def __init__(self, interval, function, args=None, kwargs=None, quorum=None):
@@ -31,9 +32,11 @@ class PrimaryTimedFunction:
                     time.sleep(self.interval)
                     continue
                 if self.processing:
-                    self.processing_skips +=1
+                    self.processing_skips += 1
                     if self.processing_skips > 5:
-                        logger.critical(f"Thead {self.function.__name__}() stuck in processing for {self.processing_skips * 10} seconds!")
+                        logger.critical(
+                            f"Thead {self.function.__name__}() " f"stuck in processing for {self.processing_skips * 10} seconds!",
+                        )
                     time.sleep(10)
                     continue
                 self.processing_skips = 0

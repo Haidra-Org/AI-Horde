@@ -1,9 +1,15 @@
-from datetime import timedelta
 import json
+from datetime import timedelta
 from threading import Lock
 
-from horde.redis_ctrl import get_horde_db, is_redis_up, get_local_horde_db, is_local_redis_up, get_all_redis_db_servers
 from horde.logger import logger
+from horde.redis_ctrl import (
+    get_all_redis_db_servers,
+    get_horde_db,
+    get_local_horde_db,
+    is_local_redis_up,
+    is_redis_up,
+)
 
 locks = {}
 
@@ -26,14 +32,16 @@ if is_local_redis_up():
 else:
     logger.init_err("Horde Local Redis", status="Failed")
 
+
 def horde_r_set(key, value):
     for hr in all_horde_redis:
         try:
             hr.set(key, value)
         except Exception as err:
-            logger.warning("Exception when writing in redis servers {hr}: {err}")
+            logger.warning(f"Exception when writing in redis servers {hr}: {err}")
     if horde_local_r:
         horde_local_r.setex(key, timedelta(10), value)
+
 
 def horde_r_setex(key, expiry, value):
     for hr in all_horde_redis:
@@ -63,8 +71,9 @@ def horde_r_local_set_to_json(key, value):
         try:
             horde_local_r.set(key, json.dumps(value))
         except Exception as err:
-            logger.error(f"Something went wrong when setting local redis: {e}")
+            logger.error(f"Something went wrong when setting local redis: {err}")
         locks[key].release()
+
 
 def horde_local_setex_to_json(key, seconds, value):
     if horde_local_r:
@@ -74,8 +83,9 @@ def horde_local_setex_to_json(key, seconds, value):
         try:
             horde_local_r.setex(key, timedelta(seconds=seconds), json.dumps(value))
         except Exception as err:
-            logger.error(f"Something went wrong when setting local redis: {e}")
+            logger.error(f"Something went wrong when setting local redis: {err}")
         locks[key].release()
+
 
 def horde_r_get(key):
     """Retrieves the value from local redis if it exists
@@ -99,6 +109,7 @@ def horde_r_get(key):
             if value is not None:
                 horde_local_r.setex(key, timedelta(seconds=abs(ttl)), value)
     return value
+
 
 def horde_r_get_json(key):
     """Same as horde_r_get()

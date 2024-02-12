@@ -1,5 +1,6 @@
 import enum
 
+
 class State(enum.Enum):
     WAITING = 0
     PROCESSING = 1
@@ -22,6 +23,7 @@ class UserRecordTypes(enum.Enum):
     FULFILLMENT = 3
     REQUEST = 4
 
+
 class UserRoleTypes(enum.Enum):
     MODERATOR = 0
     TRUSTED = 1
@@ -30,4 +32,3 @@ class UserRoleTypes(enum.Enum):
     VPN = 5
     SPECIAL = 6
     SERVICE = 7
-    

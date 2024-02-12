@@ -1,8 +1,8 @@
-from horde.threads import PrimaryTimedFunction
-from horde.database.classes import Quorum
 import horde.database.threads as threads
 from horde.argparser import args
+from horde.database.classes import Quorum
 from horde.logger import logger
+from horde.threads import PrimaryTimedFunction
 
 # Threads
 quorum = Quorum(1, threads.get_quorum)
@@ -40,14 +40,16 @@ if args.reload_all_caches:
 if args.check_prompts:
     threads.check_waiting_prompts()
     import sys
+
     sys.exit()
 
 if args.new_patreons:
     threads.store_patreon_members()
     threads.assign_monthly_kudos()
     import sys
+
     sys.exit()
-    
+
 # # Test
 
 # logger.info("store_compiled_filter_regex_replacements()")

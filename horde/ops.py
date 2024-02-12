@@ -1,7 +1,8 @@
 from loguru import logger
 
-from horde.flask import HORDE, db
 from horde.database import functions as database
+from horde.flask import HORDE
+
 
 @logger.catch(reraise=True)
 def force_patreon_kudos(user_id, prevent_date_change):

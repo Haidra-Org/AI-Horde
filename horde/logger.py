@@ -1,6 +1,8 @@
 import sys
 from functools import partialmethod
+
 from loguru import logger
+
 from horde.argparser import args
 
 STDOUT_LEVELS = ["GENERATION", "PROMPT"]
@@ -10,6 +12,7 @@ MESSAGE_LEVELS = ["MESSAGE"]
 verbosity = 40
 quiet = 0
 
+
 def set_logger_verbosity(count):
     global verbosity
     # The count comes reversed. So count = 0 means minimum verbosity
@@ -17,41 +20,49 @@ def set_logger_verbosity(count):
     # So the more count we have, the lowe we drop the versbosity maximum
     verbosity = 40 - (count * 10)
 
+
 def quiesce_logger(count):
     global quiet
     # The bigger the count, the more silent we want our logger
     quiet = count * 10
 
+
 def is_stdout_log(record):
     if record["level"].name not in STDOUT_LEVELS:
-        return(False)
+        return False
     if record["level"].no < verbosity + quiet:
-        return(False)
-    return(True)
+        return False
+    return True
+
 
 def is_init_log(record):
     if record["level"].name not in INIT_LEVELS:
-        return(False)
+        return False
     if record["level"].no < verbosity + quiet:
-        return(False)
-    return(True)
+        return False
+    return True
+
 
 def is_msg_log(record):
     if record["level"].name not in MESSAGE_LEVELS:
-        return(False)
+        return False
     if record["level"].no < verbosity + quiet:
-        return(False)
-    return(True)
+        return False
+    return True
+
 
 def is_stderr_log(record):
     if record["level"].name in STDOUT_LEVELS + INIT_LEVELS + MESSAGE_LEVELS:
-        return(False)
+        return False
     if record["level"].no < verbosity + quiet:
-        return(False)
-    return(True)
+        return False
+    return True
+
 
 def test_logger():
-    logger.generation("This is a generation message\nIt is typically multiline\nThee Lines".encode("unicode_escape").decode("utf-8"))
+    logger.generation(
+        "This is a generation message\nIt is typically multiline\nThee Lines".encode("unicode_escape").decode("utf-8"),
+    )
     logger.prompt("This is a prompt message")
     logger.debug("Debug Message")
     logger.info("Info Message")
@@ -66,7 +77,10 @@ def test_logger():
     sys.exit()
 
 
-logfmt = "<level>{level: <10}</level> | <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <green>{name}</green>:<green>{function}</green>:<green>{line}</green> - <level>{message}</level>"
+logfmt = (
+    "<level>{level: <10}</level> | <green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+    "<green>{name}</green>:<green>{function}</green>:<green>{line}</green> - <level>{message}</level>"
+)
 genfmt = "<level>{level: <10}</level> @ <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{message}</level>"
 initfmt = "<magenta>INIT      </magenta> | <level>{extra[status]: <14}</level> | <magenta>{message}</magenta>"
 msgfmt = "<level>{level: <10}</level> | <level>{message}</level>"
@@ -93,10 +107,33 @@ logger.__class__.audit = partialmethod(logger.__class__.log, "AUDIT")
 
 config = {
     "handlers": [
-        {"sink": sys.stderr, "format": logfmt, "colorize":args.color, "filter": is_stderr_log},
-        {"sink": sys.stdout, "format": genfmt, "level": "PROMPT", "colorize":args.color, "filter": is_stdout_log},
-        {"sink": sys.stdout, "format": initfmt, "level": "INIT", "colorize":args.color, "filter": is_init_log},
-        {"sink": sys.stdout, "format": msgfmt, "level": "MESSAGE", "colorize":args.color, "filter": is_msg_log}
+        {
+            "sink": sys.stderr,
+            "format": logfmt,
+            "colorize": args.color,
+            "filter": is_stderr_log,
+        },
+        {
+            "sink": sys.stdout,
+            "format": genfmt,
+            "level": "PROMPT",
+            "colorize": args.color,
+            "filter": is_stdout_log,
+        },
+        {
+            "sink": sys.stdout,
+            "format": initfmt,
+            "level": "INIT",
+            "colorize": args.color,
+            "filter": is_init_log,
+        },
+        {
+            "sink": sys.stdout,
+            "format": msgfmt,
+            "level": "MESSAGE",
+            "colorize": args.color,
+            "filter": is_msg_log,
+        },
     ],
 }
 logger.configure(**config)
