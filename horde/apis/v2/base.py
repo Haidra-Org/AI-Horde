@@ -478,10 +478,10 @@ class JobPopTemplate(Resource):
             raise e.InvalidAPIKey("prompt pop")
         if self.user.flagged:
             raise e.WorkerMaintenance(
-                "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn",
+                "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn", rc="WorkerFlaggedMaintenance"
             )
         if self.user.is_anon():
-            raise e.AnonForbidden
+            raise e.AnonForbidden(rc="AnonForbiddenWorker")
         self.worker_name = sanitize_string(self.args["name"])
         self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
@@ -489,9 +489,9 @@ class JobPopTemplate(Resource):
         self.check_ip()
         if not self.worker:
             if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, "worker name")
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, "worker name", rc="ProfaneWorkerName")
             if is_profane(self.args.bridge_agent):
-                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent")
+                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent", rc="ProfaneBridgeAgent")
             colab_search = re.compile(r"colab|tpu|google", re.IGNORECASE)
             cs = colab_search.search(self.worker_name)
             if cs:
@@ -640,7 +640,7 @@ class TransferKudos(Resource):
         kudos = ret[0]
         error = ret[1]
         if error != "OK":
-            raise e.KudosValidationError(user.get_unique_alias(), error)
+            raise e.KudosValidationError(user.get_unique_alias(), error, rc=ret[2])
         return ({"transferred": kudos}, 200)
 
 
@@ -687,12 +687,13 @@ class AwardKudos(Resource):
                 user.get_unique_alias(),
                 "Only special people can award kudos. Now you're very special as well, just not the right kind.",
                 "AwardKudos",
+                rc="NotAllowedAwards",
             )
         dest_user = database.find_user_by_username(self.args["username"])
         if not dest_user:
-            raise e.KudosValidationError(user.get_unique_alias(), "Invalid target username.", "award")
+            raise e.KudosValidationError(user.get_unique_alias(), "Invalid target username.", "award", rc="InvalidAwardUsername")
         if dest_user.is_anon():
-            raise e.KudosValidationError(user.get_unique_alias(), "Cannot award anon. No go.", "award")
+            raise e.KudosValidationError(user.get_unique_alias(), "Cannot award anon. No go.", "award", rc="KudosAwardToAnon")
         # if dest_user.is_suspicious():
         #     return([0,'Target user is rejected.'])
         if dest_user.flagged:
@@ -938,12 +939,12 @@ class WorkerSingle(Resource):
             if not admin.moderator and admin != worker.user:
                 raise e.NotOwner(admin.get_unique_alias(), worker.name)
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenWorker")
             ret = worker.set_info(self.args.info)
             if ret == "Profanity":
-                raise e.Profanity(admin.get_unique_alias(), self.args.info, "worker info")
+                raise e.Profanity(admin.get_unique_alias(), self.args.info, "worker info", rc="ProfaneWorkerInfo")
             if ret == "Too Long":
-                raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, "worker info")
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.info), 1000, "worker info", rc="TooLongWorkerName")
             ret_dict["info"] = worker.info
         # Only mods can set a worker as paused
         if self.args.paused is not None:
@@ -955,20 +956,20 @@ class WorkerSingle(Resource):
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT WorkerSingle")
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenWorker")
             ret = worker.set_name(self.args.name)
             if ret == "Profanity":
-                raise e.Profanity(self.user.get_unique_alias(), self.args.name, "worker name")
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, "worker name", rc="ProfaneWorkerName")
             if ret == "Too Long":
-                raise e.TooLong(admin.get_unique_alias(), len(self.args.name), 100, "worker name")
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.name), 100, "worker name", rc="TooLongWorkerName")
             if ret == "Already Exists":
-                raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name)
+                raise e.NameAlreadyExists(admin.get_unique_alias(), worker.name, self.args.name, rc="WorkerNameAlreadyExists")
             ret_dict["name"] = worker.name
         if self.args.team is not None:
             if not admin.moderator and admin != worker.user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT WorkerSingle")
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenWorker")
             if self.args.team == "":
                 worker.set_team(None)
                 ret_dict["team"] = "None"
@@ -979,7 +980,7 @@ class WorkerSingle(Resource):
                 ret = worker.set_team(team)
                 ret_dict["team"] = team.name
         if not len(ret_dict):
-            raise e.NoValidActions("No worker modification selected!")
+            raise e.NoValidActions("No worker modification selected!", rc="NoWorkerModSelected")
         return (ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
@@ -1020,7 +1021,7 @@ class WorkerSingle(Resource):
         if not admin.moderator and admin != worker.user:
             raise e.NotModerator(admin.get_unique_alias(), "DELETE WorkerSingle")
         if admin.is_anon():
-            raise e.AnonForbidden()
+            raise e.AnonForbidden(rc="AnonForbiddenWorker")
         logger.warning(f"{admin.get_unique_alias()} deleted worker: {worker.name}")
         ret_dict = {
             "deleted_id": worker.id,
@@ -1379,44 +1380,45 @@ class UserSingle(Resource):
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenUserMod")
             user.public_workers = self.args.public_workers
             ret_dict["public_workers"] = user.public_workers
         if self.args.username is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenUserMod")
             ret = user.set_username(self.args.username)
             if ret == "Profanity":
-                raise e.Profanity(admin.get_unique_alias(), self.args.username, "username")
+                raise e.Profanity(admin.get_unique_alias(), self.args.username, "username", rc="ProfaneUserName")
             if ret == "Too Long":
-                raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, "username")
+                raise e.TooLong(admin.get_unique_alias(), len(self.args.username), 30, "username", rc="TooLongUserName")
             ret_dict["username"] = user.username
         if self.args.contact is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenUserMod")
             ret = user.set_contact(self.args.contact)
             if ret == "Profanity":
-                raise e.Profanity(admin.get_unique_alias(), self.args.contact, "user contact")
+                raise e.Profanity(admin.get_unique_alias(), self.args.contact, "user contact", rc="ProfaneUserContact")
             ret_dict["contact"] = user.contact
         if self.args.admin_comment is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             if admin.is_anon():
-                raise e.AnonForbidden()
+                raise e.AnonForbidden(rc="AnonForbiddenUserMod")
             ret = user.set_admin_comment(self.args.admin_comment)
             if ret == "Profanity":
                 raise e.Profanity(
                     admin.get_unique_alias(),
                     self.args.admin_comment,
                     "user admin_comment",
+                    rc="ProfaneAdminComment",
                 )
             ret_dict["admin_comment"] = user.admin_comment
         if not len(ret_dict):
-            raise e.NoValidActions("No usermod operations selected!")
+            raise e.NoValidActions("No usermod operations selected!", rc="NoUserModSelected")
         return (ret_dict, 200)
 
 
@@ -1742,7 +1744,7 @@ class HordeModes(Resource):
             cfg.raid = self.args.raid
             ret_dict["raid_mode"] = cfg.raid
         if not len(ret_dict):
-            raise e.NoValidActions("No mod change selected!")
+            raise e.NoValidActions("No mod change selected!", rc="NoHordeModSelected")
         else:
             db.session.commit()
         return (ret_dict, 200)
@@ -1812,9 +1814,9 @@ class Teams(Resource):
         if not self.user:
             raise e.InvalidAPIKey("User action: " + "PUT Teams")
         if self.user.is_anon():
-            raise e.AnonForbidden()
+            raise e.AnonForbidden
         if not self.user.trusted:
-            raise e.NotTrusted
+            raise e.NotTrusted(rc="UntrustedTeamCreation")
         ret_dict = {}
 
         self.team_name = sanitize_string(self.args.name)
@@ -1824,11 +1826,11 @@ class Teams(Resource):
             self.team_info = sanitize_string(self.team_info)
 
         if self.team:
-            raise e.NameAlreadyExists(self.user.get_unique_alias(), self.team_name, self.args.name, "team")
+            raise e.NameAlreadyExists(self.user.get_unique_alias(), self.team_name, self.args.name, "team", rc="TeamNameAlreadyExists")
         if is_profane(self.team_name):
-            raise e.Profanity(self.user.get_unique_alias(), self.team_name, "team name")
+            raise e.Profanity(self.user.get_unique_alias(), self.team_name, "team name", rc="ProfaneTeamName")
         if self.team_info and is_profane(self.team_info):
-            raise e.Profanity(self.user.get_unique_alias(), self.team_info, "team info")
+            raise e.Profanity(self.user.get_unique_alias(), self.team_info, "team info", rc="ProfaneTeamInfo")
         team = Team(
             owner_id=self.user.id,
             name=self.team_name,
@@ -1934,19 +1936,19 @@ class TeamSingle(Resource):
                 raise e.NotOwner(admin.get_unique_alias(), team.name)
             ret = team.set_info(self.args.info)
             if ret == "Profanity":
-                raise e.Profanity(admin.get_unique_alias(), self.args.info, "team info")
+                raise e.Profanity(admin.get_unique_alias(), self.args.info, "team info", rc="ProfaneTeamInfo")
             ret_dict["info"] = team.info
         if self.args.name is not None:
             if not admin.moderator and admin != team.owner:
                 raise e.NotModerator(admin.get_unique_alias(), "PATCH TeamSingle")
             ret = team.set_name(self.args.name)
             if ret == "Profanity":
-                raise e.Profanity(self.user.get_unique_alias(), self.args.name, "team name")
+                raise e.Profanity(self.user.get_unique_alias(), self.args.name, "team name", rc="ProfaneTeamName")
             if ret == "Already Exists":
-                raise e.NameAlreadyExists(self.user.get_unique_alias(), team.name, self.args.name, "team")
+                raise e.NameAlreadyExists(self.user.get_unique_alias(), team.name, self.args.name, "team", rc="TeamNameAlreadyExists")
             ret_dict["name"] = team.name
         if not len(ret_dict):
-            raise e.NoValidActions("No team modification selected!")
+            raise e.NoValidActions("No team modification selected!", rc="NoTeamModSelected")
         return (ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
@@ -2515,7 +2517,7 @@ class FilterSingle(Resource):
         if not filter:
             raise e.ThingNotFound("Filter", filter_id)
         if not self.args.filter_type and not self.args.regex and not self.args.description and not self.args.replacement:
-            raise e.NoValidActions("No filter patching selected!")
+            raise e.NoValidActions("No filter patching selected!", rc="NoFilterModSelected")
         filter.user_id = (mod.id,)
         if self.args.filter_type:
             filter.filter_type = self.args.filter_type
@@ -2793,7 +2795,7 @@ class SharedKeySingle(Resource):
         )
 
         if no_valid_actions and no_valid_limit_actions:
-            raise e.NoValidActions("No shared key modification selected!")
+            raise e.NoValidActions("No shared key modification selected!", rc="NoSharedKeyModSelected")
         if self.args.expiry is not None:
             if self.args.expiry == -1:
                 sharedkey.expiry = None

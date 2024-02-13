@@ -112,6 +112,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 self.username,
                 message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
                 f"to fulfill this reques ({required_kudos}).",
+                rc="SharedKeyEmpty",
             )
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         if needs_kudos:

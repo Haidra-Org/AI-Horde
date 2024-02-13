@@ -106,7 +106,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 self.safe_ip = True
             # We actually block unsafe IPs for now to combat CP
             if not self.safe_ip:
-                raise e.NotTrusted
+                raise e.NotTrusted(rc="UntrustedUnsafeIP")
         if not self.user.special and self.params.get("special"):
             raise e.BadRequest("Only special users can send a special field.")
         for model in self.args.models:
@@ -128,13 +128,13 @@ class ImageAsyncGenerate(GenerateTemplate):
         if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(
             model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models
         ):
-            raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x")
+            raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x", rc="ControlNetUnsupported")
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
-            raise e.UnsupportedModel("You cannot use ControlNet with these models.")
+            raise e.UnsupportedModel("You cannot use ControlNet with these models.", rc="ControlNetUnsupported")
         # if self.params.get("image_is_control"):
         #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
-            raise e.UnsupportedModel("Controlnet Requires a source image.")
+            raise e.BadRequest("Controlnet Requires a source image.", rc="ControlNetSourceMissing")
         if any(model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl") for model_name in self.args.models):
             if self.params.get("hires_fix", False) is True:
                 raise e.BadRequest("hires fix does not work with SDXL currently.")
@@ -149,11 +149,11 @@ class ImageAsyncGenerate(GenerateTemplate):
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
-            raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map")
+            raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map", rc="ControlNetInvalidPayload")
         if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
-            raise e.UnsupportedModel
+            raise e.UnsupportedModel(rc="SourceImageRequiredForModel")
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
-            raise e.UnsupportedModel
+            raise e.UnsupportedModel(rc="UnexpectedModelName")
         # If the beta has been requested, it takes over the model list
         if "SDXL_beta::stability.ai#6901" in self.models:
             if self.user.is_anon():
@@ -168,11 +168,11 @@ class ImageAsyncGenerate(GenerateTemplate):
         if len(self.args["prompt"].split()) > 7500:
             raise e.InvalidPromptSize(self.username)
         if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
-            raise e.UnsupportedModel
+            raise e.UnsupportedModel(rc="UnexpectedModelName")
         if self.args.params:
             upscaler_count = len([pp for pp in self.args.params.get("post_processing", []) if pp in KNOWN_UPSCALERS])
             if upscaler_count > 1:
-                raise e.UnsupportedModel("Cannot use more than 1 upscaler at a time.")
+                raise e.BadRequest("Cannot use more than 1 upscaler at a time.",rc="TooManyUpscalers")
 
             cfg_scale = self.args.params.get("cfg_scale")
             if cfg_scale is not None:
@@ -240,6 +240,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 self.username,
                 message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
                 f"to fulfill this request ({required_kudos}).",
+                rc="SharedKeyEmpty",
             )
         if needs_kudos is True:
             if required_kudos > self.user.kudos:
@@ -314,6 +315,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 except ValueError:
                     raise e.ImageValidationFailed(
                         "Inpainting requests must either include a mask, or an alpha channel.",
+                        rc="InpaintingMissingMask"
                     )
         self.wp.activate(self.source_image, self.source_mask)
 
@@ -600,10 +602,11 @@ class Aesthetics(Resource):
                 client_agent=self.args["Client-Agent"],
             )
         if not wp.is_completed():
-            raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!")
+            raise e.InvalidAestheticAttempt("You can only aesthetically rate completed requests!", rc="AestheticsNotCompleted")
         if not wp.shared:
             raise e.InvalidAestheticAttempt(
                 "You can only aesthetically rate requests you have opted to share publicly",
+                rc="AestheticsNotPublic"
             )
         procgen_ids = [str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
         if self.args.ratings:
@@ -612,17 +615,18 @@ class Aesthetics(Resource):
                 if rating["id"] not in procgen_ids:
                     raise e.ProcGenNotFound(rating["id"])
                 if rating["id"] in seen_ids:
-                    raise e.InvalidAestheticAttempt("Duplicate image ID found in your ratings. You should be ashamed!")
+                    raise e.InvalidAestheticAttempt("Duplicate image ID found in your ratings. You should be ashamed!",rc="AestheticsDuplicate")
                 seen_ids.append(rating["id"])
         if self.args.best:
             if self.args.best not in procgen_ids:
                 raise e.ProcGenNotFound(self.args.best)
         if not self.args.ratings and not self.args.best:
-            raise e.InvalidAestheticAttempt("You need to either point to the best image, or aesthetic ratings.")
+            raise e.InvalidAestheticAttempt("You need to either point to the best image, or provide aesthetic ratings.", rc="AestheticsMissing")
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
             raise e.InvalidAestheticAttempt(
                 "Well done! You have pointed to a single image generation as being the best one of the set. "
                 "Unfortunately that doesn't help anyone. no kudos for you!",
+                rc="AestheticsSolo",
             )
         aesthetic_payload = {
             "set": id,
@@ -671,6 +675,7 @@ class Aesthetics(Resource):
                             raise e.InvalidAestheticAttempt(
                                 "What are you even doing? How could the best image you "
                                 "selected not be one of those with the highest aesthetic rating?",
+                                rc="AestheticsConfused",
                             )
                         aesthetic_payload["best"] = self.args.best
                 if len(bestofs) == 1:
@@ -690,18 +695,19 @@ class Aesthetics(Resource):
             )
             if not submit_req.ok:
                 if submit_req.status_code == 403:
-                    raise e.InvalidAestheticAttempt("This generation appears already rated")
+                    raise e.InvalidAestheticAttempt("This generation appears already rated",rc="AestheticsAlreadyExist")
                 try:
                     error_msg = submit_req.json()
                 except Exception:
                     raise e.InvalidAestheticAttempt(
                         f"Received unexpected response from rating server: {submit_req.text}",
+                        rc="AestheticsServerRejected"
                     )
-                raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}")
+                raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}",rc="AestheticsServerError")
         except requests.exceptions.ConnectionError:
-            raise e.InvalidAestheticAttempt("The rating server appears to be down")
+            raise e.InvalidAestheticAttempt("The rating server appears to be down",rc="AestheticsServerDown")
         except requests.exceptions.ReadTimeout:
-            raise e.InvalidAestheticAttempt("The rating server took to long to respond")
+            raise e.InvalidAestheticAttempt("The rating server took to long to respond",rc="AestheticsServerTimeout")
         except Exception as err:
             if type(err) == e.InvalidAestheticAttempt:
                 raise err
@@ -801,6 +807,7 @@ class Interrogate(Resource):
                 raise e.ImageValidationFailed(
                     f"Image is too large ({self.image_tiles} tiles) and would cause horde "
                     "alchemists to run out of VRAM trying to process it.",
+                    rc="SourceImageResolutionExceeded",
                 )
         except Exception as err:
             db.session.delete(self.interrogation)
@@ -835,7 +842,7 @@ class Interrogate(Resource):
                 self.safe_ip = True
             # We actually block unsafe IPs for now to combat CP
             if not self.safe_ip:
-                raise e.NotTrusted
+                raise e.NotTrusted(rc="UntrustedUnsafeIP")
 
 
 class InterrogationStatus(Resource):

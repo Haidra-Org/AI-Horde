@@ -53,6 +53,10 @@ Use these endpoints to interrogate or manipulate images.
 1. Initiate the request: `api/v2/interrogate/async`
 2. Retrieve the request results: `api/v2/interrogate/status`
 
+## Errors and return codes
+
+Whenever the AI Horde encounters an issue with an operation, it will return the usual HTTP code, along with a json containing information about the error. Please see the dedicated [README](README_return_codes.md) for more info
+
 ## Webhooks
 
 The AI Horde supports sending back the final generations as soon as they're delivered, using webhooks. 
