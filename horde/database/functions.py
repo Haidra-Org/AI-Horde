@@ -382,28 +382,32 @@ def transfer_kudos(source_user, dest_user, amount):
         return [
             0,
             "This user transferred kudos to you very recently. Please wait at least 1 minute.",
+            "TooFastKudosTransfers",
         ]
     if source_user.is_suspicious():
-        return [0, "Something went wrong when sending kudos. Please contact the mods."]
+        return [0, "Something went wrong when sending kudos. Please contact the mods.", "FaultWhenKudosSending",]
     if source_user.flagged:
         return [
             0,
             "The target account has been flagged for suspicious activity and tranferring kudos to them is blocked.",
+            "SourceAccountFlagged"
         ]
     if dest_user.is_suspicious():
         return [
             0,
             "Something went wrong when receiving kudos. Please contact the mods.",
+            "FaultWhenKudosReceiving",
         ]
     if dest_user.flagged:
         return [
             0,
             "Your account has been flagged for suspicious activity. Please contact the mods.",
+            "TargetAccountFlagged"
         ]
     if amount < 0:
-        return [0, "Nice try..."]
+        return [0, "Nice try...", "NegativeKudosTransfer"]
     if amount > source_user.kudos - source_user.get_min_kudos():
-        return [0, "Not enough kudos."]
+        return [0, "Not enough kudos.", "KudosTransferNotEnough"]
     hr.horde_r_setex(f"kudos_transfer_{source_user.id}-{dest_user.id}", timedelta(seconds=60), 1)
     transfer_log = KudosTransferLog(
         source_id=source_user.id,
@@ -421,14 +425,15 @@ def transfer_kudos(source_user, dest_user, amount):
 def transfer_kudos_to_username(source_user, dest_username, amount):
     dest_user = find_user_by_username(dest_username)
     if not dest_user:
-        return [0, "Invalid target username."]
+        return [0, "Invalid target username.", "InvalidTargetUsername"]
     if dest_user == get_anon():
         return [
             0,
             "Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.",
+            "KudosTransferToAnon"
         ]
     if dest_user == source_user:
-        return [0, "Cannot send kudos to yourself, ya monkey!"]
+        return [0, "Cannot send kudos to yourself, ya monkey!", "KudosTransferToSelf"]
     kudos = transfer_kudos(source_user, dest_user, amount)
     return kudos
 
@@ -436,9 +441,9 @@ def transfer_kudos_to_username(source_user, dest_username, amount):
 def transfer_kudos_from_apikey_to_username(source_api_key, dest_username, amount):
     source_user = find_user_by_api_key(source_api_key)
     if not source_user:
-        return [0, "Invalid API Key."]
+        return [0, "Invalid API Key.", "InvalidAPIKey"]
     if source_user == get_anon():
-        return [0, "You cannot transfer Kudos from Anonymous, smart-ass."]
+        return [0, "You cannot transfer Kudos from Anonymous, smart-ass.", "KudosTransferFromAnon"]
     kudos = transfer_kudos_to_username(source_user, dest_username, amount)
     return kudos
 

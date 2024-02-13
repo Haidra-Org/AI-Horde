@@ -40,7 +40,7 @@ def convert_source_image_to_pil(source_image_b64):
     if resolution > resolution_threshold:
         except_msg = "Image size cannot exceed 3072*3072 pixels"
         # Not sure e exists here?
-        raise ImageValidationFailed(except_msg)
+        raise ImageValidationFailed(except_msg, rc="SourceImageResolutionExceeded")
     quality = 100
     # We adjust the amount of compression based on the starting image to avoid running out of bandwidth
     if resolution > resolution_threshold * 0.9:
@@ -108,7 +108,7 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                 # if not size:
                 #     raise ImageValidationFailed("Source image URL must provide a Content-Length header")
                 if int(size) / 1024 > 5000:
-                    raise ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                    raise ImageValidationFailed("Provided image cannot be larger than 5Mb", rc="SourceImageSizeExceeded")
                 mbs = 0
                 for chunk in r.iter_content(chunk_size=1024 * 1024):
                     if chunk:
@@ -118,13 +118,13 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
                             img_data += chunk
                         mbs += 1
                         if mbs > 5:
-                            raise ImageValidationFailed("Provided image cannot be larger than 5Mb")
+                            raise ImageValidationFailed("Provided image cannot be larger than 5Mb", rc="SourceImageSizeExceeded")
                 try:
                     img = Image.open(BytesIO(img_data))
                 except UnidentifiedImageError:
-                    raise ImageValidationFailed("Url does not contain a valid image.")
+                    raise ImageValidationFailed("Url does not contain a valid image.", rc="SourceImageUrlInvalid")
                 except Exception:
-                    raise ImageValidationFailed("Something went wrong when opening image.")
+                    raise ImageValidationFailed("Something went wrong when opening image.", rc="SourceImageUnreadable")
                 if force_r2:
                     logger.debug(f"uploading {img} {uuid_string}")
                     download_url = upload_source_image(img, uuid_string)
