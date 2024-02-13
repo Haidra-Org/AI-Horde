@@ -4,13 +4,24 @@ from datetime import datetime
 class News:
     HORDE_NEWS = [
         {
+            "date_published": "2024-02-13",
+            "newspiece": (
+                "The AI Horde now supports [custom error return codes]"
+                "(https://github.com/Haidra-Org/AI-Horde/blob/main/README_return_codes.md) "
+                "You can use this to better machine parse the various errors returned from the AI horde "
+                "or to provide error translations."
+            ),
+            "tags": ["errors", "db0", "nlnet"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2024-02-03",
             "newspiece": (
                 "Webhooks are here. You can [now specify a webhook URL]"
                 "(https://github.com/Haidra-Org/AI-Horde/blob/main/README_integration.md#webhooks) "
                 "which the horde will POST to when your generations are ready"
             ),
-            "tags": ["webhooks", "db0"],
+            "tags": ["webhooks", "db0", "nlnet"],
             "importance": "Information",
         },
         {
@@ -22,7 +33,7 @@ class News:
                 "However this can have an impact on the resulting seed. If you need to have an accurate seed, "
                 "for now you can use disable_batching."
             ),
-            "tags": ["dreamer", "db0", "batching", "seed"],
+            "tags": ["dreamer", "db0", "batching", "seed", "nlnet"],
             "importance": "Information",
         },
         {
@@ -41,13 +52,13 @@ class News:
         {
             "date_published": "2023-11-26",
             "newspiece": "The AI Horde now supports different LoRa versions from each LoRa. " "Happy Winter Solstice!",
-            "tags": ["lora"],
+            "tags": ["lora", "nlnet"],
             "importance": "Information",
         },
         {
             "date_published": "2023-11-23",
             "newspiece": "The AI Horde will receive " "[an NLNet Grant!](https://dbzer0.com/blog/ai-horde-to-receive-nlnet-grant/)",
-            "tags": ["devlog", "funding"],
+            "tags": ["devlog", "funding", "nlnet"],
             "importance": "Information",
         },
         {

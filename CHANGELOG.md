@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.31.0
+
+* Added error return codes
+
 # 4.30.0
 
 * Added webhooks

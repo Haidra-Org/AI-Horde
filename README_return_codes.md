@@ -1,8 +1,21 @@
-# AI Horde Return Codes
+# AI Horde Errors
 
 Every time an exception is raised by the AI Horde, it will return both the http code, a human-readable "message" and an `rc` field which will contain a unique string code for each type of error the horde might raise. You can use these to better adjust your client logic or for informing your users using your own words or in other languages.
 
 This page will list all existing Horde RCs
+
+## Format
+
+The errors returned by the AI horde are always in this json format
+
+```json
+{
+  "message": "Human readable explanation on what went wrong",
+  "rc": "SomeReturnCodeInCamelCase"
+}
+```
+
+## Return Codes
 
 | RC | Explanation |
 | -- | ----------- |
