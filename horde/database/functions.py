@@ -385,12 +385,16 @@ def transfer_kudos(source_user, dest_user, amount):
             "TooFastKudosTransfers",
         ]
     if source_user.is_suspicious():
-        return [0, "Something went wrong when sending kudos. Please contact the mods.", "FaultWhenKudosSending",]
+        return [
+            0,
+            "Something went wrong when sending kudos. Please contact the mods.",
+            "FaultWhenKudosSending",
+        ]
     if source_user.flagged:
         return [
             0,
             "The target account has been flagged for suspicious activity and tranferring kudos to them is blocked.",
-            "SourceAccountFlagged"
+            "SourceAccountFlagged",
         ]
     if dest_user.is_suspicious():
         return [
@@ -399,11 +403,7 @@ def transfer_kudos(source_user, dest_user, amount):
             "FaultWhenKudosReceiving",
         ]
     if dest_user.flagged:
-        return [
-            0,
-            "Your account has been flagged for suspicious activity. Please contact the mods.",
-            "TargetAccountFlagged"
-        ]
+        return [0, "Your account has been flagged for suspicious activity. Please contact the mods.", "TargetAccountFlagged"]
     if amount < 0:
         return [0, "Nice try...", "NegativeKudosTransfer"]
     if amount > source_user.kudos - source_user.get_min_kudos():
@@ -427,11 +427,7 @@ def transfer_kudos_to_username(source_user, dest_username, amount):
     if not dest_user:
         return [0, "Invalid target username.", "InvalidTargetUsername"]
     if dest_user == get_anon():
-        return [
-            0,
-            "Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.",
-            "KudosTransferToAnon"
-        ]
+        return [0, "Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.", "KudosTransferToAnon"]
     if dest_user == source_user:
         return [0, "Cannot send kudos to yourself, ya monkey!", "KudosTransferToSelf"]
     kudos = transfer_kudos(source_user, dest_user, amount)

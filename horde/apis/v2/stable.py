@@ -149,7 +149,10 @@ class ImageAsyncGenerate(GenerateTemplate):
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
-            raise e.UnsupportedModel("Invalid ControlNet parameters - cannot send inital map and return the same map", rc="ControlNetInvalidPayload")
+            raise e.UnsupportedModel(
+                "Invalid ControlNet parameters - cannot send inital map and return the same map",
+                rc="ControlNetInvalidPayload",
+            )
         if not self.args.source_image and any(model_name in ["Stable Diffusion 2 Depth", "pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel(rc="SourceImageRequiredForModel")
         if not self.args.source_image and any(model_name in model_reference.controlnet_models for model_name in self.args.models):
@@ -172,7 +175,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         if self.args.params:
             upscaler_count = len([pp for pp in self.args.params.get("post_processing", []) if pp in KNOWN_UPSCALERS])
             if upscaler_count > 1:
-                raise e.BadRequest("Cannot use more than 1 upscaler at a time.",rc="TooManyUpscalers")
+                raise e.BadRequest("Cannot use more than 1 upscaler at a time.", rc="TooManyUpscalers")
 
             cfg_scale = self.args.params.get("cfg_scale")
             if cfg_scale is not None:
@@ -315,7 +318,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 except ValueError:
                     raise e.ImageValidationFailed(
                         "Inpainting requests must either include a mask, or an alpha channel.",
-                        rc="InpaintingMissingMask"
+                        rc="InpaintingMissingMask",
                     )
         self.wp.activate(self.source_image, self.source_mask)
 
@@ -606,7 +609,7 @@ class Aesthetics(Resource):
         if not wp.shared:
             raise e.InvalidAestheticAttempt(
                 "You can only aesthetically rate requests you have opted to share publicly",
-                rc="AestheticsNotPublic"
+                rc="AestheticsNotPublic",
             )
         procgen_ids = [str(procgen.id) for procgen in wp.processing_gens if not procgen.faulted and not procgen.cancelled]
         if self.args.ratings:
@@ -615,13 +618,19 @@ class Aesthetics(Resource):
                 if rating["id"] not in procgen_ids:
                     raise e.ProcGenNotFound(rating["id"])
                 if rating["id"] in seen_ids:
-                    raise e.InvalidAestheticAttempt("Duplicate image ID found in your ratings. You should be ashamed!",rc="AestheticsDuplicate")
+                    raise e.InvalidAestheticAttempt(
+                        "Duplicate image ID found in your ratings. You should be ashamed!",
+                        rc="AestheticsDuplicate",
+                    )
                 seen_ids.append(rating["id"])
         if self.args.best:
             if self.args.best not in procgen_ids:
                 raise e.ProcGenNotFound(self.args.best)
         if not self.args.ratings and not self.args.best:
-            raise e.InvalidAestheticAttempt("You need to either point to the best image, or provide aesthetic ratings.", rc="AestheticsMissing")
+            raise e.InvalidAestheticAttempt(
+                "You need to either point to the best image, or provide aesthetic ratings.",
+                rc="AestheticsMissing",
+            )
         if not self.args.ratings and self.args.best and len(procgen_ids) <= 1:
             raise e.InvalidAestheticAttempt(
                 "Well done! You have pointed to a single image generation as being the best one of the set. "
@@ -695,19 +704,19 @@ class Aesthetics(Resource):
             )
             if not submit_req.ok:
                 if submit_req.status_code == 403:
-                    raise e.InvalidAestheticAttempt("This generation appears already rated",rc="AestheticsAlreadyExist")
+                    raise e.InvalidAestheticAttempt("This generation appears already rated", rc="AestheticsAlreadyExist")
                 try:
                     error_msg = submit_req.json()
                 except Exception:
                     raise e.InvalidAestheticAttempt(
                         f"Received unexpected response from rating server: {submit_req.text}",
-                        rc="AestheticsServerRejected"
+                        rc="AestheticsServerRejected",
                     )
-                raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}",rc="AestheticsServerError")
+                raise e.InvalidAestheticAttempt(f"Rating Server returned error: {error_msg['message']}", rc="AestheticsServerError")
         except requests.exceptions.ConnectionError:
-            raise e.InvalidAestheticAttempt("The rating server appears to be down",rc="AestheticsServerDown")
+            raise e.InvalidAestheticAttempt("The rating server appears to be down", rc="AestheticsServerDown")
         except requests.exceptions.ReadTimeout:
-            raise e.InvalidAestheticAttempt("The rating server took to long to respond",rc="AestheticsServerTimeout")
+            raise e.InvalidAestheticAttempt("The rating server took to long to respond", rc="AestheticsServerTimeout")
         except Exception as err:
             if type(err) == e.InvalidAestheticAttempt:
                 raise err

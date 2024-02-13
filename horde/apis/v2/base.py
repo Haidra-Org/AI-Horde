@@ -478,7 +478,8 @@ class JobPopTemplate(Resource):
             raise e.InvalidAPIKey("prompt pop")
         if self.user.flagged:
             raise e.WorkerMaintenance(
-                "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn", rc="WorkerFlaggedMaintenance"
+                "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn",
+                rc="WorkerFlaggedMaintenance",
             )
         if self.user.is_anon():
             raise e.AnonForbidden(rc="AnonForbiddenWorker")
@@ -1282,7 +1283,7 @@ class UserSingle(Resource):
     parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
 
-    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)] #FIXME: required? #noqa PIE794
+    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]  # FIXME: required? #noqa PIE794
 
     @api.expect(parser, models.input_model_user_details, validate=True)
     @api.marshal_with(
