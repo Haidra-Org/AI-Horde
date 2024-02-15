@@ -50,6 +50,13 @@ class TextProcessingGeneration(ProcessingGeneration):
         model_multiplier = model_reference.get_text_model_multiplier(self.model)
         parameter_bonus = (max(model_multiplier, 13) / 13) ** 0.20
         kudos = self.get_things_count() * parameter_bonus * model_multiplier / 100
+        logger.debug(
+            self.get_things_count(),
+            parameter_bonus,
+            model_multiplier,
+            kudos,
+            context_multiplier,
+        )
         return round(kudos * context_multiplier, 2)
 
     def log_aborted_generation(self):
