@@ -137,3 +137,7 @@ horde*.bz2
 horde.db
 /.idea
 /boto3oeo.py
+
+
+apikey.txt
+.vscode/
