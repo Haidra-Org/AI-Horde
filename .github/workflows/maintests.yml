@@ -65,7 +65,7 @@ jobs:
       - run: python -m pip install --upgrade pip wheel setuptools
       - name: Install and run lint/format checkers
         run: |
-          python -m pip install -r requirements.dev.txt
+          python -m pip install -r requirements.dev.txt 
           black --check .
           ruff .
       - name: Install and run tests
@@ -76,3 +76,7 @@ jobs:
           sleep 5
           curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<p style="background-color:darkorange;">\K.*(?=<\/p>)' > tests/apikey.txt
           pytest tests/
+          python -m pip download --no-deps --no-binary :all: horde_sdk
+          tar -xvf horde_sdk-*.tar.gz
+          cd horde_sdk**/
+          pytest tests/ --ignore-glob=*api_calls.py

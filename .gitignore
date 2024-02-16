@@ -141,3 +141,5 @@ horde.db
 
 apikey.txt
 .vscode/
+
+horde_sdk**
