@@ -31,6 +31,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       KUDOS_TRUST_THRESHOLD: 100
+      AI_HORDE_DEV_URL: "http://localhost:7001/api/" # For horde_sdk tests
 
     services:
       postgres:
@@ -75,6 +76,7 @@ jobs:
           python server.py -vvvvi --horde stable &
           sleep 5
           curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<p style="background-color:darkorange;">\K.*(?=<\/p>)' > tests/apikey.txt
+          export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
           pytest tests/
           python -m pip download --no-deps --no-binary :all: horde_sdk
           tar -xvf horde_sdk-*.tar.gz
