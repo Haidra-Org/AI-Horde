@@ -1134,6 +1134,7 @@ class Models:
                     required=True,
                     description="The return code for this error. See: https://github.com/Haidra-Org/AI-Horde/blob/main/README_return_codes.md",
                     enum=KNOWN_RC,
+                    example="ExampleHordeError",
                 ),
             },
         )
@@ -1158,7 +1159,6 @@ class Models:
                     example="image",
                     description="The model type (text or image).",
                     enum=["image", "text"],
-                    example="ExampleHordeError",
                 ),
             },
         )
