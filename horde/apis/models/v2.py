@@ -1,5 +1,5 @@
 from flask_restx import fields, reqparse
-
+from horde.exceptions import KNOWN_RC
 
 class Parsers:
     def __init__(self):
@@ -1133,6 +1133,7 @@ class Models:
                 "rc": fields.String(
                     required=True,
                     description="The return code for this error. See: https://github.com/Haidra-Org/AI-Horde/blob/main/README_return_codes.md",
+                    enum=KNOWN_RC,
                 ),
             },
         )
