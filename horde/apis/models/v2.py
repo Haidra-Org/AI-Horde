@@ -1130,6 +1130,10 @@ class Models:
             "RequestError",
             {
                 "message": fields.String(description="The error message for this status code."),
+                "rc": fields.String(
+                    required=True,
+                    description="The return code for this error. See: https://github.com/Haidra-Org/AI-Horde/blob/main/README_return_codes.md",
+                ),
             },
         )
         self.response_model_validation_errors = api.inherit(
