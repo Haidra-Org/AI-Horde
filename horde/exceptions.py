@@ -111,6 +111,7 @@ KNOWN_RC = [
     "Locked",
 ]
 
+
 class BadRequest(wze.BadRequest):
     def __init__(self, message, log=None, rc="BadRequest"):
         self.specific = message

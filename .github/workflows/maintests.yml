@@ -1,0 +1,84 @@
+name: AI-Horde main tests
+
+on:
+    push:
+      branches:
+        - main
+      paths:
+        - '**.py'
+        - '**.json'
+        - 'tox.ini'
+        - '.github/workflows/maintests.yml'
+        - '.github/workflows/prtests.yml'
+        - '.github/workflows/release.yml'
+
+jobs:
+  runner-job:
+    runs-on: ubuntu-latest
+    # runs-on: self-hosted
+    env:
+      POSTGRES_URL: "localhost:5432/horde_test"
+      POSTGRES_PASS: "postgres"
+      PGPASSWORD: "postgres"
+      REDIS_IP: "localhost"
+      REDIS_SERVERS: '["localhost"]'
+      USE_SQLITE: 0
+      ADMINS: '["test_user#1"]'
+      R2_TRANSIENT_ACCOUNT: ${{ secrets.R2_TRANSIENT_ACCOUNT }}
+      R2_PERMANENT_ACCOUNT: ${{ secrets.R2_PERMANENT_ACCOUNT }}
+      SHARED_AWS_ACCESS_ID: ${{ secrets.SHARED_AWS_ACCESS_ID }}
+      SHARED_AWS_ACCESS_KEY: ${{ secrets.SHARED_AWS_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      KUDOS_TRUST_THRESHOLD: 100
+      AI_HORDE_DEV_URL: "http://localhost:7001/api/" # For horde_sdk tests
+
+    services:
+      postgres:
+        image: postgres:15.6-bullseye
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Set health checks to wait until postgres has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          # cache: 'pip'
+      - run: python -m pip install --upgrade pip wheel setuptools
+      - name: Install and run lint/format checkers
+        run: |
+          python -m pip install -r requirements.dev.txt 
+          black --check .
+          ruff .
+      - name: Install and run tests
+        run: |
+          python -m pip install -r requirements.txt
+          psql -h localhost -U postgres -c "CREATE DATABASE horde_test;"
+          python server.py -vvvvi --horde stable &
+          sleep 5
+          curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<p style="background-color:darkorange;">\K.*(?=<\/p>)' > tests/apikey.txt
+          export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
+          pytest tests/ -s
+          python -m pip download --no-deps --no-binary :all: horde_sdk
+          tar -xvf horde_sdk-*.tar.gz
+          cd horde_sdk**/
+          pytest tests/ --ignore-glob=*api_calls.py --ignore-glob=*test_model_meta.py -s

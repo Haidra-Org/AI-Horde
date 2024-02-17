@@ -295,6 +295,9 @@ def prune_stats():
 def store_patreon_members():
     api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
     # campaign_id = api_client.get_campaigns(10).data()[0].id()
+    if api_client is None:
+        logger.error("Failed to get patreon API client")
+        return
     cursor = None
     members = []
     while True:

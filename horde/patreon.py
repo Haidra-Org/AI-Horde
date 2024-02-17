@@ -17,6 +17,8 @@ class PatreonCache(PrimaryTimedFunction):
             # logger.debug(self.patrons)
         except (TypeError, AttributeError):
             logger.warning("Patreon cache could not be retrieved from redis. Leaving existing cache.")
+        except Exception as e:
+            logger.error(f"Error retrieving patreon cache from redis: {e}")
 
     def is_patron(self, user_id):
         return user_id in self.patrons

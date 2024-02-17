@@ -22,6 +22,7 @@ else:
     HORDE.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
         "pool_size": 50,
         "max_overflow": -1,
+        # "pool_pre_ping": True,
     }
 HORDE.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(HORDE)
