@@ -1,5 +1,5 @@
 from flask_restx import fields, reqparse
-
+from horde.exceptions import KNOWN_RC
 
 class Parsers:
     def __init__(self):
@@ -1130,6 +1130,12 @@ class Models:
             "RequestError",
             {
                 "message": fields.String(description="The error message for this status code."),
+                "rc": fields.String(
+                    required=True,
+                    description="The return code for this error. See: https://github.com/Haidra-Org/AI-Horde/blob/main/README_return_codes.md",
+                    enum=KNOWN_RC,
+                    example="ExampleHordeError",
+                ),
             },
         )
         self.response_model_validation_errors = api.inherit(

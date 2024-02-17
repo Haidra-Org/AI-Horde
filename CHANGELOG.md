@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.31.1
+
+* Documents rc return to swagger
+
 # 4.31.0
 
 * Added error return codes
