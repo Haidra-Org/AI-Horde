@@ -1158,6 +1158,7 @@ class Models:
                     example="image",
                     description="The model type (text or image).",
                     enum=["image", "text"],
+                    example="ExampleHordeError",
                 ),
             },
         )
