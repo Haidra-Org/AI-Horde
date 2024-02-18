@@ -23,6 +23,9 @@ on:
 jobs:
   required-label-job:
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
         issues: write
         pull-requests: write
@@ -33,10 +36,12 @@ jobs:
             count: 1
             labels: "allow-ci"
 
-
   runner-job:
     runs-on: ubuntu-latest
     # runs-on: self-hosted
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     env:
       POSTGRES_URL: "localhost:5432/horde_test"
       POSTGRES_PASS: "postgres"
