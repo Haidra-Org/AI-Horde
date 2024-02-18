@@ -125,4 +125,19 @@ The errors returned by the AI horde are always in this json format
 | BadRequest | Generic HTTP 400 code. You should typically never see this |
 | Forbidden | Generic HTTP 401 code. You should typically never see this |
 | Locked | Generic HTTP code. You should typically never see this |
-
+| ControlNetInpaintingMismatch | ControlNet cannot be used with inpainting at this time |
+| ControlNetInpaintingMismatch | ControlNet does not work with SDXL currently |
+| HiResFixMismatch | hires fix does not work with SDXL currently |
+| TooManyLoras | You cannot request more than 5 loras per generation |
+| BadLoraVersion | explicit LoRa version requests have to be a version ID (i.e integer). |
+| TooManyTIs | You cannot request more than 20 Textual Inversions per generation. |
+| BetaAnonForbidden | Anonymous users cannot use the SDXL_beta. |
+| BetaComparisonFault | You need to request at least 2 images for SDXL to allow for comparison |
+| BadCFGDecimals | cfg_scale must be rounded to 2 decimal places |
+| BadCFGNumber | cfg_scale must be a valid number |
+| BannedClientAgent | Banned client Agent |
+| SpecialMissingPayload | Special models have to include a special payload |
+| SpecialForbidden | This model can only be requested by a specific username |
+| SpecialMissingUsername | Special models must always include the username, in the form of 'horde_special::user#id' |
+| SpecialModelNeedsSpecialUser | Only special users can request a special model.", "SpecialModelNeedsSpecialUser|
+| SpecialFieldNeedsSpecialUser | Only special users can send a special field |

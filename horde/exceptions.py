@@ -109,6 +109,21 @@ KNOWN_RC = [
     "BadRequest",
     "Forbidden",
     "Locked",
+    "ControlNetMismatch",
+    "HiResFixMismatch",
+    "TooManyLoras",
+    "BadLoraVersion",
+    "TooManyTIs",
+    "BetaAnonForbidden",
+    "BetaComparisonFault",
+    "BadCFGDecimals",
+    "BadCFGNumber",
+    "BadClientAgent",
+    "SpecialMissingPayload",
+    "SpecialForbidden",
+    "SpecialMissingUsername",
+    "SpecialModelNeedsSpecialUser",
+    "SpecialFieldNeedsSpecialUser",
 ]
 
 
