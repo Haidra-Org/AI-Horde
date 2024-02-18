@@ -117,7 +117,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 if len(usermodel) == 1:
                     raise e.BadRequest(
                         "Special models must always include the username, in the form of 'horde_special::user#id'",
-                        rc="SpecialMissingUsername"
+                        rc="SpecialMissingUsername",
                     )
                 user_alias = usermodel[1]
                 if self.user.get_unique_alias() != user_alias:
@@ -197,7 +197,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 "This Client-Agent appears badly designed and is causing too many warnings. "
                 "First ensure it provides a proper name and contact details. "
                 "Then contact us on Discord to discuss the issue it's creating.",
-                rc="BannedClientAgent"
+                rc="BannedClientAgent",
             )
 
     # We split this into its own function, so that it may be overriden
