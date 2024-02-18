@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.31.2
+
+* Specialized some generic rcs
+* Blocked ControlNet + Inpainting
+
 # 4.31.1
 
 * Documents rc return to swagger

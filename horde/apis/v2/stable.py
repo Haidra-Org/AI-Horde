@@ -108,21 +108,22 @@ class ImageAsyncGenerate(GenerateTemplate):
             if not self.safe_ip:
                 raise e.NotTrusted(rc="UntrustedUnsafeIP")
         if not self.user.special and self.params.get("special"):
-            raise e.BadRequest("Only special users can send a special field.")
+            raise e.BadRequest("Only special users can send a special field.", "SpecialFieldNeedsSpecialUser")
         for model in self.args.models:
             if "horde_special" in model:
                 if not self.user.special:
-                    raise e.BadRequest("Only special users can request a special model.")
+                    raise e.Forbidden("Only special users can request a special model.", "SpecialModelNeedsSpecialUser")
                 usermodel = model.split("::")
                 if len(usermodel) == 1:
                     raise e.BadRequest(
                         "Special models must always include the username, in the form of 'horde_special::user#id'",
+                        rc="SpecialMissingUsername"
                     )
                 user_alias = usermodel[1]
                 if self.user.get_unique_alias() != user_alias:
-                    raise e.BadRequest(f"This model can only be requested by {user_alias}")
+                    raise e.Forbidden(f"This model can only be requested by {user_alias}", "SpecialForbidden")
                 if not self.params.get("special"):
-                    raise e.BadRequest("Special models have to include a special payload")
+                    raise e.BadRequest("Special models have to include a special payload", rc="SpecialMissingPayload")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(
@@ -135,19 +136,21 @@ class ImageAsyncGenerate(GenerateTemplate):
         #    raise e.UnsupportedModel("This feature is disabled for the moment.")
         if "control_type" in self.params and not self.args.source_image:
             raise e.BadRequest("Controlnet Requires a source image.", rc="ControlNetSourceMissing")
+        if "control_type" in self.params and self.args.source_processing == "inpainting":
+            raise e.BadRequest("ControlNet cannot be used with inpainting at this time", rc="ControlNetInpaintingMismatch")
         if any(model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl") for model_name in self.args.models):
             if self.params.get("hires_fix", False) is True:
-                raise e.BadRequest("hires fix does not work with SDXL currently.")
+                raise e.BadRequest("hires fix does not work with SDXL currently.", rc="HiResFixMismatch")
             if "control_type" in self.params:
-                raise e.BadRequest("ControlNet does not work with SDXL currently.")
+                raise e.BadRequest("ControlNet does not work with SDXL currently.", rc="ControlNetSDXLMismatch")
         if "loras" in self.params:
             if len(self.params["loras"]) > 5:
-                raise e.BadRequest("You cannot request more than 5 loras per generation.")
+                raise e.BadRequest("You cannot request more than 5 loras per generation.", rc="TooManyLoras")
             for lora in self.params["loras"]:
                 if lora.get("is_version") and not lora["name"].isdigit():
-                    raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).")
+                    raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).", rc="BadLoraVersion")
         if "tis" in self.params and len(self.params["tis"]) > 20:
-            raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.")
+            raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.", rc="TooManyTIs")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel(
                 "Invalid ControlNet parameters - cannot send inital map and return the same map",
@@ -160,10 +163,10 @@ class ImageAsyncGenerate(GenerateTemplate):
         # If the beta has been requested, it takes over the model list
         if "SDXL_beta::stability.ai#6901" in self.models:
             if self.user.is_anon():
-                raise e.Forbidden("Anonymous users cannot use the SDXL_beta.")
+                raise e.Forbidden("Anonymous users cannot use the SDXL_beta.", rc="BetaAnonForbidden")
             self.models = ["SDXL_beta::stability.ai#6901"]
             if self.params["n"] == 1:
-                raise e.BadRequest("You need to request at least 2 images for SDXL to allow for comparison")
+                raise e.BadRequest("You need to request at least 2 images for SDXL to allow for comparison", rc="BetaComparisonFault")
             # SDXL_Beta always generates 2 images
             self.params["n"] = 2
         #     if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
@@ -182,18 +185,19 @@ class ImageAsyncGenerate(GenerateTemplate):
                 try:
                     rounded_cfg_scale = round(cfg_scale, 2)
                     if rounded_cfg_scale != cfg_scale:
-                        raise e.BadRequest("cfg_scale must be rounded to 2 decimal places")
+                        raise e.BadRequest("cfg_scale must be rounded to 2 decimal places", rc="BadCFGDecimals")
                 except (TypeError, ValueError):
                     logger.warning(
                         f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated.",
                     )
-                    raise e.BadRequest("cfg_scale must be a valid number")
+                    raise e.BadRequest("cfg_scale must be a valid number", rc="BadCFGNumber")
 
         if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
-            raise e.BadRequest(
+            raise e.Forbidden(
                 "This Client-Agent appears badly designed and is causing too many warnings. "
                 "First ensure it provides a proper name and contact details. "
                 "Then contact us on Discord to discuss the issue it's creating.",
+                rc="BannedClientAgent"
             )
 
     # We split this into its own function, so that it may be overriden
