@@ -352,6 +352,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         # Using more than 10 steps with LCM requires upfront kudos
         if self.is_using_lcm() and self.get_accurate_steps() > 10:
             return (True, max_res)
+        # Stable Cascade doesn't need so many steps, so we limit it a bit to prevent abuse.
+        if any(model_reference.get_model_baseline(mn) in ["stable_cascade"] for mn in model_names) and self.get_accurate_steps() > 30:
+            return (True, max_res)
         if self.get_accurate_steps() > 50:
             return (True, max_res)
         if self.width * self.height > max_res * max_res:
@@ -439,8 +442,10 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_name = self.models[0].model
         else:
             model_name = "SDXL 1.0"
-        if model_reference.get_model_baseline(model_name) in ["stable_diffusion_xl", "stable_cascade"]:
+        if model_reference.get_model_baseline(model_name) in ["stable_diffusion_xl"]:
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1
+        if model_reference.get_model_baseline(model_name) in ["stable_cascade"]:
+            return (self.calculate_extra_kudos_burn(kudos) * self.n * 4) + 1
         # The +1 is the extra kudos burn per request
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1
 
