@@ -51,7 +51,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
 
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker
-        if model_reference.get_model_baseline(self.model) == "stable_diffusion_xl":
+        if model_reference.get_model_baseline(self.model) in ["stable_diffusion_xl", "stable_cascade"]:
             return self.wp.kudos * 2
         return self.wp.kudos
 

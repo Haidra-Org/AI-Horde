@@ -343,7 +343,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         ):
             max_res = 768
         # We allow everyone to use SDXL up to 1024
-        if max_res < 1024 and any(model_reference.get_model_baseline(mn) == "stable_diffusion_xl" for mn in model_names):
+        if max_res < 1024 and any(
+            model_reference.get_model_baseline(mn) in ["stable_diffusion_xl", "stable_cascade"] for mn in model_names
+        ):
             max_res = 1024
         if max_res > 1024:
             max_res = 1024
@@ -437,7 +439,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_name = self.models[0].model
         else:
             model_name = "SDXL 1.0"
-        if model_reference.get_model_baseline(model_name) == "stable_diffusion_xl":
+        if model_reference.get_model_baseline(model_name) in ["stable_diffusion_xl", "stable_cascade"]:
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1
         # The +1 is the extra kudos burn per request
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1
