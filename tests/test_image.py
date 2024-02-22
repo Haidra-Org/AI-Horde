@@ -20,7 +20,10 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "models": TEST_MODELS,
         "loras": [{"name": "247778", "is_version": True}],
     }
-    async_req = requests.post(f"http://{HORDE_URL}/api/v2/generate/async", json=async_dict, headers=headers)
+    protocol = "http"
+    if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
+        protocol = "https"
+    async_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/async", json=async_dict, headers=headers)
     assert async_req.ok, async_req.text
     async_results = async_req.json()
     req_id = async_results["id"]
@@ -38,7 +41,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "allow_controlnet": True,
         "allow_lora": True,
     }
-    pop_req = requests.post(f"http://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
+    pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     assert pop_req.ok, pop_req.text
     pop_results = pop_req.json()
     # print(json.dumps(pop_results, indent=4))
@@ -51,11 +54,11 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "state": "ok",
         "seed": 0,
     }
-    submit_req = requests.post(f"http://{HORDE_URL}/api/v2/generate/submit", json=submit_dict, headers=headers)
+    submit_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/submit", json=submit_dict, headers=headers)
     assert submit_req.ok, submit_req.text
     submit_results = submit_req.json()
     assert submit_results["reward"] > 0
-    retrieve_req = requests.get(f"http://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+    retrieve_req = requests.get(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
     assert retrieve_req.ok, retrieve_req.text
     retrieve_results = retrieve_req.json()
     # print(json.dumps(retrieve_results,indent=4))
@@ -71,4 +74,4 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
 
 
 if __name__ == "__main__":
-    test_simple_image_gen()
+    test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
