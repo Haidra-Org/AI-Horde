@@ -124,6 +124,8 @@ KNOWN_RC = [
     "SpecialMissingUsername",
     "SpecialModelNeedsSpecialUser",
     "SpecialFieldNeedsSpecialUser",
+    "Img2ImgMismatch",
+    "TilingMismatch",
 ]
 
 

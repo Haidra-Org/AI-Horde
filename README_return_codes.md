@@ -141,3 +141,7 @@ The errors returned by the AI horde are always in this json format
 | SpecialMissingUsername | Special models must always include the username, in the form of 'horde_special::user#id' |
 | SpecialModelNeedsSpecialUser | Only special users can request a special model.", "SpecialModelNeedsSpecialUser|
 | SpecialFieldNeedsSpecialUser | Only special users can send a special field |
+| Img2ImgMismatch | Img2Img cannot be used in combination with this model |
+| TilingMismatch | Tiling cannot be used in combination with this model |
+| ControlNetMismatch | ControlNet cannot be used in combination with this model |
+| HiResMismatch | HiRes fix cannot be used in combination with this model |

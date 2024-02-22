@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.31.3
+
+* Added some restrictions for Stable Cascade
+
 # 4.31.2
 
 * Specialized some generic rcs
