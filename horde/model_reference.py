@@ -12,6 +12,9 @@ class ModelReference(PrimaryTimedFunction):
     text_model_names = set()
     nsfw_models = set()
     controlnet_models = set()
+    # Workaround because users lacking customizer role are getting models not in the reference stripped away.
+    # However due to a racing or caching issue, this causes them to still pick jobs using those models
+    # Need to investigate more to remove this workaround
     testing_models = {
         "Juggernaut XL",
         "Animagine XL",
