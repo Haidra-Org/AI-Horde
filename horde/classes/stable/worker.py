@@ -174,7 +174,7 @@ class ImageWorker(Worker):
                 if self.user.get_unique_alias() != user_alias:
                     raise e.BadRequest(f"This model can only be hosted by {user_alias}")
                 models.add(model)
-            elif model in model_reference.stable_diffusion_names or self.user.customizer:
+            elif model in model_reference.stable_diffusion_names or self.user.customizer or model in model_reference.testing_models:
                 models.add(model)
             else:
                 logger.debug(f"Rejecting unknown model '{model}' from {self.name} ({self.id})")
