@@ -12,6 +12,13 @@ class ModelReference(PrimaryTimedFunction):
     text_model_names = set()
     nsfw_models = set()
     controlnet_models = set()
+    testing_models = {
+        "Juggernaut XL",
+        "Animagine XL",
+        "DreamShaper XL",
+        "Stable Cascade 1.0",
+        "Anime Illust Diffusion XL",
+    }
 
     def call_function(self):
         """Retrieves to nataili and text model reference and stores in it a var"""
