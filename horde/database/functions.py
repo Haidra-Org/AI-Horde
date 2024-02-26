@@ -261,6 +261,7 @@ def get_available_models(filter_model_name: str = None):
         if (
             filter_model_name
             and filter_model_name not in model_reference.stable_diffusion_names
+            and filter_model_name not in model_reference.testing_models
             and filter_model_name not in model_reference.text_model_names
             and "horde_special" not in filter_model_name
             and filter_model_name != "SDXL_beta::stability.ai#6901"
