@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.31.4
+
+* Fix worker picking up testing models because they were missing customizer role
+
 # 4.31.3
 
 * Added some restrictions for Stable Cascade
