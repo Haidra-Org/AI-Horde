@@ -32,3 +32,4 @@ class UserRoleTypes(enum.Enum):
     VPN = 5
     SPECIAL = 6
     SERVICE = 7
+    EDUCATION = 8

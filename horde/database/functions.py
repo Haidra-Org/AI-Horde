@@ -397,6 +397,12 @@ def transfer_kudos(source_user, dest_user, amount):
             "The target account has been flagged for suspicious activity and tranferring kudos to them is blocked.",
             "SourceAccountFlagged",
         ]
+    if source_user.education:
+        return [
+            0,
+            "Education accounts cannot transfer kudos away",
+            "EducationCannotSendKudos",
+        ]
     if dest_user.is_suspicious():
         return [
             0,
@@ -417,7 +423,10 @@ def transfer_kudos(source_user, dest_user, amount):
     )
     db.session.add(transfer_log)
     db.session.commit()
-    source_user.modify_kudos(-amount, "gifted")
+    transfer_type = "gifted"
+    if source_user.education:
+        transfer_type = "donated"
+    source_user.modify_kudos(-amount, transfer_type)
     dest_user.modify_kudos(amount, "received")
     logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
     return [amount, "OK"]

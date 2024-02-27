@@ -181,6 +181,8 @@ class WaitingPrompt(db.Model):
     # These are typically horde-specific so they will be defined in the specific class for this horde type
     def extract_params(self):
         # logger.debug(self.params)
+        if self.user.education:
+            self.nsfw = False
         self.n = self.params.pop("n", 1)
         # We store the original amount of jobs requested as well
         self.jobs = self.n

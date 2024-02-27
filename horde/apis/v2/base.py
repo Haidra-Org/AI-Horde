@@ -184,6 +184,8 @@ class GenerateTemplate(Resource):
                 raise e.InvalidAPIKey("generation")
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest("Only service accounts can provide a proxied_account value.")
+            if self.user.education:
+                lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
             if self.args["prompt"] == "":
@@ -237,9 +239,9 @@ class GenerateTemplate(Resource):
             prompt_replaced = False
             if prompt_suspicion >= 2 and self.gentype != "text":
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
-                if self.args.replacement_filter:
+                if self.args.replacement_filter or self.user.education:
                     if not prompt_checker.check_prompt_replacement_length(self.args.prompt):
-                        raise e.BadRequest("Prompt has to be below 1000 chars when replacement filter is on")
+                        raise e.BadRequest("Prompt has to be below 7000 chars when replacement filter is on")
                     self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
                     # If it returns None, it means it replaced everything with an empty string
                     if self.args.prompt is not None:
@@ -1366,6 +1368,19 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             user.set_service(self.args.service)
             ret_dict["service"] = user.service
+        if self.args.education is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
+            if not self.args.concurrency is None and self.args.education is True and user.concurrency < 200:
+                user.concurrency = 200
+                ret_dict["concurrency"] = user.concurrency
+                # The commit() will happen in set_education()
+            if not self.args.concurrency is None and self.args.education is False and user.concurrency == 200:
+                user.concurrency = 30
+                ret_dict["concurrency"] = user.concurrency
+                # The commit() will happen in set_education()
+            user.set_education(self.args.education)
+            ret_dict["education"] = user.education
         if self.args.special is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
