@@ -184,7 +184,7 @@ class GenerateTemplate(Resource):
                 raise e.InvalidAPIKey("generation")
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest("Only service accounts can provide a proxied_account value.")
-            if self.user.education:
+            if self.user.education or self.user.trusted:
                 lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
@@ -1372,11 +1372,11 @@ class UserSingle(Resource):
         if self.args.education is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
-            if not self.args.concurrency is None and self.args.education is True and user.concurrency < 200:
+            if self.args.concurrency is None and self.args.education is True and user.concurrency < 200:
                 user.concurrency = 200
                 ret_dict["concurrency"] = user.concurrency
                 # The commit() will happen in set_education()
-            if not self.args.concurrency is None and self.args.education is False and user.concurrency == 200:
+            if self.args.concurrency is None and self.args.education is False and user.concurrency == 200:
                 user.concurrency = 30
                 ret_dict["concurrency"] = user.concurrency
                 # The commit() will happen in set_education()

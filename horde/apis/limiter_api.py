@@ -38,7 +38,6 @@ def get_request_90hour_limit_per_ip():
 
 
 def get_request_2sec_limit_per_ip():
-    logger.debug([dynamic_ip_whitelist.is_ip_whitelisted(request.remote_addr),request.remote_addr])
     if request.remote_addr in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(request.remote_addr):
         return "10/second"
     return "2/second"
