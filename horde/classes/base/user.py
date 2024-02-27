@@ -489,7 +489,6 @@ class User(db.Model):
             db.session.add(new_role)
             db.session.commit()
             return
-        logger.debug(user_role)
         if user_role.value is False:
             user_role.value = True
             db.session.commit()
