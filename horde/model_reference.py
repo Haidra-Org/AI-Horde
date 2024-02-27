@@ -21,6 +21,7 @@ class ModelReference(PrimaryTimedFunction):
         "DreamShaper XL",
         "Stable Cascade 1.0",
         "Anime Illust Diffusion XL",
+        "Pony Diffusion XL",
     }
 
     def call_function(self):
