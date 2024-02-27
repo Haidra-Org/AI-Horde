@@ -1,23 +1,27 @@
-from flask import request
 from datetime import datetime, timedelta
-from loguru import logger
+
+from flask import request
+
 from horde.consts import WHITELISTED_SERVICE_IPS
 from horde.utils import hash_api_key
 
-class DynamicIPWhitelist():
+
+class DynamicIPWhitelist:
     # Marks IPs to dynamically whitelist for 1 day
     # Those IPs will have lower limits during API calls
     whitelisted_ips = {}
 
     def whitelist_ip(self, ipaddr):
         self.whitelisted_ips[ipaddr] = datetime.now() + timedelta(days=1)
-    
-    def is_ip_whitelisted(self,ipaddr):
+
+    def is_ip_whitelisted(self, ipaddr):
         if ipaddr not in self.whitelisted_ips:
             return False
         return self.whitelisted_ips[ipaddr] > datetime.now()
 
+
 dynamic_ip_whitelist = DynamicIPWhitelist()
+
 
 # Used to for the flask limiter, to limit requests per url paths
 def get_request_path():
