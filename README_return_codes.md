@@ -145,3 +145,4 @@ The errors returned by the AI horde are always in this json format
 | TilingMismatch | Tiling cannot be used in combination with this model |
 | ControlNetMismatch | ControlNet cannot be used in combination with this model |
 | HiResMismatch | HiRes fix cannot be used in combination with this model |
+| EducationCannotSendKudos | Education accounts cannot transfer kudos out |

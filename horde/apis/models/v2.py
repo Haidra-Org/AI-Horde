@@ -668,6 +668,10 @@ class Models:
                     default=0,
                     description="The amount of Kudos this user has given to other users.",
                 ),
+                "donated": fields.Float(
+                    default=0,
+                    description="The amount of Kudos this user has donated to public goods accounts like education.",
+                ),
                 "admin": fields.Float(
                     default=0,
                     description="The amount of Kudos this user has been given by the Horde admins.",
@@ -895,6 +899,10 @@ class Models:
                     example=False,
                     description="This is a service account used by a horde proxy.",
                 ),
+                "education": fields.Boolean(
+                    example=False,
+                    description="This is an education account used schools and universities.",
+                ),
                 "special": fields.Boolean(
                     example=False,
                     description="(Privileged) This user has been given the Special role.",
@@ -986,6 +994,10 @@ class Models:
                     example=False,
                     description="When set to true, the user is considered a service account proxying the requests for other users.",
                 ),
+                "education": fields.Boolean(
+                    example=False,
+                    description="When set to true, the user is considered an education account and some options become more restrictive.",
+                ),
                 "special": fields.Boolean(
                     example=False,
                     description="When set to true, The user can send special payloads.",
@@ -1041,6 +1053,7 @@ class Models:
                 "customizer": fields.Boolean(description="The user's new customizer status."),
                 "vpn": fields.Boolean(description="The user's new vpn status."),
                 "service": fields.Boolean(description="The user's new service status."),
+                "education": fields.Boolean(description="The user's new education status."),
                 "special": fields.Boolean(description="The user's new special status."),
                 "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
                 "contact": fields.String(example="email@example.com", description="The new contact details."),

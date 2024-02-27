@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.32.0
+
+* Add education role
+
 # 4.31.4
 
 * Fix worker picking up testing models because they were missing customizer role

@@ -74,4 +74,5 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
 
 
 if __name__ == "__main__":
+    # "ci/cd#12285"
     test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")

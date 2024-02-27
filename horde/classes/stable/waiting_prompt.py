@@ -112,6 +112,12 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.width * self.height * self.get_accurate_steps()
         self.total_usage = round(self.things * self.n / hv.thing_divisors["image"], 2)
+        # Education accounts get some settings hardcoded regardless of the request
+        if self.user.education:
+            self.nsfw = False
+            self.censor_nsfw = True
+            self.trusted_workers = True
+            self.shared = False
         self.prepare_job_payload(self.params)
         self.set_job_ttl()
         # Commit will happen in prepare_job_payload()

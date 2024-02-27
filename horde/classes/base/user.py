@@ -383,6 +383,25 @@ class User(db.Model):
         return cls.id == subquery
 
     @hybrid_property
+    def education(self) -> bool:
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.EDUCATION).first()
+        return user_role is not None and user_role.value
+
+    @education.expression
+    def education(cls):
+        subquery = (
+            db.session.query(UserRole.user_id)
+            .filter(
+                UserRole.user_role == UserRoleTypes.EDUCATION,
+                UserRole.value == True,  # noqa E712
+                UserRole.user_id == cls.id,
+            )
+            .correlate(cls)
+            .as_scalar()
+        )
+        return cls.id == subquery
+
+    @hybrid_property
     def special(self) -> bool:
         user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.SPECIAL).first()
         return user_role is not None and user_role.value
@@ -470,7 +489,6 @@ class User(db.Model):
             db.session.add(new_role)
             db.session.commit()
             return
-        logger.debug(user_role)
         if user_role.value is False:
             user_role.value = True
             db.session.commit()
@@ -512,6 +530,11 @@ class User(db.Model):
         if self.is_anon():
             return
         self.set_user_role(UserRoleTypes.SERVICE, is_service)
+
+    def set_education(self, is_service):
+        if self.is_anon():
+            return
+        self.set_user_role(UserRoleTypes.EDUCATION, is_service)
 
     def set_special(self, is_special):
         if self.is_anon():
@@ -733,6 +756,8 @@ class User(db.Model):
     def max_sharedkeys(self):
         if self.trusted:
             return 10
+        if self.education:
+            return 1000
         return 3
 
     def is_suspicious(self):
@@ -815,6 +840,7 @@ class User(db.Model):
             "worker_count": self.count_workers(),
             "account_age": (datetime.utcnow() - self.created).total_seconds(),
             "service": self.service,
+            "education": self.education,
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }

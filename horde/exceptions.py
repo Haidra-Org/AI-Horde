@@ -126,6 +126,7 @@ KNOWN_RC = [
     "SpecialFieldNeedsSpecialUser",
     "Img2ImgMismatch",
     "TilingMismatch",
+    "EducationCannotSendKudos",
 ]
 
 
