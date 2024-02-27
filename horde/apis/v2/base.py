@@ -1372,7 +1372,6 @@ class UserSingle(Resource):
         if self.args.education is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
-            logger.debug([self.args.concurrency,self.args.education,user.concurrency, self.args.concurrency is None and self.args.education is True and user.concurrency < 200])
             if self.args.concurrency is None and self.args.education is True and user.concurrency < 200:
                 user.concurrency = 200
                 ret_dict["concurrency"] = user.concurrency
