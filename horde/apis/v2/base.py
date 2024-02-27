@@ -1274,6 +1274,7 @@ class UserSingle(Resource):
         location="json",
     )
     parser.add_argument("service", type=bool, required=False, location="json")
+    parser.add_argument("education", type=bool, required=False, location="json")
     parser.add_argument(
         "special",
         type=bool,
