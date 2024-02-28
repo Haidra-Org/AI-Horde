@@ -182,6 +182,7 @@ class TextModels(v2.Models):
                     ),
                 ),
                 "min_p": fields.Float(description="Min-p sampling value.", min=0.0, default=0.0, max=1.0),
+                "smoothing_factor": fields.Float(description="Quadratic sampling value.", min=0.0, default=0.0, max=10.0),
                 "dynatemp_range": fields.Float(
                     description="Dynamic temperature range value.",
                     min=0.0,
