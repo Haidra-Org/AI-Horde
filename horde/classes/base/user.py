@@ -626,6 +626,7 @@ class User(db.Model):
             self.modify_kudos(monthly_kudos, "recurring")
         if not self.monthly_kudos_last_received:
             self.monthly_kudos_last_received = datetime.utcnow()
+            logger.info(f"Last received date set to {self.monthly_kudos_last_received}")
         self.monthly_kudos += monthly_kudos
         if self.monthly_kudos < 0:
             self.monthly_kudos = 0
@@ -647,7 +648,8 @@ class User(db.Model):
             has_month_passed = True
         if has_month_passed:
             logger.info(
-                f"Preparing to assign {kudos_amount} monthly kudos to {self.get_unique_alias()}. Current total {self.kudos}",
+                f"Preparing to assign {kudos_amount} monthly kudos to {self.get_unique_alias()}. "
+                f"Current total: {self.kudos}. Last received date: {self.monthly_kudos_last_received}",
             )
             # Not committing as it'll happen in modify_kudos() anyway
             if not self.monthly_kudos_last_received:
@@ -656,7 +658,8 @@ class User(db.Model):
                 self.monthly_kudos_last_received = self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
             self.modify_kudos(kudos_amount, "recurring")
             logger.info(
-                f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos. Their new total is {self.kudos}",
+                f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos. "
+                f"Their new total is {self.kudos} and the last received date set to {self.monthly_kudos_last_received}",
             )
 
     def calculate_monthly_kudos(self):
