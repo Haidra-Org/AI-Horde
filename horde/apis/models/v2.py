@@ -861,7 +861,7 @@ class Models:
                 "concurrency": fields.Integer(description="How many concurrent generations this user may request."),
                 "worker_invited": fields.Integer(
                     description=(
-                        f"Whether this user has been invited to join a worker to the {horde} and how many of them. "
+                        f"Whether this user has been invited to join a worker to the {horde_title} and how many of them. "
                         "When 0, this user cannot add (new) workers to the horde."
                     ),
                 ),
