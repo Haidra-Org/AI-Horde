@@ -164,7 +164,7 @@ def find_user_by_username(username):
     try:
         if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
             return None
-    except:
+    except Exception:
         return None
     # This approach handles someone cheekily putting # in their username
     user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
