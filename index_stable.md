@@ -1,6 +1,6 @@
 # AI Horde
 
-<img style="float:right" src="{horde_img_url}/{horde_image}.jpg" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/Haidra-Org/AI-Horde) of [Image generation workers](https://github.com/Haidra-Org/horde-worker-reGen) and [text generation workers](https://github.com/Haidra-Org/AI-Horde-Worker). If you like this service, consider [joining the horde yourself](https://github.com/Haidra-Org/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
+<img style="float:right" src="{horde_img_url}" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/Haidra-Org/AI-Horde) of [Image generation workers](https://github.com/Haidra-Org/horde-worker-reGen) and [text generation workers](https://github.com/Haidra-Org/AI-Horde-Worker). If you like this service, consider [joining the horde yourself](https://github.com/Haidra-Org/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
 
 For more information, check [the FAQ](https://github.com/Haidra-Org/AI-Horde/blob/main/FAQ.md). Finally you can also follow the [main developer's blog](https://dbzer0.com)
 
