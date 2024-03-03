@@ -317,7 +317,7 @@ def store_patreon_members():
                 ],
             },
         )
-        if isinstance(members_response,dict) and 'data' not in members_response:
+        if isinstance(members_response, dict) and "data" not in members_response:
             logger.error(f"Unexpected response received from patreon: {members_response}")
             return
         members += members_response.data()

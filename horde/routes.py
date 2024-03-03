@@ -24,9 +24,9 @@ from horde.patreon import patrons
 from horde.utils import ConvertAmount, hash_api_key, is_profane, sanitize_string
 from horde.vars import (
     google_verification_string,
+    horde_contact_email,
     horde_title,
     horde_url,
-    horde_contact_email,
     img_url,
 )
 
@@ -37,7 +37,7 @@ dance_return_to = "/"
 @HORDE.route("/")
 # @cache.cached(timeout=300)
 def index():
-    with open(os.getenv("HORDE_MARKDOWN_INDEX","index_stable.md")) as index_file:
+    with open(os.getenv("HORDE_MARKDOWN_INDEX", "index_stable.md")) as index_file:
         index = index_file.read()
     align_image = 0
     big_image = align_image
@@ -363,12 +363,22 @@ def finish_dance():
 
 @HORDE.route("/privacy")
 def privacy():
-    return render_template(os.getenv("HORDE_HTML_PRIVACY","privacy_policy.html"), horde_title=horde_title, horde_url=horde_url, horde_contact_email=horde_contact_email)
+    return render_template(
+        os.getenv("HORDE_HTML_PRIVACY", "privacy_policy.html"),
+        horde_title=horde_title,
+        horde_url=horde_url,
+        horde_contact_email=horde_contact_email,
+    )
 
 
 @HORDE.route("/terms")
 def terms():
-    return render_template(os.getenv("HORDE_HTML_TERMS","terms_of_service.html"), horde_title=horde_title, horde_url=horde_url, horde_contact_email=horde_contact_email)
+    return render_template(
+        os.getenv("HORDE_HTML_TERMS", "terms_of_service.html"),
+        horde_title=horde_title,
+        horde_url=horde_url,
+        horde_contact_email=horde_contact_email,
+    )
 
 
 @HORDE.route("/assets/<filename>")

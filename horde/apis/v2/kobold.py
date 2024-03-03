@@ -20,6 +20,7 @@ from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.utils import hash_dictionary
 from horde.vars import horde_title
+
 models = TextModels(api)
 parsers = TextParsers()
 

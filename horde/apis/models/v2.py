@@ -1,7 +1,8 @@
 from flask_restx import fields, reqparse
 
 from horde.exceptions import KNOWN_RC
-from horde.vars import horde_title, horde_noun
+from horde.vars import horde_noun, horde_title
+
 
 class Parsers:
     def __init__(self):
@@ -40,7 +41,8 @@ class Parsers:
             type=bool,
             required=False,
             default=False,
-            help=f"When true, only {horde_title} trusted workers will serve this request. When False, Evaluating workers will also be used.",
+            help=f"When true, only {horde_title} trusted workers will serve this request. "
+            "When False, Evaluating workers will also be used.",
             location="json",
         )
         self.generate_parser.add_argument(
@@ -565,7 +567,7 @@ class Models:
                 "bridge_agent": fields.String(
                     required=True,
                     default="unknown:0:unknown",
-                    example=f"AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
+                    example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
                     description="The bridge agent name, version and website.",
                     max_length=1000,
                 ),
@@ -1082,10 +1084,12 @@ class Models:
                     description=f"How many workers are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "thread_count": fields.Integer(
-                    description=f"How many worker threads are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
+                    description="How many worker threads are actively processing prompt generations "
+                    "in this {horde_noun} in the past 5 minutes.",
                 ),
                 "text_thread_count": fields.Integer(
-                    description=f"How many worker threads are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
+                    description="How many worker threads are actively processing prompt generations "
+                    "in this {horde_noun} in the past 5 minutes.",
                 ),
                 "queued_megapixelsteps": fields.Float(
                     description=f"The amount of megapixelsteps in waiting and processing requests currently in this {horde_noun}.",
@@ -1097,10 +1101,12 @@ class Models:
                     description=f"The amount of image interrogations waiting and processing currently in this {horde_noun}.",
                 ),
                 "interrogator_count": fields.Integer(
-                    description=f"How many workers are actively processing image interrogations in this {horde_noun} in the past 5 minutes.",
+                    description="How many workers are actively processing image interrogations "
+                    "in this {horde_noun} in the past 5 minutes.",
                 ),
                 "interrogator_thread_count": fields.Integer(
-                    description=f"How many worker threads are actively processing image interrogation in this {horde_noun} in the past 5 minutes.",
+                    description="How many worker threads are actively processing image interrogation "
+                    "in this {horde_noun} in the past 5 minutes.",
                 ),
                 "queued_tokens": fields.Float(
                     description=f"The amount of tokens in waiting and processing requests currently in this {horde_noun}.",

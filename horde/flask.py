@@ -19,8 +19,7 @@ if SQLITE_MODE:
     HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
 else:
     HORDE.config["SQLALCHEMY_DATABASE_URI"] = (
-        f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:"
-        f"{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
+        f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:" f"{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
     )
     HORDE.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
         "pool_size": 50,
