@@ -161,7 +161,10 @@ def find_user_by_oauth_id(oauth_id):
 
 def find_user_by_username(username):
     ulist = username.split("#")
-    if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
+    try:
+        if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
+            return None
+    except:
         return None
     # This approach handles someone cheekily putting # in their username
     user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
@@ -424,7 +427,7 @@ def transfer_kudos(source_user, dest_user, amount):
     db.session.add(transfer_log)
     db.session.commit()
     transfer_type = "gifted"
-    if source_user.education:
+    if dest_user.education:
         transfer_type = "donated"
     source_user.modify_kudos(-amount, transfer_type)
     dest_user.modify_kudos(amount, "received")
