@@ -1,6 +1,7 @@
 from flask_restx import fields
 
 from horde.apis.models import v2
+from horde.vars import horde_title
 
 
 class TextParsers(v2.Parsers):
@@ -322,7 +323,7 @@ class TextModels(v2.Models):
                 ),
                 "webhook": fields.String(
                     description=(
-                        "Provide a URL where the AI Horde will send a POST call after each delivered generation. "
+                        f"Provide a URL where the {horde_title} will send a POST call after each delivered generation. "
                         "The request will include the details of the job as well as the request ID."
                     ),
                 ),

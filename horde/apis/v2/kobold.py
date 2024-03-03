@@ -19,7 +19,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.utils import hash_dictionary
-
+from horde.vars import horde_title
 models = TextModels(api)
 parsers = TextParsers()
 
@@ -340,7 +340,7 @@ class TextHordeStatsTotals(Resource):
     @api.marshal_with(
         models.response_model_stats_img_totals,
         code=200,
-        description="Horde generated text statistics",
+        description=f"{horde_title} generated text statistics",
     )
     def get(self):
         """Details how many texts have been generated in the past minux,hour,day,month and total
@@ -366,7 +366,7 @@ class TextHordeStatsModels(Resource):
     @api.marshal_with(
         models.response_model_stats_models,
         code=200,
-        description="Horde generated text statistics per model",
+        description=f"{horde_title} generated text statistics per model",
     )
     def get(self):
         """Details how many texts were generated per model for the past day, month and total"""

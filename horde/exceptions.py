@@ -1,6 +1,7 @@
 from werkzeug import exceptions as wze
 
 from horde.logger import logger
+from horde.vars import horde_title
 
 KNOWN_RC = [
     "MissingPrompt",
@@ -539,7 +540,7 @@ class MaintenanceMode(wze.BadRequest):
     retry_after = 60
 
     def __init__(self, endpoint, rc="MaintenanceMode"):
-        self.specific = "Horde has entered maintenance mode. Please try again later."
+        self.specific = f"{horde_title} has entered maintenance mode. Please try again later."
         self.log = f"Rejecting endpoint '{endpoint}' because horde in maintenance mode."
         self.rc = rc
 

@@ -1,7 +1,7 @@
 from flask_restx import fields, reqparse
 
 from horde.exceptions import KNOWN_RC
-
+from horde.vars import horde_title, horde_noun
 
 class Parsers:
     def __init__(self):
@@ -40,7 +40,7 @@ class Parsers:
             type=bool,
             required=False,
             default=False,
-            help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.",
+            help=f"When true, only {horde_title} trusted workers will serve this request. When False, Evaluating workers will also be used.",
             location="json",
         )
         self.generate_parser.add_argument(
@@ -468,7 +468,7 @@ class Models:
                 "bridge_agent": fields.String(
                     required=False,
                     default="unknown:0:unknown",
-                    example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
+                    example=f"{horde_title} Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
                     description="The worker name, version and website.",
                     max_length=1000,
                 ),
@@ -509,7 +509,7 @@ class Models:
                 ),
                 "threads": fields.Integer(description="How many threads this worker is running."),
                 "uptime": fields.Integer(
-                    description="The amount of seconds this worker has been online for this Horde.",
+                    description=f"The amount of seconds this worker has been online for this {horde_title}.",
                 ),
                 "maintenance_mode": fields.Boolean(
                     example=False,
@@ -565,7 +565,7 @@ class Models:
                 "bridge_agent": fields.String(
                     required=True,
                     default="unknown:0:unknown",
-                    example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
+                    example=f"AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
                     description="The bridge agent name, version and website.",
                     max_length=1000,
                 ),
@@ -674,7 +674,7 @@ class Models:
                 ),
                 "admin": fields.Float(
                     default=0,
-                    description="The amount of Kudos this user has been given by the Horde admins.",
+                    description=f"The amount of Kudos this user has been given by the {horde_title} admins.",
                 ),
                 "received": fields.Float(
                     default=0,
@@ -861,11 +861,11 @@ class Models:
                 "concurrency": fields.Integer(description="How many concurrent generations this user may request."),
                 "worker_invited": fields.Integer(
                     description=(
-                        "Whether this user has been invited to join a worker to the horde and how many of them. "
+                        f"Whether this user has been invited to join a worker to the {horde} and how many of them. "
                         "When 0, this user cannot add (new) workers to the horde."
                     ),
                 ),
-                "moderator": fields.Boolean(example=False, description="This user is a Horde moderator."),
+                "moderator": fields.Boolean(example=False, description=f"This user is a {horde_title} moderator."),
                 "kudos_details": fields.Nested(self.response_model_user_kudos_details),
                 "worker_count": fields.Integer(
                     description="How many workers this user has created (active or inactive).",
@@ -885,7 +885,7 @@ class Models:
                 "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
                 "trusted": fields.Boolean(
                     example=False,
-                    description="This user is a trusted member of the Horde.",
+                    description=f"This user is a trusted member of the {horde_title}.",
                 ),
                 "flagged": fields.Boolean(
                     example=False,
@@ -980,7 +980,7 @@ class Models:
                     example=False,
                     description=(
                         "When set to true, the user will be able to serve custom Stable Diffusion models "
-                        "which do not exist in the Official AI Horde Model Reference."
+                        f"which do not exist in the Official {horde_title} Model Reference."
                     ),
                 ),
                 "vpn": fields.Boolean(
@@ -1070,43 +1070,43 @@ class Models:
             "HordePerformance",
             {
                 "queued_requests": fields.Integer(
-                    description="The amount of waiting and processing image requests currently in this Horde.",
+                    description=f"The amount of waiting and processing image requests currently in this {horde_noun}.",
                 ),
                 "queued_text_requests": fields.Integer(
-                    description="The amount of waiting and processing text requests currently in this Horde.",
+                    description=f"The amount of waiting and processing text requests currently in this {horde_noun}.",
                 ),
                 "worker_count": fields.Integer(
-                    description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes.",
+                    description=f"How many workers are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "text_worker_count": fields.Integer(
-                    description="How many workers are actively processing prompt generations in this Horde in the past 5 minutes.",
+                    description=f"How many workers are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "thread_count": fields.Integer(
-                    description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes.",
+                    description=f"How many worker threads are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "text_thread_count": fields.Integer(
-                    description="How many worker threads are actively processing prompt generations in this Horde in the past 5 minutes.",
+                    description=f"How many worker threads are actively processing prompt generations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "queued_megapixelsteps": fields.Float(
-                    description="The amount of megapixelsteps in waiting and processing requests currently in this Horde.",
+                    description=f"The amount of megapixelsteps in waiting and processing requests currently in this {horde_noun}.",
                 ),
                 "past_minute_megapixelsteps": fields.Float(
-                    description="How many megapixelsteps this Horde generated in the last minute.",
+                    description=f"How many megapixelsteps this {horde_noun} generated in the last minute.",
                 ),
                 "queued_forms": fields.Float(
-                    description="The amount of image interrogations waiting and processing currently in this Horde.",
+                    description=f"The amount of image interrogations waiting and processing currently in this {horde_noun}.",
                 ),
                 "interrogator_count": fields.Integer(
-                    description="How many workers are actively processing image interrogations in this Horde in the past 5 minutes.",
+                    description=f"How many workers are actively processing image interrogations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "interrogator_thread_count": fields.Integer(
-                    description="How many worker threads are actively processing image interrogation in this Horde in the past 5 minutes.",
+                    description=f"How many worker threads are actively processing image interrogation in this {horde_noun} in the past 5 minutes.",
                 ),
                 "queued_tokens": fields.Float(
-                    description="The amount of tokens in waiting and processing requests currently in this Horde.",
+                    description=f"The amount of tokens in waiting and processing requests currently in this {horde_noun}.",
                 ),
                 "past_minute_tokens": fields.Float(
-                    description="How many tokens this Horde generated in the last minute.",
+                    description=f"How many tokens this {horde_noun} generated in the last minute.",
                 ),
             },
         )
@@ -1128,15 +1128,15 @@ class Models:
             {
                 "maintenance_mode": fields.Boolean(
                     description=(
-                        "When True, this Horde will not accept new requests for image generation,"
+                        f"When True, this {horde_noun} will not accept new requests for image generation,"
                         " but will finish processing the ones currently in the queue."
                     ),
                 ),
                 "invite_only_mode": fields.Boolean(
-                    description="When True, this Horde will not only accept worker explicitly invited to join.",
+                    description=f"When True, this {horde_noun} will not only accept worker explicitly invited to join.",
                 ),
                 "raid_mode": fields.Boolean(
-                    description="When True, this Horde will not always provide full information in order to throw off attackers.",
+                    description=f"When True, this {horde_noun} will not always provide full information in order to throw off attackers.",
                 ),
             },
         )

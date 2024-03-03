@@ -29,6 +29,7 @@ from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
 from horde.utils import hash_dictionary
+from horde.vars import horde_title
 
 models = ImageModels(api)
 parsers = ImageParsers()
@@ -767,7 +768,7 @@ class Interrogate(Resource):
         type=bool,
         required=False,
         default=False,
-        help="When true, only Horde trusted workers will serve this request. When False, Evaluating workers will also be used.",
+        help=f"When true, only {horde_title} trusted workers will serve this request. When False, Evaluating workers will also be used.",
         location="json",
     )
     post_parser.add_argument(
@@ -1205,7 +1206,7 @@ class ImageHordeStatsTotals(Resource):
     @api.marshal_with(
         models.response_model_stats_img_totals,
         code=200,
-        description="Horde generated images statistics",
+        description=f"{horde_title} generated images statistics",
     )
     def get(self):
         """Details how many images have been generated in the past minux,hour,day,month and total
@@ -1231,7 +1232,7 @@ class ImageHordeStatsModels(Resource):
     @api.marshal_with(
         models.response_model_stats_models,
         code=200,
-        description="Horde generated images statistics per model",
+        description=f"{horde_title} generated images statistics per model",
     )
     def get(self):
         """Details how many images were generated per model for the past day, month and total"""
