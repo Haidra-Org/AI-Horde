@@ -1,4 +1,4 @@
-# AI Horde
+# {page_title}
 
 <img style="float:right" src="{horde_img_url}" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/Haidra-Org/AI-Horde) of [Image generation workers](https://github.com/Haidra-Org/horde-worker-reGen) and [text generation workers](https://github.com/Haidra-Org/AI-Horde-Worker). If you like this service, consider [joining the horde yourself](https://github.com/Haidra-Org/AI-Horde/blob/main/README_StableHorde.md#joining-the-horde)!
 
