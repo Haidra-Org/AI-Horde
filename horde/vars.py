@@ -1,4 +1,5 @@
 from uuid import uuid4
+import os
 
 thing_names = {
     "image": "megapixelsteps",
@@ -34,6 +35,7 @@ text_thing_divisor = thing_divisors["text"]
 things_per_sec_suspicion_threshold = suspicion_thresholds["image"]
 google_verification_string = "pmLKyCEPKM5csKT9mW1ZbGLu2TX_wD0S5FCxWlmg_iI"
 img_url = "https://raw.githubusercontent.com/db0/Stable-Horde/main/img_stable/"
-horde_title = "AI Horde"
-horde_url = "https://stablehorde.net"
+horde_title = os.getenv("HORDE_TITLE", "AI Horde")
+horde_url = os.getenv("HORDE_URL","https://aihorde.net")
+horde_contact_email = os.getenv("HORDE_EMAIL","aihorde@dbzer0.com")
 horde_instance_id = str(uuid4())
