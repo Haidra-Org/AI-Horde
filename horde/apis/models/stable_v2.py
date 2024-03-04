@@ -2,6 +2,7 @@ from flask_restx import fields
 
 from horde.apis.models import v2
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS
+from horde.vars import horde_title
 
 
 class ImageParsers(v2.Parsers):
@@ -619,7 +620,7 @@ class ImageModels(v2.Models):
                     min_length=10,
                     example="https://haidra.net/00000000-0000-0000-0000-000000000000",
                     description=(
-                        "Provide a URL where the AI Horde will send a POST call after each delivered generation. "
+                        f"Provide a URL where the {horde_title} will send a POST call after each delivered generation. "
                         "The request will include the details of the job as well as the request ID."
                     ),
                 ),
@@ -677,7 +678,7 @@ class ImageModels(v2.Models):
                     min_length=10,
                     example="https://haidra.net/00000000-0000-0000-0000-000000000000",
                     description=(
-                        "Provide a URL where the AI Horde will send a POST call after each delivered generation. "
+                        f"Provide a URL where the {horde_title} will send a POST call after each delivered generation. "
                         "The request will include the details of the job as well as the request ID."
                     ),
                 ),
@@ -742,7 +743,7 @@ class ImageModels(v2.Models):
                 "bridge_agent": fields.String(
                     required=False,
                     default="unknown",
-                    example="AI Horde Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
+                    example=f"{horde_title} Worker reGen:4.1.0:https://github.com/Haidra-Org/horde-worker-reGen",
                     description="The worker name, version and website.",
                     max_length=1000,
                 ),

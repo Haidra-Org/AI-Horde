@@ -317,6 +317,9 @@ def store_patreon_members():
                 ],
             },
         )
+        if isinstance(members_response, dict) and "data" not in members_response:
+            logger.error(f"Unexpected response received from patreon: {members_response}")
+            return
         members += members_response.data()
         if members_response.json_data.get("links") is None:
             # Avoid Exception: ('Provided cursor path did not result in a link' ..

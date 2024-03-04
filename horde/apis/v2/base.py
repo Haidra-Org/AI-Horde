@@ -34,6 +34,7 @@ from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
+from horde.vars import horde_title
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -222,7 +223,7 @@ class GenerateTemplate(Resource):
                         wp_count + n,
                         user_limit,
                         msg=(
-                            "Too many anonymous requests on using the AI Horde currently "
+                            f"Too many anonymous requests on using the {horde_title} currently "
                             f"({wp_count + n}/{user_limit}). Please consider getting a personal API key at https://aihorde.net/register "
                             "which will also provide higher priority."
                         ),
@@ -379,7 +380,8 @@ class JobPopTemplate(Resource):
             self.priority_usernames = self.args.priority_usernames
             if any("#" not in user_id for user_id in self.priority_usernames):
                 raise e.BadRequest(
-                    "Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
+                    message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
+                    rc="InvalidPriorityUsername",
                 )
         self.models = []
         if self.args.models:
@@ -392,6 +394,11 @@ class JobPopTemplate(Resource):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
+        if any(not u.isdigit for u in pre_priority_user_ids):
+            raise e.BadRequest(
+                message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
+                rc="InvalidPriorityUsername",
+            )
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
         p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
@@ -916,11 +923,11 @@ class WorkerSingle(Resource):
     @api.response(403, "Access Denied", models.response_model_error)
     @api.response(404, "Worker Not Found", models.response_model_error)
     def put(self, worker_id=""):
-        """Put the worker into maintenance or pause mode
+        f"""Put the worker into maintenance or pause mode
         Maintenance can be set by the owner of the serve or an admin.
         When in maintenance, the worker will receive a 503 request when trying to retrieve new requests.
         Use this to avoid disconnecting your worker in the middle of a generation
-        Paused can be set only by the admins of this Horde.
+        Paused can be set only by the admins of this {horde_title}.
         When in paused mode, the worker will not be given any requests to generate.
         """
         worker = database.find_worker_by_id(worker_id)
@@ -1259,7 +1266,7 @@ class UserSingle(Resource):
         required=False,
         help=(
             "When set to true, the user will be able to serve custom Stable Diffusion models "
-            "which do not exist in the Official AI Horde Model Reference."
+            f"which do not exist in the Official {horde_title} Model Reference."
         ),
         location="json",
     )
@@ -1599,7 +1606,7 @@ class HordeLoad(Resource):
     @api.marshal_with(
         models.response_model_horde_performance,
         code=200,
-        description="Horde Performance",
+        description=f"{horde_title} Performance",
     )
     def get(self):
         """Details about the current performance of this Horde"""
@@ -1639,7 +1646,7 @@ class HordeNews(Resource):
     @api.marshal_with(
         models.response_model_newspiece,
         code=200,
-        description="Horde News",
+        description=f"{horde_title} News",
         as_list=True,
     )
     def get(self):
@@ -1665,7 +1672,7 @@ class HordeModes(Resource):
     @api.marshal_with(
         models.response_model_horde_modes,
         code=200,
-        description="Horde Maintenance",
+        description=f"{horde_title} Maintenance",
         skip_none=True,
     )
     def get(self):
@@ -1737,7 +1744,7 @@ class HordeModes(Resource):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT HordeModes")
             cfg.maintenance = self.args.maintenance
             if cfg.maintenance:
-                logger.critical("Horde entered maintenance mode")
+                logger.critical(f"{horde_title} entered maintenance mode")
                 for wp in database.get_all_active_wps():
                     wp.abort_for_maintenance()
             ret_dict["maintenance_mode"] = cfg.maintenance

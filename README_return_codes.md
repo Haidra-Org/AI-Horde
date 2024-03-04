@@ -146,3 +146,4 @@ The errors returned by the AI horde are always in this json format
 | ControlNetMismatch | ControlNet cannot be used in combination with this model |
 | HiResMismatch | HiRes fix cannot be used in combination with this model |
 | EducationCannotSendKudos | Education accounts cannot transfer kudos out |
+| InvalidPriorityUsername | Prioritized user format wrong |

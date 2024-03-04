@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.32.2
+
+* Adds support for customizing the Horde (name/icons/frontpage etc)
+* Fixes crash when priority list in wrong format
+
 # 4.32.0
 
 * Add education role
