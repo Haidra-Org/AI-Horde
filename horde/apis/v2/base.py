@@ -394,7 +394,9 @@ class JobPopTemplate(Resource):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
-        if any(not u.isdigit for u in pre_priority_user_ids):
+        if any(
+            (u == '' or not u.isdigit) for u in pre_priority_user_ids
+        ):
             raise e.BadRequest(
                 message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
                 rc="InvalidPriorityUsername",
