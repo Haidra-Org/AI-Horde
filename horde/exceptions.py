@@ -128,6 +128,7 @@ KNOWN_RC = [
     "Img2ImgMismatch",
     "TilingMismatch",
     "EducationCannotSendKudos",
+    "InvalidPriorityUsername",
 ]
 
 

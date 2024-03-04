@@ -380,7 +380,8 @@ class JobPopTemplate(Resource):
             self.priority_usernames = self.args.priority_usernames
             if any("#" not in user_id for user_id in self.priority_usernames):
                 raise e.BadRequest(
-                    "Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
+                    message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
+                    rc="InvalidPriorityUsername",
                 )
         self.models = []
         if self.args.models:
@@ -393,6 +394,11 @@ class JobPopTemplate(Resource):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
+        if any(not u.isdigit for u in pre_priority_user_ids):
+            raise e.BadRequest(
+                message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
+                rc="InvalidPriorityUsername",
+            )
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
         p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
