@@ -1,4 +1,5 @@
 import time
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -8,10 +9,13 @@ from loguru import logger
 
 load_dotenv()
 
-
+r2_transient_account = os.getenv(
+    "R2_TRANSIENT_ACCOUNT",
+    "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com",
+)
 sr3 = boto3.resource(
     "s3",
-    endpoint_url="https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com",
+    endpoint_url=r2_transient_account,
 )
 while True:
     try:
