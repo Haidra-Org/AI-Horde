@@ -175,7 +175,7 @@ class UserSharedKey(db.Model):
         if self.expiry is not None and self.expiry < datetime.utcnow():
             return False, "This shared key has expired", "SharedKeyExpired"
         else:
-            return True, None
+            return True, None, None
 
     def is_job_within_limits(
         self,
