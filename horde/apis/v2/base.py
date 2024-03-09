@@ -133,6 +133,8 @@ class GenerateTemplate(Resource):
         self.safe_ip = True
         self.validate()
         # logger.warning(datetime.utcnow())
+        self.downgrade_wp_priority = False
+        # logger.warning(datetime.utcnow())
         self.initiate_waiting_prompt()
         # logger.warning(datetime.utcnow())
         if self.args.dry_run:
@@ -142,8 +144,6 @@ class GenerateTemplate(Resource):
         self.activate_waiting_prompt()
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
-        # logger.warning(datetime.utcnow())
-        self.downgrade_wp_priority = False
         # logger.warning(datetime.utcnow())
 
     # Extend if extra payload information needs to be sent
