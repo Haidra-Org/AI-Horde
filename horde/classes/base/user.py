@@ -148,6 +148,7 @@ class UserSharedKey(db.Model):
         ret_dict = {
             "username": self.user.get_unique_alias(),
             "id": self.id,
+            "name": self.name,
             "kudos": self.kudos,
             "expiry": self.expiry,
             "utilized": self.utilized,

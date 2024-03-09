@@ -394,9 +394,7 @@ class JobPopTemplate(Resource):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
-        if any(
-            (u == '' or not u.isdigit) for u in pre_priority_user_ids
-        ):
+        if any((u == "" or not u.isdigit) for u in pre_priority_user_ids):
             raise e.BadRequest(
                 message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
                 rc="InvalidPriorityUsername",
@@ -2731,7 +2729,7 @@ class SharedKeySingle(Resource):
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(404, "Shared Key Not Found", models.response_model_error)
     def get(self, sharedkey_id=""):
-        """Get details about an existing Shared Key for this user"""
+        """Get details about an existing Shared Key"""
         self.args = self.get_parser.parse_args()
         sharedkey = database.find_sharedkey(sharedkey_id)
         if not sharedkey:
