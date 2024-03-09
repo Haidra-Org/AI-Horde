@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.32.4
+
+* Fix crash when receiving generation with NUL char
+* Fix crash when using shared keys
+
 # 4.32.3
 
 * Shared Keys details now include their name
