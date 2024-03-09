@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.32.3
+
+* Shared Keys details now include their name
+* Allow customizing horde model reference locations
+
 # 4.32.2
 
 * Adds support for customizing the Horde (name/icons/frontpage etc)
