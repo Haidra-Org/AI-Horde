@@ -1,5 +1,5 @@
-black==23.12.1
-ruff==0.1.13
-pytest==8.0.0
-tox~=4.12.1
+pytest==8.0.2
+black==24.2.0
+ruff==0.3.1
+tox~=4.14.1
 horde_sdk>=0.7.29
