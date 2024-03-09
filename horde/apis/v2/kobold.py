@@ -107,25 +107,31 @@ class TextAsyncGenerate(GenerateTemplate):
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
-            self.wp.delete()
-            raise e.KudosUpfront(
-                required_kudos,
-                self.username,
-                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
-                f"to fulfill this reques ({required_kudos}).",
-                rc="SharedKeyEmpty",
-            )
-        needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
-        if needs_kudos:
-            if required_kudos > self.user.kudos:
+            if self.args.allow_downgrade:
+                self.downgrade_wp_priority = True
+            else:
                 self.wp.delete()
                 raise e.KudosUpfront(
                     required_kudos,
                     self.username,
-                    message=f"Due to heavy demand, for requests over {tokens} tokens, "
-                    "the client needs to already have the required kudos. "
-                    f"This request requires {required_kudos} kudos to fulfil.",
+                    message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
+                    f"to fulfill this reques ({required_kudos}).",
+                    rc="SharedKeyInsufficientKudos",
                 )
+        needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
+        if needs_kudos:
+            if required_kudos > self.user.kudos:
+                if self.args.allow_downgrade:
+                    self.wp.downgrade(tokens)
+                else:
+                    self.wp.delete()
+                    raise e.KudosUpfront(
+                        required_kudos,
+                        self.username,
+                        message=f"Due to heavy demand, for requests over {tokens} tokens, "
+                        "the client needs to already have the required kudos. "
+                        f"This request requires {required_kudos} kudos to fulfil.",
+                    )
 
         if self.sharedkey:
             is_in_limit, fail_message = self.sharedkey.is_job_within_limits(

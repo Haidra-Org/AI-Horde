@@ -249,26 +249,32 @@ class ImageAsyncGenerate(GenerateTemplate):
         if (self.sharedkey and self.sharedkey.kudos != -1) or needs_kudos:
             required_kudos = self.wp.extrapolate_dry_run_kudos()
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
-            self.wp.delete()
-            raise e.KudosUpfront(
-                required_kudos,
-                self.username,
-                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
-                f"to fulfill this request ({required_kudos}).",
-                rc="SharedKeyEmpty",
-            )
-        if needs_kudos is True:
-            if required_kudos > self.user.kudos:
+            if self.args.allow_downgrade:
+                self.downgrade_wp_priority = True
+            else:
                 self.wp.delete()
                 raise e.KudosUpfront(
                     required_kudos,
                     self.username,
-                    message=f"Due to heavy demand, for requests over {resolution}x{resolution} "
-                    "or over 50 steps (10 steps for LCM work, 30 steps for Stable Cascade, "
-                    "and half those steps for k_heun, dpmpp_sde, and dpm_2*) "
-                    "the client needs to already have the required kudos. "
-                    f"This request requires {required_kudos} kudos to fulfil.",
+                    message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
+                    f"to fulfill this request ({required_kudos}).",
+                    rc="SharedKeyInsufficientKudos",
                 )
+        if needs_kudos is True:
+            if required_kudos > self.user.kudos:
+                if self.args.allow_downgrade:
+                    self.wp.downgrade(resolution)
+                else:
+                    self.wp.delete()
+                    raise e.KudosUpfront(
+                        required_kudos,
+                        self.username,
+                        message=f"Due to heavy demand, for requests over {resolution}x{resolution} "
+                        "or over 50 steps (10 steps for LCM work, 30 steps for Stable Cascade, "
+                        "and half those steps for k_heun, dpmpp_sde, and dpm_2*) "
+                        "the client needs to already have the required kudos. "
+                        f"This request requires {required_kudos} kudos to fulfil.",
+                    )
         if self.wp.params["steps"] >= 300:
             print_args = self.args.copy()
             print_args["apikey"] = "REDACTED"
@@ -333,7 +339,11 @@ class ImageAsyncGenerate(GenerateTemplate):
                         "Inpainting requests must either include a mask, or an alpha channel.",
                         rc="InpaintingMissingMask",
                     )
-        self.wp.activate(self.source_image, self.source_mask)
+        self.wp.activate(
+            downgrade_wp_priority=self.downgrade_wp_priority,
+            source_image=self.source_image,
+            source_mask=self.source_mask,
+        )
 
 
 class ImageAsyncStatus(Resource):

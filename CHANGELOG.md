@@ -4,6 +4,8 @@
 
 * Shared Keys details now include their name
 * Allow customizing horde model reference locations
+* Added allow_downgrade on the async/generate payloads which allows the horde to automatically downgrade requests when the requesting user doesn't have enough kudos
+* allow_downgrade on empty shared keys, will also downgrade the priority of the request to anon
 
 # 4.32.2
 

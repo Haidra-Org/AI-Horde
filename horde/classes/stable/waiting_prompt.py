@@ -219,10 +219,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([payload,prompt_payload])
         return prompt_payload
 
-    def activate(self, source_image=None, source_mask=None):
+    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate()
+        super().activate(downgrade_wp_priority)
         if source_image or source_mask:
             self.source_image = source_image
             self.source_mask = source_mask
@@ -371,6 +371,38 @@ class ImageWaitingPrompt(WaitingPrompt):
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
         return (False, max_res)
+
+    def downgrade(self, max_resolution):
+        """Ensures this WP requirements are not exceeding upfront kudos requirements"""
+        self.slow_workers = True
+        downgraded = False
+        while self.width * self.height > max_resolution * max_resolution:
+            downgraded = True
+            self.width -= 64
+            self.height -= 64
+            # Break, just in case we went too low
+            if self.width * self.height < 512 * 512:
+                break
+        max_steps = 50
+        if any(model_reference.get_model_baseline(mn) in ["stable_cascade"] for mn in self.get_model_names()):
+            max_steps = 30
+        if self.params.get("control_type"):
+            max_steps = 20
+        if self.is_using_lcm():
+            max_steps = 10
+        while self.get_accurate_steps() > max_steps:
+            downgraded = True
+            self.params["steps"] -= 1
+            if self.params["steps"] < 5:
+                break
+        if downgraded:
+            self.params["width"] = self.width
+            self.params["height"] = self.height
+            self.gen_payload["height"] = self.height
+            self.gen_payload["width"] = self.width
+            self.gen_payload["ddim_steps"] = self.params["steps"]
+            logger.info(f"Image WP {self.id} was downgraded to {self.width}x{self.height}x{self.params['steps']}")
+            db.session.commit()
 
     def is_using_lcm(self):
         if self.params["sampler_name"] == "lcm":

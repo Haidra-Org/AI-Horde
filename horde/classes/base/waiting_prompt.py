@@ -156,7 +156,7 @@ class WaitingPrompt(db.Model):
             model_entry = WPModels(model=model, wp_id=self.id)
             db.session.add(model_entry)
 
-    def activate(self):
+    def activate(self, downgrade_wp_priority=False):
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         """
@@ -165,6 +165,9 @@ class WaitingPrompt(db.Model):
             self.extra_priority = round(self.user.kudos / 1000)
         elif self.user.flagged:
             self.extra_priority = -100
+        elif downgrade_wp_priority:
+            logger.debug("Started WP with downgraded priority to Anon")
+            self.extra_priority = -50
         else:
             self.extra_priority = self.user.kudos
         # This is an extra cost for the operation as a whole, to represent the infrastructure costs
