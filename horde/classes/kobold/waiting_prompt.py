@@ -57,10 +57,10 @@ class TextWaitingPrompt(WaitingPrompt):
         self.gen_payload["n"] = 1
         db.session.commit()
 
-    def activate(self, source_image=None, source_mask=None):
+    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate()
+        super().activate(downgrade_wp_priority)
         proxied_account = ""
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
@@ -107,8 +107,7 @@ class TextWaitingPrompt(WaitingPrompt):
         return (False, max_tokens)
 
     def downgrade(self, max_tokens):
-        """Ensures this WP requirements are not exceeding upfront kudos requirements
-        """
+        """Ensures this WP requirements are not exceeding upfront kudos requirements"""
         self.slow_workers = True
         while self.max_length > max_tokens:
             self.max_length = max_tokens
@@ -116,7 +115,6 @@ class TextWaitingPrompt(WaitingPrompt):
             self.gen_payload["max_length"] = self.max_length
             logger.info(f"Text WP {self.id} was downgraded to {self.max_length} tokens")
         db.session.commit()
-
 
     def calculate_kudos(self):
         # Slimmed down version of procgen.get_gen_kudos()

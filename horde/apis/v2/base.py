@@ -143,6 +143,8 @@ class GenerateTemplate(Resource):
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
         # logger.warning(datetime.utcnow())
+        self.downgrade_wp_priority = False
+        # logger.warning(datetime.utcnow())
 
     # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):
@@ -174,9 +176,12 @@ class GenerateTemplate(Resource):
             if self.args.apikey:
                 self.sharedkey = database.find_sharedkey(self.args.apikey)
                 if self.sharedkey:
-                    is_valid, error_msg = self.sharedkey.is_valid()
+                    is_valid, error_msg, rc = self.sharedkey.is_valid()
                     if not is_valid:
-                        raise e.Forbidden(error_msg)
+                        if rc == "SharedKeyEmpty" and self.args.allow_downgrade:
+                            self.downgrade_wp_priority = True
+                        else:
+                            raise e.Forbidden(message=error_msg, rc=rc)
                     self.user = self.sharedkey.user
                 if not self.user:
                     self.user = database.find_user_by_api_key(self.args.apikey)
@@ -184,7 +189,7 @@ class GenerateTemplate(Resource):
             if not self.user:
                 raise e.InvalidAPIKey("generation")
             if not self.user.service and self.args["proxied_account"]:
-                raise e.BadRequest("Only service accounts can provide a proxied_account value.")
+                raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
             if self.user.education or self.user.trusted:
                 lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
@@ -213,7 +218,7 @@ class GenerateTemplate(Resource):
             if self.args.params:
                 n = self.args.params.get("n", 1)
             if n > 1 and self.args["disable_batching"] is True and not self.user.trusted and not patrons.is_patron(self.user.id):
-                raise e.BadRequest("Only trusted users and patreon supporters can disable batching.")
+                raise e.BadRequest(message="Only trusted users and patreon supporters can disable batching.", rc="RequiresTrust")
             user_limit = self.user.get_concurrency(self.args["models"], database.retrieve_available_models)
             # logger.warning(datetime.utcnow())
             if wp_count + n > user_limit:
@@ -319,7 +324,7 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
-        self.wp.activate()
+        self.wp.activate(self.downgrade_wp_priority)
 
 
 class SyncGenerate(GenerateTemplate):
@@ -394,9 +399,7 @@ class JobPopTemplate(Resource):
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
         pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
-        if any(
-            (u == '' or not u.isdigit) for u in pre_priority_user_ids
-        ):
+        if any((u == "" or not u.isdigit) for u in pre_priority_user_ids):
             raise e.BadRequest(
                 message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
                 rc="InvalidPriorityUsername",

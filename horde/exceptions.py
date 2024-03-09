@@ -76,6 +76,8 @@ KNOWN_RC = [
     "TooManyNewIPs",
     "KudosUpfront",
     "SharedKeyEmpty",
+    "SharedKeyExpired",
+    "SharedKeyInsufficientKudos",
     "InvalidJobID",
     "RequestNotFound",
     "WorkerNotFound",
@@ -129,6 +131,8 @@ KNOWN_RC = [
     "TilingMismatch",
     "EducationCannotSendKudos",
     "InvalidPriorityUsername",
+    "OnlyServiceAccountProxy",
+    "RequiresTrust",
 ]
 
 

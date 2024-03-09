@@ -147,3 +147,7 @@ The errors returned by the AI horde are always in this json format
 | HiResMismatch | HiRes fix cannot be used in combination with this model |
 | EducationCannotSendKudos | Education accounts cannot transfer kudos out |
 | InvalidPriorityUsername | Prioritized user format wrong |
+| SharedKeyExpired | This shared key has expired |
+| SharedKeyInsufficientKudos | This Shared key has insufficient kudos for this request |
+| OnlyServiceAccountProxy | This request requires a Service Account |
+| RequiresTrust | This request requires the user to be trusted or a patreon |

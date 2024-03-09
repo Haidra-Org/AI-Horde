@@ -170,9 +170,9 @@ class UserSharedKey(db.Model):
 
     def is_valid(self):
         if self.kudos == 0:
-            return False, "This shared key has run out of kudos."
+            return False, "This shared key has run out of kudos.", "SharedKeyEmpty"
         if self.expiry is not None and self.expiry < datetime.utcnow():
-            return False, "This shared key has expired"
+            return False, "This shared key has expired", "SharedKeyExpired"
         else:
             return True, None
 

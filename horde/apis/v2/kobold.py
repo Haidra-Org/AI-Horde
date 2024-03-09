@@ -107,14 +107,17 @@ class TextAsyncGenerate(GenerateTemplate):
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
-            self.wp.delete()
-            raise e.KudosUpfront(
-                required_kudos,
-                self.username,
-                message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
-                f"to fulfill this reques ({required_kudos}).",
-                rc="SharedKeyEmpty",
-            )
+            if self.args.allow_downgrade:
+                self.downgrade_wp_priority = True
+            else:
+                self.wp.delete()
+                raise e.KudosUpfront(
+                    required_kudos,
+                    self.username,
+                    message=f"This shared key does not have enough remaining kudos ({self.sharedkey.kudos}) "
+                    f"to fulfill this reques ({required_kudos}).",
+                    rc="SharedKeyInsufficientKudos",
+                )
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         if needs_kudos:
             if required_kudos > self.user.kudos:
