@@ -84,7 +84,8 @@ class ProcessingGeneration(db.Model):
         # We return -1 to know to send a different error
         if self.is_faulted():
             return -1
-        self.generation = generation
+        # Sanitize NUL char away from string literal we store in the DB
+        self.generation = generation.replace("\x00", "\uFFFD")
         # Support for two typical properties
         self.seed = kwargs.get("seed", None)
         self.gen_metadata = kwargs.get("gen_metadata", None)
