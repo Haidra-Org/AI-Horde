@@ -118,14 +118,17 @@ class TextAsyncGenerate(GenerateTemplate):
         needs_kudos, tokens = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         if needs_kudos:
             if required_kudos > self.user.kudos:
-                self.wp.delete()
-                raise e.KudosUpfront(
-                    required_kudos,
-                    self.username,
-                    message=f"Due to heavy demand, for requests over {tokens} tokens, "
-                    "the client needs to already have the required kudos. "
-                    f"This request requires {required_kudos} kudos to fulfil.",
-                )
+                if self.args.allow_downgrade:
+                    self.wp.downgrade(tokens)
+                else:
+                    self.wp.delete()
+                    raise e.KudosUpfront(
+                        required_kudos,
+                        self.username,
+                        message=f"Due to heavy demand, for requests over {tokens} tokens, "
+                        "the client needs to already have the required kudos. "
+                        f"This request requires {required_kudos} kudos to fulfil.",
+                    )
 
         if self.sharedkey:
             is_in_limit, fail_message = self.sharedkey.is_job_within_limits(

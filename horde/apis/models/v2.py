@@ -104,6 +104,13 @@ class Parsers:
             required=False,
             location="json",
         )
+        self.generate_parser.add_argument(
+            "allow_downgrade",
+            type=bool,
+            default=False,
+            required=False,
+            location="json",
+        )
         self.generate_parser.add_argument("webhook", type=str, required=False, location="json")
 
         # The parser for RequestPop

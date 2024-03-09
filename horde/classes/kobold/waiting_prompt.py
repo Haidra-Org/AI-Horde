@@ -106,6 +106,18 @@ class TextWaitingPrompt(WaitingPrompt):
             return (True, max_tokens)
         return (False, max_tokens)
 
+    def downgrade(self, max_tokens):
+        """Ensures this WP requirements are not exceeding upfront kudos requirements
+        """
+        self.slow_workers = True
+        while self.max_length > max_tokens:
+            self.max_length = max_tokens
+            self.params["max_length"] = self.max_length
+            self.gen_payload["max_length"] = self.max_length
+            logger.info(f"Text WP {self.id} was downgraded to {self.max_length} tokens")
+        db.session.commit()
+
+
     def calculate_kudos(self):
         # Slimmed down version of procgen.get_gen_kudos()
         # As we don't know the worker's trusted status.
