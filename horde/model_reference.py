@@ -1,3 +1,5 @@
+import os
+
 import requests
 
 from horde.logger import logger
@@ -31,11 +33,17 @@ class ModelReference(PrimaryTimedFunction):
         for _riter in range(10):
             try:
                 self.reference = requests.get(
-                    "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json",
+                    os.getenv(
+                        "HORDE_IMAGE_COMPVIS_REFERENCE",
+                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json",
+                    ),
                     timeout=2,
                 ).json()
                 diffusers = requests.get(
-                    "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/diffusers.json",
+                    os.getenv(
+                        "HORDE_IMAGE_DIFFUSERS_REFERENCE",
+                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/diffusers.json",
+                    ),
                     timeout=2,
                 ).json()
                 self.reference.update(diffusers)
@@ -60,7 +68,10 @@ class ModelReference(PrimaryTimedFunction):
         for _riter in range(10):
             try:
                 self.text_reference = requests.get(
-                    "https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json",
+                    os.getenv(
+                        "HORDE_IMAGE_LLM_REFERENCE",
+                        "https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json",
+                    ),
                     timeout=2,
                 ).json()
                 # logger.debug(self.reference)

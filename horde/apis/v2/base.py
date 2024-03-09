@@ -2734,7 +2734,7 @@ class SharedKeySingle(Resource):
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(404, "Shared Key Not Found", models.response_model_error)
     def get(self, sharedkey_id=""):
-        """Get details about an existing Shared Key for this user"""
+        """Get details about an existing Shared Key"""
         self.args = self.get_parser.parse_args()
         sharedkey = database.find_sharedkey(sharedkey_id)
         if not sharedkey:

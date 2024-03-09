@@ -758,6 +758,7 @@ class Models:
                 "username": fields.String(
                     description="The owning user's unique Username. It is a combination of their chosen alias plus their ID.",
                 ),
+                "name": fields.String(description="The Shared Key Name."),
                 "kudos": fields.Integer(description="The Kudos limit assigned to this key."),
                 "expiry": fields.DateTime(
                     dt_format="rfc822",
