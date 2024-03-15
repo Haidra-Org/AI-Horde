@@ -1,5 +1,6 @@
 import json
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta
 
@@ -256,6 +257,12 @@ def worker_exists(worker_id):
 def get_available_models(filter_model_name: str = None):
     models_dict = {}
     available_worker_models = None
+
+    if filter_model_name is not None:
+        # Decode the filter_model_name from URL encoding
+        # e.g., `aphrodite%2FNeverSleep%2FNoromaid-13b-v0.3` will become `aphrodite/NeverSleep/Noromaid-13b-v0.3`.
+        filter_model_name = urllib.parse.unquote(filter_model_name)
+
     for model_type, worker_class, wp_class, procgen_class in [
         ("image", ImageWorker, ImageWaitingPrompt, ImageProcessingGeneration),
         ("text", TextWorker, TextWaitingPrompt, TextProcessingGeneration),
