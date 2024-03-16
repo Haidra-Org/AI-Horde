@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.32.5
+
+* parses url-escaped values for model names
+* Increased max `max_length` to 1024
+
 # 4.32.4
 
 * Fix crash when receiving generation with NUL char
