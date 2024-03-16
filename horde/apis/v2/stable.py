@@ -148,6 +148,14 @@ class ImageAsyncGenerate(GenerateTemplate):
                 self.warnings.add(WarningMessage.CfgScaleTooSmall)
             if "max_cfg_scale" in model_req_dict and model_req_dict["max_cfg_scale"] < self.params.get("cfg_scale", 7.5):
                 self.warnings.add(WarningMessage.CfgScaleTooLarge)
+            if "samplers" in model_req_dict and self.params.get("sampler_name", "k_euler_a") not in model_req_dict["samplers"]:
+                self.warnings.add(WarningMessage.SamplerMismatch)
+            # FIXME: Scheduler workaround until we support multiple schedulers
+            scheduler = 'karras'
+            if not self.params.get("karras", True):
+                scheduler = 'simple'
+            if "schedulers" in model_req_dict and scheduler not in model_req_dict["schedulers"]:
+                self.warnings.add(WarningMessage.SchedulerMismatch)
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.", rc="ControlNetUnsupported")
         # if self.params.get("image_is_control"):

@@ -57,3 +57,5 @@ class WarningMessage(ReturnedEnum):
     CfgScaleMismatch = "The cfg scale specified for this generation does not match the requirements of one of the requested models."
     CfgScaleTooSmall = "The cfg_scale specified for this generation is too small for this model."
     CfgScaleTooLarge = "The cfg_scale specified for this generation is too large for this model."
+    SamplerMismatch = "The requested sampler does not match the requirements for one of the requested models."
+    SchedulerMismatch = "The requested scheduler does not match the requirements for one of the requested models."
