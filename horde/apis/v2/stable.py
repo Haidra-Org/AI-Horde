@@ -30,6 +30,7 @@ from horde.model_reference import model_reference
 from horde.patreon import patrons
 from horde.utils import hash_dictionary
 from horde.vars import horde_title
+from horde.enums import WarningMessage
 
 models = ImageModels(api)
 parsers = ImageParsers()
@@ -82,10 +83,13 @@ class ImageAsyncGenerate(GenerateTemplate):
             return ret_dict, 200
         ret_dict = {
             "id": self.wp.id,
-            "kudos": round(self.kudos),
+            "kudos": round(self.kudos),            
         }
         if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict["message"] = self.get_size_too_big_message()
+            self.warnings.add(WarningMessage.NoAvailableWorker)
+        if len(self.warnings) > 0:
+            ret_dict["warnings"] = list(self.warnings)
         return ret_dict, 202
 
     def get_size_too_big_message(self):
@@ -131,6 +135,19 @@ class ImageAsyncGenerate(GenerateTemplate):
             model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models
         ):
             raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x", rc="ControlNetUnsupported")
+        for model_req_dict in [model_reference.get_model_requirements(m) for m in self.args.models]:
+            if "clip_skip" in model_req_dict and model_req_dict["clip_skip"] != self.params.get("clip_skip", 1):
+                self.warnings.add(WarningMessage.ClipSkipMismatch)
+            if "min_steps" in model_req_dict and model_req_dict["min_steps"] > self.params.get("steps", 30):
+                self.warnings.add(WarningMessage.StepsTooFew)
+            if "max_steps" in model_req_dict and model_req_dict["max_steps"] < self.params.get("steps", 30):
+                self.warnings.add(WarningMessage.StepsTooMany)
+            if "cfg_scale" in model_req_dict and model_req_dict["cfg_scale"] != self.params.get("cfg_scale", 7.5):
+                self.warnings.add(WarningMessage.CfgScaleMismatch)
+            if "min_cfg_scale" in model_req_dict and model_req_dict["min_cfg_scale"] > self.params.get("cfg_scale", 7.5):
+                self.warnings.add(WarningMessage.CfgScaleTooSmall)
+            if "max_cfg_scale" in model_req_dict and model_req_dict["max_cfg_scale"] < self.params.get("cfg_scale", 7.5):
+                self.warnings.add(WarningMessage.CfgScaleTooLarge)
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.", rc="ControlNetUnsupported")
         # if self.params.get("image_is_control"):

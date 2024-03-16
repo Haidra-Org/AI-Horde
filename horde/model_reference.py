@@ -18,12 +18,6 @@ class ModelReference(PrimaryTimedFunction):
     # However due to a racing or caching issue, this causes them to still pick jobs using those models
     # Need to investigate more to remove this workaround
     testing_models = {
-        "Juggernaut XL",
-        "Animagine XL",
-        "DreamShaper XL",
-        "Stable Cascade 1.0",
-        "Anime Illust Diffusion XL",
-        "Pony Diffusion XL",
     }
 
     def call_function(self):
@@ -93,6 +87,10 @@ class ModelReference(PrimaryTimedFunction):
     def get_model_baseline(self, model_name):
         model_details = self.reference.get(model_name, {})
         return model_details.get("baseline", "stable diffusion 1")
+
+    def get_model_requirements(self, model_name):
+        model_details = self.reference.get(model_name, {})
+        return model_details.get("requirements", {})
 
     def get_model_csam_whitelist(self, model_name):
         model_details = self.reference.get(model_name, {})

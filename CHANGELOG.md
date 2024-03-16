@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.33.0
+
+* When there is any potential issues with the request, the warnings key will be returned containing an array of potential issues. This should be returned to the user to inform them to potentially cancel the request in advance.
+
 # 4.32.5
 
 * parses url-escaped values for model names

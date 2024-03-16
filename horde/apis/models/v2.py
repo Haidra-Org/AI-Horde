@@ -2,6 +2,7 @@ from flask_restx import fields, reqparse
 
 from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
+from horde.enums import WarningMessage
 
 
 class Parsers:
@@ -309,6 +310,18 @@ class Models:
                 "generations": fields.List(fields.Nested(self.response_model_generation_result)),
             },
         )
+        self.response_model_warning = api.model(
+            "RequestSingleWarning",
+            {
+                "code": fields.String(
+                    description="A unique identifier for this warning.",
+                    enum=[i.name for i in WarningMessage]
+                ),
+                "message": fields.String(
+                    description="Something that you should be aware about this request, in plain text.",
+                ),
+            },
+        )        
         self.response_model_async = api.model(
             "RequestAsync",
             {
@@ -320,6 +333,7 @@ class Models:
                     default=None,
                     description="Any extra information from the horde about this request.",
                 ),
+                "warnings": fields.List(fields.Nested(self.response_model_warning)),
             },
         )
         self.response_model_generation_payload = api.model(

@@ -114,6 +114,7 @@ class GenerateTemplate(Resource):
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.params = {}
+        self.warnings = set()
         if self.args.params:
             self.params = self.args.params
         self.models = []
