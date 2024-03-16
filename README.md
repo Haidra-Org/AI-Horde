@@ -1,8 +1,9 @@
 # AI Horde
 
-A massive crowdsourced distributed inference cluster for AI Models. This software can support both Image and Text generation.
-It allows people without a powerful GPU to use Stable Diffusion or Large Language Models like Pygmalion/Llama by relying on spare/idle resources provided by the community.
-It also allows non-python clients, such as games and apps, to use AI-provided generations.
+The AI Horde is an enterprise-level ML-Ops crowdsourced distributed inference cluster for AI Models. This middleware can support both Image and Text generation. It is infinitelly scalable and supports seamless drop-in/drop-out of compute resources. 
+The [Public version](https://aihorde.net) allows people without a powerful GPU to use Stable Diffusion or Large Language Models like Pygmalion/Llama by relying on spare/idle resources provided by the communit and also allows non-python clients, such as games and apps, to use AI-provided generations.
+
+The AI Horde middleware itself can also be run privately inside a closed environment within any enterprise. It can be installed within hours and can scale your ML solution within days of deployment. 
 
 For more questions, check the [FAQ](FAQ.md)
 
