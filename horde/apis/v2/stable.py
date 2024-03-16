@@ -22,6 +22,7 @@ from horde.classes.stable.worker import ImageWorker
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
+from horde.enums import WarningMessage
 from horde.flask import HORDE, cache, db
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
@@ -30,7 +31,6 @@ from horde.model_reference import model_reference
 from horde.patreon import patrons
 from horde.utils import hash_dictionary
 from horde.vars import horde_title
-from horde.enums import WarningMessage
 
 models = ImageModels(api)
 parsers = ImageParsers()
@@ -83,7 +83,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             return ret_dict, 200
         ret_dict = {
             "id": self.wp.id,
-            "kudos": round(self.kudos),            
+            "kudos": round(self.kudos),
         }
         if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict["message"] = self.get_size_too_big_message()
