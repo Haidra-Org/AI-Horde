@@ -1,8 +1,8 @@
 from flask_restx import fields, reqparse
 
+from horde.enums import WarningMessage
 from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
-from horde.enums import WarningMessage
 
 
 class Parsers:
@@ -313,15 +313,12 @@ class Models:
         self.response_model_warning = api.model(
             "RequestSingleWarning",
             {
-                "code": fields.String(
-                    description="A unique identifier for this warning.",
-                    enum=[i.name for i in WarningMessage]
-                ),
+                "code": fields.String(description="A unique identifier for this warning.", enum=[i.name for i in WarningMessage]),
                 "message": fields.String(
                     description="Something that you should be aware about this request, in plain text.",
                 ),
             },
-        )        
+        )
         self.response_model_async = api.model(
             "RequestAsync",
             {

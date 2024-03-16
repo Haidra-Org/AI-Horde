@@ -17,8 +17,7 @@ class ModelReference(PrimaryTimedFunction):
     # Workaround because users lacking customizer role are getting models not in the reference stripped away.
     # However due to a racing or caching issue, this causes them to still pick jobs using those models
     # Need to investigate more to remove this workaround
-    testing_models = {
-    }
+    testing_models = {}
 
     def call_function(self):
         """Retrieves to nataili and text model reference and stores in it a var"""

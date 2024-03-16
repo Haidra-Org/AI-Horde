@@ -34,8 +34,8 @@ class UserRoleTypes(enum.Enum):
     SERVICE = 7
     EDUCATION = 8
 
+
 class ReturnedEnum(enum.Enum):
-    
     @property
     def code(self):
         return self.name
@@ -44,12 +44,13 @@ class ReturnedEnum(enum.Enum):
     def message(self):
         return self.value
 
+
 class WarningMessage(ReturnedEnum):
     NoAvailableWorker = (
-            "Warning: No available workers can fulfill this request. "
-            "It will expire in 20 minutes unless a worker appears. "
-            "Please confider reducing its size of the request or choosing a different model."
-        )
+        "Warning: No available workers can fulfill this request. "
+        "It will expire in 20 minutes unless a worker appears. "
+        "Please confider reducing its size of the request or choosing a different model."
+    )
     ClipSkipMismatch = "The clip skip specified for this generation does not match the requirements of one of the requested models."
     StepsTooFew = "The steps specified for this generation are too few for this model."
     StepsTooMany = "The steps specified for this generation are too many for this model."
