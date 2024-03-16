@@ -152,7 +152,7 @@ class TextModels(v2.Models):
                 ),
                 "max_length": fields.Integer(
                     min=16,
-                    max=512,
+                    max=1024,
                     default=80,
                     description="Number of tokens to generate.",
                 ),
