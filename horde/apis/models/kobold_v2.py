@@ -259,6 +259,7 @@ class TextModels(v2.Models):
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
+                "extra_source_images": fields.List(fields.Nested(self.model_extra_source_images)),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
                 "softprompt": fields.String(description="The soft prompt requested for this generation."),
                 "model": fields.String(description="Which of the available models to use for this request."),
@@ -325,6 +326,7 @@ class TextModels(v2.Models):
                         "from which this request is coming from."
                     ),
                 ),
+                "extra_source_images": fields.List(fields.Nested(self.model_extra_source_images)),
                 "disable_batching": fields.Boolean(
                     default=False,
                     description=(

@@ -28,6 +28,7 @@ from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.detection import prompt_checker
 from horde.flask import HORDE, cache, db
+from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.patreon import patrons
@@ -325,7 +326,14 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden and extended
     def activate_waiting_prompt(self):
-        self.wp.activate(self.downgrade_wp_priority)
+        if self.args.extra_source_images:
+            for iiter, eimg in enumerate(self.args.extra_source_images):
+                (
+                    eimg["image"],
+                    _,
+                    _,
+                ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
+        self.wp.activate(self.downgrade_wp_priority, extra_source_images=self.args.extra_source_images)
 
 
 class SyncGenerate(GenerateTemplate):

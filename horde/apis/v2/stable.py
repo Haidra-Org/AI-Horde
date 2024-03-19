@@ -151,9 +151,9 @@ class ImageAsyncGenerate(GenerateTemplate):
             if "samplers" in model_req_dict and self.params.get("sampler_name", "k_euler_a") not in model_req_dict["samplers"]:
                 self.warnings.add(WarningMessage.SamplerMismatch)
             # FIXME: Scheduler workaround until we support multiple schedulers
-            scheduler = 'karras'
+            scheduler = "karras"
             if not self.params.get("karras", True):
-                scheduler = 'simple'
+                scheduler = "simple"
             if "schedulers" in model_req_dict and scheduler not in model_req_dict["schedulers"]:
                 self.warnings.add(WarningMessage.SchedulerMismatch)
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
@@ -184,6 +184,12 @@ class ImageAsyncGenerate(GenerateTemplate):
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).", rc="BadLoraVersion")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.", rc="TooManyTIs")
+        if self.args.source_processing == "remix" and any(
+            not model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models
+        ):
+            raise e.BadRequest("Image Remix is only available for Stable Cascade models.", rc="InvalidRemix")
+        if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0 and self.args.source_processing != "remix":
+            raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel(
                 "Invalid ControlNet parameters - cannot send inital map and return the same map",
@@ -364,10 +370,19 @@ class ImageAsyncGenerate(GenerateTemplate):
                         "Inpainting requests must either include a mask, or an alpha channel.",
                         rc="InpaintingMissingMask",
                     )
+        if self.args.extra_source_images:
+            for iiter, eimg in enumerate(self.args.extra_source_images):
+                (
+                    eimg["image"],
+                    _,
+                    _,
+                ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
+
         self.wp.activate(
             downgrade_wp_priority=self.downgrade_wp_priority,
             source_image=self.source_image,
             source_mask=self.source_mask,
+            extra_source_images=self.args.extra_source_images,
         )
 
 

@@ -150,20 +150,23 @@ class TextAsyncGenerate(GenerateTemplate):
     def validate(self):
         super().validate()
         if self.params.get("max_context_length", 1024) < self.params.get("max_length", 80):
-            raise e.BadRequest("You cannot request more tokens than your context length.")
+            raise e.BadRequest("You cannot request more tokens than your context length.", rc="TokenOverflow")
         if "sampler_order" in self.params and len(set(self.params["sampler_order"])) < 7:
             raise e.BadRequest(
                 "When sending a custom sampler order, you need to specify all possible samplers in the order",
+                rc="MissingFullSamplerOrder",
             )
+        if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
+            raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
         if "stop_sequence" in self.params:
             stop_seqs = set(self.params["stop_sequence"])
             if len(stop_seqs) > 128:
-                raise e.BadRequest("Too many stop sequences specified (max allowed is 128).")
+                raise e.BadRequest("Too many stop sequences specified (max allowed is 128).", rc="TooManyStopSequences")
             total_stop_seq_len = 0
             for seq in stop_seqs:
                 total_stop_seq_len += len(seq)
             if total_stop_seq_len > 2000:
-                raise e.BadRequest("Your total stop sequence length exceeds the allowed limit (2000 chars).")
+                raise e.BadRequest("Your total stop sequence length exceeds the allowed limit (2000 chars).", rc="ExcessiveStopSequence")
 
     def get_hashed_params_dict(self):
         gen_payload = self.params.copy()

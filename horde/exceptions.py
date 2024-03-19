@@ -133,6 +133,12 @@ KNOWN_RC = [
     "InvalidPriorityUsername",
     "OnlyServiceAccountProxy",
     "RequiresTrust",
+    "InvalidRemixModel",
+    "InvalidExtraSourceImages",
+    "MissingFullSamplerOrder",
+    "TooManyStopSequences",
+    "ExcessiveStopSequence",
+    "TokenOverflow",
 ]
 
 
