@@ -15,6 +15,7 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
 from horde.utils import get_db_uuid, get_expiry_date
+from horde.bridge_reference import check_bridge_capability
 
 procgen_classes = {
     "template": ProcessingGeneration,
@@ -81,7 +82,7 @@ class WaitingPrompt(db.Model):
 
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
     gen_payload = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
-    extra_source_images = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
+    extra_source_images = db.Column(MutableDict.as_mutable(json_column_type), nullable=True)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
@@ -162,9 +163,8 @@ class WaitingPrompt(db.Model):
         Before we add it to the queue
         """
         self.active = True
-        if extra_source_images:
+        if extra_source_images is not None and len(extra_source_images) > 0:
             self.extra_source_images = extra_source_images
-            db.session.commit()
         if self.user.flagged and self.user.kudos > 10:
             self.extra_priority = round(self.user.kudos / 1000)
         elif self.user.flagged:
@@ -276,6 +276,9 @@ class WaitingPrompt(db.Model):
             "model": procgen_list[0].model,
             "ids": [g.id for g in procgen_list],
         }
+        if self.extra_source_images and check_bridge_capability("extra_source_images", procgen_list[0].worker.bridge_agent):
+            prompt_payload["extra_source_images"] = self.extra_source_images
+
         return prompt_payload
 
     def is_completed(self):
