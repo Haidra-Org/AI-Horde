@@ -202,7 +202,11 @@ class KudosModel:
             payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
         )
         data_control_types.append(payload.get("control_type", "None"))
-        data_source_processing_types.append(payload.get("source_processing", "txt2img"))
+        sp = payload.get("source_processing", "txt2img")
+        # Little hack until new model is out
+        if sp == "remix":
+            sp = "img2img"
+        data_source_processing_types.append(sp)
         data_post_processors = payload.get("post_processing", [])[:]
         # logger.debug([data,data_control_types,data_source_processing_types,data_post_processors])
 
