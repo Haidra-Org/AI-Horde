@@ -170,8 +170,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with SDXL currently.", rc="ControlNetMismatch")
         if any(model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models):
-            if self.args.source_image:
-                raise e.BadRequest("Img2Img does not work with Stable Cascade currently.", rc="Img2ImgMismatch")
             if self.params.get("hires_fix", False) is True:
                 raise e.BadRequest("hires fix does not work with Stable Cascade currently.", rc="HiResFixMismatch")
             if "control_type" in self.params:
