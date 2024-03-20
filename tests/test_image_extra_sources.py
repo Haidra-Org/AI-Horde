@@ -5,7 +5,7 @@ from io import BytesIO
 import base64
 
 def load_image_as_b64(image_path):
-    final_src_img = Image.open('img_stable/0.jpg')
+    final_src_img = Image.open(image_path)
     buffer = BytesIO()
     final_src_img.save(buffer, format="Webp", quality=50, exact=True)
     return base64.b64encode(buffer.getvalue()).decode("utf8")
@@ -22,11 +22,13 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "r2": True,
         "shared": True,
         "trusted_workers": True,
-        "width": 1024,
-        "height": 1024,
-        "steps": 20,
-        "cfg_scale": 4,
-        "sampler_name": "k_euler_a",
+        "params": {
+            "width": 1024,
+            "height": 1024,
+            "steps": 20,
+            "cfg_scale": 4,
+            "sampler_name": "k_euler_a",
+        },
         "models": TEST_MODELS,
         "source_image": load_image_as_b64('img_stable/0.jpg'),
         "source_processing": "remix",
@@ -50,7 +52,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     print(async_results)
     pop_dict = {
         "name": "CICD Fake Dreamer",
-        "models": ["Fustercluck", "AlbedoBase XL (SDXL)"],
+        "models": TEST_MODELS,
         "bridge_agent": "AI Horde Worker reGen:5.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "amount": 10,
         "max_pixels": 4194304,
