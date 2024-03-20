@@ -471,7 +471,7 @@ class ImageModels(v2.Models):
                 "source_processing": fields.String(
                     required=False,
                     default="img2img",
-                    enum=["img2img", "inpainting", "outpainting"],
+                    enum=["img2img", "inpainting", "outpainting", "remix"],
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
@@ -584,7 +584,7 @@ class ImageModels(v2.Models):
                 "source_processing": fields.String(
                     required=False,
                     default="img2img",
-                    enum=["img2img", "inpainting", "outpainting"],
+                    enum=["img2img", "inpainting", "outpainting", "remix"],
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
