@@ -72,14 +72,14 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         raise err
 
     pop_results = pop_req.json()
-    print(json.dumps(pop_results, indent=4))
+    # print(json.dumps(pop_results, indent=4))
 
     job_id = pop_results["id"]
     try:
         assert job_id is not None, pop_results
     except AssertionError as err:
-        # requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
-        # print("Request cancelled")
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
+        print("Request cancelled")
         raise err
     submit_dict = {
         "id": job_id,
