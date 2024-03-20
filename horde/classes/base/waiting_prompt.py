@@ -164,7 +164,7 @@ class WaitingPrompt(db.Model):
         """
         self.active = True
         if extra_source_images is not None and len(extra_source_images) > 0:
-            self.extra_source_images = json.dumps(extra_source_images)
+            self.extra_source_images = {"esi": extra_source_images}
         if self.user.flagged and self.user.kudos > 10:
             self.extra_priority = round(self.user.kudos / 1000)
         elif self.user.flagged:
@@ -277,7 +277,7 @@ class WaitingPrompt(db.Model):
             "ids": [g.id for g in procgen_list],
         }
         if self.extra_source_images and check_bridge_capability("extra_source_images", procgen_list[0].worker.bridge_agent):
-            prompt_payload["extra_source_images"] = self.extra_source_images
+            prompt_payload["extra_source_images"] = self.extra_source_images['esi']
 
         return prompt_payload
 
