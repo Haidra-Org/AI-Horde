@@ -62,11 +62,16 @@ class ImageWorker(Worker):
         if waiting_prompt.source_image and not check_bridge_capability("img2img", self.bridge_agent):
             return [False, "img2img"]
         # logger.warning(datetime.utcnow())
-        if waiting_prompt.source_processing != "img2img":
+        if waiting_prompt.source_processing in [
+            "inpainting",
+            "outpainting",
+        ]:
             if not check_bridge_capability("inpainting", self.bridge_agent):
                 return [False, "painting"]
             if not model_reference.has_inpainting_models(self.get_model_names()):
                 return [False, "models"]
+            if not self.allow_painting:
+                return [False, "painting"]
         # If the only model loaded is the inpainting ones, we skip the worker when this kind of work is not required
         if waiting_prompt.source_processing not in [
             "inpainting",
@@ -124,8 +129,6 @@ class ImageWorker(Worker):
             self.bridge_agent,
         ):
             return [False, "bridge_version"]
-        if waiting_prompt.source_processing != "img2img" and not self.allow_painting:
-            return [False, "painting"]
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.

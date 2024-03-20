@@ -49,11 +49,11 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert async_req.ok, async_req.text
     async_results = async_req.json()
     req_id = async_results["id"]
-    print(async_results)
+    # print(async_results)
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS,
-        "bridge_agent": "AI Horde Worker reGen:5.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "bridge_agent": "AI Horde Worker reGen:5.3.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "amount": 10,
         "max_pixels": 4194304,
         "allow_img2img": True,
@@ -67,7 +67,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     try:
         assert pop_req.ok, pop_req.text
     except AssertionError as err:
-        async_del = requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
         print("Request cancelled")
         raise err
 
@@ -78,8 +78,8 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     try:
         assert job_id is not None, pop_results
     except AssertionError as err:
-        async_del = requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
-        print("Request cancelled")
+        # requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
+        # print("Request cancelled")
         raise err
     submit_dict = {
         "id": job_id,

@@ -12,10 +12,13 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "r2": True,
         "shared": True,
         "trusted_workers": True,
-        "width": 1024,
-        "height": 1024,
-        "steps": 8,
-        "cfg_scale": 1.5,
+        "params": {
+            "width": 1024,
+            "height": 1024,
+            "steps": 8,
+            "cfg_scale": 1.5,
+            "sampler_name": "k_euler_a",
+        },
         "sampler_name": "k_euler_a",
         "models": TEST_MODELS,
         "loras": [{"name": "247778", "is_version": True}],
@@ -30,7 +33,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     # print(async_results)
     pop_dict = {
         "name": "CICD Fake Dreamer",
-        "models": ["Fustercluck", "AlbedoBase XL (SDXL)"],
+        "models": TEST_MODELS,
         "bridge_agent": "AI Horde Worker reGen:4.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "amount": 10,
         "max_pixels": 4194304,
