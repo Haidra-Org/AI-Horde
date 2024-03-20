@@ -224,7 +224,7 @@ class ImageWaitingPrompt(WaitingPrompt):
     def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate(downgrade_wp_priority, extra_source_images=None)
+        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images)
         if source_image or source_mask:
             self.source_image = source_image
             self.source_mask = source_mask

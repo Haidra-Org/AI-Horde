@@ -375,7 +375,6 @@ class ImageAsyncGenerate(GenerateTemplate):
                     _,
                     _,
                 ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
-        logger.debug(self.args.extra_source_images)
         self.wp.activate(
             downgrade_wp_priority=self.downgrade_wp_priority,
             source_image=self.source_image,
