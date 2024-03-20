@@ -62,12 +62,23 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "allow_lora": True,
     }
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
-    assert pop_req.ok, pop_req.text
+    try:
+        assert pop_req.ok, pop_req.text
+    except AssertionError as err:
+        async_del = requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
+        print("Request cancelled")
+        raise err
+
     pop_results = pop_req.json()
     print(json.dumps(pop_results, indent=4))
 
     job_id = pop_results["id"]
-    assert job_id is not None, pop_results
+    try:
+        assert job_id is not None, pop_results
+    except AssertionError as err:
+        async_del = requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
+        print("Request cancelled")
+        raise err
     submit_dict = {
         "id": job_id,
         "generation": "R2",

@@ -91,6 +91,7 @@ class KudosModel:
         "inpainting",
         "outpainting",
         "txt2img",
+        "remix",
     ]
 
     _model = None
