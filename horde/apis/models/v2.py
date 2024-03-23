@@ -323,6 +323,7 @@ class Models:
                 "code": fields.String(description="A unique identifier for this warning.", enum=[i.name for i in WarningMessage]),
                 "message": fields.String(
                     description="Something that you should be aware about this request, in plain text.",
+                    min_length=1,
                 ),
             },
         )

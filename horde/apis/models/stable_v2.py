@@ -182,6 +182,7 @@ class ImageModels(v2.Models):
                         "censorship",
                         "source_image",
                         "source_mask",
+                        "extra_source_images",
                         "batch_index",
                     ],
                     description="The relevance of the metadata field",
