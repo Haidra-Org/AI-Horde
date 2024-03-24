@@ -7,7 +7,8 @@ class News:
             "date_published": "2024-03-24",
             "newspiece": (
                 "The AI Horde now supports [Stable Cascade](https://stability.ai/news/introducing-stable-cascade) along with its"
-                "[image variations / remix](https://comfyanonymous.github.io/ComfyUI_examples/stable_cascade/#image-variations) capabilities!"
+                "[image variations / remix](https://comfyanonymous.github.io/ComfyUI_examples/stable_cascade/#image-variations)"
+                " capabilities!"
             ),
             "tags": ["Stable Cascade", "db0", "nlnet"],
             "importance": "Information",

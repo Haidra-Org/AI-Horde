@@ -209,7 +209,7 @@ class ImageWaitingPrompt(WaitingPrompt):
                         if src_msk:
                             prompt_payload["source_mask"] = convert_pil_to_b64(src_msk, 50)
             if self.extra_source_images and check_bridge_capability("extra_source_images", procgen.worker.bridge_agent):
-                prompt_payload["extra_source_images"] = self.extra_source_images['esi']
+                prompt_payload["extra_source_images"] = self.extra_source_images["esi"]
             # We always ask the workers to upload the generation to R2 instead of sending it back as b64
             # If they send it back as b64 anyway, we upload it outselves
             prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
