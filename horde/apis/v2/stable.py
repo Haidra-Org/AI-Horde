@@ -187,8 +187,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         ):
             raise e.BadRequest("Image Remix is only available for Stable Cascade models.", rc="InvalidRemix")
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
-            if len(self.args.extra_source_images) > 5:
-                raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages.")
             if self.args.source_processing != "remix":
                 raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):

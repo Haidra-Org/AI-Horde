@@ -192,6 +192,11 @@ class GenerateTemplate(Resource):
                 raise e.InvalidAPIKey("generation")
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
+            if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
+                if len(self.args.extra_source_images) > 5:
+                    raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages.")
+                if len(self.args.extra_source_images) > 1 and not self.user.trusted and not patrons.is_patron(self.user.id):
+                    raise e.BadRequest("Only trusted users and patrons can send more than 1 extra source images.", rc="MoreThanMinExtraSourceImage.")
             if self.user.education or self.user.trusted:
                 lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()

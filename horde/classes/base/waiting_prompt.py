@@ -163,8 +163,6 @@ class WaitingPrompt(db.Model):
         Before we add it to the queue
         """
         self.active = True
-        if extra_source_images is not None and len(extra_source_images) > 0:
-            self.extra_source_images = {"esi": extra_source_images}
         if self.user.flagged and self.user.kudos > 10:
             self.extra_priority = round(self.user.kudos / 1000)
         elif self.user.flagged:
@@ -178,6 +176,10 @@ class WaitingPrompt(db.Model):
         # and rewarding requests which bundle multiple jobs into the same payload
         # Instead of splitting them into multiples.
         horde_tax = 1
+        if extra_source_images is not None and len(extra_source_images) > 0:
+            self.extra_source_images = {"esi": extra_source_images}
+            # Extra source images add more infrastructure costs, which are represented with a kudos tax
+            horde_tax += 5 * len(extra_source_images)
         self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
         # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()
