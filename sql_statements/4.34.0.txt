@@ -1,0 +1,1 @@
+ALTER TABLE waiting_prompts ADD COLUMN extra_source_images JSONB;

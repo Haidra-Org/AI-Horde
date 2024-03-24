@@ -1,12 +1,22 @@
 import requests
+import json
+from PIL import Image
+from io import BytesIO
+import base64
 
-TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
+def load_image_as_b64(image_path):
+    final_src_img = Image.open(image_path)
+    buffer = BytesIO()
+    final_src_img.save(buffer, format="Webp", quality=50, exact=True)
+    return base64.b64encode(buffer.getvalue()).decode("utf8")
+
+TEST_MODELS = ["Stable Cascade 1.0"]
 
 
 def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625"}  # ci/cd user
     async_dict = {
-        "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
+        "prompt": "A remix",
         "nsfw": True,
         "censor_nsfw": False,
         "r2": True,
@@ -15,13 +25,22 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "params": {
             "width": 1024,
             "height": 1024,
-            "steps": 8,
-            "cfg_scale": 1.5,
+            "steps": 20,
+            "cfg_scale": 4,
             "sampler_name": "k_euler_a",
         },
-        "sampler_name": "k_euler_a",
         "models": TEST_MODELS,
-        "loras": [{"name": "247778", "is_version": True}],
+        "source_image": load_image_as_b64('img_stable/0.jpg'),
+        "source_processing": "remix",
+        "extra_source_images": [
+            {
+                "image": load_image_as_b64('img_stable/1.jpg'),
+                "strength": 0.5,
+            },
+            {
+                "image": load_image_as_b64('img_stable/2.jpg'),
+            },
+        ],
     }
     protocol = "http"
     if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
@@ -34,7 +53,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS,
-        "bridge_agent": "AI Horde Worker reGen:4.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "bridge_agent": "AI Horde Worker reGen:5.3.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "amount": 10,
         "max_pixels": 4194304,
         "allow_img2img": True,
@@ -51,6 +70,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)    
         print("Request cancelled")
         raise err
+
     pop_results = pop_req.json()
     # print(json.dumps(pop_results, indent=4))
 

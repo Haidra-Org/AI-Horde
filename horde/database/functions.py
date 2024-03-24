@@ -786,6 +786,10 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 worker.allow_painting == True,  # noqa E712
             ),
             or_(
+                ImageWaitingPrompt.extra_source_images == None,  # noqa E712
+                check_bridge_capability("extra_source_images", worker.bridge_agent),
+            ),
+            or_(
                 ImageWaitingPrompt.safe_ip == True,  # noqa E712
                 worker.allow_unsafe_ipaddr == True,  # noqa E712
             ),

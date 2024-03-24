@@ -208,6 +208,8 @@ class ImageWaitingPrompt(WaitingPrompt):
                         src_msk = download_source_mask(self.id)
                         if src_msk:
                             prompt_payload["source_mask"] = convert_pil_to_b64(src_msk, 50)
+            if self.extra_source_images and check_bridge_capability("extra_source_images", procgen.worker.bridge_agent):
+                prompt_payload["extra_source_images"] = self.extra_source_images['esi']
             # We always ask the workers to upload the generation to R2 instead of sending it back as b64
             # If they send it back as b64 anyway, we upload it outselves
             prompt_payload["r2_upload"] = generate_procgen_upload_url(str(procgen.id), self.shared)
@@ -219,10 +221,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([payload,prompt_payload])
         return prompt_payload
 
-    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None):
+    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate(downgrade_wp_priority)
+        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images)
         if source_image or source_mask:
             self.source_image = source_image
             self.source_mask = source_mask

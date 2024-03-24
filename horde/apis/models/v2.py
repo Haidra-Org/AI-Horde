@@ -38,6 +38,13 @@ class Parsers:
             location="json",
         )
         self.generate_parser.add_argument(
+            "extra_source_images",
+            type=list,
+            required=False,
+            help="Extra images to send to the worker to processing",
+            location="json",
+        )
+        self.generate_parser.add_argument(
             "trusted_workers",
             type=bool,
             required=False,
@@ -316,6 +323,7 @@ class Models:
                 "code": fields.String(description="A unique identifier for this warning.", enum=[i.name for i in WarningMessage]),
                 "message": fields.String(
                     description="Something that you should be aware about this request, in plain text.",
+                    min_length=1,
                 ),
             },
         )
@@ -1461,5 +1469,12 @@ class Models:
                     example=10,
                 ),
                 "regex": fields.String(required=True, description="The full regex for this filter type."),
+            },
+        )
+        self.model_extra_source_images = api.model(
+            "ExtraSourceImage",
+            {
+                "image": fields.String(description="The Base64-encoded webp to use for further processing."),
+                "strength": fields.Float(description="Optional field, determining the strength to use for the processing", default=1.0),
             },
         )

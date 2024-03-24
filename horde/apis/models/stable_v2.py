@@ -182,6 +182,7 @@ class ImageModels(v2.Models):
                         "censorship",
                         "source_image",
                         "source_mask",
+                        "extra_source_images",
                         "batch_index",
                     ],
                     description="The relevance of the metadata field",
@@ -471,7 +472,7 @@ class ImageModels(v2.Models):
                 "source_processing": fields.String(
                     required=False,
                     default="img2img",
-                    enum=["img2img", "inpainting", "outpainting"],
+                    enum=["img2img", "inpainting", "outpainting", "remix"],
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
@@ -481,6 +482,7 @@ class ImageModels(v2.Models):
                         "If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
                     ),
                 ),
+                "extra_source_images": fields.List(fields.Nested(self.model_extra_source_images)),
                 "r2_upload": fields.String(description="The r2 upload link to use to upload this image."),
                 "r2_uploads": fields.List(
                     fields.String(description="The r2 upload link to use to upload this image."),
@@ -583,7 +585,7 @@ class ImageModels(v2.Models):
                 "source_processing": fields.String(
                     required=False,
                     default="img2img",
-                    enum=["img2img", "inpainting", "outpainting"],
+                    enum=["img2img", "inpainting", "outpainting", "remix"],
                     description="If source_image is provided, specifies how to process it.",
                 ),
                 "source_mask": fields.String(
@@ -593,6 +595,7 @@ class ImageModels(v2.Models):
                         "If this arg is not passed, the inpainting/outpainting mask has to be embedded as alpha channel."
                     ),
                 ),
+                "extra_source_images": fields.List(fields.Nested(self.model_extra_source_images)),
                 "r2": fields.Boolean(
                     default=True,
                     description="If True, the image will be sent via cloudflare r2 download link.",
