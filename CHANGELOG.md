@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.34.0
+
+* Adds support for Stable Cascade img2img
+* Adds support for Stable Cascade remix. Allows sending up to 5 extra images to mash together.
+
 # 4.33.0
 
 * When there is any potential issues with the request, the warnings key will be returned containing an array of potential issues. This should be returned to the user to inform them to potentially cancel the request in advance.

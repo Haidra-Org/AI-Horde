@@ -4,6 +4,15 @@ from datetime import datetime
 class News:
     HORDE_NEWS = [
         {
+            "date_published": "2024-03-24",
+            "newspiece": (
+                "The AI Horde now supports [Stable Cascade](https://stability.ai/news/introducing-stable-cascade) along with its"
+                "[image variations / remix](https://comfyanonymous.github.io/ComfyUI_examples/stable_cascade/#image-variations) capabilities!"
+            ),
+            "tags": ["Stable Cascade", "db0", "nlnet"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2024-02-13",
             "newspiece": (
                 "The AI Horde now supports [custom error return codes]"
