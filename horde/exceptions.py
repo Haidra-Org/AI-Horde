@@ -135,6 +135,7 @@ KNOWN_RC = [
     "RequiresTrust",
     "InvalidRemixModel",
     "InvalidExtraSourceImages",
+    "TooManyExtraSourceImages",
     "MissingFullSamplerOrder",
     "TooManyStopSequences",
     "ExcessiveStopSequence",
