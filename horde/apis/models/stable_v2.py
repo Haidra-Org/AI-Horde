@@ -70,17 +70,6 @@ class ImageParsers(v2.Parsers):
             location="json",
         )
         self.generate_parser.add_argument(
-            "allow_downgrade",
-            type=bool,
-            default=False,
-            required=False,
-            help=(
-                "If True, The request and the user or shared key doesn't have enough upfront kudos to perform, "
-                "it will be downgraded so that it doesn't require upfront kudos. "
-            ),
-            location="json",
-        )
-        self.generate_parser.add_argument(
             "replacement_filter",
             type=bool,
             default=True,
@@ -626,6 +615,13 @@ class ImageModels(v2.Models):
                     description=(
                         "When true, This request will not use batching. This will allow you to retrieve accurate seeds. "
                         "Feature is restricted to Trusted users and Patreons."
+                    ),
+                ),
+                "allow_downgrade": fields.Boolean(
+                    default=False,
+                    description=(
+                        "When true and the request requires upfront kudos and the account does not have enough "
+                        "The request will be downgraded in steps and resolution so that it does not need upfront kudos."
                     ),
                 ),
                 "webhook": fields.String(

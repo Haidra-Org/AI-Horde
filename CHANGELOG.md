@@ -1,5 +1,10 @@
 # Changelog
 
+# 4.34.1
+
+* fix missing `allow_downgrade` doc from the API
+* Add extra horde tax per extra source image
+
 # 4.34.0
 
 * Adds support for Stable Cascade img2img
