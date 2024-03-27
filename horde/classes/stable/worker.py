@@ -201,7 +201,7 @@ class ImageWorker(Worker):
         mps = wp.get_amount_calculation_things()
         # If the job has upscalers, we increase the amount of MPS in our calculations
         # As currently the upscaling happens serially on the worker
-        pp_multiplier = 1 + (wp.count_pp() * 0.2)
+        pp_multiplier = 1 + (wp.count_pp() * 0.4)
         if wp.has_heavy_pp():
             pp_multiplier *= 1.8
         mps *= pp_multiplier
