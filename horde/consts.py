@@ -69,11 +69,13 @@ KNOWN_LCM_LORA_VERSIONS = {
     "243643",
     "225222",
     "219782",
+    "363353",
 }
 
 KNOWN_LCM_LORA_IDS = {
     "195519",
     "216190",
+    "324115",
 }
 
 WHITELISTED_VPN_IPS = [
