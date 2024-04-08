@@ -1274,17 +1274,22 @@ class ImageHordeStatsModels(Resource):
         location="headers",
     )
     get_parser.add_argument(
-        "model_type",
+        "model_state",
         required=False,
-        default='known',
+        default="known",
         type=str,
-        help="If 'known', only show stats for known models in the model reference. If 'custom' only show stats for custom models. If 'all' shows stats for all models.",
+        help=(
+            "If 'known', only show stats for known models in the model reference. "
+            "If 'custom' only show stats for custom models. "
+            "If 'all' shows stats for all models."
+        ),
         location="args",
     )
 
     @logger.catch(reraise=True)
     # @cache.cached(timeout=50, query_string=True)
     @api.expect(get_parser)
+    @api.response(400, "Validation Error", models.response_model_error)
     @api.marshal_with(
         models.response_model_stats_models,
         code=200,
@@ -1293,6 +1298,6 @@ class ImageHordeStatsModels(Resource):
     def get(self):
         """Details how many images were generated per model for the past day, month and total"""
         self.args = self.get_parser.parse_args()
-        if self.args.model_type not in ['known', 'custom', 'all']:
-            return e.BadRequest("'model_type' needs to be one of ['known', 'custom', 'all']")
-        return compile_imagegen_stats_models(self.args.model_type), 200
+        if self.args.model_state not in ["known", "custom", "all"]:
+            raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
+        return compile_imagegen_stats_models(self.args.model_state), 200

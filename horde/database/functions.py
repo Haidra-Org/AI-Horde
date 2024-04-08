@@ -366,7 +366,7 @@ def get_available_models(filter_model_name: str = None):
     return list(models_dict.values())
 
 
-def retrieve_available_models(model_type=None, min_count=None, max_count=None):
+def retrieve_available_models(model_type=None, min_count=None, max_count=None, model_state="known"):
     """Retrieves model details from Redis cache, or from DB if cache is unavailable"""
     if hr.horde_r is None:
         return get_available_models()
@@ -384,6 +384,23 @@ def retrieve_available_models(model_type=None, min_count=None, max_count=None):
         models_ret = [md for md in models_ret if md["count"] >= min_count]
     if max_count is not None:
         models_ret = [md for md in models_ret if md["count"] <= max_count]
+
+    def check_model_state(model_name):
+        if model_type is None:
+            return True
+        model_check = model_reference.is_known_image_model
+        if model_type == "text":
+            model_check = model_reference.is_known_text_model
+        if model_state == "known" and model_check(model_name):
+            return True
+        if model_state == "custom" and not model_check(model_name):
+            return True
+        if model_state == "all":
+            return True
+        return False
+
+    models_ret = [md for md in models_ret if check_model_state(md["name"])]
+
     return models_ret
 
 

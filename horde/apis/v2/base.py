@@ -1565,10 +1565,22 @@ class Models(Resource):
         help="Filter the models that have at most this amount of threads serving.",
         location="args",
     )
+    get_parser.add_argument(
+        "model_state",
+        required=False,
+        default="all",
+        type=str,
+        help=(
+            "If 'known', only show stats for known models in the model reference. "
+            "If 'custom' only show stats for custom models. "
+            "If 'all' shows stats for all models."
+        ),
+        location="args",
+    )
 
-    @logger.catch(reraise=True)
     @cache.cached(timeout=2, query_string=True)
     @api.expect(get_parser)
+    @api.response(400, "Validation Error", models.response_model_error)
     @api.marshal_with(
         models.response_model_active_model,
         code=200,
@@ -1578,10 +1590,13 @@ class Models(Resource):
     def get(self):
         """Returns a list of models active currently in this horde"""
         self.args = self.get_parser.parse_args()
+        if self.args.model_state not in ["known", "custom", "all"]:
+            raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
         models_ret = database.retrieve_available_models(
             model_type=self.args.type,
             min_count=self.args.min_count,
             max_count=self.args.max_count,
+            model_state=self.args.model_state,
         )
         return (models_ret, 200)
 
