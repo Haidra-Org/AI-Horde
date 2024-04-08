@@ -1,9 +1,11 @@
+from loguru import logger
 from datetime import datetime, timedelta
 
 from sqlalchemy import Enum, func
 
 from horde.enums import ImageGenState
 from horde.flask import db
+from horde.model_reference import model_reference
 
 
 class ImageGenerationStatisticPP(db.Model):
@@ -206,20 +208,30 @@ def compile_imagegen_stats_totals():
     return stats_dict
 
 
-def compile_imagegen_stats_models():
+def compile_imagegen_stats_models(model_type = 'known'):
     query = db.session.query(ImageGenerationStatistic.model, func.count()).group_by(ImageGenerationStatistic.model)
+    def check_model_type(model_name):
+        if model_type == 'known' and model_reference.is_known_image_model(model_name):
+            return True 
+        if model_type == 'custom' and not model_reference.is_known_image_model(model_name):
+            return True 
+        if model_type == 'all':
+            return True
+        return False
     return {
-        "total": {model: count for model, count in query.all()},
+        "total": {model: count for model, count in query.all() if check_model_type(model)},
         "day": {
             model: count
             for model, count in query.filter(
                 ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1),
             ).all()
+            if check_model_type(model)
         },
         "month": {
             model: count
             for model, count in query.filter(
                 ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
             ).all()
+            if check_model_type(model)
         },
     }

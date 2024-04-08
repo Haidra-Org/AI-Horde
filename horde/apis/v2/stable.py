@@ -1273,9 +1273,17 @@ class ImageHordeStatsModels(Resource):
         help="The client name and version",
         location="headers",
     )
+    get_parser.add_argument(
+        "model_type",
+        required=False,
+        default='known',
+        type=str,
+        help="If 'known', only show stats for known models in the model reference. If 'custom' only show stats for custom models. If 'all' shows stats for all models.",
+        location="args",
+    )
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=50)
+    # @cache.cached(timeout=50, query_string=True)
     @api.expect(get_parser)
     @api.marshal_with(
         models.response_model_stats_models,
@@ -1284,4 +1292,7 @@ class ImageHordeStatsModels(Resource):
     )
     def get(self):
         """Details how many images were generated per model for the past day, month and total"""
-        return compile_imagegen_stats_models(), 200
+        self.args = self.get_parser.parse_args()
+        if self.args.model_type not in ['known', 'custom', 'all']:
+            return e.BadRequest("'model_type' needs to be one of ['known', 'custom', 'all']")
+        return compile_imagegen_stats_models(self.args.model_type), 200
