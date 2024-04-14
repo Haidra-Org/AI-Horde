@@ -374,6 +374,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
         # if HORDE_UPFRONT_KUDOS_ON_WORKERLIST is set to 1, then specifying a worker allow/deny list requires upfront kudos
+        logger.debug(len(self.workers))
+        logger.debug(self.workers)
         if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0) == 1 and len(self.workers) > 0:
             return (True, max_res)
         return (False, max_res)
