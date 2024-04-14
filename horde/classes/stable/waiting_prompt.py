@@ -334,13 +334,16 @@ class ImageWaitingPrompt(WaitingPrompt):
         return self.kudos
 
     def require_upfront_kudos(self, counted_totals, total_threads):
-        """Returns True if this wp requires that the user already has the required kudos to fulfil it
-        else returns False
+        """Returns A tuple
+        First entry in the tuple is True if this wp requires that the user already has the required kudos to fulfil it
+        else is False
+        Second entry in the tuple is the max resolution that can be used without upfront kudos
+        Third entry in the tuple is whether the upfront kudos requirement prevents downgrading to resolve this.
         """
         queue = counted_totals["queued_requests"]
         max_res = 1024 + (total_threads * 10) - round(queue * 0.9)
         if not self.slow_workers:
-            return (True, max_res)
+            return (True, max_res, False)
         if max_res < 576:
             max_res = 576
         model_names = self.get_model_names()
@@ -360,25 +363,23 @@ class ImageWaitingPrompt(WaitingPrompt):
             max_res = 1024
         # Using more than 10 steps with LCM requires upfront kudos
         if self.is_using_lcm() and self.get_accurate_steps() > 10:
-            return (True, max_res)
+            return (True, max_res, False)
         # Stable Cascade doesn't need so many steps, so we limit it a bit to prevent abuse.
         if any(model_reference.get_model_baseline(mn) in ["stable_cascade"] for mn in model_names) and self.get_accurate_steps() > 30:
-            return (True, max_res)
+            return (True, max_res, False)
         if self.get_accurate_steps() > 50:
-            return (True, max_res)
+            return (True, max_res, False)
         if self.width * self.height > max_res * max_res:
-            return (True, max_res)
+            return (True, max_res, False)
         if self.params.get("control_type") and self.get_accurate_steps() > 20:
-            return (True, max_res)
+            return (True, max_res, False)
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
         # if HORDE_UPFRONT_KUDOS_ON_WORKERLIST is set to 1, then specifying a worker allow/deny list requires upfront kudos
-        logger.debug(len(self.workers))
-        logger.debug(os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0))
         if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0) == 1 and len(self.workers) > 0:
-            return (True, max_res)
-        return (False, max_res)
+            return (True, max_res, True)
+        return (False, max_res, False)
 
     def downgrade(self, max_resolution):
         """Ensures this WP requirements are not exceeding upfront kudos requirements"""

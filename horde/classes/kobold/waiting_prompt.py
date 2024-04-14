@@ -91,23 +91,26 @@ class TextWaitingPrompt(WaitingPrompt):
         super().record_usage(raw_things, kudos, usage_type)
 
     def require_upfront_kudos(self, counted_totals, total_threads):
-        """Returns True if this wp requires that the user already has the required kudos to fulfil it
-        else returns False
+        """Returns A tuple
+        First entry in the tuple is True if this wp requires that the user already has the required kudos to fulfil it
+        else is False
+        Second entry in the tuple is the max tokens that can be used without upfront kudos
+        Third entry in the tuple is whether the upfront kudos requirement prevents downgrading to resolve this.
         """
         queue = counted_totals["queued_text_requests"]
         max_tokens = 512 + (total_threads * 5) - round(queue * 0.9)
         # logger.debug([queue,max_tokens])
         if not self.slow_workers:
-            return (True, max_tokens)
+            return (True, max_tokens, False)
         if max_tokens < 256:
             max_tokens = 256
         if max_tokens > 512:
             max_tokens = 512
         if self.max_length > max_tokens:
-            return (True, max_tokens)
+            return (True, max_tokens, False)
         if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0) == 1 and len(self.workers) > 0:
-            return (True, max_tokens)
-        return (False, max_tokens)
+            return (True, max_tokens, True)
+        return (False, max_tokens, False)
 
     def downgrade(self, max_tokens):
         """Ensures this WP requirements are not exceeding upfront kudos requirements"""
