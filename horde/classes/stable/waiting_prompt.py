@@ -1,5 +1,6 @@
 import copy
 import random
+import os
 
 from sqlalchemy.sql import expression
 
@@ -372,6 +373,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
+        # if HORDE_UPFRONT_KUDOS_ON_WORKERLIST is set to 1, then specifying a worker allow/deny list requires upfront kudos
+        if os.get("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0) == 1 and len(self.workers) > 0:
+            return (True, max_res)
         return (False, max_res)
 
     def downgrade(self, max_resolution):

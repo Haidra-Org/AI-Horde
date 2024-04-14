@@ -1,4 +1,5 @@
 import math
+import os
 
 from sqlalchemy.sql import expression
 
@@ -103,6 +104,8 @@ class TextWaitingPrompt(WaitingPrompt):
         if max_tokens > 512:
             max_tokens = 512
         if self.max_length > max_tokens:
+            return (True, max_tokens)
+        if os.get("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0) == 1 and len(self.workers) > 0:
             return (True, max_tokens)
         return (False, max_tokens)
 
