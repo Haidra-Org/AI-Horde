@@ -119,6 +119,7 @@ class TextAsyncGenerate(GenerateTemplate):
                     f"to fulfill this reques ({required_kudos}).",
                     rc="SharedKeyInsufficientKudos",
                 )
+        logger.debug([needs_kudos, disable_downgrade,required_kudos > self.user.kudos])
         if needs_kudos:
             if required_kudos > self.user.kudos:
                 if self.args.allow_downgrade and not disable_downgrade:
