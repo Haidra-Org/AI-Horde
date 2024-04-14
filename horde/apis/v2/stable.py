@@ -274,12 +274,12 @@ class ImageAsyncGenerate(GenerateTemplate):
             webhook=self.args.webhook,
         )
         _, total_threads = database.count_active_workers("image")
-        needs_kudos, resolution = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
+        needs_kudos, resolution, disable_downgrade = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
         required_kudos = 0
         if (self.sharedkey and self.sharedkey.kudos != -1) or needs_kudos:
             required_kudos = self.wp.extrapolate_dry_run_kudos()
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
-            if self.args.allow_downgrade:
+            if self.args.allow_downgrade and not disable_downgrade:
                 self.downgrade_wp_priority = True
             else:
                 self.wp.delete()
@@ -292,7 +292,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 )
         if needs_kudos is True:
             if required_kudos > self.user.kudos:
-                if self.args.allow_downgrade:
+                if self.args.allow_downgrade and not disable_downgrade:
                     self.wp.downgrade(resolution)
                 else:
                     self.wp.delete()
