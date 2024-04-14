@@ -1,6 +1,6 @@
 import copy
-import random
 import os
+import random
 
 from sqlalchemy.sql import expression
 
