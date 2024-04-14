@@ -2,6 +2,7 @@ import json
 import time
 import urllib.parse
 import uuid
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import Boolean, and_, func, not_, or_
@@ -784,17 +785,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ),
             ),
             or_(
-                WPAllowedWorkers.id.is_(None),
-                and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(False),
-                    WPAllowedWorkers.worker_id == worker.id,
-                ),
-                and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(True),
-                    WPAllowedWorkers.worker_id != worker.id,
-                ),
-            ),
-            or_(
                 ImageWaitingPrompt.source_image == None,  # noqa E712
                 worker.allow_img2img == True,  # noqa E712
             ),
@@ -856,6 +846,47 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     # logger.debug(final_wp_list)
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(ImageWaitingPrompt.user_id.in_(priority_user_ids))
+        final_wp_list = final_wp_list.filter(
+            or_(
+                WPAllowedWorkers.id.is_(None),
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(False),
+                    WPAllowedWorkers.worker_id == worker.id,
+                ),
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(True),
+                    WPAllowedWorkers.worker_id != worker.id,
+                ),
+            ),
+        )
+    # If HORDE_REQUIRE_MATCHED_TARGETING is set to 1, we disable using WPAllowedWorkers
+    # Targeted requests will only be picked up in the condition above as it will include the
+    # filter to ensure the worker also has that user as a priority
+    elif os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", 0) == 1:
+        final_wp_list = final_wp_list.filter(
+            or_(
+                WPAllowedWorkers.id.is_(None),
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(True),
+                    WPAllowedWorkers.worker_id != worker.id,
+                ),
+            ),
+        )
+    else:
+        final_wp_list = final_wp_list.filter(
+            or_(
+                WPAllowedWorkers.id.is_(None),
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(False),
+                    WPAllowedWorkers.worker_id == worker.id,
+                ),
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(True),
+                    WPAllowedWorkers.worker_id != worker.id,
+                ),
+            ),
+        )
+
     # logger.debug(final_wp_list)
     final_wp_list = (
         final_wp_list.order_by(ImageWaitingPrompt.extra_priority.desc(), ImageWaitingPrompt.created.asc())
