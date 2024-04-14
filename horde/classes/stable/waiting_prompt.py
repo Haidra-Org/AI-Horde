@@ -288,9 +288,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         #
         # Legacy calculation
         #
-        logger.debug(len(self.workers))
         if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", '0') == '1' and len(self.workers) > 0:
-            self.kudos = 0
+            self.kudos = 0.1
             db.session.commit()
             return self.kudos
         legacy_kudos_cost = 0

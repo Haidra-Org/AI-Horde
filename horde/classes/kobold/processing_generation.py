@@ -31,7 +31,7 @@ class TextProcessingGeneration(ProcessingGeneration):
 
     def get_gen_kudos(self):
         if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", '0') == '1' and len(self.wp.workers) > 0:
-            return 0
+            return 0.1
         # This formula creates an exponential increase on the kudos consumption, based on the context requested
         # 1024 context is considered the base.
         # The reason is that higher context has exponential VRAM requirements
