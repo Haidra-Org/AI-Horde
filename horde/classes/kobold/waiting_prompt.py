@@ -123,6 +123,9 @@ class TextWaitingPrompt(WaitingPrompt):
         db.session.commit()
 
     def calculate_kudos(self):
+        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", '0') == '1' and len(self.workers) > 0:
+            self.kudos = 0
+            return self.kudos
         # Slimmed down version of procgen.get_gen_kudos()
         # As we don't know the worker's trusted status.
         # It exists here in order to allow us to calculate dry_runs
