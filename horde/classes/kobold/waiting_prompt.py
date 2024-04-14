@@ -108,7 +108,7 @@ class TextWaitingPrompt(WaitingPrompt):
             max_tokens = 512
         if self.max_length > max_tokens:
             return (True, max_tokens, False)
-        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", 0) == 1 and len(self.workers) > 0:
+        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", '0') == '1' and len(self.workers) > 0:
             return (True, max_tokens, True)
         return (False, max_tokens, False)
 
