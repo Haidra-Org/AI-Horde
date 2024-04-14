@@ -852,10 +852,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
             or_(
                 WPAllowedWorkers.id.is_(None),
                 and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(False),
-                    WPAllowedWorkers.worker_id == worker.id,
-                ),
-                and_(
                     ImageWaitingPrompt.worker_blacklist.is_(True),
                     WPAllowedWorkers.worker_id != worker.id,
                 ),
