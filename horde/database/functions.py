@@ -870,7 +870,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
         # If HORDE_REQUIRE_MATCHED_TARGETING is set to 1, we disable using WPAllowedWorkers
         # Targeted requests will only be picked up in the condition above as it will include the
         # filter to ensure the worker also has that user as a priority
-        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", '0') == '1':
+        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1":
             final_wp_list = final_wp_list.filter(
                 or_(
                     WPAllowedWorkers.id.is_(None),

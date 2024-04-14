@@ -108,7 +108,7 @@ class TextWaitingPrompt(WaitingPrompt):
             max_tokens = 512
         if self.max_length > max_tokens:
             return (True, max_tokens, False)
-        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", '0') == '1' and len(self.workers) > 0:
+        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and len(self.workers) > 0:
             return (True, max_tokens, True)
         return (False, max_tokens, False)
 
@@ -123,7 +123,7 @@ class TextWaitingPrompt(WaitingPrompt):
         db.session.commit()
 
     def calculate_kudos(self):
-        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", '0') == '1' and len(self.workers) > 0:
+        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1" and len(self.workers) > 0:
             self.kudos = 0.1
             return self.kudos
         # Slimmed down version of procgen.get_gen_kudos()

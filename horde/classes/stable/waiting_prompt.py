@@ -288,7 +288,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         #
         # Legacy calculation
         #
-        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", '0') == '1' and len(self.workers) > 0:
+        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1" and len(self.workers) > 0:
             self.kudos = 0.1
             db.session.commit()
             return self.kudos
@@ -381,7 +381,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
         #     return(True,max_res)
         # if HORDE_UPFRONT_KUDOS_ON_WORKERLIST is set to 1, then specifying a worker allow/deny list requires upfront kudos
-        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", '0') == '1' and len(self.workers) > 0:
+        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and len(self.workers) > 0:
             return (True, max_res, True)
         return (False, max_res, False)
 
