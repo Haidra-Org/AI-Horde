@@ -932,6 +932,13 @@ class Models:
                     example=False,
                     description="This is an education account used schools and universities.",
                 ),
+                "customizer": fields.Boolean(
+                    example=False,
+                    description=(
+                        "When set to true, the user will be able to serve custom Stable Diffusion models "
+                        f"which do not exist in the Official {horde_title} Model Reference."
+                    ),
+                ),
                 "special": fields.Boolean(
                     example=False,
                     description="(Privileged) This user has been given the Special role.",

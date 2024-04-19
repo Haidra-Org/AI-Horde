@@ -845,6 +845,7 @@ class User(db.Model):
             "account_age": (datetime.utcnow() - self.created).total_seconds(),
             "service": self.service,
             "education": self.education,
+            "customizer": self.customizer,
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }
