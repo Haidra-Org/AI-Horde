@@ -377,8 +377,8 @@ class TextModels(v2.Models):
             },
         )
 
-        self.response_model_single_period_total_img_stat = api.model(
-            "SinglePeriodImgStat",
+        self.response_model_single_period_total_txt_stat = api.model(
+            "SinglePeriodTxtStat",
             {
                 "requests": fields.Integer(description="The amount of text requests generated during this period."),
                 "tokens": fields.Integer(description="The amount of tokens generated during this period."),
@@ -388,11 +388,11 @@ class TextModels(v2.Models):
         self.response_model_stats_img_totals = api.model(
             "StatsTxtTotals",
             {
-                "minute": fields.Nested(self.response_model_single_period_total_img_stat),
-                "hour": fields.Nested(self.response_model_single_period_total_img_stat),
-                "day": fields.Nested(self.response_model_single_period_total_img_stat),
-                "month": fields.Nested(self.response_model_single_period_total_img_stat),
-                "total": fields.Nested(self.response_model_single_period_total_img_stat),
+                "minute": fields.Nested(self.response_model_single_period_total_txt_stat),
+                "hour": fields.Nested(self.response_model_single_period_total_txt_stat),
+                "day": fields.Nested(self.response_model_single_period_total_txt_stat),
+                "month": fields.Nested(self.response_model_single_period_total_txt_stat),
+                "total": fields.Nested(self.response_model_single_period_total_txt_stat),
             },
         )
 
