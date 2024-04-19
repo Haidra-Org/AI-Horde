@@ -1474,7 +1474,7 @@ class Models:
         self.model_extra_source_images = api.model(
             "ExtraSourceImage",
             {
-                "image": fields.String(description="The Base64-encoded webp to use for further processing."),
+                "image": fields.String(description="The Base64-encoded webp to use for further processing.", min_length=1),
                 "strength": fields.Float(description="Optional field, determining the strength to use for the processing", default=1.0),
             },
         )
