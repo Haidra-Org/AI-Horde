@@ -1734,21 +1734,21 @@ class HordeModes(Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("apikey", type=str, required=True, help="The Admin API key.", location="headers")
     parser.add_argument(
-        "maintenance",
+        "maintenance_mode",
         type=bool,
         required=False,
         help="Start or stop maintenance mode.",
         location="json",
     )
     parser.add_argument(
-        "invite_only",
+        "invite_only_mode",
         type=bool,
         required=False,
         help="Start or stop worker invite-only mode.",
         location="json",
     )
     parser.add_argument(
-        "raid",
+        "raid_mode",
         type=bool,
         required=False,
         help="Start or stop raid mode.",
@@ -1776,10 +1776,10 @@ class HordeModes(Resource):
             raise e.InvalidAPIKey("Admin action: " + "PUT HordeModes")
         ret_dict = {}
         cfg = settings.get_settings()
-        if self.args.maintenance is not None:
+        if self.args.maintenance_mode is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT HordeModes")
-            cfg.maintenance = self.args.maintenance
+            cfg.maintenance = self.args.maintenance_mode
             if cfg.maintenance:
                 logger.critical(f"{horde_title} entered maintenance mode")
                 for wp in database.get_all_active_wps():
@@ -1794,15 +1794,15 @@ class HordeModes(Resource):
         #         wp.abort_for_maintenance()
         #     database.shutdown(self.args.shutdown)
         #     ret_dict["maintenance_mode"] = settings.maintenance
-        if self.args.invite_only is not None:
+        if self.args.invite_only_mode is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT HordeModes")
-            cfg.invite_only = self.args.invite_only
+            cfg.invite_only = self.args.invite_only_mode
             ret_dict["invite_only_mode"] = cfg.invite_only
-        if self.args.raid is not None:
+        if self.args.raid_mode is not None:
             if not admin.moderator:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT HordeModes")
-            cfg.raid = self.args.raid
+            cfg.raid = self.args.raid_mode
             ret_dict["raid_mode"] = cfg.raid
         if not len(ret_dict):
             raise e.NoValidActions("No mod change selected!", rc="NoHordeModSelected")
