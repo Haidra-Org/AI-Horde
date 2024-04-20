@@ -1619,6 +1619,7 @@ class ModelSingle(Resource):
         models.response_model_active_model,
         code=200,
         description="Lists specific model stats",
+        as_list=True,
     )
     def get(self, model_name="stable_diffusion"):
         """Returns all the statistics of a specific model in this horde"""
