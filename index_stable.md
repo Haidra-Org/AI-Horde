@@ -53,7 +53,7 @@ The following are some of the popular tools which provide an interface for Image
     * [AI Brush](https://www.aibrush.art/)
 * There are also mobile apps:
     * AI Painter ([iOS](https://apps.apple.com/hk/app/%E6%A9%9F%E7%95%AB%E5%B8%AB-%E5%B0%88%E6%A5%AD%E7%9A%84ai%E7%B9%AA%E7%95%ABapp/id1644645946) + [Android](https://play.google.com/store/apps/details?id=wkygame.ai.all.in.one))
-    * [aislingeach](https://github.com/amiantos/aislingeach) (iOS)
+    * [Aislingeach](https://github.com/amiantos/aislingeach) (iOS)
 
 <img src="https://raw.githubusercontent.com/Haidra-Org/Lucid-Creations/main/screenshot.png" width="500" />
 
