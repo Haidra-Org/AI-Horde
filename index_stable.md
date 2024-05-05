@@ -61,10 +61,13 @@ The following are some of the popular tools which provide an interface for Image
 
 The following are some of the popular tools which provide an interface for Text Generation on the AI Horde
 
-* [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
-* [SillyTavern](https://sillytavernai.com/) - Another Dedicated WebUI
-* [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
-* [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
+* We have also a few dedicated Web UIs with even less requirements:
+    * [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
+    * [SillyTavern](https://sillytavernai.com/) - Another Dedicated WebUI
+    * [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
+    * [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
+* There are also mobile apps:
+    * [Inneal](https://github.com/amiantos/inneal) (iOS)
 
 ### Command Line
 
