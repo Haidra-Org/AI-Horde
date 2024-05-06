@@ -49,11 +49,12 @@ The following are some of the popular tools which provide an interface for Image
 * We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
 * We have also a few dedicated Web UIs with even less requirements:
     * [Art Bot](https://tinybots.net/artbot)
-    * [AAAI UI](https://artificial-art.eu/)
-    * [AI Brush](https://www.aibrush.art/)
+    * [AI Scribbles](https://www.aiscribbles.com/generate/)
+    * [Horde NG](https://horde-ng.org/)
 * There are also mobile apps:
     * AI Painter ([iOS](https://apps.apple.com/hk/app/%E6%A9%9F%E7%95%AB%E5%B8%AB-%E5%B0%88%E6%A5%AD%E7%9A%84ai%E7%B9%AA%E7%95%ABapp/id1644645946) + [Android](https://play.google.com/store/apps/details?id=wkygame.ai.all.in.one))
-    * [aislingeach](https://github.com/amiantos/aislingeach) (iOS)
+    * [Aislingeach](https://github.com/amiantos/aislingeach) (iOS)
+    * [HordeNG](https://play.google.com/store/apps/details?id=org.horde_ng.twa) (Android)
 
 <img src="https://raw.githubusercontent.com/Haidra-Org/Lucid-Creations/main/screenshot.png" width="500" />
 
@@ -61,10 +62,13 @@ The following are some of the popular tools which provide an interface for Image
 
 The following are some of the popular tools which provide an interface for Text Generation on the AI Horde
 
-* [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
-* [SillyTavern](https://sillytavernai.com/) - Another Dedicated WebUI
-* [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
-* [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
+* We have also a few dedicated Web UIs with even less requirements:
+    * [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
+    * [SillyTavern](https://sillytavernai.com/) - Another Dedicated WebUI
+    * [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
+    * [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
+* There are also mobile apps:
+    * [Inneal](https://github.com/amiantos/inneal) (iOS)
 
 ### Command Line
 
