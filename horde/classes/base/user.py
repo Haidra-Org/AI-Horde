@@ -561,7 +561,8 @@ class User(db.Model):
         db.session.commit()
 
     def record_usage(self, raw_things, kudos, usage_type):
-        self.last_active = datetime.utcnow()
+        if not self.is_anon():
+            self.last_active = datetime.utcnow()
         self.modify_kudos(-kudos, "accumulated")
         self.update_user_record(record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1)
         self.update_user_record(
