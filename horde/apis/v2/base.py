@@ -462,8 +462,8 @@ class JobPopTemplate(Resource):
                 if worker_ret is None:
                     continue
                 # logger.debug(worker_ret)
-                return worker_ret, 200            
-            db.session.commit() # Unlock all locked wp rows before picking up new ones
+                return worker_ret, 200
+            db.session.commit()  # Unlock all locked wp rows before picking up new ones
             self.wp_page += 1
             self.prioritized_wp = self.get_sorted_wp()
             logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")

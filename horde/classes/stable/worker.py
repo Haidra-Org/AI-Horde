@@ -120,7 +120,7 @@ class ImageWorker(Worker):
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if (
-            waiting_prompt.params.get("hires_fix") 
+            waiting_prompt.params.get("hires_fix")
             and "stable_cascade" in model_reference.get_all_model_baselines(self.get_model_names())
             and not check_bridge_capability("stable_cascade_2pass", self.bridge_agent)
         ):
