@@ -54,6 +54,9 @@ class ImageProcessingGeneration(ProcessingGeneration):
         if model_reference.get_model_baseline(self.model) in ["stable_diffusion_xl"]:
             return self.wp.kudos * 2
         if model_reference.get_model_baseline(self.model) in ["stable_cascade"]:
+            # Stable Cascade 2pass has almost a double cost as it generates extra at a low generation
+            if self.wp.params.get("hires_fix", False):
+                return self.wp.kudos * 7
             return self.wp.kudos * 4
         return self.wp.kudos
 

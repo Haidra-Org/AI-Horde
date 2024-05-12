@@ -450,6 +450,7 @@ class JobPopTemplate(Resource):
                     if skipped_reason != "secret":
                         self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
                     # logger.warning(datetime.utcnow())
+
                     continue
                 # There is a chance that by the time we finished all the checks, another worker picked up the WP.
                 # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
@@ -462,6 +463,7 @@ class JobPopTemplate(Resource):
                     continue
                 # logger.debug(worker_ret)
                 return worker_ret, 200
+            db.session.commit()  # Unlock all locked wp rows before picking up new ones
             self.wp_page += 1
             self.prioritized_wp = self.get_sorted_wp()
             logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
