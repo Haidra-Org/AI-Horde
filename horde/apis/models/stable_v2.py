@@ -352,7 +352,7 @@ class ImageModels(v2.Models):
                 ),
                 "hires_fix": fields.Boolean(
                     default=False,
-                    description="Set to True to process the image at base resolution before upscaling and re-processing.",
+                    description="Set to True to process the image at base resolution before upscaling and re-processing or to use Stable Cascade 2-pass.",
                 ),
                 "clip_skip": fields.Integer(
                     required=False,

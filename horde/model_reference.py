@@ -87,6 +87,13 @@ class ModelReference(PrimaryTimedFunction):
         model_details = self.reference.get(model_name, {})
         return model_details.get("baseline", "stable diffusion 1")
 
+    def get_all_model_baselines(self, model_names):
+        baselines = set()
+        for model_name in model_names:
+            model_details = self.reference.get(model_name, {})
+            baselines.add(model_details.get("baseline", "stable diffusion 1"))
+        return baselines
+
     def get_model_requirements(self, model_name):
         model_details = self.reference.get(model_name, {})
         return model_details.get("requirements", {})
