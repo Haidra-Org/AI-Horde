@@ -141,6 +141,8 @@ KNOWN_RC = [
     "ExcessiveStopSequence",
     "TokenOverflow",
     "MoreThanMinExtraSourceImage",
+    "InvalidExtraTexts",
+    "MissingExtraTexts",
 ]
 
 

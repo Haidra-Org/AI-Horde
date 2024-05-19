@@ -29,7 +29,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
-from horde.utils import hash_dictionary
+from horde.utils import hash_dictionary, does_extra_text_reference_exist
 from horde.vars import horde_title
 
 models = ImageModels(api)
@@ -100,9 +100,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         )
 
     def validate(self):
-        # logger.warning(datetime.utcnow())
         super().validate()
-        # logger.warning(datetime.utcnow())
         # During raids, we prevent VPNs
         if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
@@ -187,6 +185,16 @@ class ImageAsyncGenerate(GenerateTemplate):
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
             if self.args.source_processing != "remix":
                 raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
+        if self.params.get("extra_texts") is not None and len(self.params.get("extra_texts")) > 0:
+            if self.params.get("workflow") not in ["qr_code"]:
+                raise e.BadRequest("This request type does not accept extra texts.", rc="InvalidExtraTexts.")
+        if self.params.get("workflow") == "qr_code":
+            if not all(model_reference.get_model_baseline(model_name).startswith("stable diffusion 1") for model_name in self.args.models):
+                raise e.BadRequest("QR Code controlnet only works with SD 1.5 models currently", rc="ControlNetMismatch.")
+            if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
+                raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
+            if not does_extra_text_reference_exist(self.params.get("extra_texts"), 'qr_code'):
+                raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel(
                 "Invalid ControlNet parameters - cannot send inital map and return the same map",
@@ -560,6 +568,7 @@ class ImageJobPop(JobPopTemplate):
             if "blacklist" in post_ret.get("skipped", {}):
                 db_skipped["blacklist"] = post_ret["skipped"]["blacklist"]
             post_ret["skipped"] = db_skipped
+        logger.debug(post_ret)
         return post_ret, retcode
 
     def check_in(self):

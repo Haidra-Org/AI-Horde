@@ -120,3 +120,9 @@ def validate_regex(regex_string):
     except Exception:
         return False
     return True
+
+def does_extra_text_reference_exist(extra_texts, reference):
+    for et in extra_texts:
+        if et['reference'] == reference:
+            return True
+    return False
