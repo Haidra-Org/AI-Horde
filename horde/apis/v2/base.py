@@ -167,7 +167,7 @@ class GenerateTemplate(Resource):
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 
-    # We split this into its own function, so that it may be overriden and extended
+    # We split this into its own function, so that it may be overridden and extended
     def validate(self):
         if settings.mode_maintenance():
             raise e.MaintenanceMode("Generate")
@@ -315,7 +315,7 @@ class GenerateTemplate(Resource):
             "It will expire in 20 minutes. Please confider reducing its size of the request."
         )
 
-    # We split this into its own function, so that it may be overriden
+    # We split this into its own function, so that it may be overridden
     def initiate_waiting_prompt(self):
         self.wp = WaitingPrompt(
             worker_ids=self.workers,
@@ -332,7 +332,7 @@ class GenerateTemplate(Resource):
             webhook=self.args.webhook,
         )
 
-    # We split this into its own function, so that it may be overriden and extended
+    # We split this into its own function, so that it may be overridden and extended
     def activate_waiting_prompt(self):
         if self.args.extra_source_images:
             for iiter, eimg in enumerate(self.args.extra_source_images):
@@ -503,7 +503,7 @@ class JobPopTemplate(Resource):
             ipaddr=self.worker_ip,
         )
 
-    # We split this into its own function, so that it may be overriden and extended
+    # We split this into its own function, so that it may be overridden and extended
     def validate(self):
         self.skipped = {}
         self.user = database.find_user_by_api_key(self.args["apikey"])
@@ -538,7 +538,7 @@ class JobPopTemplate(Resource):
             # Untrusted users can only have 3 workers
             if not self.user.trusted and worker_count > 3:
                 raise e.Forbidden("To avoid abuse, untrusted users can only have up to 3 distinct workers.")
-            # Trusted users can have up to 20 workers by default unless overriden
+            # Trusted users can have up to 20 workers by default unless overridden
             if worker_count > 20 and worker_count > self.user.worker_invited:
                 raise e.Forbidden(
                     "To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust.",
