@@ -4,6 +4,17 @@ from datetime import datetime
 class News:
     HORDE_NEWS = [
         {
+            "date_published": "2024-05-20",
+            "newspiece": (
+                "You can now generate QR Codes on the AI Horde!"
+                "Currently this functionality is only available for Stable Diffusion 1.5."
+                "To use this functionality, your frontend needs to support it so that you can type the text you wish"
+                "to be made into a QR code and to specify the specific qr_code workflow."
+            ),
+            "tags": ["db0", "nlnet", "text2img"],
+            "importance": "Information",
+        },
+        {
             "date_published": "2024-05-12",
             "newspiece": (
                 "The AI Horde now supports Stable Cascade 2pass"
