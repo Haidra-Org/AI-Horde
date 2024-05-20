@@ -29,7 +29,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
-from horde.utils import hash_dictionary, does_extra_text_reference_exist
+from horde.utils import does_extra_text_reference_exist, hash_dictionary
 from horde.vars import horde_title
 
 models = ImageModels(api)
@@ -195,7 +195,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.BadRequest("QR Code controlnet only works with SD 1.5 models currently", rc="ControlNetMismatch.")
             if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
                 raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
-            if not does_extra_text_reference_exist(self.params.get("extra_texts"), 'qr_code'):
+            if not does_extra_text_reference_exist(self.params.get("extra_texts"), "qr_code"):
                 raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel(

@@ -52,9 +52,7 @@ KNOWN_SAMPLERS = {
     "lcm",
 }
 
-KNOWN_WORKFLOWS = {
-    "qr_code"
-}
+KNOWN_WORKFLOWS = {"qr_code"}
 
 # These samplers perform double the steps per image
 # As such we need to take it into account for the upfront kudos requirements

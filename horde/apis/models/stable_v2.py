@@ -391,7 +391,12 @@ class ImageModels(v2.Models):
                 "tis": fields.List(fields.Nested(self.input_model_tis, skip_none=True)),
                 "special": fields.Nested(self.input_model_special_payload, skip_none=True),
                 "extra_texts": fields.List(fields.Nested(self.model_extra_texts)),
-                "workflow": fields.String(required=False, default=None, enum=list(KNOWN_WORKFLOWS), description="Explicitly specify the horde-engine workflow to use."),
+                "workflow": fields.String(
+                    required=False,
+                    default=None,
+                    enum=list(KNOWN_WORKFLOWS),
+                    description="Explicitly specify the horde-engine workflow to use.",
+                ),
             },
         )
         self.response_model_generation_payload = api.inherit(
