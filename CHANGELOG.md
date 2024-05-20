@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.35.0
+
+* Added ability to generate QR-code images
+
 # 4.34.1
 
 * fix missing `allow_downgrade` doc from the API

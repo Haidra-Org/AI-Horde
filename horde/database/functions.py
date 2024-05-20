@@ -191,7 +191,6 @@ def find_user_by_sharedkey(shared_key):
     try:
         sharedkey_uuid = uuid.UUID(shared_key)
     except ValueError:
-        logger.debug(f"Non-UUID sharedkey_id sent: '{shared_key}'.")
         return None
     if SQLITE_MODE:
         sharedkey_uuid = str(sharedkey_uuid)

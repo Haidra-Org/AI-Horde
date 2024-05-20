@@ -1,7 +1,7 @@
 from flask_restx import fields
 
 from horde.apis.models import v2
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS, KNOWN_WORKFLOWS
 from horde.vars import horde_title
 
 
@@ -390,6 +390,13 @@ class ImageModels(v2.Models):
                 "loras": fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
                 "tis": fields.List(fields.Nested(self.input_model_tis, skip_none=True)),
                 "special": fields.Nested(self.input_model_special_payload, skip_none=True),
+                "extra_texts": fields.List(fields.Nested(self.model_extra_texts)),
+                "workflow": fields.String(
+                    required=False,
+                    default=None,
+                    enum=list(KNOWN_WORKFLOWS),
+                    description="Explicitly specify the horde-engine workflow to use.",
+                ),
             },
         )
         self.response_model_generation_payload = api.inherit(

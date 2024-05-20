@@ -1485,3 +1485,10 @@ class Models:
                 "strength": fields.Float(description="Optional field, determining the strength to use for the processing", default=1.0),
             },
         )
+        self.model_extra_texts = api.model(
+            "ExtraText",
+            {
+                "text": fields.String(description="The extra text to send along with this generation.", min_length=1),
+                "reference": fields.String(description="The reference which points how and where this text should be used.", min_length=3),
+            },
+        )

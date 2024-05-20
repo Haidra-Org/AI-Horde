@@ -1,4 +1,4 @@
-HORDE_VERSION = "4.34.1"
+HORDE_VERSION = "4.35.0"
 
 WHITELISTED_SERVICE_IPS = {
     "212.227.227.178",  # Turing Bot
@@ -51,6 +51,8 @@ KNOWN_SAMPLERS = {
     "DDIM",
     "lcm",
 }
+
+KNOWN_WORKFLOWS = {"qr_code"}
 
 # These samplers perform double the steps per image
 # As such we need to take it into account for the upfront kudos requirements
