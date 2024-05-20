@@ -189,6 +189,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             if self.params.get("workflow") not in ["qr_code"]:
                 raise e.BadRequest("This request type does not accept extra texts.", rc="InvalidExtraTexts.")
         if self.params.get("workflow") == "qr_code":
+            # QR-code pipeline cannot do batching currently
+            self.args["disable_batching"] = True
             if not all(model_reference.get_model_baseline(model_name).startswith("stable diffusion 1") for model_name in self.args.models):
                 raise e.BadRequest("QR Code controlnet only works with SD 1.5 models currently", rc="ControlNetMismatch.")
             if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
@@ -568,7 +570,6 @@ class ImageJobPop(JobPopTemplate):
             if "blacklist" in post_ret.get("skipped", {}):
                 db_skipped["blacklist"] = post_ret["skipped"]["blacklist"]
             post_ret["skipped"] = db_skipped
-        logger.debug(post_ret)
         return post_ret, retcode
 
     def check_in(self):
