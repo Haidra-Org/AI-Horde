@@ -52,6 +52,8 @@ class ImageProcessingGeneration(ProcessingGeneration):
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker
         if model_reference.get_model_baseline(self.model) in ["stable_diffusion_xl"]:
+            if self.wp.params.get("workflow") == "qr_code":
+                return self.wp.kudos * 4
             return self.wp.kudos * 2
         if model_reference.get_model_baseline(self.model) in ["stable_cascade"]:
             # Stable Cascade 2pass has almost a double cost as it generates extra at a low generation
