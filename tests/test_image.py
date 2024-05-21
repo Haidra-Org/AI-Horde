@@ -42,6 +42,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "allow_unsafe_ipaddr": True,
         "allow_post_processing": True,
         "allow_controlnet": True,
+        "allow_sdxl_controlnet": True,
         "allow_lora": True,
     }
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)

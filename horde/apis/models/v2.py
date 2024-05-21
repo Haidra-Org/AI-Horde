@@ -620,6 +620,14 @@ class Models:
                     default=None,
                     description="If True, this worker supports and allows lora requests.",
                 ),
+                "controlnet": fields.Boolean(
+                    default=None,
+                    description="If True, this worker supports and allows controlnet requests.",
+                ),
+                "sdxl_controlnet": fields.Boolean(
+                    default=None,
+                    description="If True, this worker supports and allows SDXL controlnet requests.",
+                ),
                 "max_length": fields.Integer(
                     example=80,
                     description="The maximum tokens this worker can generate.",

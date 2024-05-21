@@ -23,6 +23,7 @@ class ImageWorker(Worker):
     allow_painting = db.Column(db.Boolean, default=True, nullable=False)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
     allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
+    allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False)
     allow_lora = db.Column(db.Boolean, default=False, nullable=False)
     wtype = "image"
 
@@ -36,6 +37,7 @@ class ImageWorker(Worker):
         self.allow_painting = kwargs.get("allow_painting", True)
         self.allow_post_processing = kwargs.get("allow_post_processing", True)
         self.allow_controlnet = kwargs.get("allow_controlnet", False)
+        self.allow_sdxl_controlnet = kwargs.get("allow_sdxl_controlnet", False)
         self.allow_lora = kwargs.get("allow_lora", False)
         if len(self.get_model_names()) == 0:
             self.set_models(["stable_diffusion"])
@@ -116,7 +118,14 @@ class ImageWorker(Worker):
             if not check_bridge_capability("image_is_control", self.bridge_agent):
                 return [False, "bridge_version"]
             if not self.allow_controlnet:
+                return [False, "controlnet"]
+        if waiting_prompt.params.get("workflow") == "qr_code":
+            if not check_bridge_capability("controlnet", self.bridge_agent):
                 return [False, "bridge_version"]
+            if not check_bridge_capability("qr_code", self.bridge_agent):
+                return [False, "bridge_version"]
+            if not self.allow_sdxl_controlnet:
+                return [False, "controlnet"]
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if (
@@ -169,6 +178,7 @@ class ImageWorker(Worker):
         ret_dict["painting"] = self.allow_painting if check_bridge_capability("inpainting", self.bridge_agent) else False
         ret_dict["post-processing"] = self.allow_post_processing
         ret_dict["controlnet"] = self.allow_controlnet
+        ret_dict["sdxl_controlnet"] = self.allow_sdxl_controlnet
         ret_dict["lora"] = self.allow_lora
         return ret_dict
 

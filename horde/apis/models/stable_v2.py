@@ -133,6 +133,14 @@ class ImageParsers(v2.Parsers):
             location="json",
         )
         self.job_pop_parser.add_argument(
+            "allow_sdxl_controlnet",
+            type=bool,
+            required=False,
+            default=False,
+            help="If True, this worker will pick up requests requesting SDXL ControlNet.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
             "allow_lora",
             type=bool,
             required=False,
@@ -518,6 +526,10 @@ class ImageModels(v2.Models):
                 "allow_controlnet": fields.Boolean(
                     default=True,
                     description="If True, this worker will pick up requests requesting ControlNet.",
+                ),
+                "allow_sdxl_controlnet": fields.Boolean(
+                    default=True,
+                    description="If True, this worker will pick up requests requesting SDXL ControlNet.",
                 ),
                 "allow_lora": fields.Boolean(
                     default=True,
