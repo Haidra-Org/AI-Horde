@@ -191,7 +191,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         if self.params.get("workflow") == "qr_code":
             # QR-code pipeline cannot do batching currently
             self.args["disable_batching"] = True
-            if not all(model_reference.get_model_baseline(model_name).startswith("stable diffusion 1") for model_name in self.args.models):
+            if not all(model_reference.get_model_baseline(model_name) in ['stable_diffusion 1', 'stable_diffusion_xl'] for model_name in self.args.models):
                 raise e.BadRequest("QR Code controlnet only works with SD 1.5 models currently", rc="ControlNetMismatch.")
             if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
                 raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
@@ -588,6 +588,7 @@ class ImageJobPop(JobPopTemplate):
             allow_unsafe_ipaddr=self.args.allow_unsafe_ipaddr,
             allow_post_processing=self.args.allow_post_processing,
             allow_controlnet=self.args.allow_controlnet,
+            allow_sdxl_controlnet=self.args.allow_sdxl_controlnet,
             allow_lora=self.args.allow_lora,
             priority_usernames=self.priority_usernames,
         )

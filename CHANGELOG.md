@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.35.1
+
+* Added allow_sdxl_controlnet worker key
+
 # 4.35.0
 
 * Added ability to generate QR-code images
