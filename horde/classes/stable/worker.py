@@ -124,7 +124,7 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not check_bridge_capability("qr_code", self.bridge_agent):
                 return [False, "bridge_version"]
-            if not self.allow_sdxl_controlnet:
+            if "stable_diffusion_xl" in model_reference.get_all_model_baselines(self.get_model_names()) and not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
