@@ -192,7 +192,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             # QR-code pipeline cannot do batching currently
             self.args["disable_batching"] = True
             if not all(
-                model_reference.get_model_baseline(model_name) in ["stable_diffusion 1", "stable_diffusion_xl"]
+                model_reference.get_model_baseline(model_name) in ["stable diffusion 1", "stable_diffusion_xl"]
                 for model_name in self.args.models
             ):
                 raise e.BadRequest("QR Code controlnet only works with SD 1.5 models currently", rc="ControlNetMismatch.")
