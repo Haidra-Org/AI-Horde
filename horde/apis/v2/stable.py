@@ -195,7 +195,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 model_reference.get_model_baseline(model_name) in ["stable diffusion 1", "stable_diffusion_xl"]
                 for model_name in self.args.models
             ):
-                raise e.BadRequest("QR Code controlnet only works with SD 1.5 models currently", rc="ControlNetMismatch.")
+                raise e.BadRequest("QR Code controlnet only works with SD 1.5 and SDXL models currently", rc="ControlNetMismatch.")
             if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
                 raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
             if not does_extra_text_reference_exist(self.params.get("extra_texts"), "qr_code"):
