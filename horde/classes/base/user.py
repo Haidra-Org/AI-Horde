@@ -542,6 +542,12 @@ class User(db.Model):
             return
         self.set_user_role(UserRoleTypes.SPECIAL, is_special)
 
+    def set_public_workers(self, has_public_workers):
+        if self.is_anon():
+            return
+        self.public_workers = has_public_workers
+        db.session.commit()
+
     def get_unique_alias(self):
         return f"{self.username}#{self.id}"
 

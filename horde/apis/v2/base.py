@@ -1429,7 +1429,7 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             if admin.is_anon():
                 raise e.AnonForbidden(rc="AnonForbiddenUserMod")
-            user.public_workers = self.args.public_workers
+            user.set_public_workers(self.args.public_workers)
             ret_dict["public_workers"] = user.public_workers
         if self.args.username is not None:
             if not admin.moderator and admin != user:
