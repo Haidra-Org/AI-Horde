@@ -257,7 +257,7 @@ class WorkerTemplate(db.Model):
 
     # This should be extended by each worker type
     def check_in(self, **kwargs):
-        # To avoid excessive commits, 
+        # To avoid excessive commits,
         # we only record new changes on the worker every 30 seconds
         if (datetime.utcnow() - self.last_check_in).total_seconds() < 30:
             return
