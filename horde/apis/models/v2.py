@@ -1168,6 +1168,13 @@ class Models:
                     example="Information",
                     description="How critical this piece of news is.",
                 ),
+                "tags": fields.List(
+                    fields.String(description="Tags for this newspiece."),
+                ),
+                "title": fields.String(description="The title of this newspiece."),
+                "more_info_urls": fields.List(
+                    fields.String(description="URLs for more information about this newspiece."),
+                ),
             },
         )
 
