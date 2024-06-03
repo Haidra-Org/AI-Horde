@@ -56,7 +56,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS,
         "bridge_agent": "AI Horde Worker reGen:8.0.1-citests:https://github.com/Haidra-Org/horde-worker-reGen",
-        "nsfw": True, 
+        "nsfw": True,
         "amount": 10,
         "max_pixels": 4194304,
         "allow_img2img": True,
