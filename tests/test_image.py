@@ -1,3 +1,4 @@
+import json
 import requests
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
@@ -53,7 +54,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         print("Request cancelled")
         raise err
     pop_results = pop_req.json()
-    # print(json.dumps(pop_results, indent=4))
+    print(json.dumps(pop_results, indent=4))
 
     job_id = pop_results["id"]
     try:
@@ -75,7 +76,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     retrieve_req = requests.get(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
     assert retrieve_req.ok, retrieve_req.text
     retrieve_results = retrieve_req.json()
-    # print(json.dumps(retrieve_results,indent=4))
+    print(json.dumps(retrieve_results,indent=4))
     assert len(retrieve_results["generations"]) == 1
     gen = retrieve_results["generations"][0]
     assert len(gen["gen_metadata"]) == 0
