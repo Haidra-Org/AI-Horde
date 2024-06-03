@@ -23,9 +23,6 @@ on:
 jobs:
   required-label-job:
     runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha }}
-      cancel-in-progress: true
     permissions:
         issues: write
         pull-requests: write
@@ -39,9 +36,7 @@ jobs:
   runner-job:
     runs-on: ubuntu-latest
     # runs-on: self-hosted
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha }}
-      cancel-in-progress: true
+    needs: required-label-job
     env:
       POSTGRES_URL: "localhost:5432/horde_test"
       POSTGRES_PASS: "postgres"
