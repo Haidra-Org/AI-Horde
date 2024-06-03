@@ -33,6 +33,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     async_results = async_req.json()
     req_id = async_results["id"]
     # print(async_results)
+    print(async_results)
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS,
@@ -49,6 +50,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     }
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
+        print(pop_req.text)
         assert pop_req.ok, pop_req.text
     except AssertionError as err:
         requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
