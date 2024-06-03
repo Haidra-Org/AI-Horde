@@ -23,7 +23,7 @@ def api_key() -> str:
     raise ValueError("No api key file found")
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def increase_kudos(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625", "user_id": "1"}
 
