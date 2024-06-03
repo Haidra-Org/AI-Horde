@@ -4,17 +4,17 @@ import pytest
 import requests
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def CIVERSION() -> str:
     return "0.1.1"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def HORDE_URL() -> str:
     return "localhost:7001"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def api_key() -> str:
     key_file = pathlib.Path(__file__).parent / "apikey.txt"
     if key_file.exists():
