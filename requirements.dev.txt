@@ -1,5 +1,5 @@
 pytest==8.0.2
-black==24.2.2
+black==24.4.2
 ruff==0.4.2
 tox~=4.14.1
 horde_sdk>=0.7.29
