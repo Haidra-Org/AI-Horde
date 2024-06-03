@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from loguru import logger
 
 
@@ -16,8 +17,6 @@ class News:
         else:
             self.HORDE_NEWS = []
             logger.error(f"File {path} not found. No news will be available.")
-
-
 
     def get_news(self):
         """extensible function from gathering nodes from extensing classes"""
