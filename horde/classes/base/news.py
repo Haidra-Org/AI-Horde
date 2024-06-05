@@ -13,7 +13,14 @@ class News:
 
         if os.path.exists(path):
             with open(path) as file:
-                self.HORDE_NEWS = json.load(file)
+                try:
+                    self.HORDE_NEWS = json.load(file)
+                except json.JSONDecodeError:
+                    self.HORDE_NEWS = []
+                    logger.error(f"File {path} is not a valid JSON file. No news will be available.")
+                except Exception as e:
+                    self.HORDE_NEWS = []
+                    logger.exception(f"An error occurred while reading the news file: {e}")
         else:
             self.HORDE_NEWS = []
             logger.error(f"File {path} not found. No news will be available.")
