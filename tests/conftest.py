@@ -4,17 +4,17 @@ import pytest
 import requests
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def CIVERSION() -> str:
     return "0.1.1"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def HORDE_URL() -> str:
     return "localhost:7001"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def api_key() -> str:
     key_file = pathlib.Path(__file__).parent / "apikey.txt"
     if key_file.exists():
@@ -23,7 +23,7 @@ def api_key() -> str:
     raise ValueError("No api key file found")
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def increase_kudos(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625", "user_id": "1"}
 

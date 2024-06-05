@@ -55,7 +55,8 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS,
-        "bridge_agent": "AI Horde Worker reGen:5.3.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "bridge_agent": "AI Horde Worker reGen:8.0.1-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "nsfw": True,
         "amount": 10,
         "max_pixels": 4194304,
         "allow_img2img": True,

@@ -1,3 +1,5 @@
+import json
+
 import requests
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
@@ -31,10 +33,12 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     async_results = async_req.json()
     req_id = async_results["id"]
     # print(async_results)
+    print(async_results)
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS,
-        "bridge_agent": "AI Horde Worker reGen:4.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "bridge_agent": "AI Horde Worker reGen:8.0.1-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "nsfw": True,
         "amount": 10,
         "max_pixels": 4194304,
         "allow_img2img": True,
@@ -47,13 +51,14 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     }
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
+        print(pop_req.text)
         assert pop_req.ok, pop_req.text
     except AssertionError as err:
         requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
         print("Request cancelled")
         raise err
     pop_results = pop_req.json()
-    # print(json.dumps(pop_results, indent=4))
+    print(json.dumps(pop_results, indent=4))
 
     job_id = pop_results["id"]
     try:
@@ -75,7 +80,7 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     retrieve_req = requests.get(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
     assert retrieve_req.ok, retrieve_req.text
     retrieve_results = retrieve_req.json()
-    # print(json.dumps(retrieve_results,indent=4))
+    print(json.dumps(retrieve_results, indent=4))
     assert len(retrieve_results["generations"]) == 1
     gen = retrieve_results["generations"][0]
     assert len(gen["gen_metadata"]) == 0
