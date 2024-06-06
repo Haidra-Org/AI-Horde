@@ -4,12 +4,12 @@ import time
 from datetime import datetime, timedelta
 
 import regex as re
-from flask import request, render_template
+from flask import render_template, request
 from flask_restx import Namespace, Resource, reqparse
 from flask_restx.reqparse import ParseResult
+from markdownify import markdownify
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
-from markdownify import markdownify
 
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
@@ -36,7 +36,7 @@ from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
-from horde.vars import horde_title, horde_url, horde_contact_email
+from horde.vars import horde_contact_email, horde_title, horde_url
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -2916,6 +2916,7 @@ class SharedKeySingle(Resource):
         db.session.commit()
         return {"message": "OK"}, 200
 
+
 class DocsTerms(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument(
@@ -2955,9 +2956,10 @@ class DocsTerms(Resource):
             horde_url=horde_url,
             horde_contact_email=horde_contact_email,
         )
-        if self.args.format == 'markdown':
-            return {'markdown': markdownify(html_template).strip('\n')}, 200
-        return {'html': html_template}, 200
+        if self.args.format == "markdown":
+            return {"markdown": markdownify(html_template).strip("\n")}, 200
+        return {"html": html_template}, 200
+
 
 class DocsPrivacy(Resource):
     get_parser = reqparse.RequestParser()
@@ -2998,9 +3000,10 @@ class DocsPrivacy(Resource):
             horde_url=horde_url,
             horde_contact_email=horde_contact_email,
         )
-        if self.args.format == 'markdown':
-            return {'markdown': markdownify(html_template).strip('\n')}, 200
-        return {'html': html_template}, 200
+        if self.args.format == "markdown":
+            return {"markdown": markdownify(html_template).strip("\n")}, 200
+        return {"html": html_template}, 200
+
 
 class DocsSponsors(Resource):
     get_parser = reqparse.RequestParser()
@@ -3042,6 +3045,6 @@ class DocsSponsors(Resource):
             all_patrons=all_patrons,
             all_sponsors=patrons.get_sponsors(),
         )
-        if self.args.format == 'markdown':
-            return {'markdown': markdownify(html_template).strip('\n')}, 200
-        return {'html': html_template}, 200
+        if self.args.format == "markdown":
+            return {"markdown": markdownify(html_template).strip("\n")}, 200
+        return {"html": html_template}, 200

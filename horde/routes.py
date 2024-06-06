@@ -372,6 +372,7 @@ def privacy():
         horde_contact_email=horde_contact_email,
     )
 
+
 @HORDE.route("/terms")
 def terms():
     return render_template(
