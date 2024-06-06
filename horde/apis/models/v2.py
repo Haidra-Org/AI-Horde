@@ -1507,3 +1507,16 @@ class Models:
                 "reference": fields.String(description="The reference which points how and where this text should be used.", min_length=3),
             },
         )
+        self.response_model_doc_terms = api.model(
+            "HordeDocument",
+            {
+                "html": fields.String(
+                    required=False,
+                    description="The document in html format.",
+                ),
+                "markdown": fields.String(
+                    required=False,
+                    description="The document in markdown format.",
+                ),
+            },
+        )
