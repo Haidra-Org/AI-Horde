@@ -140,7 +140,8 @@ def index():
 def patrons_route():
     all_patrons = ", ".join(patrons.get_names(min_entitlement=3, max_entitlement=99))
     return render_template(
-        "sponsors.html",
+        "document.html",
+        doc="sponsors.html",
         page_title="Sponsors",
         all_patrons=all_patrons,
         all_sponsors=patrons.get_sponsors(),
@@ -364,17 +365,18 @@ def finish_dance():
 @HORDE.route("/privacy")
 def privacy():
     return render_template(
-        os.getenv("HORDE_HTML_PRIVACY", "privacy_policy.html"),
+        "document.html",
+        doc=os.getenv("HORDE_HTML_TERMS", "privacy_policy.html"),
         horde_title=horde_title,
         horde_url=horde_url,
         horde_contact_email=horde_contact_email,
     )
 
-
 @HORDE.route("/terms")
 def terms():
     return render_template(
-        os.getenv("HORDE_HTML_TERMS", "terms_of_service.html"),
+        "document.html",
+        doc=os.getenv("HORDE_HTML_TERMS", "terms_of_service.html"),
         horde_title=horde_title,
         horde_url=horde_url,
         horde_contact_email=horde_contact_email,

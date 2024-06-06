@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.36.0
+
+* Added Document endpoints
+
 # 4.35.1
 
 * Added allow_sdxl_controlnet worker key

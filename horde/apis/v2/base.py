@@ -4,11 +4,12 @@ import time
 from datetime import datetime, timedelta
 
 import regex as re
-from flask import request
+from flask import request, render_template
 from flask_restx import Namespace, Resource, reqparse
 from flask_restx.reqparse import ParseResult
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
+from markdownify import markdownify
 
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
@@ -35,7 +36,7 @@ from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
-from horde.vars import horde_title
+from horde.vars import horde_title, horde_url, horde_contact_email
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -2914,3 +2915,133 @@ class SharedKeySingle(Resource):
         db.session.delete(sharedkey)
         db.session.commit()
         return {"message": "OK"}, 200
+
+class DocsTerms(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "format",
+        required=False,
+        default="html",
+        type=str,
+        help="html or markdown",
+        location="args",
+    )
+
+    # @cache.cached(timeout=3600, query_string=True)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_doc_terms,
+        code=200,
+        description=f"{horde_title} documentation",
+        skip_none=True,
+    )
+    def get(self):
+        """Terms and Conditions"""
+        self.args = self.get_parser.parse_args()
+        if self.args.format not in ["html", "markdown"]:
+            raise e.BadRequest("'format' needs to be one of ['html', 'markdown']")
+        html_template = render_template(
+            os.getenv("HORDE_HTML_TERMS", "terms_of_service.html"),
+            horde_title=horde_title,
+            horde_url=horde_url,
+            horde_contact_email=horde_contact_email,
+        )
+        if self.args.format == 'markdown':
+            return {'markdown': markdownify(html_template).strip('\n')}, 200
+        return {'html': html_template}, 200
+
+class DocsPrivacy(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "format",
+        required=False,
+        default="html",
+        type=str,
+        help="html or markdown",
+        location="args",
+    )
+
+    # @cache.cached(timeout=3600, query_string=True)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_doc_terms,
+        code=200,
+        description=f"{horde_title} documentation",
+        skip_none=True,
+    )
+    def get(self):
+        """Privacy Policy"""
+        self.args = self.get_parser.parse_args()
+        if self.args.format not in ["html", "markdown"]:
+            raise e.BadRequest("'format' needs to be one of ['html', 'markdown']")
+        html_template = render_template(
+            os.getenv("HORDE_HTML_PRIVACY", "privacy_policy.html"),
+            horde_title=horde_title,
+            horde_url=horde_url,
+            horde_contact_email=horde_contact_email,
+        )
+        if self.args.format == 'markdown':
+            return {'markdown': markdownify(html_template).strip('\n')}, 200
+        return {'html': html_template}, 200
+
+class DocsSponsors(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "format",
+        required=False,
+        default="html",
+        type=str,
+        help="html or markdown",
+        location="args",
+    )
+
+    # @cache.cached(timeout=3600, query_string=True)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_doc_terms,
+        code=200,
+        description=f"{horde_title} documentation",
+        skip_none=True,
+    )
+    def get(self):
+        """Sponsors"""
+        self.args = self.get_parser.parse_args()
+        if self.args.format not in ["html", "markdown"]:
+            raise e.BadRequest("'format' needs to be one of ['html', 'markdown']")
+        all_patrons = ", ".join(patrons.get_names(min_entitlement=3, max_entitlement=99))
+        html_template = render_template(
+            "sponsors.html",
+            page_title="Sponsors",
+            all_patrons=all_patrons,
+            all_sponsors=patrons.get_sponsors(),
+        )
+        if self.args.format == 'markdown':
+            return {'markdown': markdownify(html_template).strip('\n')}, 200
+        return {'html': html_template}, 200
