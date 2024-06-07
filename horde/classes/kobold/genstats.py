@@ -9,7 +9,7 @@ from horde.flask import db
 class TextGenerationStatistic(db.Model):
     __tablename__ = "text_gen_stats"
     id = db.Column(db.Integer, primary_key=True)
-    finished = db.Column(db.DateTime(timezone=False), default=datetime.utcnow)
+    finished = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
     # Created comes from the procgen
     created = db.Column(db.DateTime(timezone=False), nullable=True)
     model = db.Column(db.String(255), index=True, nullable=False)
