@@ -16,5 +16,4 @@ api = Api(
     ordered=True,
 )
 
-api.config.SWAGGER_UI_DOC_EXPANSION = 'list'
 api.add_namespace(v2)

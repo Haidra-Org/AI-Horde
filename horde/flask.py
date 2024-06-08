@@ -10,6 +10,7 @@ from horde.redis_ctrl import ger_cache_url, is_redis_up
 
 cache = None
 HORDE = Flask(__name__)
+HORDE.config.SWAGGER_UI_DOC_EXPANSION = 'list'
 HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
 
 SQLITE_MODE = os.getenv("USE_SQLITE", "0") == "1"
