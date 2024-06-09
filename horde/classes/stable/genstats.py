@@ -161,78 +161,93 @@ def record_image_statistic(procgen):
         db.session.commit()
 
 
-def compile_imagegen_stats_totals():
-    count_query = db.session.query(ImageGenerationStatistic)
-    count_minute = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1),
-    ).count()
-    count_hour = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1),
-    ).count()
-    count_day = count_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).count()
-    count_month = count_query.filter(
-        ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
-    ).count()
-    count_total = count_query.count()
-    ps_query = db.session.query(
-        func.sum(ImageGenerationStatistic.width * ImageGenerationStatistic.height * ImageGenerationStatistic.steps),
-    )
-    ps_minute = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(minutes=1)).scalar()
-    ps_hour = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(hours=1)).scalar()
-    ps_day = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1)).scalar()
-    ps_month = ps_query.filter(ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30)).scalar()
-    ps_total = ps_query.scalar()
-    stats_dict = {
-        "minute": {
-            "images": count_minute,
-            "ps": ps_minute,
-        },
-        "hour": {
-            "images": count_hour,
-            "ps": ps_hour,
-        },
-        "day": {
-            "images": count_day,
-            "ps": ps_day,
-        },
-        "month": {
-            "images": count_month,
-            "ps": ps_month,
-        },
-        "total": {
-            "images": count_total,
-            "ps": ps_total,
-        },
-    }
-    return stats_dict
+class CompiledImageGenStatsTotals(db.Model):
+    """A table to store the compiled image generation statistics for the minute, hour, day, month, and total periods."""
+
+    __tablename__ = "compiled_image_gen_stats_totals"
+    id = db.Column(db.Integer, primary_key=True)
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
+    minute_images = db.Column(db.Integer, nullable=False)
+    minute_pixels = db.Column(db.Integer, nullable=False)
+    hour_images = db.Column(db.Integer, nullable=False)
+    hour_pixels = db.Column(db.Integer, nullable=False)
+    day_images = db.Column(db.Integer, nullable=False)
+    day_pixels = db.Column(db.Integer, nullable=False)
+    month_images = db.Column(db.Integer, nullable=False)
+    month_pixels = db.Column(db.Integer, nullable=False)
+    total_images = db.Column(db.Integer, nullable=False)
+    total_pixels = db.Column(db.BigInteger, nullable=False)
 
 
-def compile_imagegen_stats_models(model_state="known"):
-    query = db.session.query(ImageGenerationStatistic.model, func.count()).group_by(ImageGenerationStatistic.model)
+def get_compiled_imagegen_stats_totals() -> dict[str, dict[str, int]]:
+    """Get the precompiled image generation statistics the minute, hour, day, month, and total periods.
 
-    def check_model_state(model_name):
-        if model_state == "known" and model_reference.is_known_image_model(model_name):
-            return True
-        if model_state == "custom" and not model_reference.is_known_image_model(model_name):
-            return True
-        if model_state == "all":
-            return True
-        return False
+    Returns:
+        dict[str, dict[str, int]]: A dictionary containing the number of images and pixels generated for each period.
+    """
 
-    return {
-        "total": {model: count for model, count in query.all() if check_model_state(model)},
-        "day": {
-            model: count
-            for model, count in query.filter(
-                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=1),
-            ).all()
-            if check_model_state(model)
-        },
-        "month": {
-            model: count
-            for model, count in query.filter(
-                ImageGenerationStatistic.finished >= datetime.utcnow() - timedelta(days=30),
-            ).all()
-            if check_model_state(model)
-        },
-    }
+    latest_entry = db.session.query(CompiledImageGenStatsTotals).order_by(CompiledImageGenStatsTotals.created.desc()).first()
+
+    periods = ["minute", "hour", "day", "month", "total"]
+    stats = {period: {"images": 0, "ps": 0} for period in periods}
+
+    if latest_entry:
+        for period in periods:
+            stats[period]["images"] = getattr(latest_entry, f"{period}_images")
+            stats[period]["ps"] = getattr(latest_entry, f"{period}_pixels")
+
+    return stats
+
+
+class CompiledImageGenStatsModels(db.Model):
+    """A table to store the compiled image generation statistics for each model."""
+
+    __tablename__ = "compiled_image_gen_stats_models"
+    id = db.Column(db.Integer, primary_key=True)
+    created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True, nullable=False)
+    model_id = db.Column(db.Integer, db.ForeignKey("known_image_models.id"), nullable=True)
+    model = db.relationship("KnownImageModel", backref=db.backref("known_image_models", lazy=True))
+    model_name = db.Column(db.String(255), nullable=False)
+    model_state = db.Column(db.String(16), nullable=False)
+    day_images = db.Column(db.Integer, nullable=False)
+    month_images = db.Column(db.Integer, nullable=False)
+    total_images = db.Column(db.Integer, nullable=False)
+
+
+def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, int]]:
+    """Gets the precompiled image generation statistics for the day, month, and total periods for each model.
+
+    Returns:
+        dict[str, dict[str, int]]: A dictionary containing the number of images generated for each period for each model.
+    """
+    # If model_state is "all" we get all models, if it's "known" we get only known models, if it's "custom" we get only custom models
+
+    if model_state == "all":
+        models = db.session.query(CompiledImageGenStatsModels.model).distinct().all()
+    elif model_state == "known":
+        models = (
+            db.session.query(CompiledImageGenStatsModels.model).filter(CompiledImageGenStatsModels.model_state == "known").distinct().all()
+        )
+    elif model_state == "custom":
+        models = (
+            db.session.query(CompiledImageGenStatsModels.model).filter(CompiledImageGenStatsModels.model_state == "custom").distinct().all()
+        )
+    else:
+        raise ValueError("Invalid model_state. Expected 'all', 'known', or 'custom'.")
+
+    periods = ["day", "month", "total"]
+    stats = {model: {period: {"images": 0} for period in periods} for model in models}
+
+    for model in models:
+        latest_entry = (
+            db.session.query(CompiledImageGenStatsModels)
+            .filter_by(model=model)
+            .order_by(CompiledImageGenStatsModels.created.desc())
+            .first()
+        )
+
+        if latest_entry:
+            for period in periods:
+                stats[model][period]["images"] = getattr(latest_entry, f"{period}_images")
+
+    return stats
