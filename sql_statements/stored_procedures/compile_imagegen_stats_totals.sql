@@ -27,8 +27,8 @@ BEGIN
     SELECT COALESCE(SUM(width * height * steps), 0) INTO ps_month FROM image_gen_stats WHERE finished >= NOW() - INTERVAL '30 days';
     SELECT COALESCE(SUM(width * height * steps), 0) INTO ps_total FROM image_gen_stats;
 
-    -- Insert compiled statistics into compiled_image_gen_stats
-    INSERT INTO compiled_image_gen_stats (
+    -- Insert compiled statistics into compiled_image_gen_stats_totals
+    INSERT INTO compiled_image_gen_stats_totals (
         created, minute_images, minute_pixels, hour_images, hour_pixels, 
         day_images, day_pixels, month_images, month_pixels, total_images, total_pixels
     ) VALUES (
