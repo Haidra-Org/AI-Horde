@@ -215,39 +215,43 @@ class CompiledImageGenStatsModels(db.Model):
 
 
 def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, int]]:
-    """Gets the precompiled image generation statistics for the day, month, and total periods for each model.
+    """Gets the precompiled image generation statistics for the day, month, and total periods for each model."""
 
-    Returns:
-        dict[str, dict[str, int]]: A dictionary containing the number of images generated for each period for each model.
-    """
+    models: tuple[CompiledImageGenStatsModels] = ()
+
     # If model_state is "all" we get all models, if it's "known" we get only known models, if it's "custom" we get only custom models
-
     if model_state == "all":
-        models = db.session.query(CompiledImageGenStatsModels.model).distinct().all()
+        models = db.session.query(CompiledImageGenStatsModels.model_name).distinct().all()
     elif model_state == "known":
         models = (
-            db.session.query(CompiledImageGenStatsModels.model).filter(CompiledImageGenStatsModels.model_state == "known").distinct().all()
+            db.session.query(CompiledImageGenStatsModels.model_name)
+            .filter(CompiledImageGenStatsModels.model_state == "known")
+            .distinct()
+            .all()
         )
     elif model_state == "custom":
         models = (
-            db.session.query(CompiledImageGenStatsModels.model).filter(CompiledImageGenStatsModels.model_state == "custom").distinct().all()
+            db.session.query(CompiledImageGenStatsModels.model_name)
+            .filter(CompiledImageGenStatsModels.model_state == "custom")
+            .distinct()
+            .all()
         )
     else:
         raise ValueError("Invalid model_state. Expected 'all', 'known', or 'custom'.")
 
     periods = ["day", "month", "total"]
-    stats = {model: {period: {"images": 0} for period in periods} for model in models}
+    stats = {model.model_name: {period: {"images": 0} for period in periods} for model in models}
 
     for model in models:
         latest_entry = (
             db.session.query(CompiledImageGenStatsModels)
-            .filter_by(model=model)
+            .filter_by(model_name=model.model_name)
             .order_by(CompiledImageGenStatsModels.created.desc())
             .first()
         )
 
         if latest_entry:
             for period in periods:
-                stats[model][period]["images"] = getattr(latest_entry, f"{period}_images")
+                stats[model.model_name][period]["images"] = getattr(latest_entry, f"{period}_images")
 
     return stats
