@@ -55,9 +55,11 @@ class ModelReference(PrimaryTimedFunction):
                             self.nsfw_models.add(model)
                         if self.reference[model].get("type") == "controlnet":
                             self.controlnet_models.add(model)
+
                 break
             except Exception as e:
                 logger.error(f"Error when downloading nataili models list: {e}")
+
         for _riter in range(10):
             try:
                 self.text_reference = requests.get(
