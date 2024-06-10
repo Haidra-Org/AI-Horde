@@ -95,15 +95,16 @@ def get_compiled_textgen_stats_models() -> dict[str, dict[str, int]]:
     Returns:
         dict[str, dict[str, int]]: A dictionary with the model as the key and the requests as the values.
     """
-    query = db.session.query(CompiledTextGenStatsModels).order_by(CompiledTextGenStatsModels.created.desc()).all()
 
-    PERIODS = ["day", "month", "total"]
+    models: tuple[CompiledTextGenStatsModels] = (
+        db.session.query(CompiledTextGenStatsModels).order_by(CompiledTextGenStatsModels.created.desc()).all()
+    )
 
-    models = set([row.model for row in query])
-    stats_dict = {model: {period: 0 for period in PERIODS} for model in models}
+    periods = ["day", "month", "total"]
+    stats = {period: {model.model: 0 for model in models} for period in periods}
 
-    for row in query:
-        for period in PERIODS:
-            stats_dict[row.model][period] = getattr(row, f"{period}_requests")
+    for model in models:
+        for period in periods:
+            stats[period][model.model] = getattr(model, f"{period}_requests")
 
-    return stats_dict
+    return stats
