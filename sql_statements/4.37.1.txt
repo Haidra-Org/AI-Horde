@@ -1,0 +1,5 @@
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN minute_pixels TYPE bigint;
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN hour_pixels TYPE bigint;
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN day_pixels TYPE bigint;
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN month_pixels TYPE bigint;
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN total_pixels TYPE bigint;
