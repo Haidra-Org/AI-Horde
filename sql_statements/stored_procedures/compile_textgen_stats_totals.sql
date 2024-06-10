@@ -27,8 +27,8 @@ BEGIN
     SELECT COALESCE(SUM(max_length), 0) INTO tokens_month FROM text_gen_stats WHERE finished >= NOW() - INTERVAL '30 days';
     SELECT COALESCE(SUM(max_length), 0) INTO tokens_total FROM text_gen_stats;
 
-    -- Insert compiled statistics into compiled_text_gen_stats
-    INSERT INTO compiled_text_gen_stats (
+    -- Insert compiled statistics into compiled_text_gen_stats_totals
+    INSERT INTO compiled_text_gen_stats_totals (
         created, minute_requests, minute_tokens, hour_requests, hour_tokens, 
         day_requests, day_tokens, month_requests, month_tokens, total_requests, total_tokens
     ) VALUES (
