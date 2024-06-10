@@ -6,11 +6,11 @@ DECLARE
     count_hour INTEGER;
     count_day INTEGER;
     count_month INTEGER;
-    count_total INTEGER;
+    count_total BIGINT;
     ps_minute INTEGER;
     ps_hour INTEGER;
     ps_day INTEGER;
-    ps_month INTEGER;
+    ps_month BIGINT;
     ps_total BIGINT;
 BEGIN
     -- Calculate image counts

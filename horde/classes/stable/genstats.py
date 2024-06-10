@@ -173,8 +173,8 @@ class CompiledImageGenStatsTotals(db.Model):
     day_images = db.Column(db.Integer, nullable=False)
     day_pixels = db.Column(db.Integer, nullable=False)
     month_images = db.Column(db.Integer, nullable=False)
-    month_pixels = db.Column(db.Integer, nullable=False)
-    total_images = db.Column(db.Integer, nullable=False)
+    month_pixels = db.Column(db.BigInteger, nullable=False)
+    total_images = db.Column(db.BigInteger, nullable=False)
     total_pixels = db.Column(db.BigInteger, nullable=False)
 
 
