@@ -38,7 +38,7 @@ def get_known_image_models() -> list[KnownImageModel]:
 
 
 @logger.catch(reraise=True)
-def is_model_known(model_name: KnownImageModel | str) -> bool:
+def is_model_known(model_name: Union[KnownImageModel, str]) -> bool:
     """Check if a model is known in the database.
 
     Args:
