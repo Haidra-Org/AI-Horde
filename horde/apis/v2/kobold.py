@@ -7,8 +7,8 @@ from horde.apis.models.kobold_v2 import TextModels, TextParsers
 from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
 from horde.classes.base import settings
 from horde.classes.kobold.genstats import (
-    compile_textgen_stats_models,
-    compile_textgen_stats_totals,
+    get_compiled_textgen_stats_models,
+    get_compiled_textgen_stats_totals,
 )
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
@@ -356,7 +356,7 @@ class TextHordeStatsTotals(Resource):
         """Details how many texts have been generated in the past minux,hour,day,month and total
         Also shows the amount of pixelsteps for the same timeframe.
         """
-        return compile_textgen_stats_totals(), 200
+        return get_compiled_textgen_stats_totals(), 200
 
 
 class TextHordeStatsModels(Resource):
@@ -380,7 +380,7 @@ class TextHordeStatsModels(Resource):
     )
     def get(self):
         """Details how many texts were generated per model for the past day, month and total"""
-        return compile_textgen_stats_models(), 200
+        return get_compiled_textgen_stats_models(), 200
 
 
 class KoboldKudosTransfer(Resource):
