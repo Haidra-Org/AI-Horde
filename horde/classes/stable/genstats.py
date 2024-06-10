@@ -214,7 +214,7 @@ class CompiledImageGenStatsModels(db.Model):
     total_images = db.Column(db.Integer, nullable=False)
 
 
-def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, int]]:
+def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, dict[str, int]]]:
     """Gets the precompiled image generation statistics for the day, month, and total periods for each model."""
 
     models: tuple[CompiledImageGenStatsModels] = ()
@@ -240,7 +240,7 @@ def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, di
         raise ValueError("Invalid model_state. Expected 'all', 'known', or 'custom'.")
 
     periods = ["day", "month", "total"]
-    stats = {model.model_name: {period: {"images": 0} for period in periods} for model in models}
+    stats = {period: {model.model_name: 0 for model in models} for period in periods}
 
     for model in models:
         latest_entry = (
@@ -252,6 +252,6 @@ def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, di
 
         if latest_entry:
             for period in periods:
-                stats[model.model_name][period]["images"] = getattr(latest_entry, f"{period}_images")
+                stats[period][model.model_name] = getattr(latest_entry, f"{period}_images")
 
     return stats
