@@ -31,3 +31,5 @@ BEGIN
     RAISE NOTICE 'Cron job already exists with the same schedule for stored procedure: %. Skipping scheduling.', p_stored_procedure;
   END IF;
 END $$;
+
+UPDATE cron.job SET nodename = '';
