@@ -96,8 +96,10 @@ def get_compiled_textgen_stats_models() -> dict[str, dict[str, int]]:
         dict[str, dict[str, int]]: A dictionary with the model as the key and the requests as the values.
     """
 
+    latest_date = db.session.query(db.func.max(CompiledTextGenStatsModels.created)).scalar()
+
     models: tuple[CompiledTextGenStatsModels] = (
-        db.session.query(CompiledTextGenStatsModels).order_by(CompiledTextGenStatsModels.created.desc()).all()
+        db.session.query(CompiledTextGenStatsModels).filter(CompiledTextGenStatsModels.created == latest_date).all()
     )
 
     periods = ["day", "month", "total"]

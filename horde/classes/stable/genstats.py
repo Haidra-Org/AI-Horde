@@ -216,6 +216,8 @@ class CompiledImageGenStatsModels(db.Model):
 def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, dict[str, int]]]:
     """Gets the precompiled image generation statistics for the day, month, and total periods for each model."""
 
+    latest_date = db.session.query(db.func.max(CompiledImageGenStatsModels.created)).scalar()
+
     models: tuple[CompiledImageGenStatsModels] = ()
 
     # If model_state is "all" we get all models, if it's "known" we get only known models, if it's "custom" we get only custom models
@@ -245,7 +247,7 @@ def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, di
         latest_entry = (
             db.session.query(CompiledImageGenStatsModels)
             .filter_by(model_name=model.model_name)
-            .order_by(CompiledImageGenStatsModels.created.desc())
+            .filter(CompiledImageGenStatsModels.created == latest_date)
             .first()
         )
 
