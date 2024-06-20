@@ -8,7 +8,7 @@ from flask import render_template, request
 from flask_restx import Namespace, Resource, reqparse
 from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 
 import horde.apis.limiter_api as lim
@@ -32,6 +32,7 @@ from horde.flask import HORDE, cache, db
 from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.logger import logger
+from horde.metrics import waitress_metrics
 from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
@@ -201,7 +202,7 @@ class GenerateTemplate(Resource):
                         "Only trusted users and patrons can send more than 1 extra source images.",
                         rc="MoreThanMinExtraSourceImage.",
                     )
-            if self.user.education or self.user.trusted:
+            if self.user.education or self.user.trusted or self.user.service:
                 lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
@@ -2641,10 +2642,20 @@ class Heartbeat(Resource):
 
     @api.expect(get_parser)
     def get(self):
-        """If this loads, this node is available"""
+        """If this loads, this node is available
+        Includes some other metrics to gauge the health of this node"""
+        db_conn = True
+        try:
+            db.session.execute(text("SELECT 1"))
+        except Exception:
+            db_conn = False
         return {
             "message": "OK",
             "version": HORDE_VERSION,
+            "queue": waitress_metrics.queue,
+            "threads": waitress_metrics.threads,
+            "active_count": waitress_metrics.active_count,
+            "db_connection": db_conn,
         }, 200
 
 

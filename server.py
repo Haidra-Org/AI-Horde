@@ -14,6 +14,7 @@ else:
 from horde.argparser import args
 from horde.flask import HORDE
 from horde.logger import logger
+from horde.metrics import waitress_metrics
 
 if __name__ == "__main__":
     # Only setting this for the WSGI logs
@@ -21,7 +22,18 @@ if __name__ == "__main__":
         format="%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s",
         level=logging.WARNING,
     )
-    from waitress import serve
+    import waitress
+
+    # Monkeypatch to get metrics until below is done
+    # https://github.com/Pylons/waitress/issues/182
+    _create_server = waitress.create_server
+
+    def create_server(*args, **kwargs):
+        server = _create_server(*args, **kwargs)
+        waitress_metrics.setup(server.task_dispatcher)
+        return server
+
+    waitress.create_server = create_server
 
     logger.init("WSGI Server", status="Starting")
     url_scheme = "https"
@@ -32,7 +44,7 @@ if __name__ == "__main__":
     if args.insecure:
         allowed_host = "0.0.0.0"
         logger.init_warn("WSGI Mode", status="Insecure")
-    serve(
+    waitress.serve(
         HORDE,
         port=args.port,
         url_scheme=url_scheme,
