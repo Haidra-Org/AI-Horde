@@ -5,7 +5,7 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
-        7: {"qr_code", "extra_texts", "worfkflow"},
+        7: {"qr_code", "extra_texts", "workflow"},
         6: {"stable_cascade_2pass"},
         5: {"extra_source_images"},
         3: {"lora_versions"},
