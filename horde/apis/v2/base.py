@@ -203,7 +203,7 @@ class GenerateTemplate(Resource):
                         "Only trusted users and patrons can send more than 1 extra source images.",
                         rc="MoreThanMinExtraSourceImage.",
                     )
-            if self.user.education or self.user.trusted:
+            if self.user.education or self.user.trusted or self.user.service:
                 lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())

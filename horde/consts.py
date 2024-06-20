@@ -3,7 +3,6 @@ HORDE_VERSION = "4.38.0"
 WHITELISTED_SERVICE_IPS = {
     "212.227.227.178",  # Turing Bot
     "5.189.169.230",  # Discord Bot
-    "pcs3.lugui.in",  # Another Discord Bot
 }
 
 # And their extra kudos adjustments based on how expensive to process they are and/or how much extra horde resources they consume
