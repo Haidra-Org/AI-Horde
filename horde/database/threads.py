@@ -396,3 +396,22 @@ def store_compiled_filter_regex_replacements():
         replacements = retrieve_regex_replacements(10)
         # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
         hr.horde_r_set("cached_regex_replacements", json.dumps(replacements))
+
+
+@logger.catch(reraise=True)
+def store_known_image_models():
+    """Stores the known image models in the database"""
+    from horde.classes.stable.known_image_models import (
+        add_known_image_models_from_json,
+        delete_any_unspecified_image_models,
+    )
+    from horde.model_reference import model_reference
+
+    with HORDE.app_context():
+        if model_reference.reference is not None:
+            logger.debug("Storing known image models from the model reference")
+            add_known_image_models_from_json(model_reference.reference)
+            delete_any_unspecified_image_models(list(model_reference.reference.keys()))
+
+        else:
+            logger.debug("No known image models to store from the model reference")

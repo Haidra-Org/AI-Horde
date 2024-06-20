@@ -12,8 +12,8 @@ from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTempla
 from horde.classes.base import settings
 from horde.classes.base.user import User
 from horde.classes.stable.genstats import (
-    compile_imagegen_stats_models,
-    compile_imagegen_stats_totals,
+    get_compiled_imagegen_stats_models,
+    get_compiled_imagegen_stats_totals,
 )
 from horde.classes.stable.interrogation import Interrogation
 from horde.classes.stable.interrogation_worker import InterrogationWorker
@@ -573,6 +573,7 @@ class ImageJobPop(JobPopTemplate):
             if "blacklist" in post_ret.get("skipped", {}):
                 db_skipped["blacklist"] = post_ret["skipped"]["blacklist"]
             post_ret["skipped"] = db_skipped
+
         return post_ret, retcode
 
     def check_in(self):
@@ -1272,7 +1273,7 @@ class ImageHordeStatsTotals(Resource):
         """Details how many images have been generated in the past minux,hour,day,month and total
         Also shows the amount of pixelsteps for the same timeframe.
         """
-        return compile_imagegen_stats_totals(), 200
+        return get_compiled_imagegen_stats_totals(), 200
 
 
 class ImageHordeStatsModels(Resource):
@@ -1312,4 +1313,4 @@ class ImageHordeStatsModels(Resource):
         self.args = self.get_parser.parse_args()
         if self.args.model_state not in ["known", "custom", "all"]:
             raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
-        return compile_imagegen_stats_models(self.args.model_state), 200
+        return get_compiled_imagegen_stats_models(self.args.model_state), 200

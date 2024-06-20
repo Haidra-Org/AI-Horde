@@ -230,7 +230,7 @@ class User(db.Model):
     oauth_id = db.Column(db.String(50), unique=True, nullable=False, index=True)
     api_key = db.Column(db.String(100), unique=True, nullable=False, index=True)
     client_id = db.Column(db.String(50), unique=True, default=generate_client_id, nullable=False)
-    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
     admin_comment = db.Column(db.Text, default=None)
