@@ -16,7 +16,6 @@ from horde.flask import HORDE
 from horde.logger import logger
 from horde.metrics import waitress_metrics
 
-
 if __name__ == "__main__":
     # Only setting this for the WSGI logs
     logging.basicConfig(
@@ -28,11 +27,12 @@ if __name__ == "__main__":
     # Monkeypatch to get metrics until below is done
     # https://github.com/Pylons/waitress/issues/182
     _create_server = waitress.create_server
+
     def create_server(*args, **kwargs):
         server = _create_server(*args, **kwargs)
         waitress_metrics.setup(server.task_dispatcher)
         return server
-    
+
     waitress.create_server = create_server
 
     logger.init("WSGI Server", status="Starting")

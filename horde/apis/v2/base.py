@@ -8,9 +8,8 @@ from flask import render_template, request
 from flask_restx import Namespace, Resource, reqparse
 from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
-from sqlalchemy import text
 
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
@@ -33,12 +32,12 @@ from horde.flask import HORDE, cache, db
 from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.logger import logger
+from horde.metrics import waitress_metrics
 from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_title, horde_url
-from horde.metrics import waitress_metrics
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -2647,8 +2646,8 @@ class Heartbeat(Resource):
         Includes some other metrics to gauge the health of this node"""
         db_conn = True
         try:
-            db.session.execute(text('SELECT 1'))
-        except:
+            db.session.execute(text("SELECT 1"))
+        except Exception:
             db_conn = False
         return {
             "message": "OK",
