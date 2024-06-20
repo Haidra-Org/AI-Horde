@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.37.0
+
+* Add waitress / db metrics to heartbeat
+
 # 4.36.0
 
 * Added Document endpoints

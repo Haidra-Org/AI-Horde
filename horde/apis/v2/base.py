@@ -10,6 +10,7 @@ from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
+from sqlalchemy import text
 
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
@@ -37,6 +38,7 @@ from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_title, horde_url
+from horde.metrics import waitress_metrics
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -2641,10 +2643,20 @@ class Heartbeat(Resource):
 
     @api.expect(get_parser)
     def get(self):
-        """If this loads, this node is available"""
+        """If this loads, this node is available
+        Includes some other metrics to gauge the health of this node"""
+        db_conn = True
+        try:
+            db.session.execute(text('SELECT 1'))
+        except:
+            db_conn = False
         return {
             "message": "OK",
             "version": HORDE_VERSION,
+            "queue": waitress_metrics.queue,
+            "threads": waitress_metrics.threads,
+            "active_count": waitress_metrics.active_count,
+            "db_connection": db_conn,
         }, 200
 
 
