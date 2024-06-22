@@ -405,6 +405,10 @@ class ImageModels(v2.Models):
                     enum=list(KNOWN_WORKFLOWS),
                     description="Explicitly specify the horde-engine workflow to use.",
                 ),
+                "transparent": fields.Boolean(
+                    default=False,
+                    description="Set to True to generate the image using Layer Diffuse, creating an image with a transparent background.",
+                ),
             },
         )
         self.response_model_generation_payload = api.inherit(

@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.39.0
+
+* Adds generating transparent images
+
 # 4.38.0
 
 * Add waitress / db metrics to heartbeat

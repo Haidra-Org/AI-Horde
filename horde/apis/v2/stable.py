@@ -178,6 +178,13 @@ class ImageAsyncGenerate(GenerateTemplate):
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).", rc="BadLoraVersion")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.", rc="TooManyTIs")
+        if self.params.get("transparent", False) is True and any(
+            model_reference.get_model_baseline(model_name) not in ["stable_diffusion_xl", "stable diffusion 1"]
+            for model_name in self.args.models
+        ):
+            raise e.BadRequest(
+                "Generating Transparent images is is only possible for Stable Diffusion 1.5 and XL models.", rc="InvalidTransparency",
+            )
         if self.args.source_processing == "remix" and any(
             not model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models
         ):
