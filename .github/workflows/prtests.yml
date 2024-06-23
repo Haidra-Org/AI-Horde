@@ -84,9 +84,31 @@ jobs:
       - uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Create pg_cron extension
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          # cache: 'pip'
+      - run: python -m pip install --upgrade pip wheel setuptools
+      - name: Install and run tests
         run: |
-          psql --host=localhost --dbname=postgres --username=postgres -c 'CREATE EXTENSION pg_cron;'
+          python -m pip install -r requirements.txt -r requirements.dev.txt 
+          python server.py -vvvvi --horde stable &
+          sleep 5
+          curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<p style="background-color:darkorange;">\K.*(?=<\/p>)' > tests/apikey.txt
+          export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
+          
+          python -m pip download --no-deps --no-binary :all: horde_sdk
+          tar -xvf horde_sdk-*.tar.gz
+          cd horde_sdk**/
+          pytest tests/ --ignore-glob=*api_calls.py --ignore-glob=*test_model_meta.py -s
+          
+  lint-check-job:
+    runs-on: ubuntu-latest
+    needs: required-label-job
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -97,15 +119,3 @@ jobs:
           python -m pip install -r requirements.dev.txt 
           black --check .
           ruff .
-      - name: Install and run tests
-        run: |
-          python -m pip install -r requirements.txt
-          python server.py -vvvvi --horde stable &
-          sleep 5
-          curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<p style="background-color:darkorange;">\K.*(?=<\/p>)' > tests/apikey.txt
-          export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
-          
-          python -m pip download --no-deps --no-binary :all: horde_sdk
-          tar -xvf horde_sdk-*.tar.gz
-          cd horde_sdk**/
-          pytest tests/ --ignore-glob=*api_calls.py --ignore-glob=*test_model_meta.py -s
