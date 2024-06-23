@@ -2644,15 +2644,15 @@ class Heartbeat(Resource):
     def get(self):
         """If this loads, this node is available
         Includes some other metrics to gauge the health of this node"""
-        health = 'OK'
-        db_conn = True        
+        health = "OK"
+        db_conn = True
         try:
             db.session.execute(text("SELECT 1"))
         except Exception:
             db_conn = False
-            health = 'DOWN'
+            health = "DOWN"
         if waitress_metrics.queue > 0:
-            health = 'OVERLOADED'
+            health = "OVERLOADED"
         return {
             "message": health,
             "version": HORDE_VERSION,
