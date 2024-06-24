@@ -904,7 +904,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
 
 
 def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_user_ids=None):
-    ## Massively costly approach, doing 1 new query per count. Not sure about it.
+    ## FIXME: Massively costly approach, doing 1 new query per count. Not sure about it.
     ret_dict = {}
     open_wp_list = (
         db.session.query(ImageWaitingPrompt)
@@ -1078,6 +1078,22 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     # 'worker_id': ,
     # 'blacklist': ,
     # 'kudos': skipped_kudos, # Not Implemented: See skipped_kudos TODO.
+    for key in [
+        "bridge_version",
+        "untrusted",
+        "performance",
+        "controlnet",
+        "post-processing",
+        "lora",
+        "nsfw",
+        "unsafe_ip",
+        "painting",
+        "img2img",
+        "worker_id",
+        "models",
+    ]:
+        if key not in ret_dict:
+            ret_dict[key] = 0
     return ret_dict
 
 
