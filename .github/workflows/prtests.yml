@@ -94,6 +94,9 @@ jobs:
           python -m pip install -r requirements.txt -r requirements.dev.txt 
           python server.py -vvvvi --horde stable &
           sleep 5
+
+          pytest tests/ -s
+          
           curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<p style="background-color:darkorange;">\K.*(?=<\/p>)' > tests/apikey.txt
           export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
           
