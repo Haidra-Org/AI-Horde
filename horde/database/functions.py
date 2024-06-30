@@ -841,7 +841,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 and_(
                     check_bridge_capability("layer_diffuse", worker.bridge_agent),
                     worker.allow_sdxl_controlnet == True,  # noqa E712
-                )
+                ),
             ),
         )
     )

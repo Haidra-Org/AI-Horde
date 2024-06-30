@@ -183,7 +183,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             for model_name in self.args.models
         ):
             raise e.BadRequest(
-                "Generating Transparent images is is only possible for Stable Diffusion 1.5 and XL models.", rc="InvalidTransparency",
+                "Generating Transparent images is is only possible for Stable Diffusion 1.5 and XL models.",
+                rc="InvalidTransparency",
             )
         if self.args.source_processing == "remix" and any(
             not model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models
