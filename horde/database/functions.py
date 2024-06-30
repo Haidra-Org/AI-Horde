@@ -836,6 +836,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 worker.speed >= 500000,  # 0.5 MPS/s
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
             ),
+            or_(
+                ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(False),
+                and_(
+                    check_bridge_capability("layer_diffuse", worker.bridge_agent),
+                    worker.allow_sdxl_controlnet == True,  # noqa E712
+                )
+            ),
         )
     )
     # logger.debug(final_wp_list)
@@ -1066,6 +1073,10 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
             and_(
                 not check_bridge_capability("tiling", worker.bridge_agent),
                 ImageWaitingPrompt.params["tiling"].astext.cast(Boolean).is_(True),
+            ),
+            and_(
+                not check_bridge_capability("layer_diffuse", worker.bridge_agent),
+                ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(True),
             ),
         ),
     ).count()

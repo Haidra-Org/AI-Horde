@@ -143,6 +143,7 @@ KNOWN_RC = [
     "MoreThanMinExtraSourceImage",
     "InvalidExtraTexts",
     "MissingExtraTexts",
+    "InvalidTransparency",
 ]
 
 
