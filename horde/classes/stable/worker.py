@@ -126,9 +126,6 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if "stable_diffusion_xl" in model_reference.get_all_model_baselines(self.get_model_names()) and not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
-        if waiting_prompt.params.get("transparent") is True:
-            if not check_bridge_capability("layer_diffuse", self.bridge_agent):
-                return [False, "bridge_version"]
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if (

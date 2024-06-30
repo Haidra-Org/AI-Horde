@@ -580,7 +580,7 @@ class ImageJobPop(JobPopTemplate):
             if "blacklist" in post_ret.get("skipped", {}):
                 db_skipped["blacklist"] = post_ret["skipped"]["blacklist"]
             post_ret["skipped"] = db_skipped
-
+        # logger.debug(post_ret)
         return post_ret, retcode
 
     def check_in(self):
