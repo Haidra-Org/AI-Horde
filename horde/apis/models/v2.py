@@ -876,6 +876,30 @@ class Models:
             },
         )
 
+        self.response_model_user_active_generations = api.model(
+            "UserActiveGenerations",
+            {
+                "text": fields.List(
+                    fields.String(
+                        description="(Privileged) The list of active text generation IDs requested by this user.",
+                        example="00000000-0000-0000-0000-000000000000",
+                    ),
+                ),
+                "image": fields.List(
+                    fields.String(
+                        description="(Privileged) The list of active image generation IDs requested by this user.",
+                        example="00000000-0000-0000-0000-000000000000",
+                    ),
+                ),
+                "alchemy": fields.List(
+                    fields.String(
+                        description="(Privileged) The list of active alchemy generation IDs requested by this user.",
+                        example="00000000-0000-0000-0000-000000000000",
+                    ),
+                ),
+            },
+        )
+
         self.response_model_user_details = api.model(
             "UserDetails",
             {
@@ -919,6 +943,7 @@ class Models:
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
+                "active_generations": fields.Nested(self.response_model_user_active_generations, skip_none=True),
                 "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
                 "trusted": fields.Boolean(
                     example=False,

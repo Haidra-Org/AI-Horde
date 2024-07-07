@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.30.0
+
+* Adds the `active_generations` privileged key on user info providing a list of all non-expired gens the user has active.
+
 # 4.39.1
 
 * Added news about transparent images
