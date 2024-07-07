@@ -315,6 +315,7 @@ class ImageModels(v2.Models):
                 "sampler_name": fields.String(required=False, default="k_euler_a", enum=list(KNOWN_SAMPLERS)),
                 "cfg_scale": fields.Float(required=False, default=7.5, min=0, max=100),
                 "denoising_strength": fields.Float(required=False, example=0.75, min=0.01, max=1.0),
+                "hires_fix_denoising_strength": fields.Float(required=False, example=0.75, min=0.01, max=1.0),
                 "seed": fields.String(
                     required=False,
                     example="The little seed that could",

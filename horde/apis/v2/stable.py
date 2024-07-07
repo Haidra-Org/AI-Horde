@@ -163,8 +163,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         if "control_type" in self.params and self.args.source_processing == "inpainting":
             raise e.BadRequest("ControlNet cannot be used with inpainting at this time", rc="ControlNetInpaintingMismatch")
         if any(model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl") for model_name in self.args.models):
-            if self.params.get("hires_fix", False) is True:
-                raise e.BadRequest("hires fix does not work with SDXL currently.", rc="HiResFixMismatch")
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with SDXL currently.", rc="ControlNetMismatch")
         if any(model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models):
@@ -178,14 +176,25 @@ class ImageAsyncGenerate(GenerateTemplate):
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).", rc="BadLoraVersion")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.", rc="TooManyTIs")
-        if self.params.get("transparent", False) is True and any(
-            model_reference.get_model_baseline(model_name) not in ["stable_diffusion_xl", "stable diffusion 1"]
-            for model_name in self.args.models
-        ):
-            raise e.BadRequest(
-                "Generating Transparent images is is only possible for Stable Diffusion 1.5 and XL models.",
-                rc="InvalidTransparency",
-            )
+        if self.params.get("transparent", False) is True:
+            if any(
+                model_reference.get_model_baseline(model_name) not in ["stable_diffusion_xl", "stable diffusion 1"]
+                for model_name in self.args.models
+            ):
+                raise e.BadRequest(
+                    "Generating Transparent images is only possible for Stable Diffusion 1.5 and XL models.",
+                    rc="InvalidTransparencyModel",
+                )
+            if len(self.args.extra_source_images) > 0:
+                raise e.BadRequest(
+                    "Generating Transparent images is not supported during img2img workflows.",
+                    rc="InvalidTransparencyImg2Img",
+                )
+            if "control_type" in self.params:
+                raise e.BadRequest(
+                    "Generating Transparent images is not supported during controlnet workflows currently.",
+                    rc="InvalidTransparencyCN",
+                )
         if self.args.source_processing == "remix" and any(
             not model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models
         ):

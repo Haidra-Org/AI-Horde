@@ -1,5 +1,11 @@
 # Changelog
 
+# 4.39.1
+
+* Added news about transparent images
+* Adds `hires_fix_denoising_strength` to the API params
+* Prevents gens using transparency on invalid workflows
+
 # 4.39.0
 
 * Adds generating transparent images

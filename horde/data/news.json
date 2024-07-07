@@ -1,6 +1,18 @@
 [
     {
         "date_published": "2024-05-20",
+        "newspiece": "You can now use the [SD Layer Diffuse tech](https://github.com/layerdiffusion/sd-forge-layerdiffuse) to generate transparent images directly with the AI horde (without the use of a post-processor). To use this functionality, simply pass `transparent: true` in your payloads params. This feature is not supported on Img2Img however.",
+        "tags": [
+            "db0",
+            "nlnet",
+            "text2img"
+        ],
+        "importance": "Information",
+        "more_info_urls": [],
+        "title": "Generate QR Codes"
+    },
+    {
+        "date_published": "2024-05-20",
         "newspiece": "You can now generate QR Codes on the AI Horde! Currently this functionality is only available for Stable Diffusion 1.5. To use this functionality, your frontend needs to support it so that you can type the text you wish to be made into a QR code and to specify the specific qr_code workflow.",
         "tags": [
             "db0",
