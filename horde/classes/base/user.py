@@ -861,11 +861,6 @@ class User(db.Model):
             for worker in self.workers:
                 workers_array.append(str(worker.id))
             ret_dict["worker_ids"] = workers_array
-            ret_dict["active_generations"] = {}
-            for wp in self.waiting_prompts:
-                if wp.wp_type not in ret_dict["active_generations"]:
-                    ret_dict["active_generations"][wp.wp_type] = []
-                ret_dict["active_generations"][wp.wp_type].append(str(wp.id))
         if details_privilege >= 1:
             sharedkeys_array = []
             for sk in self.sharedkeys:
@@ -874,6 +869,11 @@ class User(db.Model):
             ret_dict["contact"] = self.contact
             ret_dict["vpn"] = self.vpn
             ret_dict["special"] = self.special
+            ret_dict["active_generations"] = {}
+            for wp in self.waiting_prompts:
+                if wp.wp_type not in ret_dict["active_generations"]:
+                    ret_dict["active_generations"][wp.wp_type] = []
+                ret_dict["active_generations"][wp.wp_type].append(str(wp.id))
         if details_privilege >= 2:
             mk_dict = {
                 "amount": self.calculate_monthly_kudos(),
