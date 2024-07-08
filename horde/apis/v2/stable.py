@@ -185,7 +185,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                     "Generating Transparent images is only possible for Stable Diffusion 1.5 and XL models.",
                     rc="InvalidTransparencyModel",
                 )
-            if len(self.args.extra_source_images) > 0:
+            if self.args.extra_source_images and len(self.args.extra_source_images) > 0:
                 raise e.BadRequest(
                     "Generating Transparent images is not supported during img2img workflows.",
                     rc="InvalidTransparencyImg2Img",
