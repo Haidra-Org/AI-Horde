@@ -501,10 +501,12 @@ class ImageWaitingPrompt(WaitingPrompt):
     def get_amount_calculation_things(self):
         return self.width * self.height
 
-    def has_heavy_pp(self):
+    def has_heavy_operations(self):
         for pp in self.params.get("post_processing", []):
             if pp in HEAVY_POST_PROCESSORS:
                 return True
+        if self.params.get("transparent", False):
+            return True
         return False
 
     def count_pp(self):
