@@ -1334,7 +1334,7 @@ class UserSingle(Resource):
     @api.response(404, "Worker Not Found", models.response_model_error)
     def put(self, user_id=""):
         """Endpoint for horde admins to perform operations on users"""
-        user = user = database.find_user_by_id(user_id)
+        user = database.find_user_by_id(user_id)
         if not user:
             raise e.UserNotFound(user_id)
         self.args = self.parser.parse_args()
@@ -1469,6 +1469,7 @@ class UserSingle(Resource):
             ret_dict["admin_comment"] = user.admin_comment
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!", rc="NoUserModSelected")
+        user.refresh_cache()
         return (ret_dict, 200)
 
 
@@ -2738,7 +2739,7 @@ class SharedKey(Resource):
     def put(self):
         """Create a new SharedKey for this user"""
         self.args = self.put_parser.parse_args()
-        user: User = database.find_user_by_api_key(self.args.apikey)
+        user = database.find_user_by_api_key(self.args.apikey)
         if not user:
             raise e.InvalidAPIKey("get sharedkey")
         if user.is_anon():
@@ -2760,6 +2761,7 @@ class SharedKey(Resource):
         )
         db.session.add(new_key)
         db.session.commit()
+        user.refresh_cache()
         return new_key.get_details(), 200
 
 
@@ -2929,6 +2931,7 @@ class SharedKeySingle(Resource):
             )
         db.session.delete(sharedkey)
         db.session.commit()
+        user.refresh_cache()
         return {"message": "OK"}, 200
 
 
