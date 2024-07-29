@@ -897,6 +897,19 @@ class User(db.Model):
             db.session.add(new_kd)
         db.session.commit()
 
+    def refresh_cache(self):
+        try:
+            privileges = [0, 1, 2]  # public, self-view, moderator
+            for privilege in privileges:
+                cache_name = f"cached_user_id_{self.id}_privilege_{privilege}"
+                hr.horde_r_delete(cache_name)
+
+            api_cache_name = f"cached_apikey_user_{self.api_key}"
+            hr.horde_r_delete(api_cache_name)
+
+        except Exception:
+            return None
+
     def record_problem_job(self, procgen, ipaddr, worker, prompt):
         # We do not report the admin as they do dev work often.
         if self.id == 1:

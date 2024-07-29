@@ -155,13 +155,13 @@ def get_total_usage():
     return totals
 
 
-def find_user_by_oauth_id(oauth_id):
+def find_user_by_oauth_id(oauth_id) -> User | None:
     if oauth_id == "anon" and not ALLOW_ANONYMOUS:
         return None
     return db.session.query(User).filter_by(oauth_id=oauth_id).first()
 
 
-def find_user_by_username(username):
+def find_user_by_username(username) -> User | None:
     ulist = username.split("#")
     try:
         if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
@@ -173,21 +173,21 @@ def find_user_by_username(username):
     return user
 
 
-def find_user_by_id(user_id):
+def find_user_by_id(user_id) -> User | None:
     if int(user_id) == 0 and not ALLOW_ANONYMOUS:
         return None
     user = db.session.query(User).filter_by(id=user_id).first()
     return user
 
 
-def find_user_by_api_key(api_key):
+def find_user_by_api_key(api_key) -> User | None:
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return None
     user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
     return user
 
 
-def find_user_by_sharedkey(shared_key):
+def find_user_by_sharedkey(shared_key) -> User | None:
     try:
         sharedkey_uuid = uuid.UUID(shared_key)
     except ValueError:

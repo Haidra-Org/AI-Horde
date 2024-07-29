@@ -119,3 +119,13 @@ def horde_r_get_json(key):
     if value is None:
         return None
     return json.loads(value)
+
+
+def horde_r_delete(key):
+    for hr in all_horde_redis:
+        try:
+            hr.delete(key)
+        except Exception as err:
+            logger.warning(f"Exception when deleting from redis servers {hr}: {err}")
+    if horde_local_r:
+        horde_local_r.delete(key)
