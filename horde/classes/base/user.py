@@ -641,7 +641,10 @@ class User(db.Model):
         db.session.commit()
 
     def receive_monthly_kudos(self, force=False, prevent_date_change=False):
-        logger.info(f"Checking {self.get_unique_alias()} for monthly kudos. They currently have {self.kudos} kudos last received at {self.monthly_kudos_last_received}")
+        logger.info(
+            f"Checking {self.get_unique_alias()} for monthly kudos. "
+            f"They currently have {self.kudos} kudos last received at {self.monthly_kudos_last_received}",
+        )
         kudos_amount = self.calculate_monthly_kudos()
         if kudos_amount == 0:
             logger.warning(f"receive_monthly_kudos() received 0 kudos account {self.get_unique_alias()}")
