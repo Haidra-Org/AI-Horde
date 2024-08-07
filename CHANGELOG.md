@@ -1,6 +1,10 @@
 # Changelog
 
-# 4.30.0
+# 4.40.1
+
+* Prevents mistral models from being considered suspiciously fast.
+
+# 4.40.0
 
 * Adds the `active_generations` privileged key on user info providing a list of all non-expired gens the user has active.
 

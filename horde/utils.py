@@ -48,17 +48,21 @@ class ConvertAmount:
             self.prefix = "kilo"
             self.char = "K"
         elif self.digits < 10:
-            self.amount = round(amount / 1000000, self.decimals)
+            self.amount = round(amount / 1_000_000, self.decimals)
             self.prefix = "mega"
             self.char = "M"
         elif self.digits < 13:
-            self.amount = round(amount / 1000000000, self.decimals)
+            self.amount = round(amount / 1_000_000_000, self.decimals)
             self.prefix = "giga"
             self.char = "G"
-        else:
-            self.amount = round(amount / 1000000000000, self.decimals)
+        elif self.digits < 16:
+            self.amount = round(amount / 1_000_000_000_000, self.decimals)
             self.prefix = "tera"
             self.char = "T"
+        else:
+            self.amount = round(amount / 1_000_000_000_000_000, self.decimals)
+            self.prefix = "peta"
+            self.char = "P"
 
 
 def get_db_uuid():
