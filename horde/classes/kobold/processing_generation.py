@@ -112,5 +112,11 @@ class TextProcessingGeneration(ProcessingGeneration):
             if param_multiplier >= params_count:
                 unreasonable_speed = max_speed_per_multiplier[params_count]
                 break
+        # This handles the 8x7 and 8x22 models which are generally faster than their size implies.
+        if "8x" in self.model:
+            unreasonable_speed = unreasonable_speed * 3
         if things_per_sec > unreasonable_speed:
-            self.worker.report_suspicion(reason=Suspicions.UNREASONABLY_FAST, formats=[things_per_sec])
+            self.worker.report_suspicion(
+                reason=Suspicions.UNREASONABLY_FAST, 
+                formats=[f"{things_per_sec} > {unreasonable_speed}"]
+            )
