@@ -116,7 +116,4 @@ class TextProcessingGeneration(ProcessingGeneration):
         if "8x" in self.model:
             unreasonable_speed = unreasonable_speed * 3
         if things_per_sec > unreasonable_speed:
-            self.worker.report_suspicion(
-                reason=Suspicions.UNREASONABLY_FAST, 
-                formats=[f"{things_per_sec} > {unreasonable_speed}"]
-            )
+            self.worker.report_suspicion(reason=Suspicions.UNREASONABLY_FAST, formats=[f"{things_per_sec} > {unreasonable_speed}"])
