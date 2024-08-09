@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 from loguru import logger
 
 from horde.database import functions as database

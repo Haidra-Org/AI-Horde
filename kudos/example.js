@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2022 AI Horde developers
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // This is an ES6 module, so your script should be a module too.
 
 // Download kudos_standalone.js module from https://github.com/db0/AI-Horde/blob/main/kudos/kudos_standalone.js

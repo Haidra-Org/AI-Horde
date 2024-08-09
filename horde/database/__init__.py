@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 import horde.database.threads as threads
 from horde.argparser import args
 from horde.database.classes import Quorum

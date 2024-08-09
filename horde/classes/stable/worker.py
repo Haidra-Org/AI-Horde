@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 from horde import exceptions as e
 from horde.bridge_reference import (
     check_bridge_capability,

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # # OBSOLETE
 # from flask import Blueprint
 # from flask_restx import Api
