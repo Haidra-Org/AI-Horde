@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 

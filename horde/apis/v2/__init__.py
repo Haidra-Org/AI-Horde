@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 import horde.apis.v2.base as base
 import horde.apis.v2.kobold as kobold
 import horde.apis.v2.stable as stable

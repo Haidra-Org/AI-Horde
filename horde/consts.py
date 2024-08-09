@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 AI Horde developers
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 HORDE_VERSION = "4.40.2"
 
 WHITELISTED_SERVICE_IPS = {
