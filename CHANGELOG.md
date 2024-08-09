@@ -1,5 +1,9 @@
 # Changelog
 
+# 4.40.2
+
+* Prevents too high max context from being used for rewards
+
 # 4.40.1
 
 * Prevents mistral models from being considered suspiciously fast.

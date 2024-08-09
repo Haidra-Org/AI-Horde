@@ -103,7 +103,7 @@ class TextWorker(Worker):
     def calculate_uptime_reward(self):
         model = self.get_model_names()[0]
         # The base amount of kudos one gets is based on the max context length they've loaded
-        base_kudos = 25 + (15 * self.max_context_length / 1024)
+        base_kudos = 25 + (15 * min(self.max_context_length,16384) / 1024)
         if not model_reference.is_known_text_model(model):
             return base_kudos * 0.5
         # We consider the 7B models the baseline here
