@@ -101,7 +101,6 @@ jobs:
           black --check .
           ruff .
 
-
     reuse-lint-job:
       runs-on: ubuntu-latest
       steps:
