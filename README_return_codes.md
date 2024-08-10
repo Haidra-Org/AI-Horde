@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # AI Horde Errors
 
 Every time an exception is raised by the AI Horde, it will return both the http code, a human-readable "message" and an `rc` field which will contain a unique string code for each type of error the horde might raise. You can use these to better adjust your client logic or for informing your users using your own words or in other languages.

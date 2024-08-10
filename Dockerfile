@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Use a slim base image for Python 3.10
 FROM python:3.10-slim
 

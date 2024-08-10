@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Integrating to the AI Horde
 
 This readme will provide information on how you can build software which uses the AI Horde

@@ -1,3 +1,7 @@
+-- SPDX-FileCopyrightText: 2024 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+--
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+
 -- Show text generations per client for last month
 SELECT
     COUNT(*), 

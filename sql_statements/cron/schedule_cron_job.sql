@@ -1,3 +1,7 @@
+-- SPDX-FileCopyrightText: 2024 Tazlin
+--
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 CREATE OR REPLACE PROCEDURE schedule_cron_job(

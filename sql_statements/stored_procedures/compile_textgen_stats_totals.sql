@@ -1,3 +1,7 @@
+-- SPDX-FileCopyrightText: 2024 Tazlin
+--
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+
 CREATE OR REPLACE PROCEDURE compile_textgen_stats_totals()
 LANGUAGE plpgsql
 AS $$

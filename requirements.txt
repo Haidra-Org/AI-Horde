@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024 db0
+#
+# SPDX-License-Identifier: CC0-1.0
+
 werkzeug~=2.2.2
 Flask~=2.2.2
 flask-restx
@@ -28,5 +32,5 @@ git+https://github.com/Patreon/patreon-python.git
 torch
 emoji
 semver >= 3.0.2
-numpy ~= 1.24.1 # better_profanity fails on later versions of numpy
+numpy ~= 1.26.4 # better_profanity fails on later versions of numpy
 markdownify

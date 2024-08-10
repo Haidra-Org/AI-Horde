@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import horde.apis.v2.base as base
 import horde.apis.v2.kobold as kobold
 import horde.apis.v2.stable as stable
