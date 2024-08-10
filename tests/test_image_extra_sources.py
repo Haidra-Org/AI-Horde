@@ -40,11 +40,11 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "source_processing": "remix",
         "extra_source_images": [
             {
-                "image": load_image_as_b64("img_stable/1.jpg"),
+                "image": load_image_as_b64("img_stable/0.jpg"),
                 "strength": 0.5,
             },
             {
-                "image": load_image_as_b64("img_stable/2.jpg"),
+                "image": load_image_as_b64("img_stable/0.jpg"),
             },
         ],
     }
