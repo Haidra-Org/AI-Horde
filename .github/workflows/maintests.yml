@@ -1,5 +1,4 @@
 # SPDX-FileCopyrightText: 2023 Tazlin
-# SPDX-FileCopyrightText: 2023 db0
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -90,7 +89,7 @@ jobs:
   lint-check-job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -101,3 +100,11 @@ jobs:
           python -m pip install -r requirements.dev.txt 
           black --check .
           ruff .
+
+
+    reuse-lint-job:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - name: REUSE Compliance Check
+          uses: fsfe/reuse-action@v4
