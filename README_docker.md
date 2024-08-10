@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tazlin
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Running ai-horde with Docker
 
 ---

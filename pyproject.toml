@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+# SPDX-FileCopyrightText: 2023 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 [project]
 name = "AI Horde"
 version = "4.30.0"

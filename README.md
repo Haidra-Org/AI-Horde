@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # AI Horde
 
 The AI Horde is an enterprise-level ML-Ops crowdsourced distributed inference cluster for AI Models. This middleware can support both Image and Text generation. It is infinitelly scalable and supports seamless drop-in/drop-out of compute resources. 

@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2023 Tazlin
+# SPDX-FileCopyrightText: 2023 db0
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 name: AI-Horde main tests
 
 on:
