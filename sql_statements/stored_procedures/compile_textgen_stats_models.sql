@@ -8,24 +8,24 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     WITH model_stats AS (
-        SELECT 
+        SELECT
             tgs.model as model_name,
             COUNT(*) FILTER (WHERE tgs.finished >= (NOW() at time zone 'utc') - INTERVAL '1 day') as day_requests,
             COUNT(*) FILTER (WHERE tgs.finished >= (NOW() at time zone 'utc') - INTERVAL '30 days') as month_requests,
             COUNT(*) as total_requests
-        FROM 
+        FROM
             text_gen_stats as tgs
-        GROUP BY 
+        GROUP BY
             tgs.model
     )
     INSERT INTO compiled_text_gen_stats_models (created, model, day_requests, month_requests, total_requests)
-    SELECT 
+    SELECT
         (NOW() at time zone 'utc'),
         model_name,
         day_requests,
         month_requests,
         total_requests
-    FROM 
+    FROM
         model_stats;
     COMMIT;
 END; $$;

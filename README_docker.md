@@ -35,4 +35,3 @@ Copy the `.env_template` file in the root folder to create the .env_docker file.
 # run in background
 docker-compose up -d
 ```
-

@@ -27,24 +27,24 @@ The errors returned by the AI horde are always in this json format
 | -- | ----------- |
 | MissingPrompt | The generation prompt was not given |
 | CorruptPrompt | The prompts was rejected as unethical |
-| KudosValidationError | Something went wrong when transferring kudos. This is a base rc, so you should never typically see it. | 
-| NoValidActions | Something went wrong when modifying an entity on the horde. This is a base rc, so you should never typically see it. | 
+| KudosValidationError | Something went wrong when transferring kudos. This is a base rc, so you should never typically see it. |
+| NoValidActions | Something went wrong when modifying an entity on the horde. This is a base rc, so you should never typically see it. |
 | InvalidSize | Requested image size is not a multiple of 64 |
-| InvalidPromptSize | Prompt is too large | 
-| TooManySteps | Too many steps requested for image generation | 
+| InvalidPromptSize | Prompt is too large |
+| TooManySteps | Too many steps requested for image generation |
 | Profanity | Profanity Detected. This is a base rc, so you should never typically see it.
-| ProfaneWorkerName | Profanity detected in worker name | 
-| ProfaneBridgeAgent | Profanity detected in bridge agent | 
-| ProfaneWorkerInfo | Profanity detected in worker info | 
-| ProfaneUserName | Profanity detected in username | 
-| ProfaneUserContact | Profanity detected in user contact details | 
-| ProfaneAdminComment | Profanity detected in admin comment | 
-| ProfaneTeamName | Profanity detected in team name | 
-| ProfaneTeamInfo | Profanity detected in team info | 
+| ProfaneWorkerName | Profanity detected in worker name |
+| ProfaneBridgeAgent | Profanity detected in bridge agent |
+| ProfaneWorkerInfo | Profanity detected in worker info |
+| ProfaneUserName | Profanity detected in username |
+| ProfaneUserContact | Profanity detected in user contact details |
+| ProfaneAdminComment | Profanity detected in admin comment |
+| ProfaneTeamName | Profanity detected in team name |
+| ProfaneTeamInfo | Profanity detected in team info |
 | TooLong | Provided string was too long. This is a base rc, so you should never typically see it. |
-| TooLongWorkerName | The provided worker name is too long | 
-| TooLongUserName | The provided username is too long | 
-| NameAlreadyExists | The provided name already exists. This is a base rc, so you should never typically see it. | 
+| TooLongWorkerName | The provided worker name is too long |
+| TooLongUserName | The provided username is too long |
+| NameAlreadyExists | The provided name already exists. This is a base rc, so you should never typically see it. |
 | WorkerNameAlreadyExists | The provided worker name already exists |
 | TeamNameAlreadyExists | The provided team name already exists |
 | PolymorphicNameConflict | The provided worker name already exists for a different worker type (e.g. Dreamer VS Scribe) |
@@ -90,38 +90,38 @@ The errors returned by the AI horde are always in this json format
 | UntrustedUnsafeIP | Untrusted user tried to use a VPN for a worker |
 | WorkerMaintenance | Worker has been put into maintenance and cannot pop new jobs |
 | WorkerFlaggedMaintenance | Worker owner has been flagged and worker has been put into permanent maintenance |
-| TooManySameIPs | Same IP attempted to spawn too many workers | 
+| TooManySameIPs | Same IP attempted to spawn too many workers |
 | WorkerInviteOnly | AI Horde is in worker invite-only mode and worker owner needs to request permission |
 | UnsafeIP | Worker attempted to connect from VPN |
 | TimeoutIP | Operation rejected because user IP in timeout |
-| TooManyNewIPs | Too many workers from new IPs currently | 
+| TooManyNewIPs | Too many workers from new IPs currently |
 | KudosUpfront | This request requires upfront kudos to accept |
 | SharedKeyEmpty | Shared Key used in the request does not have any more kudos |
 | InvalidJobID | Job not found when trying to submit. This probably means its request was delected for inactivity |
 | RequestNotFound | Request not found. This probably means it was delected for inactivity |
 | WorkerNotFound | Worker ID not found |
 | TeamNotFound | Team ID not found |
-| FilterNotFound | Regex filter not found | 
+| FilterNotFound | Regex filter not found |
 | UserNotFound | User not found |
 | DuplicateGen | Job has already been submitted |
 | AbortedGen | Request aborted because too many jobs have failed |
 | RequestExpired | Request expired |
 | TooManyPrompts | User has requested too many generations concurrently |
-| NoValidWorkers | No workers online which can pick up this request | 
+| NoValidWorkers | No workers online which can pick up this request |
 | MaintenanceMode | Request aborted because horde is in maintenance mode |
 | TargetAccountFlagged | Action rejected because target user has been flagged for violating Horde ToS |
 | SourceAccountFlagged | Action rejected because source user has been flagged for violating Horde ToS |
-| FaultWhenKudosReceiving | Unexpected error when receiving kudos | 
+| FaultWhenKudosReceiving | Unexpected error when receiving kudos |
 | FaultWhenKudosSending | Unexpected error when sending kudos |
-| TooFastKudosTransfers | User tried to send kudos too fast after receiving them from the same user | 
+| TooFastKudosTransfers | User tried to send kudos too fast after receiving them from the same user |
 | KudosTransferToAnon | User tried to transfer kudos to Anon |
-| KudosTransferToSelf | User tried to transfer kudos to themselves | 
+| KudosTransferToSelf | User tried to transfer kudos to themselves |
 | KudosTransferNotEnough | User tried to transfer more kudos than they have |
 | NegativeKudosTransfer | User tried to transfer negative kudos |
 | KudosTransferFromAnon | User tried to transfer kudos using the Anon API key |
-| InvalidAwardUsername | Tried to award kudos to non-existing user | 
-| KudosAwardToAnon | Tried to award kudos to Anonymous user | 
-| NotAllowedAwards | This user is not allowed to Award Kudos | 
+| InvalidAwardUsername | Tried to award kudos to non-existing user |
+| KudosAwardToAnon | Tried to award kudos to Anonymous user |
+| NotAllowedAwards | This user is not allowed to Award Kudos |
 | NoWorkerModSelected | No valid worker modification selected |
 | NoUserModSelected | No valid user modification selected |
 | NoHordeModSelected | No valid horde modification selected |

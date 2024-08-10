@@ -64,18 +64,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
                 function onSubmit(token) {
                   document.getElementById("main-form").submit();
                 }
-            </script>          
-            <button type="submit" class="btn btn-default g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback='onSubmit' data-action='submit'>Submit</button>           
+            </script>
+            <button type="submit" class="btn btn-default g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback='onSubmit' data-action='submit'>Submit</button>
         </form>
         {% if api_key is not none %}
         <h2>API Key</h2>
         <p>Your new API Key is below. It will not be displayed again. Submit this form to generate a new one. Use this key in your client and in your bridge to identify your user</p>
         <p><b>Do not share this with anyone!</b></p>
-        <p style="background-color:darkorange;">{{ api_key }}</p>   
+        <p style="background-color:darkorange;">{{ api_key }}</p>
         {% endif %}
         <h2>Privacy Policy</h2>
         <p>The only information we store from your account is your unique ID for uniqueness.</p>
         <p>We do not other use your id for any purpose.</p>
-   </div> 
+   </div>
 <p><a href="/">Back to Main page</a></p>
 {% endblock %}

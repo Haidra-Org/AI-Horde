@@ -173,7 +173,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # 4.22.0
 
-Allows workers to send the `gen_metadata` key which can contain a list of dictionaries. 
+Allows workers to send the `gen_metadata` key which can contain a list of dictionaries.
 Each dictionary will be information to give to the user about that specific metadata
 Such as wether it's been censored and why, or whether any loras have been skipped.
 
@@ -196,7 +196,7 @@ Correctly calculate waiting requests with n>1
 * Worker IP block adjustable by days
 * Worker IP block now handles IPv6 defaulting to a /64 range (See https://www.mediawiki.org/wiki/Help:Range_blocks/IPv6)
 * IP Ban also blocks new registrations from that IP
-* Added manual IP ban endpoint. 
+* Added manual IP ban endpoint.
 * Added endpoint to get all IP blocks
 * Added endpoint to check if a specific IP is blocked
 
@@ -279,7 +279,7 @@ Correctly calculate waiting requests with n>1
 
 # 4.17.4
 
-* Set the Scribe kudos baseline to 4bit. 
+* Set the Scribe kudos baseline to 4bit.
 * Added kudos consumption multiplier based on context size
 
 # 4.17.3
@@ -387,11 +387,11 @@ Support lora's `inject_trigger`
 # 4.12.0
 
 **Added Shared Keys**. Now each user can generate a number of shared keys which they can give to others to use.
-When using a shared key to generate, the request pretend act as if it was that user. 
+When using a shared key to generate, the request pretend act as if it was that user.
 
 However shared keys cannot be used for any other purpose than generating, so they cannot be abused. They are thus meant to be a lower-security option for sharing one's priority, without having to transfer kudos all the time.
 
-Shared keys can be created with an optional limited amount of kudos to use, and/or an expiry date. 
+Shared keys can be created with an optional limited amount of kudos to use, and/or an expiry date.
 Regardless of what the shared key kudos limit is, the request will use the full kudos priority of its owner.
 
 New Endpoints:
@@ -415,7 +415,7 @@ Check api documentation for payloads required.
 # 4.10.0
 
 * Weights now do not cost kudos (preparation for comfy switch)
-* Allows text models to be named by appending the horde `::user#id` at the end. 
+* Allows text models to be named by appending the horde `::user#id` at the end.
   A worker can only offer such a model when the worker's owner matches the name in the model name.
   This will allow test models to be served in a way that someone cannot poison the data.
 * Cached user GET.
@@ -507,10 +507,10 @@ Fixed incorrectly using `.seconds` instead of `.total_seconds()` in timedeltas
 
 * Added new option for `/async` (both text and image): `slow_workers`.
    * If True (Default), the request will function as currently
-   * If False, the request will only be picked up by workers who have a decent speed (0.3 MPS/s for Image, 2 tokens/s for Text). However selecting this option will incur a 20% Kudos consumption penalty and require upfront kudos.  
-   
+   * If False, the request will only be picked up by workers who have a decent speed (0.3 MPS/s for Image, 2 tokens/s for Text). However selecting this option will incur a 20% Kudos consumption penalty and require upfront kudos.
+
    The purpose of this option is to give people the ability to onboard slower workers while also allowing other people to avoid those workers if needed.
-* Added check for load on Text Gen and requirement for upfront kudos when requesting too many tokens while load is high   
+* Added check for load on Text Gen and requirement for upfront kudos when requesting too many tokens while load is high
 
 # 4.3.0
 
@@ -519,7 +519,7 @@ Fixed incorrectly using `.seconds` instead of `.total_seconds()` in timedeltas
 
 # 4.2.0
 
-* Added regex transparent replacements instead of IP blocks. 
+* Added regex transparent replacements instead of IP blocks.
 * New arg for `/api/v2/generate/async`: `replacement_filter`. When True (Default), it will transparently replace underage context in CSAM-detected prompts. When false (or when prompt too large) will IP block instead.
 * NSFW models which hit their lightweight CSAM filter, will always replace instead of giving an error. This is to avoid people reverse engineering the CSAM regex through trial and error
 
@@ -661,10 +661,10 @@ Age check shouldn't apply to text
 
 ## 3.5.0
 
-* Worker Bridges now have to send a new field in the pop payload called bridge_agent. 
+* Worker Bridges now have to send a new field in the pop payload called bridge_agent.
     It should be in the form of `name:version:url`. For example `AI Horde Worker:11:https://github.com/db0/AI-Horde-Worker`
 
-   This will allow people to better know the capabilities of each worker 
+   This will allow people to better know the capabilities of each worker
 
 * Exposed bridge_agent in the worker info
 
@@ -683,13 +683,13 @@ Age check shouldn't apply to text
 * Added regex endpoint for filters
 * When trying to submit on an aborted gen, will get a different error than a duplicate one
 
-## 3.2 
+## 3.2
 
 * Added Filtering API
 
 ## v2.7
 
-### Features 
+### Features
 
 * Increased the jobs dropped needed to think a worker is suspicious
 * Added thread locking for starting generations to avoid the n going negative
@@ -698,7 +698,7 @@ Age check shouldn't apply to text
 
 ## v2.6
 
-### Features 
+### Features
 
 * Added post-processing capabilities. GFPGAN and RealESRGAN_x4plus
 * Added clean shutdown capability
@@ -734,7 +734,7 @@ The horde workers can now run multiple threads. The horde has been adjusted to s
 ### Countermeasures
 
 * Anon user has a different concurrency per model. Anon can only queue 10 images per worker serving that model. That means anon cannot request images for models that don't have any workers! I had to add this countermeasure because I noticed someone queueing 500 images on a model that had very few workers, therefore choking the whole queue for other anon usage.
-* Lowered limits before upfront kudos are required. 
+* Lowered limits before upfront kudos are required.
    * Now the resolution threshold is based on how many concurrent requests are currently in the queue to a min of 576x576 which will remain always available without kudos.
    * steps threshold lowered to 50
    * pseudonymous users start with 14 kudos, which will allow them to always have a bit more kudos to do some extra steps or resolution.
@@ -777,7 +777,7 @@ Used in `/v2/worker/` and `/v2/worker/{worker_id}`
 
 ### Features
 
-* Added ability to create teams and join them with workers. 
+* Added ability to create teams and join them with workers.
     Each worker will record how much kudos, requests and MPS they're generated to their team. This has no utility by itself other than allowinf self-organization.
     The new APIs developed allow **trusted users** to create new teams, but anyone can dedicate their worker to a specific team by using the worker PUT.
     You can list all teams or query a specific one.
@@ -866,7 +866,7 @@ Please check the API documentation for each new field.
 
 This is as far back as my current changelog goes. This header does not contain all the changes until 2.0
 
-### Countermeasures 
+### Countermeasures
 
 * Increased suspicion threshold
 * More Corrupt prompts filtering
