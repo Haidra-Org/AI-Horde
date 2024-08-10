@@ -18,20 +18,20 @@ For more information, check [the FAQ](https://github.com/Haidra-Org/AI-Horde/blo
 
 [![](assets/logo_nlnet.svg)](https://nlnet.nl/project/AI-Horde/)
 
-## Stats 
+## Stats
 
 ### Image Generation
-* Average Recent Performance: {avg_performance} {avg_thing_name} per second. 
-* Total generated: {total_image_things} {total_total_image_things_name}. 
+* Average Recent Performance: {avg_performance} {avg_thing_name} per second.
+* Total generated: {total_image_things} {total_total_image_things_name}.
 * Total image requests fulfilled: {total_image_fulfillments}{total_image_fulfillments_char}.
 * Active [Dreamers](/api/v2/workers?type=image)/Threads: {image_workers}/{image_worker_threads}
-* Queue: {total_image_queue} requests for a total of {queued_image_things} {queued_image_things_name}. 
+* Queue: {total_image_queue} requests for a total of {queued_image_things} {queued_image_things_name}.
 ### Text Generation
-* Average Recent Performance: {avg_text_performance} {avg_text_thing_name} per second. 
-* Total generated: {total_text_things} {total_text_things_name}. 
+* Average Recent Performance: {avg_text_performance} {avg_text_thing_name} per second.
+* Total generated: {total_text_things} {total_text_things_name}.
 * Total texts requests fulfilled: {total_text_fulfillments}{total_text_fulfillments_char}.
 * Active [Scribes](/api/v2/workers?type=text)/Threads: {text_workers}/{text_worker_threads}
-* Queue: {total_text_queue} requests for a total of {queued_text_things} {queued_text_things_name}. 
+* Queue: {total_text_queue} requests for a total of {queued_text_things} {queued_text_things_name}.
 ### Image Alchemy
 * Total processed: {total_forms}{total_forms_char}.
 * Active [Alchemists](/api/v2/workers?type=interrogation)/Threads: {interrogation_workers}/{interrogation_worker_threads}

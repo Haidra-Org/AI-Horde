@@ -4,8 +4,8 @@
 
 -- Show text generations per client for last month
 SELECT
-    COUNT(*), 
-    CASE 
+    COUNT(*),
+    CASE
         WHEN client_agent LIKE '%Agnaistic%' THEN 'Agnaistic'
         WHEN client_agent LIKE '%ArtBot%' THEN 'ArtBot'
         WHEN client_agent LIKE '%DreamDiffusion%' THEN 'DreamDiffusion'

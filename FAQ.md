@@ -37,7 +37,7 @@ People want to contribute to the horde for many reasons
 
 ### Can workers spy on my prompts or generations?
 
-*Technically*, yes. While the worker software and the bridge code is not set to allow it, ultimately the software resides at someone else's computer and is open source. As such, anyone with the know-how can modify their own code to not just see all prompts passing through, but even save all results they generate. 
+*Technically*, yes. While the worker software and the bridge code is not set to allow it, ultimately the software resides at someone else's computer and is open source. As such, anyone with the know-how can modify their own code to not just see all prompts passing through, but even save all results they generate.
 
 However workers do not have any identifying information about individual requestors as they cannot see their ID or IP.
 
@@ -78,7 +78,7 @@ The AI Horde API provides a `dry_run` payload key. When set to true, it will ret
 On top of that there is what's known as the "horde tax" which represents the extra costs to the infrastructure for each request. These kudos are not received by the worker but are rather "burnt" forever.
 
 * There is a 1 kudos tax per request. This is applied even if the request it cancelled, faulted or aborted.
-* There is a 1 kudos tax per job in a request. 
+* There is a 1 kudos tax per job in a request.
 * When requesting only fast workers, there's an added +20% kudos burn.
 * When requesting a worker blacklist, there's an added +10% kudos burn.
 
@@ -97,9 +97,9 @@ We use Kudos to support good behaviour in the community. As such we have ways to
 
 **Yes!** Check the `api/v2/transfer` endpoint.
 
-Remember however that the Kudos is merely a prioritization mechanism, **not a currency**. The AI Horde are under no obligation to maintain Kudos totals or current rate of return, and we may tweak them to ensure more optimal operation of the system. 
+Remember however that the Kudos is merely a prioritization mechanism, **not a currency**. The AI Horde are under no obligation to maintain Kudos totals or current rate of return, and we may tweak them to ensure more optimal operation of the system.
 
-### Can I sell my kudos? 
+### Can I sell my kudos?
 
 **NO!** Kudos is inherently valueless and we do not allow anyone exchanging kudos for money. Bypassing this requirement is an existential threat to the AI Horde. Please do not attempt to do this under the table. **If you exchange money for Kudos and we discover it, we might zero out your account and whoever you bought it from!**
 
@@ -178,11 +178,11 @@ No, the horde itself is not storing such details. The prompts and the generation
 
 ### Why should I use the Horde and not my local PC?
 
-Not everyone has a power GPU in their PC. The horde allows anyone to use fast Stable Diffusion and KoboldAI, not only the ones privileged enough to be able to afford an expensive graphics card. 
+Not everyone has a power GPU in their PC. The horde allows anyone to use fast Stable Diffusion and KoboldAI, not only the ones privileged enough to be able to afford an expensive graphics card.
 
 Furthermore, local clients, even at the best of times, are difficult to setup up and often error prone due to python dependencies. They also need plenty of internet bandwidth to download 4GB of models. The stable horde provides no-install clients, as well as browser clients you can use even on your phone!
 
-Finally if you wanted to provide a service built on image or text generation, you can now use your own PC to power your image generations, and therefore avoid all the complexity and capital costs required with setting up a server infrastructure. 
+Finally if you wanted to provide a service built on image or text generation, you can now use your own PC to power your image generations, and therefore avoid all the complexity and capital costs required with setting up a server infrastructure.
 
 ### Why should I use the Horde and not a service like Stability.ai?
 
