@@ -22,4 +22,4 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   - `compile_*gen_stats_*.sql`
     - These files defined stored procedures which populated the `compiled_*` tables and generally represent minute/hour/day/total statistics about generations.
   - `cron_jobs/`
-    - Schedules any stats compile jobs via `schedule_cron_job`.
+    - Schedules any stats compile jobs via `schedule_cron_job`. 

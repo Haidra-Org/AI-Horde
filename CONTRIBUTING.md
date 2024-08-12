@@ -57,7 +57,7 @@ Ruff might request extra manual fixes
 
 ### New file
 
-If you add a new file, you need to ensure that it has the copyright and license information with a command like this
+If you add a new file, you need to ensure that it has the copyright and license information with a command like this:
 
 ```bash
 reuse annotate  --copyright db0 --license="AGPL-3.0-or-later"  horde/my_new_code.py
@@ -73,10 +73,16 @@ The license to choose is based on the file.
 
 ### Existing file
 
-If you did some significant contributions to the code (i.e. not things like syntax, spelling. linting etc), then just add your own copyrights to an existing file
+If you did some significant contributions to the code (i.e. not things like syntax, spelling. linting etc), then just add your own copyrights to an existing file. For example:
 
 ```bash
 reuse annotate  --copyright db0 horde/existing_code.py
 ```
 
 Simply replace the copyright with your own username and optionally email.
+
+Note that the pre-commit will not complain if you forget to add your copyright notice to an existing file.
+
+# Code of Conduct
+
+We expect all contributors to follow the [Anarchist code of conduct](https://wiki.dbzer0.com/the-anarchist-code-of-conduct/). Do not drive away other contributors due to intended or unintended on bigotry.
