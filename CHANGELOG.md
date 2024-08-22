@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.40.3
+
+* Ensure jobs don't expire soon after being picked up
+
 # 4.40.2
 
 * Prevents too high max context from being used for rewards

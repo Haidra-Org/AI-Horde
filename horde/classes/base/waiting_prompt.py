@@ -239,7 +239,8 @@ class WaitingPrompt(db.Model):
         current_n = self.n
         self.n -= safe_amount
         payload = self.get_job_payload(current_n)
-        db.session.commit()
+        # This does a commit as well
+        self.refresh()
         procgen_class = procgen_classes[self.wp_type]
         gens_list = []
         model = None
