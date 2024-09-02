@@ -21,7 +21,7 @@ services:
       - redis
 
   postgres:
-    image: postgres:15.3-alpine
+    image: dex_postgres:latest
     container_name: postgres
     restart: always
     environment:
