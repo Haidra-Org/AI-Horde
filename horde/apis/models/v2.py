@@ -1549,3 +1549,15 @@ class Models:
                 ),
             },
         )
+
+        self.response_model_auto_worker_type = api.model(
+            "AutoWorkerType",
+            {
+                "recommended_worker_type": fields.String(
+                    example="image",
+                    description="The recommended type of worker.",
+                    enum=["image", "text"],
+                    required=True,
+                ),
+            },
+        )
