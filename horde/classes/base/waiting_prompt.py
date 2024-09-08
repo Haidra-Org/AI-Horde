@@ -91,6 +91,7 @@ class WaitingPrompt(db.Model):
     ipaddr = db.Column(db.String(39))  # ipv6
     safe_ip = db.Column(db.Boolean, default=False, nullable=False)
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    validated_backends = db.Column(db.Boolean, default=True, nullable=False, index=True)
     slow_workers = db.Column(db.Boolean, default=True, nullable=False, index=True)
     worker_blacklist = db.Column(db.Boolean, default=False, nullable=False, index=True)
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)

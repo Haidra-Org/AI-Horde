@@ -163,6 +163,8 @@ BRIDGE_SAMPLERS = {  # TODO: Refactor along with schedulers
     },
 }
 
+LLM_VALIDATED_BACKENDS = {"AI Horde Worker~Aphrodite" "KoboldCppEmbedWorker"}
+
 
 @logger.catch(reraise=True)
 def parse_bridge_agent(bridge_agent):
@@ -193,6 +195,12 @@ def check_bridge_capability(capability, bridge_agent):
             total_capabilities.update(BRIDGE_CAPABILITIES[bridge_name][version])
     # logger.debug([total_capabilities, capability, capability in total_capabilities])
     return capability in total_capabilities
+
+
+@logger.catch(reraise=True)
+def is_backed_validated(bridge_agent):
+    bridge_name, _ = parse_bridge_agent(bridge_agent)
+    return bridge_name in LLM_VALIDATED_BACKENDS
 
 
 @logger.catch(reraise=True)

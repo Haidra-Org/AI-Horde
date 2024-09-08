@@ -9,6 +9,9 @@ from sqlalchemy.dialects.postgresql import UUID
 
 from horde import exceptions as e
 from horde import horde_redis as hr
+from horde.bridge_reference import (
+    is_backed_validated,
+)
 from horde.classes.base.worker import Worker
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
@@ -114,6 +117,9 @@ class TextWorker(Worker):
         param_multiplier = model_reference.get_text_model_multiplier(model) / 7
         if param_multiplier < 0.25:
             param_multiplier = 0.25
+        # Unvalidated backends get less kudos
+        if not is_backed_validated(self.worker.bridge_agent):
+            base_kudos *= 0.3
         # The uptime is based on both how much context they provide, as well as how many parameters they're serving
         return round(base_kudos * param_multiplier, 2)
 
@@ -125,6 +131,8 @@ class TextWorker(Worker):
             return [False, "max_context_length"]
         if self.max_length < waiting_prompt.max_length:
             return [False, "max_length"]
+        if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
+            return [False, "bridge_version"]
         matching_softprompt = True
         if waiting_prompt.softprompt:
             matching_softprompt = False
