@@ -12,6 +12,7 @@ def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     async_dict = {
         "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
         "trusted_workers": True,
+        "validated_backends": False,
         "max_length": 512,
         "max_context_length": 2048,
         "temperature": 1,
@@ -28,7 +29,7 @@ def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     pop_dict = {
         "name": "CICD Fake Scribe",
         "models": ["elinas/chronos-70b-v2"],
-        "bridge_agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625",
+        "bridge_agent": f"KoboldCppEmbedWorker:{CIVERSION}:(discord)db0#1625",
         "amount": 10,
         "max_context_length": 4096,
         "max_length": 512,
