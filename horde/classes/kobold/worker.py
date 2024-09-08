@@ -118,7 +118,7 @@ class TextWorker(Worker):
         if param_multiplier < 0.25:
             param_multiplier = 0.25
         # Unvalidated backends get less kudos
-        if not is_backed_validated(self.worker.bridge_agent):
+        if not is_backed_validated(self.bridge_agent):
             base_kudos *= 0.3
         # The uptime is based on both how much context they provide, as well as how many parameters they're serving
         return round(base_kudos * param_multiplier, 2)
