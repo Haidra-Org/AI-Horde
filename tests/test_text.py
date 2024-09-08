@@ -44,7 +44,7 @@ def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     except AssertionError as err:
         requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/text/status/{req_id}", headers=headers)
         print("Request cancelled")
-        raise err    
+        raise err
     submit_dict = {
         "id": job_id,
         "generation": "test ",

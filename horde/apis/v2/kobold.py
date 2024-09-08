@@ -312,7 +312,6 @@ class TextJobPop(JobPopTemplate):
             priority_user_ids=priority_user_ids,
             page=self.wp_page,
         )
-        logger.debug([sorted_wps,self.args])
         return sorted_wps
 
 
