@@ -12,7 +12,7 @@ def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     async_dict = {
         "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
         "trusted_workers": True,
-        "validated_backends": False,
+        "validated_backends": True,
         "max_length": 512,
         "max_context_length": 2048,
         "temperature": 1,
@@ -38,9 +38,13 @@ def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert pop_req.ok, pop_req.text
     pop_results = pop_req.json()
     # print(json.dumps(pop_results, indent=4))
-
     job_id = pop_results["id"]
-    assert job_id is not None, pop_results
+    try:
+        assert job_id is not None, pop_results
+    except AssertionError as err:
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/text/status/{req_id}", headers=headers)
+        print("Request cancelled")
+        raise err    
     submit_dict = {
         "id": job_id,
         "generation": "test ",
