@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.41.0
+
+* Adds support for extra backends behind LLM bridges, and for knowing which are validated.
+
 # 4.40.3
 
 * Ensure jobs don't expire soon after being picked up
