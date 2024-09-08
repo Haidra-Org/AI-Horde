@@ -58,6 +58,16 @@ class Parsers:
             location="json",
         )
         self.generate_parser.add_argument(
+            "validated_backends",
+            type=bool,
+            required=False,
+            default=False,
+            help=f"When true, only inference backends that are validated by the {horde_title} devs will serve this request. "
+            "When False, non-validated backends will also be used which can increase speed but "
+            "you may end up with unexpected results.",
+            location="json",
+        )
+        self.generate_parser.add_argument(
             "workers",
             type=list,
             required=False,

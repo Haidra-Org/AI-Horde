@@ -582,7 +582,7 @@ class ImageModels(v2.Models):
                 "validated_backends": fields.Boolean(
                     default=True,
                     description=(
-                        "When true, only inference backends that are validated by the AI Horde devs will serve this request. "
+                        f"When true, only inference backends that are validated by the {horde_title} devs will serve this request. "
                         "When False, non-validated backends will also be used which can increase speed but "
                         "you may end up with unexpected results."
                     ),

@@ -294,6 +294,14 @@ class TextModels(v2.Models):
                         "When False, Evaluating workers will also be used which can increase speed but adds more risk!"
                     ),
                 ),
+                "validated_backends": fields.Boolean(
+                    default=True,
+                    description=(
+                        f"When true, only inference backends that are validated by the {horde_title} devs will serve this request. "
+                        "When False, non-validated backends will also be used which can increase speed but "
+                        "you may end up with unexpected results."
+                    ),
+                ),
                 "slow_workers": fields.Boolean(
                     default=True,
                     description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.",
