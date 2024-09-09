@@ -59,7 +59,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         # This is the approximate reward for generating with a 2.7 model at 4bit
         model_multiplier = model_reference.get_text_model_multiplier(self.model)
         parameter_bonus = (max(model_multiplier, 13) / 13) ** 0.20
-        kudos = self.get_things_count() * parameter_bonus * model_multiplier / 100
+        kudos = self.get_things_count() * parameter_bonus * model_multiplier / 125
         # Unvalidated backends have their rewards cut to 30%
         if not is_backed_validated(self.worker.bridge_agent):
             kudos *= 0.3

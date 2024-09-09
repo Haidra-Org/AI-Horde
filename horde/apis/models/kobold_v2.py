@@ -242,7 +242,7 @@ class TextModels(v2.Models):
             },
         )
         self.response_model_job_pop = api.model(
-            "GenerationPayload",
+            "GenerationPayloadKobold",
             {
                 "payload": fields.Nested(self.response_model_generation_payload, skip_none=True),
                 "id": fields.String(description="The UUID for this text generation."),
