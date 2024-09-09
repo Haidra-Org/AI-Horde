@@ -21,7 +21,9 @@ services:
       - redis
 
   postgres:
-    image: postgres:15.3-alpine
+    build:
+      context: docker/postgres
+      dockerfile: dockerfile
     container_name: postgres
     restart: always
     environment:

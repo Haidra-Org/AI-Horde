@@ -3070,3 +3070,56 @@ class DocsSponsors(Resource):
         if self.args.format == "markdown":
             return {"markdown": markdownify(html_template).strip("\n")}, 200
         return {"html": html_template}, 200
+
+class AutoWorkerType(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=True,
+        help="A User API key.",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_auto_worker_type,
+        code=200,
+        description="Recommended worker type details",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    def get(self):
+        """Get the recommended worker type for the user"""
+        self.args = self.get_parser.parse_args()
+        self.user = database.find_user_by_api_key(self.args["apikey"])
+        if not self.user:
+            raise e.InvalidAPIKey("get auto worker type")
+
+        active_workers = database.get_active_workers()
+        image_workers_count = 0
+        text_workers_count = 0
+
+        for worker in active_workers:
+            if worker.worker_type == "image":
+                image_workers_count += 1
+            elif worker.worker_type == "text":
+                text_workers_count += 1
+            else:
+                logger.warning(f"Unknown worker type {worker.worker_type} for worker {worker.id}")
+
+        logger.debug(f"Image workers: {image_workers_count} Text workers: {text_workers_count}")
+
+        if image_workers_count > text_workers_count:
+            return {"recommended_worker_type": "text"}, 200
+        else:
+            return {"recommended_worker_type": "image"}, 200
