@@ -163,7 +163,7 @@ BRIDGE_SAMPLERS = {  # TODO: Refactor along with schedulers
     },
 }
 
-LLM_VALIDATED_BACKENDS = {"AI Horde Worker", "AI Horde Worker~Aphrodite~oai", "AI Horde Worker~Aphrodite~kai", "KoboldCppEmbedWorker"}
+LLM_VALIDATED_BACKENDS = {"AI Horde Worker", "AI Horde Worker~aphrodite~oai", "AI Horde Worker~aphrodite~kai", "KoboldCppEmbedWorker"}
 
 
 @logger.catch(reraise=True)
