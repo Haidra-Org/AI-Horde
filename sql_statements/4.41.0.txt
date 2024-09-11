@@ -1,0 +1,1 @@
+ALTER TABLE waiting_prompts ADD COLUMN validated_backends BOOLEAN default true;

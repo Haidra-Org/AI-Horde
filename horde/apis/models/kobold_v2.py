@@ -242,7 +242,7 @@ class TextModels(v2.Models):
             },
         )
         self.response_model_job_pop = api.model(
-            "GenerationPayload",
+            "GenerationPayloadKobold",
             {
                 "payload": fields.Nested(self.response_model_generation_payload, skip_none=True),
                 "id": fields.String(description="The UUID for this text generation."),
@@ -292,6 +292,14 @@ class TextModels(v2.Models):
                     description=(
                         "When true, only trusted workers will serve this request. "
                         "When False, Evaluating workers will also be used which can increase speed but adds more risk!"
+                    ),
+                ),
+                "validated_backends": fields.Boolean(
+                    default=True,
+                    description=(
+                        f"When true, only inference backends that are validated by the {horde_title} devs will serve this request. "
+                        "When False, non-validated backends will also be used which can increase speed but "
+                        "you may end up with unexpected results."
                     ),
                 ),
                 "slow_workers": fields.Boolean(

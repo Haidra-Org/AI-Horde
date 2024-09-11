@@ -332,6 +332,7 @@ class GenerateTemplate(Resource):
             nsfw=self.args.nsfw,
             censor_nsfw=self.args.censor_nsfw,
             trusted_workers=self.args.trusted_workers,
+            validated_backends=self.args.validated_backends,
             worker_blacklist=self.args.worker_blacklist,
             ipaddr=self.user_ip,
             sharedkey_id=self.args.apikey if self.sharedkey else None,

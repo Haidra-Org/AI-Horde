@@ -89,6 +89,7 @@ class TextAsyncGenerate(GenerateTemplate):
             params=self.params,
             softprompt=self.args.softprompt,
             trusted_workers=self.args.trusted_workers,
+            validated_backends=self.args.validated_backends,
             worker_blacklist=self.args.worker_blacklist,
             slow_workers=self.args.slow_workers,
             ipaddr=self.user_ip,
@@ -311,7 +312,6 @@ class TextJobPop(JobPopTemplate):
             priority_user_ids=priority_user_ids,
             page=self.wp_page,
         )
-
         return sorted_wps
 
 
