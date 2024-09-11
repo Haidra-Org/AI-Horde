@@ -64,7 +64,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             if self.wp.params.get("hires_fix", False):
                 return self.wp.kudos * 7
             return self.wp.kudos * 4
-        if model_reference.get_model_baseline(self.model) in ["flux.1"]:
+        if model_reference.get_model_baseline(self.model) in ["flux_1"]:
             # Flux is double the size of SDXL and much slower, so it gives double the rewards from it.
             return self.wp.kudos * 8
         return self.wp.kudos

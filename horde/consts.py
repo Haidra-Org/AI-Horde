@@ -42,7 +42,7 @@ HEAVY_POST_PROCESSORS = {
 # used to figure out batches by a set multiplier to reduce how many images are batched
 # at a time when these models are used.
 BASELINE_BATCHING_MULTIPLIERS = {
-    "flux.1": 2,
+    "flux_1": 2,
 }
 
 
