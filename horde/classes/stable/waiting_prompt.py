@@ -13,12 +13,12 @@ from horde.bridge_reference import check_bridge_capability
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.stable.kudos import KudosModel
 from horde.consts import (
+    BASELINE_BATCHING_MULTIPLIERS,
     HEAVY_POST_PROCESSORS,
     KNOWN_LCM_LORA_IDS,
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_POST_PROCESSORS,
     SECOND_ORDER_SAMPLERS,
-    BASELINE_BATCHING_MULTIPLIERS,
 )
 from horde.flask import db
 from horde.image import convert_pil_to_b64
@@ -374,7 +374,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.is_using_lcm() and self.get_accurate_steps() > 10:
             return (True, max_res, False)
         # Some models don't require a lot of steps, so we check their requirements. The max steps we allow without upfront kudos is 40
-        if any(model_reference.get_model_requirements(mn).get("max_steps",40) > self.get_accurate_steps() for mn in model_names):
+        if any(model_reference.get_model_requirements(mn).get("max_steps", 40) > self.get_accurate_steps() for mn in model_names):
             return (True, max_res, False)
         if self.width * self.height > max_res * max_res:
             return (True, max_res, False)
@@ -399,7 +399,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             # Break, just in case we went too low
             if self.width * self.height < 512 * 512:
                 break
-        max_steps = min(model_reference.get_model_requirements(mn).get("max_steps",30) for mn in self.get_model_names())
+        max_steps = min(model_reference.get_model_requirements(mn).get("max_steps", 30) for mn in self.get_model_names())
         if self.params.get("control_type"):
             max_steps = 20
         if self.is_using_lcm():
@@ -518,6 +518,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             if BASELINE_BATCHING_MULTIPLIERS.get(mn, 1) > highest_multiplier:
                 highest_multiplier = BASELINE_BATCHING_MULTIPLIERS.get(mn, 1)
         return highest_multiplier
-    
+
     def count_pp(self):
         return len(self.params.get("post_processing", []))
