@@ -172,6 +172,11 @@ class ImageAsyncGenerate(GenerateTemplate):
         if any(model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models):
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with Stable Cascade currently.", rc="ControlNetMismatch")
+        if any(model_reference.get_model_baseline(model_name).startswith("flux.1") for model_name in self.args.models):
+            if "control_type" in self.params:
+                raise e.BadRequest("ControlNet does not work with Flux currently.", rc="ControlNetMismatch")
+            if self.params.get("hires_fix", False) is True:
+                raise e.BadRequest("HiRes Fix does not work with Flux currently.", rc="HiResMismatch")
         if "loras" in self.params:
             if len(self.params["loras"]) > 5:
                 raise e.BadRequest("You cannot request more than 5 loras per generation.", rc="TooManyLoras")

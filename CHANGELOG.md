@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.42.0
+
+* Adds support for the Flux family of models
+
 # 4.41.0
 
 * Adds support for extra backends behind LLM bridges, and for knowing which are validated.
