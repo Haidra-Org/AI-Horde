@@ -18,6 +18,7 @@ from horde.consts import (
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_POST_PROCESSORS,
     SECOND_ORDER_SAMPLERS,
+    BASELINE_BATCHING_MULTIPLIERS,
 )
 from horde.flask import db
 from horde.image import convert_pil_to_b64
@@ -511,5 +512,12 @@ class ImageWaitingPrompt(WaitingPrompt):
             return True
         return False
 
+    def get_highest_model_batching_multiplier(self):
+        highest_multiplier = 1
+        for mn in self.get_model_names():
+            if BASELINE_BATCHING_MULTIPLIERS.get(mn, 1) > highest_multiplier:
+                highest_multiplier = BASELINE_BATCHING_MULTIPLIERS.get(mn, 1)
+        return highest_multiplier
+    
     def count_pp(self):
         return len(self.params.get("post_processing", []))

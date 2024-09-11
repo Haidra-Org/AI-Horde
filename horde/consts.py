@@ -38,6 +38,13 @@ HEAVY_POST_PROCESSORS = {
     "4x_AnimeSharp" "CodeFormers",
 }
 
+# These models are very large in VRAM, so we increase the calculated MPS
+# used to figure out batches by a set multiplier to reduce how many images are batched
+# at a time when these models are used.
+BASELINE_BATCHING_MULTIPLIERS = {
+    "flux.1": 2,
+}
+
 
 KNOWN_SAMPLERS = {
     "k_lms",

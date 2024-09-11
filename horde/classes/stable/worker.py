@@ -225,6 +225,7 @@ class ImageWorker(Worker):
         if wp.has_heavy_operations():
             pp_multiplier *= 1.8
         mps *= pp_multiplier
+        mps *= wp.get_highest_model_batching_multiplier()
         safe_amount = round(safe_generations / mps)
         if safe_amount > amount:
             safe_amount = amount
