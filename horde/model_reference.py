@@ -53,6 +53,7 @@ class ModelReference(PrimaryTimedFunction):
                         "stable diffusion 2 512",
                         "stable_diffusion_xl",
                         "stable_cascade",
+                        "flux_1",
                     }:
                         self.stable_diffusion_names.add(model)
                         if self.reference[model].get("nsfw"):

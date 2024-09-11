@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-HORDE_VERSION = "4.41.0 "
+HORDE_VERSION = "4.42.0 "
 
 WHITELISTED_SERVICE_IPS = {
     "212.227.227.178",  # Turing Bot
@@ -36,6 +36,13 @@ HEAVY_POST_PROCESSORS = {
     "RealESRGAN_x4plus_anime_6B",
     "NMKD_Siax",
     "4x_AnimeSharp" "CodeFormers",
+}
+
+# These models are very large in VRAM, so we increase the calculated MPS
+# used to figure out batches by a set multiplier to reduce how many images are batched
+# at a time when these models are used.
+BASELINE_BATCHING_MULTIPLIERS = {
+    "flux_1": 2,
 }
 
 

@@ -150,6 +150,7 @@ KNOWN_RC = [
     "InvalidTransparencyModel",
     "InvalidTransparencyImg2Img",
     "InvalidTransparencyCN",
+    "HiResMismatch",
 ]
 
 
