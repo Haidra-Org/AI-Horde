@@ -442,28 +442,20 @@ class ImageWaitingPrompt(WaitingPrompt):
         return steps
 
     def set_job_ttl(self):
-        # default is 2 minutes. Then we scale up based on resolution.
-        # This will be more accurate with a newer formula
-        self.job_ttl = 120
-        if self.width * self.height > 2048 * 2048:
-            self.job_ttl = 800
-        elif self.width * self.height > 1024 * 1024:
-            self.job_ttl = 400
-        elif self.width * self.height > 728 * 728:
-            self.job_ttl = 260
-        elif self.width * self.height >= 512 * 512:
-            self.job_ttl = 150
-        # When too many steps are involved, we increase the expiry time
-        if self.get_accurate_steps() >= 200:
-            self.job_ttl = self.job_ttl * 3
-        elif self.get_accurate_steps() >= 100:
-            self.job_ttl = self.job_ttl * 2
+        # We are aiming here for a graceful min 2sec/it speed on workers for 512x512 which is well below our requested min 0.5mps/s,
+        # to buffer for model loading and allow for the occasional slowdown without dropping jobs. 
+        # There is also a minimum of 2mins, regardless of steps and resolution used and an extra 30 seconds for model loading.
+        # This means a worker at 1mps/s should be able to finish a 512x512x50 request comfortably within 30s but we allow up to 2.5mins.
+        # This number then increases lineary based on the resolution requested.
+        # Using this formula, a 1536x768x40 request is expected to take ~50s on a 1mps/s worker, but we will only time out after 390s.
+        ttl_multiplier = (self.width * self.height) / (512*512)
+        self.job_ttl = 30 + (self.get_accurate_steps() * 2 * ttl_multiplier)
         # CN is 3 times slower
         if self.gen_payload.get("control_type"):
             self.job_ttl = self.job_ttl * 3
-        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
-            logger.debug(self.get_model_names())
-            self.job_ttl = 300
+        # Flux is way slower than Stable Diffusion
+        if any(model_reference.get_model_baseline(mn) in ["flux_1"] for mn in self.get_model_names()):
+            self.job_ttl = self.job_ttl * 3
         # logger.info([weights_count,self.job_ttl])
         db.session.commit()
 
