@@ -29,6 +29,7 @@ class ImageWorker(Worker):
     allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
     allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False)
     allow_lora = db.Column(db.Boolean, default=False, nullable=False)
+    limit_max_steps = db.Column(db.Boolean, default=False, nullable=False)
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
@@ -43,6 +44,7 @@ class ImageWorker(Worker):
         self.allow_controlnet = kwargs.get("allow_controlnet", False)
         self.allow_sdxl_controlnet = kwargs.get("allow_sdxl_controlnet", False)
         self.allow_lora = kwargs.get("allow_lora", False)
+        self.limit_max_steps = kwargs.get("limit_max_steps", False)
         if len(self.get_model_names()) == 0:
             self.set_models(["stable_diffusion"])
         paused_string = ""
@@ -154,6 +156,17 @@ class ImageWorker(Worker):
             return [False, "bridge_version"]
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
+        if self.limit_max_steps:
+            for mn in waiting_prompt.model_names():
+                avg_steps = (
+                    int(
+                        model_reference.get_model_requirements(mn).get("min_steps", 20)
+                        + model_reference.get_model_requirements(mn).get("max_steps", 40)
+                    )
+                    / 2
+                )
+                if waiting_prompt.get_accurate_steps() > avg_steps:
+                    return [False, "unsafe_ip"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
         if not self.user.trusted:  # FIXME #noqa SIM102

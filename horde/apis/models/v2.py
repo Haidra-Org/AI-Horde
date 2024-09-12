@@ -102,6 +102,14 @@ class Parsers:
             location="json",
         )
         self.generate_parser.add_argument(
+            "extra_slow_workers",
+            type=bool,
+            default=False,
+            required=False,
+            help="When True, allows very slower workers to pick up this request. Use this when you don't mind waiting a lot.",
+            location="json",
+        )
+        self.generate_parser.add_argument(
             "dry_run",
             type=bool,
             default=False,
@@ -202,6 +210,13 @@ class Parsers:
             required=False,
             default=1,
             help="How many jobvs to pop at the same time",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "extra_slow_worker",
+            type=bool,
+            default=False,
+            required=False,
             location="json",
         )
 
@@ -536,6 +551,13 @@ class Models:
                     description="How many jobvs to pop at the same time",
                     min=1,
                     max=20,
+                ),
+                "extra_slow_worker": fields.Boolean(
+                    default=True,
+                    description=(
+                        "If True, marks the worker as very slow. You should only use this if your mps/s is lower than 0.1."
+                        "Extra slow workers are excluded from normal requests but users can opt in to use them."
+                    ),
                 ),
             },
         )

@@ -841,6 +841,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
             ),
             or_(
+                worker.extra_slow_worker == False,
+                and_(
+                    worker.extra_slow_worker == True,
+                    ImageWaitingPrompt.extra_slow_workers == True,  # noqa E712
+                ),
+            ),
+            or_(
                 not_(ImageWaitingPrompt.params.has_key("transparent")),
                 ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(False),
                 and_(

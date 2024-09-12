@@ -348,6 +348,10 @@ class TextModels(v2.Models):
                         "The request will include the details of the job as well as the request ID."
                     ),
                 ),
+                "extra_slow_workers": fields.Boolean(
+                    default=False,
+                    description="When True, allows very slower workers to pick up this request. Use this when you don't mind waiting a lot.",
+                ),
             },
         )
         self.response_model_contrib_details = api.inherit(

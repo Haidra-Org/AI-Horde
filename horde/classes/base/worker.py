@@ -121,6 +121,7 @@ class WorkerTemplate(db.Model):
     # Used by all workers to record how much they can pick up to generate
     # The value of this column is dfferent per worker type
     max_power = db.Column(db.Integer, default=20, nullable=False)
+    extra_slow_worker = db.Column(db.Boolean, default=False, nullable=False)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
@@ -511,7 +512,8 @@ class Worker(WorkerTemplate):
         self.set_models(kwargs.get("models"))
         self.nsfw = kwargs.get("nsfw", True)
         self.set_blacklist(kwargs.get("blacklist", []))
-        db.session.commit()
+        self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
+        # Commit should happen on calling extensions
 
     def set_blacklist(self, blacklist):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)

@@ -143,3 +143,22 @@ class ImageProcessingGeneration(ProcessingGeneration):
             f.write(json_object)
         upload_shared_metadata(filename)
         os.remove(filename)
+
+    def set_job_ttl(self):
+        # We are aiming here for a graceful min 2sec/it speed on workers for 512x512 which is well below our requested min 0.5mps/s,
+        # to buffer for model loading and allow for the occasional slowdown without dropping jobs.
+        # There is also a minimum of 2mins, regardless of steps and resolution used and an extra 30 seconds for model loading.
+        # This means a worker at 1mps/s should be able to finish a 512x512x50 request comfortably within 30s but we allow up to 2.5mins.
+        # This number then increases lineary based on the resolution requested.
+        # Using this formula, a 1536x768x40 request is expected to take ~50s on a 1mps/s worker, but we will only time out after 390s.
+        ttl_multiplier = (self.wp.width * self.wp.height) / (512 * 512)
+        self.job_ttl = 30 + (self.wp.get_accurate_steps() * 2 * ttl_multiplier)
+        # CN is 3 times slower
+        if self.wp.gen_payload.get("control_type"):
+            self.job_ttl = self.job_ttl * 2
+        # Flux is way slower than Stable Diffusion
+        if any(model_reference.get_model_baseline(mn) in ["flux_1"] for mn in self.wp.get_model_names()):
+            self.job_ttl = self.job_ttl * 3
+        if self.worker.extra_slow_worker is True:
+            self.job_ttl = self.job_ttl * 3
+        db.session.commit()

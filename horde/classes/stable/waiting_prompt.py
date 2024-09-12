@@ -125,7 +125,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.trusted_workers = True
             self.shared = False
         self.prepare_job_payload(self.params)
-        self.set_job_ttl()
         # Commit will happen in prepare_job_payload()
 
     @logger.catch(reraise=True)
@@ -440,24 +439,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             # So we adjust the things to take that into account
             steps *= 2
         return steps
-
-    def set_job_ttl(self):
-        # We are aiming here for a graceful min 2sec/it speed on workers for 512x512 which is well below our requested min 0.5mps/s,
-        # to buffer for model loading and allow for the occasional slowdown without dropping jobs. 
-        # There is also a minimum of 2mins, regardless of steps and resolution used and an extra 30 seconds for model loading.
-        # This means a worker at 1mps/s should be able to finish a 512x512x50 request comfortably within 30s but we allow up to 2.5mins.
-        # This number then increases lineary based on the resolution requested.
-        # Using this formula, a 1536x768x40 request is expected to take ~50s on a 1mps/s worker, but we will only time out after 390s.
-        ttl_multiplier = (self.width * self.height) / (512*512)
-        self.job_ttl = 30 + (self.get_accurate_steps() * 2 * ttl_multiplier)
-        # CN is 3 times slower
-        if self.gen_payload.get("control_type"):
-            self.job_ttl = self.job_ttl * 3
-        # Flux is way slower than Stable Diffusion
-        if any(model_reference.get_model_baseline(mn) in ["flux_1"] for mn in self.get_model_names()):
-            self.job_ttl = self.job_ttl * 3
-        # logger.info([weights_count,self.job_ttl])
-        db.session.commit()
 
     def log_faulted_prompt(self):
         source_processing = "txt2img"

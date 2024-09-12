@@ -152,6 +152,14 @@ class ImageParsers(v2.Parsers):
             help="If True, this worker will pick up requests requesting LoRas.",
             location="json",
         )
+        self.job_pop_parser.add_argument(
+            "limit_max_steps",
+            type=bool,
+            required=False,
+            default=False,
+            help="If True, This worker will not pick up jobs with more steps than the average allowed for that model.",
+            location="json",
+        )
         self.job_submit_parser.add_argument(
             "seed",
             type=int,
@@ -544,6 +552,13 @@ class ImageModels(v2.Models):
                     default=True,
                     description="If True, this worker will pick up requests requesting LoRas.",
                 ),
+                "limit_max_steps": fields.Boolean(
+                    default=True,
+                    description=(
+                        "If True, This worker will not pick up jobs with more steps than the average allowed for that model."
+                        " this is for use by workers which might run into issues doing too many steps."
+                    ),
+                ),
             },
         )
         self.input_model_job_submit = api.inherit(
@@ -590,6 +605,10 @@ class ImageModels(v2.Models):
                 "slow_workers": fields.Boolean(
                     default=True,
                     description="When True, allows slower workers to pick up this request. Disabling this incurs an extra kudos cost.",
+                ),
+                "extra_slow_workers": fields.Boolean(
+                    default=False,
+                    description="When True, allows very slower workers to pick up this request. Use this when you don't mind waiting a lot.",
                 ),
                 "censor_nsfw": fields.Boolean(
                     default=False,

@@ -204,17 +204,18 @@ def check_waiting_prompts():
                 .filter(
                     procgen_class.generation == None,  # noqa E712
                     procgen_class.faulted == False,  # noqa E712
-                    # cutoff_time - procgen_class.start_time > wp_class.job_ttl,
-                    # How do we calculate this in the query? Maybe I need to
-                    # set an expiry time iun procgen as well better?
+                    # TODO: How do we calculate this in the query?
+                    # cutoff_time - procgen_class.start_time > procgen_class.job_ttl,
                 )
                 .all()
             )
+            modifed_procgens = 0
             for proc_gen in all_proc_gen:
-                if proc_gen.is_stale(proc_gen.wp.job_ttl):
+                if proc_gen.is_stale():
                     proc_gen.abort()
                     proc_gen.wp.n += 1
-            if len(all_proc_gen) >= 1:
+                    modifed_procgens += 1
+            if modifed_procgens >= 1:
                 db.session.commit()
             # Faults WP with 3 or more faulted Procgens
             wp_ids = (

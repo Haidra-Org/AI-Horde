@@ -6,6 +6,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.43.0
+
+* Adjused TTL formula to be algorithmic
+* prevent workers without flux support picking up flux jobs
+* Adds `extra_slow_workers` bool for image gen async
+* Adds `extra_slow_worker` bool for worker pop
+* Adds `limit_max_steps` for worker pop
+
 # 4.42.0
 
 * Adds support for the Flux family of models

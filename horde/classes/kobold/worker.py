@@ -49,7 +49,7 @@ class TextWorker(Worker):
         super().check_in(**kwargs)
         self.max_length = max_length
         self.max_context_length = max_context_length
-        self.set_softprompts(softprompts)
+        self.set_softprompts(softprompts)  # Does a commit as well
         paused_string = ""
         if self.paused:
             paused_string = "(Paused) "
