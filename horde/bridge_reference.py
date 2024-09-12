@@ -9,6 +9,7 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
+        9: {"flux"},
         8: {"layer_diffuse"},
         7: {"qr_code", "extra_texts", "workflow"},
         6: {"stable_cascade_2pass"},
