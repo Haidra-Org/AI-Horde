@@ -374,7 +374,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.is_using_lcm() and self.get_accurate_steps() > 10:
             return (True, max_res, False)
         # Some models don't require a lot of steps, so we check their requirements. The max steps we allow without upfront kudos is 40
-        if any(model_reference.get_model_requirements(mn).get("max_steps", 40) > self.get_accurate_steps() for mn in model_names):
+        if any(model_reference.get_model_requirements(mn).get("max_steps", 40) < self.get_accurate_steps() for mn in model_names):
             return (True, max_res, False)
         if self.width * self.height > max_res * max_res:
             return (True, max_res, False)
