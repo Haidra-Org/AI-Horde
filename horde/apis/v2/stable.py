@@ -602,6 +602,8 @@ class ImageJobPop(JobPopTemplate):
                 db_skipped["blacklist"] = post_ret["skipped"]["blacklist"]
             if "step_count" in post_ret.get("skipped", {}):
                 db_skipped["step_count"] = post_ret["skipped"]["step_count"]
+            if "bridge_version" in post_ret.get("skipped", {}):
+                db_skipped["bridge_version"] = db_skipped.get("bridge_version",0) + post_ret["skipped"]["step_count"]
             post_ret["skipped"] = db_skipped
         # logger.debug(post_ret)
         return post_ret, retcode
