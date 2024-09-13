@@ -841,9 +841,9 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
             ),
             or_(
-                worker.extra_slow_worker.is_(False),
+                worker.extra_slow_worker is False,
                 and_(
-                    worker.extra_slow_worker.is_(True),
+                    worker.extra_slow_worker is True,
                     ImageWaitingPrompt.extra_slow_workers.is_(True),
                 ),
             ),
