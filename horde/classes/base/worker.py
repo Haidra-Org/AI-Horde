@@ -272,6 +272,10 @@ class WorkerTemplate(db.Model):
         self.prioritized_users = kwargs.get("prioritized_users", [])
         if not kwargs.get("safe_ip", True) and not self.user.trusted:
             self.report_suspicion(reason=Suspicions.UNSAFE_IP)
+        # To avoid excessive commits,
+        # we only record new uptime on the worker every 30 seconds
+        if (datetime.utcnow() - self.last_check_in).total_seconds() < 30 and (datetime.utcnow() - self.created).total_seconds() > 30:
+            return
         if not self.is_stale() and not self.paused and not self.maintenance:
             self.uptime += (datetime.utcnow() - self.last_check_in).total_seconds()
             # Every 10 minutes of uptime gets 100 kudos rewarded
