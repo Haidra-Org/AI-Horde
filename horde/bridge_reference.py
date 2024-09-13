@@ -186,6 +186,7 @@ def parse_bridge_agent(bridge_agent):
 @logger.catch(reraise=True)
 def check_bridge_capability(capability, bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
+    logger.debug([bridge_name, bridge_version])
     if bridge_name not in BRIDGE_CAPABILITIES:
         return False
     total_capabilities = set()
