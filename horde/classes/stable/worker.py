@@ -24,13 +24,13 @@ class ImageWorker(Worker):
     }
     # TODO: Switch to max_power
     max_pixels = db.Column(db.BigInteger, default=512 * 512, nullable=False)
-    allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
-    allow_painting = db.Column(db.Boolean, default=True, nullable=False)
-    allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
-    allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
-    allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False)
-    allow_lora = db.Column(db.Boolean, default=False, nullable=False)
-    limit_max_steps = db.Column(db.Boolean, default=False, nullable=False)
+    allow_img2img = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    allow_painting = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    allow_post_processing = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    allow_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    allow_lora = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    limit_max_steps = db.Column(db.Boolean, default=False, nullable=False, index=True)
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):

@@ -1,8 +1,13 @@
-ALTER TABLE waiting_prompts ADD COLUMN extra_slow_workers BOOLEAN default false;
-ALTER TABLE workers ADD COLUMN extra_slow_worker BOOLEAN default false;
-ALTER TABLE workers ADD COLUMN limit_max_steps BOOLEAN default false;
-ALTER TABLE processing_gens ADD COLUMN job_ttl BOOLEAN default false;
+ALTER TABLE waiting_prompts ADD COLUMN extra_slow_workers BOOLEAN NOT NULL default false;
+ALTER TABLE workers ADD COLUMN extra_slow_worker BOOLEAN NOT NULL default false;
+ALTER TABLE workers ADD COLUMN limit_max_steps BOOLEAN NOT NULL default false;
 ALTER TABLE processing_gens ADD COLUMN job_ttl INTEGER NOT NULL DEFAULT 150;
 CREATE INDEX idx_processing_gens_job_ttl ON public.processing_gens USING btree(job_ttl);
-CREATE INDEX idx_workers_extra_slow_worker ON public.workers USING btree(extra_slow_worker);
 CREATE INDEX idx_waiting_prompts_extra_slow_workers ON public.waiting_prompts USING btree(extra_slow_workers);
+CREATE INDEX idx_workers_extra_slow_worker ON public.workers USING btree(extra_slow_worker);
+CREATE INDEX idx_workers_allow_img2img ON public.workers USING btree(allow_img2img);
+CREATE INDEX idx_workers_allow_painting ON public.workers USING btree(allow_painting);
+CREATE INDEX idx_workers_allow_post_processing ON public.workers USING btree(allow_post_processing);
+CREATE INDEX idx_workers_allow_controlnet ON public.workers USING btree(allow_controlnet);
+CREATE INDEX idx_workers_allow_sdxl_controlnet ON public.workers USING btree(allow_sdxl_controlnet);
+CREATE INDEX idx_workers_allow_lora ON public.workers USING btree(allow_lora);
