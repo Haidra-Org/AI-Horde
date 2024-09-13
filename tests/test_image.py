@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 
-import requests
+import requests, time
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
 
@@ -122,6 +122,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     protocol = "http"
     if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
         protocol = "https"
+    time.sleep(1)
     async_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/async", json=async_dict, headers=headers)
     assert async_req.ok, async_req.text
     async_results = async_req.json()
@@ -167,6 +168,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     # Test extra_slow_worker
     async_dict["params"]["steps"] = 5
     pop_dict["extra_slow_worker"] = True
+    time.sleep(0.5)
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
         # print(pop_req.text)
@@ -188,10 +190,12 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
 
     # Try popping as an extra slow worker
     async_dict["extra_slow_workers"] = True
+    time.sleep(0.5)
     async_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/async", json=async_dict, headers=headers)
     assert async_req.ok, async_req.text
     async_results = async_req.json()
     req_id = async_results["id"]
+    time.sleep(0.5)
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
         assert pop_req.ok, pop_req.text
