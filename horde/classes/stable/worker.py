@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from datetime import datetime, timedelta
+
 from horde import exceptions as e
 from horde.bridge_reference import (
     check_bridge_capability,
@@ -33,6 +35,10 @@ class ImageWorker(Worker):
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
+        # To avoid excessive commits,
+        # we only record new changes on the worker every 10 seconds
+        if (datetime.utcnow() - self.last_check_in).total_seconds() < 10 and (datetime.utcnow() - self.created).total_seconds() > 10:
+            return
         super().check_in(**kwargs)
         if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072:  # FIXME #noqa SIM102
             if not self.user.trusted:

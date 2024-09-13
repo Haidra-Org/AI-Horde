@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -46,6 +46,10 @@ class TextWorker(Worker):
     wtype = "text"
 
     def check_in(self, max_length, max_context_length, softprompts, **kwargs):
+        # To avoid excessive commits,
+        # we only record new changes on the worker every 30 seconds
+        if (datetime.utcnow() - self.last_check_in).total_seconds() < 10 and (datetime.utcnow() - self.created).total_seconds() > 10:
+            return
         super().check_in(**kwargs)
         self.max_length = max_length
         self.max_context_length = max_context_length
