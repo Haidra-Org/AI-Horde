@@ -265,6 +265,6 @@ def quick_pop(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
 
 if __name__ == "__main__":
     # "ci/cd#12285"
-    # test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")
-    # test_flux_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")
+    test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")
+    test_flux_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")
     quick_pop("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")

@@ -294,7 +294,6 @@ class WorkerTemplate(db.Model):
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.utcnow()
-        db.session.commit()
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
