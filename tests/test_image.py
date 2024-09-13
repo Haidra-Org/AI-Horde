@@ -116,7 +116,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
             "sampler_name": "k_euler",
         },
         "models": TEST_MODELS_FLUX,
-        "extra_slow_workers": True,
+        # "extra_slow_workers": True,
     }
     protocol = "http"
     if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
@@ -140,9 +140,10 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "allow_controlnet": True,
         "allow_sdxl_controlnet": True,
         "allow_lora": True,
-        "extra_slow_worker": True,
+        "extra_slow_worker": False,
         "limit_max_steps": True,
     }
+    # Test limit_max_steps
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
         print(pop_req.text)
@@ -153,6 +154,35 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         raise err
     pop_results = pop_req.json()
     print(json.dumps(pop_results, indent=4))
+    try:
+        assert pop_results["id"] is None, pop_results
+        assert pop_results["skipped"]["step_count"] == 1, pop_results
+    except AssertionError as err:
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+        print("Request cancelled")
+        raise err
+    requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+    # Test extra_slow_worker
+    pop_dict["limit_max_steps"] = False
+    pop_dict["extra_slow_worker"] = True
+    pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
+    try:
+        print(pop_req.text)
+        assert pop_req.ok, pop_req.text
+    except AssertionError as err:
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+        print("Request cancelled")
+        raise err
+    pop_results = pop_req.json()
+    print(json.dumps(pop_results, indent=4))
+    try:
+        assert pop_results["id"] is None, pop_results
+        assert pop_results["skipped"]["step_count"] == 1, pop_results
+    except AssertionError as err:
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+        print("Request cancelled")
+        raise err
+
 
     job_id = pop_results["id"]
     try:

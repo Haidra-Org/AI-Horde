@@ -1054,6 +1054,12 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
         ).count()
         if skipped_wps > 0:
             ret_dict["performance"] = skipped_wps
+    if worker.extra_slow_worker is True:
+        skipped_wps = open_wp_list.filter(
+            ImageWaitingPrompt.extra_slow_workers == False,  # noqa E712
+        ).count()
+        if skipped_wps > 0:
+            ret_dict["performance"] = ret_dict.get("performance",0) + skipped_wps
     # Count skipped WPs requiring trusted workers
     if worker.user.trusted is False:
         skipped_wps = open_wp_list.filter(
