@@ -121,7 +121,7 @@ class WorkerTemplate(db.Model):
     # Used by all workers to record how much they can pick up to generate
     # The value of this column is dfferent per worker type
     max_power = db.Column(db.Integer, default=20, nullable=False)
-    extra_slow_worker = db.Column(db.Boolean, default=False, nullable=False)
+    extra_slow_worker = db.Column(db.Boolean, default=False, nullable=False, index=True)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
