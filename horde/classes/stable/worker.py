@@ -155,7 +155,7 @@ class ImageWorker(Worker):
         if "flux_1" in model_reference.get_all_model_baselines(self.get_model_names()) and not check_bridge_capability(
             "flux", self.bridge_agent
         ):
-            logger.debug("bridge_version")
+            logger.debug(["bridge_version",self.bridge_agent])
             return [False, "bridge_version"]
         if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
             "clip_skip",
