@@ -149,7 +149,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     # Test limit_max_steps
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
-        print(pop_req.text)
+        # print(pop_req.text)
         assert pop_req.ok, pop_req.text
     except AssertionError as err:
         requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
