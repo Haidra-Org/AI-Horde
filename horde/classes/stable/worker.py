@@ -166,7 +166,7 @@ class ImageWorker(Worker):
                     / 2
                 )
                 if waiting_prompt.get_accurate_steps() > avg_steps:
-                    return [False, "unsafe_ip"]
+                    return [False, "step_count"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
         if not self.user.trusted:  # FIXME #noqa SIM102

@@ -459,6 +459,9 @@ class ImageModels(v2.Models):
                 "max_pixels": fields.Integer(
                     description="How many waiting requests were skipped because they demanded a higher size than this worker provides.",
                 ),
+                "step_count": fields.Integer(
+                    description="How many waiting requests were skipped because they demanded a higher step count that the worker wants.",
+                ),
                 "unsafe_ip": fields.Integer(
                     description="How many waiting requests were skipped because they came from an unsafe IP.",
                 ),
