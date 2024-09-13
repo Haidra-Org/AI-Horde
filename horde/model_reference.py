@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os
+from datetime import datetime
 
 import requests
-from datetime import datetime
 
 from horde.logger import logger
 from horde.threads import PrimaryTimedFunction
@@ -31,8 +31,10 @@ class ModelReference(PrimaryTimedFunction):
         for _riter in range(10):
             try:
                 ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json"
-                if datetime.utcnow() <= datetime(2024, 9, 30): # Flux Beta
-                    ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/flux/stable_diffusion.json"
+                if datetime.utcnow() <= datetime(2024, 9, 30):  # Flux Beta
+                    ref_json = (
+                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/flux/stable_diffusion.json"
+                    )
                     logger.debug("Using flux beta model reference...")
                 self.reference = requests.get(
                     os.getenv(

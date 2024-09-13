@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy.dialects.postgresql import UUID
 

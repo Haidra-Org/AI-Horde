@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import json
 
 import requests
 
@@ -96,8 +95,8 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert retrieve_results["done"] is True
     requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
 
-TEST_MODELS_FLUX = ["Flux.1-Schnell fp8 (Compact)"]
 
+TEST_MODELS_FLUX = ["Flux.1-Schnell fp8 (Compact)"]
 
 
 def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
@@ -232,6 +231,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
     requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+
 
 def quick_pop(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     print("quick_pop")

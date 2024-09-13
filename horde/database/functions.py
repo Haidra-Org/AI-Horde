@@ -841,10 +841,10 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
             ),
             or_(
-                worker.extra_slow_worker == False,
+                worker.extra_slow_worker.is_(False),
                 and_(
-                    worker.extra_slow_worker == True,
-                    ImageWaitingPrompt.extra_slow_workers == True,  # noqa E712
+                    worker.extra_slow_worker.is_(True),
+                    ImageWaitingPrompt.extra_slow_workers.is_(True),
                 ),
             ),
             or_(
@@ -1059,7 +1059,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
             ImageWaitingPrompt.extra_slow_workers == False,  # noqa E712
         ).count()
         if skipped_wps > 0:
-            ret_dict["performance"] = ret_dict.get("performance",0) + skipped_wps
+            ret_dict["performance"] = ret_dict.get("performance", 0) + skipped_wps
     # Count skipped WPs requiring trusted workers
     if worker.user.trusted is False:
         skipped_wps = open_wp_list.filter(

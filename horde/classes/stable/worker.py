@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-from datetime import datetime, timedelta
 
 from horde import exceptions as e
 from horde.bridge_reference import (
@@ -155,9 +154,10 @@ class ImageWorker(Worker):
             logger.debug("bridge_version")
             return [False, "bridge_version"]
         if "flux_1" in model_reference.get_all_model_baselines(self.get_model_names()) and not check_bridge_capability(
-            "flux", self.bridge_agent
+            "flux",
+            self.bridge_agent,
         ):
-            logger.debug(["bridge_version",self.bridge_agent])
+            logger.debug(["bridge_version", self.bridge_agent])
             return [False, "bridge_version"]
         if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
             "clip_skip",
@@ -178,7 +178,7 @@ class ImageWorker(Worker):
                 avg_steps = (
                     int(
                         model_reference.get_model_requirements(mn).get("min_steps", 20)
-                        + model_reference.get_model_requirements(mn).get("max_steps", 40)
+                        + model_reference.get_model_requirements(mn).get("max_steps", 40),
                     )
                     / 2
                 )

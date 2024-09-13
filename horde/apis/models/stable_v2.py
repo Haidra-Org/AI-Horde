@@ -611,7 +611,9 @@ class ImageModels(v2.Models):
                 ),
                 "extra_slow_workers": fields.Boolean(
                     default=False,
-                    description="When True, allows very slower workers to pick up this request. Use this when you don't mind waiting a lot.",
+                    description=(
+                        "When True, allows very slower workers to pick up this request. " "Use this when you don't mind waiting a lot."
+                    ),
                 ),
                 "censor_nsfw": fields.Boolean(
                     default=False,
