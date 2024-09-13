@@ -456,7 +456,7 @@ class JobPopTemplate(Resource):
                     # as they're typically countermeasures to raids
                     if skipped_reason != "secret":
                         self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
-                    # logger.warning(datetime.utcnow())
+                    logger.debug(self.skipped)
 
                     continue
                 # There is a chance that by the time we finished all the checks, another worker picked up the WP.
@@ -477,7 +477,7 @@ class JobPopTemplate(Resource):
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
-        # logger.warning(datetime.utcnow())
+        logger.debug(self.skipped)
         return {"id": None, "ids": [], "skipped": self.skipped}, 200
 
     def get_sorted_wp(self, priority_user_ids=None):
