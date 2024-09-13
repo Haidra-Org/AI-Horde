@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 
-import requests, time
+import time
+
+import requests
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
 
