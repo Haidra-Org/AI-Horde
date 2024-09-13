@@ -459,13 +459,12 @@ class WaitingPrompt(db.Model):
             logger.warning(f"Error when aborting WP. Skipping: {err}")
 
     def refresh(self, worker=None):
-        if self.n > 0 and worker is not None and worker.extra_slow_worker is True:
+        if worker is not None and worker.extra_slow_worker is True:
             self.expiry = get_extra_slow_expiry_date()
         else:
             new_expiry = get_expiry_date()
             if self.expiry < new_expiry:
                 self.expiry = new_expiry
-        logger.debug([self.expiry,self.n,worker,worker.extra_slow_worker if worker is not None else None])
         db.session.commit()
 
     def is_stale(self):
