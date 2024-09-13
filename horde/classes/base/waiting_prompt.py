@@ -93,7 +93,7 @@ class WaitingPrompt(db.Model):
     trusted_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
     validated_backends = db.Column(db.Boolean, default=True, nullable=False, index=True)
     slow_workers = db.Column(db.Boolean, default=True, nullable=False, index=True)
-    extra_slow_workers = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    extra_slow_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
     worker_blacklist = db.Column(db.Boolean, default=False, nullable=False, index=True)
     faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     active = db.Column(db.Boolean, default=False, nullable=False, index=True)
