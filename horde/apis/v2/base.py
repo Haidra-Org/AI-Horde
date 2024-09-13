@@ -449,6 +449,7 @@ class JobPopTemplate(Resource):
         # logger.warning(datetime.utcnow())
         while len(self.prioritized_wp) > 0:
             for wp in self.prioritized_wp:
+                logger.debug(wp)
                 check_gen = self.worker.can_generate(wp)
                 if not check_gen[0]:
                     skipped_reason = check_gen[1]
