@@ -161,8 +161,8 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         assert pop_results["id"] is None, pop_results
         assert pop_results["skipped"].get("step_count") == 1, pop_results
     except AssertionError as err:
-        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
-        print("Request cancelled")
+        # requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+        # print("Request cancelled")
         raise err
 
     # Test extra_slow_worker
@@ -233,7 +233,38 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert retrieve_results["done"] is True
     requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
 
+def quick_pop(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
+    print("quick_pop")
+    headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625"}  # ci/cd user
+    protocol = "http"
+    if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
+        protocol = "https"
+    # print(async_results)
+    pop_dict = {
+        "name": "CICD Fake Dreamer",
+        "models": TEST_MODELS_FLUX,
+        "bridge_agent": "AI Horde Worker reGen:9.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "nsfw": True,
+        "amount": 10,
+        "max_pixels": 4194304,
+        "allow_img2img": True,
+        "allow_painting": True,
+        "allow_unsafe_ipaddr": True,
+        "allow_post_processing": True,
+        "allow_controlnet": True,
+        "allow_sdxl_controlnet": True,
+        "allow_lora": True,
+        "extra_slow_worker": False,
+        "limit_max_steps": True,
+    }
+
+    # Test limit_max_steps
+    pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
+    print(pop_req.text)
+
+
 if __name__ == "__main__":
     # "ci/cd#12285"
-    test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
-    test_flux_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
+    # test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")
+    # test_flux_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")
+    quick_pop("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.2.0")

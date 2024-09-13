@@ -91,18 +91,21 @@ class ImageWorker(Worker):
             self.bridge_agent,
             waiting_prompt.gen_payload.get("karras", False),
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         # logger.warning(datetime.utcnow())
         if len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1 and not check_bridge_capability(
             "post-processing",
             self.bridge_agent,
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         for pp in KNOWN_POST_PROCESSORS:
             if pp in waiting_prompt.gen_payload.get("post_processing", []) and not check_bridge_capability(
                 pp,
                 self.bridge_agent,
             ):
+                logger.debug("bridge_version")
                 return [False, "bridge_version"]
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, "img2img"]
@@ -112,47 +115,59 @@ class ImageWorker(Worker):
         ):
             return [False, "models"]
         if waiting_prompt.params.get("tiling") and not check_bridge_capability("tiling", self.bridge_agent):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if waiting_prompt.params.get("return_control_map") and not check_bridge_capability(
             "return_control_map",
             self.bridge_agent,
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if waiting_prompt.params.get("control_type"):
             if not check_bridge_capability("controlnet", self.bridge_agent):
+                logger.debug("bridge_version")
                 return [False, "bridge_version"]
             if not check_bridge_capability("image_is_control", self.bridge_agent):
+                logger.debug("bridge_version")
                 return [False, "bridge_version"]
             if not self.allow_controlnet:
+                logger.debug("bridge_version")
                 return [False, "controlnet"]
         if waiting_prompt.params.get("workflow") == "qr_code":
             if not check_bridge_capability("controlnet", self.bridge_agent):
+                logger.debug("bridge_version")
                 return [False, "bridge_version"]
             if not check_bridge_capability("qr_code", self.bridge_agent):
+                logger.debug("bridge_version")
                 return [False, "bridge_version"]
             if "stable_diffusion_xl" in model_reference.get_all_model_baselines(self.get_model_names()) and not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if (
             waiting_prompt.params.get("hires_fix")
             and "stable_cascade" in model_reference.get_all_model_baselines(self.get_model_names())
             and not check_bridge_capability("stable_cascade_2pass", self.bridge_agent)
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if "flux_1" in model_reference.get_all_model_baselines(self.get_model_names()) and not check_bridge_capability(
             "flux", self.bridge_agent
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
             "clip_skip",
             self.bridge_agent,
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if any(lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])) and not check_bridge_capability(
             "lora_versions",
             self.bridge_agent,
         ):
+            logger.debug("bridge_version")
             return [False, "bridge_version"]
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
