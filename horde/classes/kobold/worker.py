@@ -49,7 +49,7 @@ class TextWorker(Worker):
         super().check_in(**kwargs)
         self.max_length = max_length
         self.max_context_length = max_context_length
-        self.set_softprompts(softprompts)
+        self.set_softprompts(softprompts)  # Does a commit as well
         paused_string = ""
         if self.paused:
             paused_string = "(Paused) "
@@ -57,6 +57,7 @@ class TextWorker(Worker):
             f"{paused_string}Text Worker {self.name} checked-in, offering models {self.models} "
             f"at {self.max_length} max tokens and {self.max_context_length} max content length.",
         )
+        db.session.commit()
 
     def refresh_softprompt_cache(self):
         softprompts_list = [s.softprompt for s in self.softprompts]
@@ -100,11 +101,10 @@ class TextWorker(Worker):
             ],
         )
         db.session.query(TextWorkerSoftprompts).filter_by(worker_id=self.id).delete()
-        db.session.commit()
+        db.session.flush()
         for softprompt_name in softprompts:
             softprompt = TextWorkerSoftprompts(worker_id=self.id, softprompt=softprompt_name)
             db.session.add(softprompt)
-        db.session.commit()
         self.refresh_softprompt_cache()
 
     def calculate_uptime_reward(self):

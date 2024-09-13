@@ -101,6 +101,10 @@ def get_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)
 
 
+def get_extra_slow_expiry_date():
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+60)
+
+
 def get_interrogation_form_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+3)
 

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+
 from horde import exceptions as e
 from horde.bridge_reference import (
     check_bridge_capability,
@@ -23,12 +24,13 @@ class ImageWorker(Worker):
     }
     # TODO: Switch to max_power
     max_pixels = db.Column(db.BigInteger, default=512 * 512, nullable=False)
-    allow_img2img = db.Column(db.Boolean, default=True, nullable=False)
-    allow_painting = db.Column(db.Boolean, default=True, nullable=False)
-    allow_post_processing = db.Column(db.Boolean, default=True, nullable=False)
-    allow_controlnet = db.Column(db.Boolean, default=False, nullable=False)
-    allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False)
-    allow_lora = db.Column(db.Boolean, default=False, nullable=False)
+    allow_img2img = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    allow_painting = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    allow_post_processing = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    allow_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    allow_lora = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    limit_max_steps = db.Column(db.Boolean, default=False, nullable=False, index=True)
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
@@ -43,6 +45,7 @@ class ImageWorker(Worker):
         self.allow_controlnet = kwargs.get("allow_controlnet", False)
         self.allow_sdxl_controlnet = kwargs.get("allow_sdxl_controlnet", False)
         self.allow_lora = kwargs.get("allow_lora", False)
+        self.limit_max_steps = kwargs.get("limit_max_steps", False)
         if len(self.get_model_names()) == 0:
             self.set_models(["stable_diffusion"])
         paused_string = ""
@@ -138,6 +141,11 @@ class ImageWorker(Worker):
             and not check_bridge_capability("stable_cascade_2pass", self.bridge_agent)
         ):
             return [False, "bridge_version"]
+        if "flux_1" in model_reference.get_all_model_baselines(self.get_model_names()) and not check_bridge_capability(
+            "flux",
+            self.bridge_agent,
+        ):
+            return [False, "bridge_version"]
         if waiting_prompt.params.get("clip_skip", 1) > 1 and not check_bridge_capability(
             "clip_skip",
             self.bridge_agent,
@@ -150,6 +158,17 @@ class ImageWorker(Worker):
             return [False, "bridge_version"]
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
+        if self.limit_max_steps:
+            for mn in waiting_prompt.get_model_names():
+                avg_steps = (
+                    int(
+                        model_reference.get_model_requirements(mn).get("min_steps", 20)
+                        + model_reference.get_model_requirements(mn).get("max_steps", 40),
+                    )
+                    / 2
+                )
+                if waiting_prompt.get_accurate_steps() > avg_steps:
+                    return [False, "step_count"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
         if not self.user.trusted:  # FIXME #noqa SIM102

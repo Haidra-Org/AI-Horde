@@ -121,6 +121,7 @@ class WorkerTemplate(db.Model):
     # Used by all workers to record how much they can pick up to generate
     # The value of this column is dfferent per worker type
     max_power = db.Column(db.Integer, default=20, nullable=False)
+    extra_slow_worker = db.Column(db.Boolean, default=False, nullable=False, index=True)
 
     paused = db.Column(db.Boolean, default=False, nullable=False)
     maintenance = db.Column(db.Boolean, default=False, nullable=False)
@@ -196,7 +197,7 @@ class WorkerTemplate(db.Model):
                 f"Last suspicion log: {reason.name}.\n"
                 f"Total Suspicion {self.get_suspicion()}",
             )
-        db.session.commit()
+        db.session.flush()
 
     def get_suspicion_reasons(self):
         return set([s.suspicion_id for s in self.suspicions])
@@ -261,10 +262,6 @@ class WorkerTemplate(db.Model):
 
     # This should be extended by each worker type
     def check_in(self, **kwargs):
-        # To avoid excessive commits,
-        # we only record new changes on the worker every 30 seconds
-        if (datetime.utcnow() - self.last_check_in).total_seconds() < 30 and (datetime.utcnow() - self.created).total_seconds() > 30:
-            return
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
         self.threads = kwargs.get("threads", 1)
@@ -275,6 +272,10 @@ class WorkerTemplate(db.Model):
         self.prioritized_users = kwargs.get("prioritized_users", [])
         if not kwargs.get("safe_ip", True) and not self.user.trusted:
             self.report_suspicion(reason=Suspicions.UNSAFE_IP)
+        # To avoid excessive commits,
+        # we only record new uptime on the worker every 30 seconds
+        if (datetime.utcnow() - self.last_check_in).total_seconds() < 30 and (datetime.utcnow() - self.created).total_seconds() > 30:
+            return
         if not self.is_stale() and not self.paused and not self.maintenance:
             self.uptime += (datetime.utcnow() - self.last_check_in).total_seconds()
             # Every 10 minutes of uptime gets 100 kudos rewarded
@@ -293,7 +294,6 @@ class WorkerTemplate(db.Model):
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
         self.last_check_in = datetime.utcnow()
-        db.session.commit()
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -511,7 +511,8 @@ class Worker(WorkerTemplate):
         self.set_models(kwargs.get("models"))
         self.nsfw = kwargs.get("nsfw", True)
         self.set_blacklist(kwargs.get("blacklist", []))
-        db.session.commit()
+        self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
+        # Commit should happen on calling extensions
 
     def set_blacklist(self, blacklist):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
@@ -527,7 +528,7 @@ class Worker(WorkerTemplate):
         for word in blacklist:
             blacklisted_word = WorkerBlackList(worker_id=self.id, word=word[0:15])
             db.session.add(blacklisted_word)
-        db.session.commit()
+        db.session.flush()
 
     def refresh_model_cache(self):
         models_list = [m.model for m in self.models]
@@ -563,7 +564,7 @@ class Worker(WorkerTemplate):
             return
         # logger.debug([existing_model_names,models, existing_model_names == models])
         db.session.query(WorkerModel).filter_by(worker_id=self.id).delete()
-        db.session.commit()
+        db.session.flush()
         for model_name in models:
             model = WorkerModel(worker_id=self.id, model=model_name)
             db.session.add(model)

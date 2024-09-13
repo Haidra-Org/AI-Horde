@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os
+from datetime import datetime
 
 import requests
 
@@ -24,15 +25,21 @@ class ModelReference(PrimaryTimedFunction):
     testing_models = {}
 
     def call_function(self):
-        """Retrieves to nataili and text model reference and stores in it a var"""
+        """Retrieves to image and text model reference and stores in it a var"""
         # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
         # We don't want to report on any random model name a client might request
         for _riter in range(10):
             try:
+                ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json"
+                if datetime.utcnow() <= datetime(2024, 9, 30):  # Flux Beta
+                    ref_json = (
+                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/flux/stable_diffusion.json"
+                    )
+                    logger.debug("Using flux beta model reference...")
                 self.reference = requests.get(
                     os.getenv(
                         "HORDE_IMAGE_COMPVIS_REFERENCE",
-                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json",
+                        ref_json,
                     ),
                     timeout=2,
                 ).json()

@@ -125,7 +125,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.trusted_workers = True
             self.shared = False
         self.prepare_job_payload(self.params)
-        self.set_job_ttl()
         # Commit will happen in prepare_job_payload()
 
     @logger.catch(reraise=True)
@@ -440,32 +439,6 @@ class ImageWaitingPrompt(WaitingPrompt):
             # So we adjust the things to take that into account
             steps *= 2
         return steps
-
-    def set_job_ttl(self):
-        # default is 2 minutes. Then we scale up based on resolution.
-        # This will be more accurate with a newer formula
-        self.job_ttl = 120
-        if self.width * self.height > 2048 * 2048:
-            self.job_ttl = 800
-        elif self.width * self.height > 1024 * 1024:
-            self.job_ttl = 400
-        elif self.width * self.height > 728 * 728:
-            self.job_ttl = 260
-        elif self.width * self.height >= 512 * 512:
-            self.job_ttl = 150
-        # When too many steps are involved, we increase the expiry time
-        if self.get_accurate_steps() >= 200:
-            self.job_ttl = self.job_ttl * 3
-        elif self.get_accurate_steps() >= 100:
-            self.job_ttl = self.job_ttl * 2
-        # CN is 3 times slower
-        if self.gen_payload.get("control_type"):
-            self.job_ttl = self.job_ttl * 3
-        if "SDXL_beta::stability.ai#6901" in self.get_model_names():
-            logger.debug(self.get_model_names())
-            self.job_ttl = 300
-        # logger.info([weights_count,self.job_ttl])
-        db.session.commit()
 
     def log_faulted_prompt(self):
         source_processing = "txt2img"

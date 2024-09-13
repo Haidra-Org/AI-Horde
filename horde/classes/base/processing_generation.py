@@ -44,6 +44,7 @@ class ProcessingGeneration(db.Model):
         nullable=False,
         server_default=expression.literal(False),
     )
+    job_ttl = db.Column(db.Integer, default=150, nullable=False, index=True)
 
     wp_id = db.Column(
         uuid_column_type(),
@@ -80,6 +81,7 @@ class ProcessingGeneration(db.Model):
             self.model = matching_models[0]
         else:
             self.model = kwargs["model"]
+        self.set_job_ttl()
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):
@@ -163,10 +165,10 @@ class ProcessingGeneration(db.Model):
     def is_faulted(self):
         return self.faulted
 
-    def is_stale(self, ttl):
+    def is_stale(self):
         if self.is_completed() or self.is_faulted():
             return False
-        return (datetime.utcnow() - self.start_time).total_seconds() > ttl
+        return (datetime.utcnow() - self.start_time).total_seconds() > self.job_ttl
 
     def delete(self):
         db.session.delete(self)
@@ -224,3 +226,10 @@ class ProcessingGeneration(db.Model):
                 break
             except Exception as err:
                 logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times...")
+
+    def set_job_ttl(self):
+        """Returns how many seconds each job request should stay waiting before considering it stale and cancelling it
+        This function should be overriden by the invididual hordes depending on how the calculating ttl
+        """
+        self.job_ttl = 150
+        db.session.commit()

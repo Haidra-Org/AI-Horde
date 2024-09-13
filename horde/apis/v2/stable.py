@@ -300,6 +300,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             validated_backends=self.args.validated_backends,
             worker_blacklist=self.args.worker_blacklist,
             slow_workers=self.args.slow_workers,
+            extra_slow_workers=self.args.extra_slow_workers,
             source_processing=self.args.source_processing,
             ipaddr=self.user_ip,
             safe_ip=self.safe_ip,
@@ -599,6 +600,10 @@ class ImageJobPop(JobPopTemplate):
                 db_skipped["kudos"] = post_ret["skipped"]["kudos"]
             if "blacklist" in post_ret.get("skipped", {}):
                 db_skipped["blacklist"] = post_ret["skipped"]["blacklist"]
+            if "step_count" in post_ret.get("skipped", {}):
+                db_skipped["step_count"] = post_ret["skipped"]["step_count"]
+            if "bridge_version" in post_ret.get("skipped", {}):
+                db_skipped["bridge_version"] = db_skipped.get("bridge_version", 0) + post_ret["skipped"]["bridge_version"]
             post_ret["skipped"] = db_skipped
         # logger.debug(post_ret)
         return post_ret, retcode
@@ -621,6 +626,8 @@ class ImageJobPop(JobPopTemplate):
             allow_controlnet=self.args.allow_controlnet,
             allow_sdxl_controlnet=self.args.allow_sdxl_controlnet,
             allow_lora=self.args.allow_lora,
+            extra_slow_worker=self.args.extra_slow_worker,
+            limit_max_steps=self.args.limit_max_steps,
             priority_usernames=self.priority_usernames,
         )
 
