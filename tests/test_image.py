@@ -161,8 +161,8 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         assert pop_results["id"] is None, pop_results
         assert pop_results["skipped"].get("step_count") == 1, pop_results
     except AssertionError as err:
-        # requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
-        # print("Request cancelled")
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+        print("Request cancelled")
         raise err
 
     # Test extra_slow_worker

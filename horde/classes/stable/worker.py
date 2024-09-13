@@ -52,7 +52,7 @@ class ImageWorker(Worker):
         paused_string = ""
         if self.paused:
             paused_string = "(Paused) "
-        db.session.commit()
+        db.session.flush()
         logger.trace(
             f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} "
             f"at {self.max_pixels} max pixels",

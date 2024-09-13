@@ -197,7 +197,7 @@ class WorkerTemplate(db.Model):
                 f"Last suspicion log: {reason.name}.\n"
                 f"Total Suspicion {self.get_suspicion()}",
             )
-        db.session.commit()
+        db.session.flush()
 
     def get_suspicion_reasons(self):
         return set([s.suspicion_id for s in self.suspicions])
@@ -205,7 +205,7 @@ class WorkerTemplate(db.Model):
     def reset_suspicion(self):
         """Clears the worker's suspicion and resets their reasons"""
         db.session.query(WorkerSuspicions).filter_by(worker_id=self.id).delete()
-        db.session.commit()
+        db.session.flush()
 
     def get_suspicion(self):
         return len(self.suspicions)
@@ -226,7 +226,7 @@ class WorkerTemplate(db.Model):
         if len(new_name) > 100:
             return "Too Long"
         self.name = sanitize_string(new_name)
-        db.session.commit()
+        db.session.flush()
         return "OK"
 
     def set_info(self, new_info):
@@ -237,12 +237,12 @@ class WorkerTemplate(db.Model):
         if len(new_info) > 1000:
             return "Too Long"
         self.info = sanitize_string(new_info)
-        db.session.commit()
+        db.session.flush()
         return "OK"
 
     def set_team(self, new_team):
         self.team_id = new_team.id
-        db.session.commit()
+        db.session.flush()
         return "OK"
 
     # This should be overwriten by each specific horde
@@ -254,11 +254,11 @@ class WorkerTemplate(db.Model):
         self.maintenance_msg = self.default_maintenance_msg
         if self.maintenance and maintenance_msg not in [None, ""]:
             self.maintenance_msg = sanitize_string(maintenance_msg)
-        db.session.commit()
+        db.session.flush()
 
     def toggle_paused(self, is_paused_active):
         self.paused = is_paused_active
-        db.session.commit()
+        db.session.flush()
 
     # This should be extended by each worker type
     def check_in(self, **kwargs):
@@ -343,7 +343,7 @@ class WorkerTemplate(db.Model):
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
-        db.session.commit()
+        db.session.flush()
         if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
             self.report_suspicion(
                 reason=Suspicions.UNREASONABLY_FAST,
@@ -356,10 +356,10 @@ class WorkerTemplate(db.Model):
         if not kudos_details:
             kudos_details = WorkerStats(worker_id=self.id, action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
-            db.session.commit()
+            db.session.flush()
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
-            db.session.commit()
+            db.session.flush()
         logger.trace([kudos_details, kudos_details.value])
 
     def log_aborted_job(self):
@@ -391,7 +391,7 @@ class WorkerTemplate(db.Model):
             self.report_suspicion(reason=Suspicions.TOO_MANY_JOBS_ABORTED)
             self.aborted_jobs = 0
         self.uncompleted_jobs += 1
-        db.session.commit()
+        db.session.flush()
 
     # def is_slow(self):
 
@@ -430,19 +430,19 @@ class WorkerTemplate(db.Model):
         for key in kudos_details:
             new_kd = WorkerStats(worker_id=self.id, action=key, value=kudos_details[key])
             db.session.add(new_kd)
-        db.session.commit()
+        db.session.flush()
 
     def import_performances(self, performances):
         for p in performances:
             new_kd = WorkerPerformance(worker_id=self.id, performance=p)
             db.session.add(new_kd)
-        db.session.commit()
+        db.session.flush()
 
     def import_suspicions(self, suspicions):
         for s in suspicions:
             new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(s))
             db.session.add(new_suspicion)
-        db.session.commit()
+        db.session.flush()
 
     # Should be extended by each specific horde
     @logger.catch(reraise=True)
@@ -528,7 +528,7 @@ class Worker(WorkerTemplate):
         for word in blacklist:
             blacklisted_word = WorkerBlackList(worker_id=self.id, word=word[0:15])
             db.session.add(blacklisted_word)
-        db.session.commit()
+        db.session.flush()
 
     def refresh_model_cache(self):
         models_list = [m.model for m in self.models]
@@ -564,11 +564,11 @@ class Worker(WorkerTemplate):
             return
         # logger.debug([existing_model_names,models, existing_model_names == models])
         db.session.query(WorkerModel).filter_by(worker_id=self.id).delete()
-        db.session.commit()
+        db.session.flush()
         for model_name in models:
             model = WorkerModel(worker_id=self.id, model=model_name)
             db.session.add(model)
-        db.session.commit()
+        db.session.flush()
         self.refresh_model_cache()
 
     def parse_models(self, models):
