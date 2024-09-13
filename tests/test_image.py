@@ -7,6 +7,7 @@ import json
 import requests
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
+TEST_MODELS = ["Flux.1-Schnell fp8 (Compact)"]
 
 
 def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
@@ -184,5 +185,5 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
 
 if __name__ == "__main__":
     # "ci/cd#12285"
-    # test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
-    test_flux_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
+    test_simple_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
+    # test_flux_image_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
