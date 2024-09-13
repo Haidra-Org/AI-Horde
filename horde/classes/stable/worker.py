@@ -140,6 +140,7 @@ class ImageWorker(Worker):
             and not check_bridge_capability("stable_cascade_2pass", self.bridge_agent)
         ):
             return [False, "bridge_version"]
+        logger.debug('test')
         if "flux_1" in model_reference.get_all_model_baselines(self.get_model_names()) and not check_bridge_capability(
             "flux", self.bridge_agent
         ):
