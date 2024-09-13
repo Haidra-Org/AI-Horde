@@ -116,7 +116,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
             "sampler_name": "k_euler",
         },
         "models": TEST_MODELS_FLUX,
-        # "extra_slow_workers": True,
+        "extra_slow_workers": True,
     }
     protocol = "http"
     if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
@@ -129,7 +129,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": TEST_MODELS_FLUX,
-        "bridge_agent": "AI Horde Worker reGen:9.0.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "bridge_agent": "AI Horde Worker reGen:9.1.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "nsfw": True,
         "amount": 10,
         "max_pixels": 4194304,
@@ -140,8 +140,8 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "allow_controlnet": True,
         "allow_sdxl_controlnet": True,
         "allow_lora": True,
-        # "extra_slow_worker": True,
-        # "limit_max_steps": True,
+        "extra_slow_worker": True,
+        "limit_max_steps": True,
     }
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
