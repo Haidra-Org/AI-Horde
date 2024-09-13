@@ -476,6 +476,7 @@ class JobPopTemplate(Resource):
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
+        logger.debug(self.skipped)
         return {"id": None, "ids": [], "skipped": self.skipped}, 200
 
     def get_sorted_wp(self, priority_user_ids=None):
