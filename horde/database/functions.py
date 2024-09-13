@@ -1064,9 +1064,6 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
                 WPModels,
                 WPAllowedWorkers,
             )
-            .filter(
-                ImageWaitingPrompt.n > 0,
-            )
         )      
         logger.debug(test.all())
         if skipped_wps > 0:
