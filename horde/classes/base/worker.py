@@ -568,6 +568,7 @@ class Worker(WorkerTemplate):
         for model_name in models:
             model = WorkerModel(worker_id=self.id, model=model_name)
             db.session.add(model)
+        db.session.commit()
         self.refresh_model_cache()
 
     def parse_models(self, models):
