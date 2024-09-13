@@ -125,7 +125,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     pop_dict = {
         "name": "CICD Fake Dreamer",
         "models": ["Flux.1-Schnell fp8 (Compact)"],
-        "bridge_agent": "AI Horde Worker reGen:9.0.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "bridge_agent": "AI Horde Worker reGen:9.0.0:https://github.com/Haidra-Org/horde-worker-reGen",
         "nsfw": True,
         "amount": 10,
         "max_pixels": 4194304,
