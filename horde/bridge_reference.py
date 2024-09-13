@@ -195,8 +195,8 @@ def check_bridge_capability(capability, bridge_agent):
         checked_semver = semver.Version.parse(str(version), True)
         if checked_semver.compare(bridge_version) <= 0:
             total_capabilities.update(BRIDGE_CAPABILITIES[bridge_name][version])
-    logger.debug([total_capabilities, capability, capability in total_capabilities])
-    logger.debug([bridge_name, BRIDGE_CAPABILITIES[bridge_name]])
+    # logger.debug([total_capabilities, capability, capability in total_capabilities])
+    # logger.debug([bridge_name, BRIDGE_CAPABILITIES[bridge_name]])
     return capability in total_capabilities
 
 

@@ -95,6 +95,10 @@ def test_simple_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
 
+TEST_MODELS_FLUX = ["Flux.1-Schnell fp8 (Compact)"]
+
+
+
 def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625"}  # ci/cd user
     async_dict = {
@@ -111,7 +115,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
             "cfg_scale": 1,
             "sampler_name": "k_euler",
         },
-        "models": ["Flux.1-Schnell fp8 (Compact)"],
+        "models": TEST_MODELS_FLUX,
         # "extra_slow_workers": True,
     }
     protocol = "http"
@@ -124,8 +128,8 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     print(async_results)
     pop_dict = {
         "name": "CICD Fake Dreamer",
-        "models": ["Flux.1-Schnell fp8 (Compact)"],
-        "bridge_agent": "AI Horde Worker reGen:9.0.0:https://github.com/Haidra-Org/horde-worker-reGen",
+        "models": TEST_MODELS_FLUX,
+        "bridge_agent": "AI Horde Worker reGen:9.0.0-citests:https://github.com/Haidra-Org/horde-worker-reGen",
         "nsfw": True,
         "amount": 10,
         "max_pixels": 4194304,
@@ -176,7 +180,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert len(gen["gen_metadata"]) == 0
     assert gen["seed"] == "0"
     assert gen["worker_name"] == "CICD Fake Dreamer"
-    assert gen["model"] in TEST_MODELS
+    assert gen["model"] in TEST_MODELS_FLUX
     assert gen["state"] == "ok"
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
