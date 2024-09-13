@@ -143,6 +143,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "extra_slow_worker": False,
         "limit_max_steps": True,
     }
+
     # Test limit_max_steps
     pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
     try:
@@ -162,6 +163,7 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         print("Request cancelled")
         raise err
     requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+
     # Test extra_slow_worker
     pop_dict["limit_max_steps"] = False
     pop_dict["extra_slow_worker"] = True
@@ -177,13 +179,30 @@ def test_flux_image_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     print(json.dumps(pop_results, indent=4))
     try:
         assert pop_results["id"] is None, pop_results
-        assert pop_results["skipped"]["step_count"] == 1, pop_results
+        assert pop_results["skipped"]["performance"] == 1, pop_results
     except AssertionError as err:
         requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
         print("Request cancelled")
         raise err
+    requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
 
-
+    # Try popping as an extra slow worker
+    async_dict["extra_slow_workers"] = True
+    async_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/async", json=async_dict, headers=headers)
+    assert async_req.ok, async_req.text
+    async_results = async_req.json()
+    req_id = async_results["id"]
+    print(async_results)
+    pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/pop", json=pop_dict, headers=headers)
+    try:
+        print(pop_req.text)
+        assert pop_req.ok, pop_req.text
+    except AssertionError as err:
+        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/status/{req_id}", headers=headers)
+        print("Request cancelled")
+        raise err
+    pop_results = pop_req.json()
+    print(json.dumps(pop_results, indent=4))
     job_id = pop_results["id"]
     try:
         assert job_id is not None, pop_results
