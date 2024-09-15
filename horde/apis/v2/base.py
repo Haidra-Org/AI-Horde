@@ -768,6 +768,15 @@ class Workers(Resource):
         location="args",
     )
 
+    get_parser.add_argument(
+        "name",
+        required=False,
+        default=None,
+        type=str,
+        help="Find a worker by name (case insensitive).",
+        location="args",
+    )
+
     @api.expect(get_parser)
     @logger.catch(reraise=True)
     # @cache.cached(timeout=10, query_string=True)
@@ -813,9 +822,11 @@ class Workers(Resource):
         return workers_ret
 
     def parse_worker_by_query(self, workers_list):
-        if not self.args.type:
-            return workers_list
-        return [w for w in workers_list if w["type"] == self.args.type]
+        if self.args.name:
+            return [w for w in workers_list if w["name"].lower() == self.args.name.lower()]
+        if self.args.type:
+            return [w for w in workers_list if w["type"] == self.args.type]
+        return workers_list
 
 
 class WorkerSingle(Resource):

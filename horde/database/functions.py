@@ -218,6 +218,13 @@ def find_worker_by_name(worker_name, worker_class=ImageWorker):
     return worker
 
 
+def find_worker_id_by_name(worker_name):
+    for worker_class in [ImageWorker, TextWorker, InterrogationWorker]:
+        worker_id = db.session.query(worker_class.id).filter_by(name=worker_name).first()
+        if worker_id:
+            return worker_id
+
+
 def worker_name_exists(worker_name):
     for worker_class in [ImageWorker, TextWorker, InterrogationWorker]:
         worker = db.session.query(worker_class).filter_by(name=worker_name).count()
