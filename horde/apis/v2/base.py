@@ -846,6 +846,14 @@ class WorkerSingle(Resource):
         help="The client name and version.",
         location="headers",
     )
+    get_parser.add_argument(
+        "is_name",
+        required=False,
+        default=None,
+        type=bool,
+        help="When true, it specifies that the worker_id is actually a worker name. This is case sensitive.",
+        location="args",
+    )
 
     @api.expect(get_parser)
     # @cache.cached(timeout=10)
@@ -870,6 +878,12 @@ class WorkerSingle(Resource):
             admin = database.find_user_by_api_key(self.args["apikey"])
             if admin and admin.moderator:
                 details_privilege = 2
+        # Ugly hack due to flask-restx being buggy and unmaintained
+        if self.args.is_name is True and request.query_string != b"is_name=false":
+            worker = database.find_worker_id_by_name(worker_id)
+            if not worker:
+                raise e.WorkerNotFound(worker_id)
+            worker_id = str(worker.id)
         if not hr.horde_r:
             cache_exists = False
         if details_privilege > 0:
