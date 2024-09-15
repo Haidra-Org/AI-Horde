@@ -829,7 +829,34 @@ class Workers(Resource):
         return workers_list
 
 
-class WorkerSingle(Resource):
+class WorkerSingleBase(Resource):
+
+    def get_worker_by_id(self, worker_id):
+        cache_exists = True
+        details_privilege = 0
+        if self.args.apikey:
+            admin = database.find_user_by_api_key(self.args["apikey"])
+            if admin and admin.moderator:
+                details_privilege = 2
+        if not hr.horde_r:
+            cache_exists = False
+        if details_privilege > 0:
+            cache_name = f"cached_worker_{worker_id}_privileged"
+            cached_worker = hr.horde_r_get(cache_name)
+        else:
+            cache_name = f"cached_worker_{worker_id}"
+        cached_worker = hr.horde_r_get(cache_name)
+        if cache_exists and cached_worker:
+            worker_details = json.loads(cached_worker)
+        else:
+            worker = database.find_worker_by_id(worker_id)
+            if not worker:
+                raise e.WorkerNotFound(worker_id)
+            worker_details = worker.get_details(details_privilege)
+            hr.horde_r_setex_json(cache_name, timedelta(seconds=30), worker_details)
+        return worker_details, 200
+
+class WorkerSingleName(WorkerSingleBase):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument(
         "apikey",
@@ -846,13 +873,45 @@ class WorkerSingle(Resource):
         help="The client name and version.",
         location="headers",
     )
+
+    @api.expect(get_parser)
+    # @cache.cached(timeout=10)
+    @api.marshal_with(
+        models.response_model_worker_details,
+        code=200,
+        description="Worker Details",
+        skip_none=True,
+    )
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(403, "Access Denied", models.response_model_error)
+    @api.response(404, "Worker Not Found", models.response_model_error)
+    def get(self, worker_name=""):
+        """Details of a registered worker
+        Can retrieve the details of a worker even if inactive
+        (A worker is considered inactive if it has not checked in for 5 minutes)
+        """
+        self.args = self.get_parser.parse_args()
+        worker = database.find_worker_id_by_name(worker_name)
+        if not worker:
+            raise e.WorkerNotFound(worker_name)
+        return self.get_worker_by_id(str(worker.id)), 200
+
+class WorkerSingle(WorkerSingleBase):
+    get_parser = reqparse.RequestParser()
     get_parser.add_argument(
-        "is_name",
+        "apikey",
+        type=str,
         required=False,
-        default=None,
-        type=bool,
-        help="When true, it specifies that the worker_id is actually a worker name. This is case sensitive.",
-        location="args",
+        help="The Moderator or Owner API key.",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
     )
 
     @api.expect(get_parser)
@@ -871,36 +930,8 @@ class WorkerSingle(Resource):
         Can retrieve the details of a worker even if inactive
         (A worker is considered inactive if it has not checked in for 5 minutes)
         """
-        cache_exists = True
-        details_privilege = 0
         self.args = self.get_parser.parse_args()
-        if self.args.apikey:
-            admin = database.find_user_by_api_key(self.args["apikey"])
-            if admin and admin.moderator:
-                details_privilege = 2
-        # Ugly hack due to flask-restx being buggy and unmaintained
-        if self.args.is_name is True and request.query_string != b"is_name=false":
-            worker = database.find_worker_id_by_name(worker_id)
-            if not worker:
-                raise e.WorkerNotFound(worker_id)
-            worker_id = str(worker.id)
-        if not hr.horde_r:
-            cache_exists = False
-        if details_privilege > 0:
-            cache_name = f"cached_worker_{worker_id}_privileged"
-            cached_worker = hr.horde_r_get(cache_name)
-        else:
-            cache_name = f"cached_worker_{worker_id}"
-        cached_worker = hr.horde_r_get(cache_name)
-        if cache_exists and cached_worker:
-            worker_details = json.loads(cached_worker)
-        else:
-            worker = database.find_worker_by_id(worker_id)
-            if not worker:
-                raise e.WorkerNotFound(worker_id)
-            worker_details = worker.get_details(details_privilege)
-            hr.horde_r_setex_json(cache_name, timedelta(seconds=30), worker_details)
-        return worker_details, 200
+        return self.get_worker_by_id(worker_id), 200
 
     put_parser = reqparse.RequestParser()
     put_parser.add_argument(
