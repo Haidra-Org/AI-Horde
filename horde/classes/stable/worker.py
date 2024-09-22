@@ -159,16 +159,29 @@ class ImageWorker(Worker):
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
         if self.limit_max_steps:
-            for mn in waiting_prompt.get_model_names():
-                avg_steps = (
-                    int(
-                        model_reference.get_model_requirements(mn).get("min_steps", 20)
-                        + model_reference.get_model_requirements(mn).get("max_steps", 40),
+            if len (waiting_prompt.get_model_names()) > 1:
+                for mn in waiting_prompt.get_model_names():
+                    avg_steps = (
+                        int(
+                            model_reference.get_model_requirements(mn).get("min_steps", 20)
+                            + model_reference.get_model_requirements(mn).get("max_steps", 40),
+                        )
+                        / 2
                     )
-                    / 2
-                )
-                if waiting_prompt.get_accurate_steps() > avg_steps:
-                    return [False, "step_count"]
+                    if waiting_prompt.get_accurate_steps() > avg_steps:
+                        return [False, "step_count"]
+            else:
+                # If the request has an empty model list, we compare instead to the worker's model list
+                for mn in self.get_model_names():
+                    avg_steps = (
+                        int(
+                            model_reference.get_model_requirements(mn).get("min_steps", 20)
+                            + model_reference.get_model_requirements(mn).get("max_steps", 40),
+                        )
+                        / 2
+                    )
+                    if waiting_prompt.get_accurate_steps() > avg_steps:
+                        return [False, "step_count"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
         if not self.user.trusted:  # FIXME #noqa SIM102
