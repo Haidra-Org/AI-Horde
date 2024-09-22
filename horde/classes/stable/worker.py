@@ -159,7 +159,7 @@ class ImageWorker(Worker):
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
         if self.limit_max_steps:
-            if len (waiting_prompt.get_model_names()) > 1:
+            if len(waiting_prompt.get_model_names()) > 1:
                 for mn in waiting_prompt.get_model_names():
                     avg_steps = (
                         int(

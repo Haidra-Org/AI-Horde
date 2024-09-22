@@ -856,6 +856,7 @@ class WorkerSingleBase(Resource):
             hr.horde_r_setex_json(cache_name, timedelta(seconds=30), worker_details)
         return worker_details
 
+
 class WorkerSingleName(WorkerSingleBase):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument(
@@ -895,6 +896,7 @@ class WorkerSingleName(WorkerSingleBase):
         if not worker:
             raise e.WorkerNotFound(worker_name)
         return self.get_worker_by_id(str(worker.id)), 200
+
 
 class WorkerSingle(WorkerSingleBase):
     get_parser = reqparse.RequestParser()
