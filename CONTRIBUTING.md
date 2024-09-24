@@ -12,6 +12,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 * start server with `python server.py  -vvvvi --horde stable`
 * You can now connect to http://localhost:7001
 
+To run the AI Horde with Docker or Docker Compose, see the [README_docker.md](README_docker.md).
+
 # How to contribute to the AI Horde code
 
 We are happy you have ideas to improve this service and we welcome all contributors.

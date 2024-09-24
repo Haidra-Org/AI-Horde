@@ -1,19 +1,28 @@
 # SPDX-FileCopyrightText: 2024 Tazlin
+# SPDX-FileCopyrightText: 2024 ceruleandeep
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-version: '3'
 services:
   aihorde:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: aihorde:latest
     container_name: aihorde
     ports:
       - "7001:7001"
     # The port number written in front of the colon (:) is the port number to be exposed to the outside, so if you change it, you can access it with localhost:{changePort}.
     environment:
-      - PROFILE=docker # If you write a profile, the .env_{PROFILE} file is read.
+      # Flask obtains its environment variables from the .env file.
+      # If you set a profile, the .env_{PROFILE} file is read instead.
+      - PROFILE=docker
     volumes:
-      - .env_docker:/app/.env_docker # You can replace the local pre-built .env file with the container's file.
+      # .env_{PROFILE} is copied into the image when it is built.
+      # So that you can change the environment variables without rebuilding the image, mount the .env file.
+      - .env_docker:/app/.env_docker
+      # Likewise, you can mount the horde directory to change the source code without rebuilding the image.
+      - ./horde:/app/horde
     networks:
       - aihorde_network
     depends_on:
@@ -21,13 +30,14 @@ services:
       - redis
 
   postgres:
-    image: postgres:15.3-alpine
+    image: ghcr.io/haidra-org/ai-horde-postgres:latest
     container_name: postgres
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: postgres
+        POSTGRES_PASSWORD: changeme
+    volumes:
+      # Use a named volume to persist the data even if the container is deleted.
+      - postgres_data:/var/lib/postgresql/data/
     ports:
       - "5432:5432"
     networks:
@@ -45,3 +55,6 @@ services:
 networks:
   aihorde_network:
     driver: bridge
+
+volumes:
+  postgres_data:

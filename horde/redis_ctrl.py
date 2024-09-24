@@ -24,7 +24,14 @@ ipaddr_timeout_db = 5
 
 def is_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex((redis_hostname, redis_port)) == 0
+        try:
+            return s.connect_ex((redis_hostname, redis_port)) == 0
+        except socket.gaierror as e:
+            # connect_ex suppresses exceptions from POSIX connect() call
+            # but can still raise gaierror if e.g. the hostname is invalid.
+            # This may be transient, so log the error and return False.
+            logger.error(f"Redis server at {redis_hostname}:{redis_port} is not reachable: {e}")
+            return False
 
 
 def is_local_redis_up() -> bool:
