@@ -20,9 +20,7 @@ repos:
     rev: v0.4.3
     hooks:
     -    id: ruff
-repos:
-  - repo: https://github.com/fsfe/reuse-tool
+-   repo: https://github.com/fsfe/reuse-tool
     rev: v4.0.3
     hooks:
       - id: reuse
-      
