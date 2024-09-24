@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+# SPDX-FileCopyrightText: 2024 ceruleandeep
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -11,85 +12,97 @@ from horde.logger import logger
 from horde.threads import PrimaryTimedFunction
 
 
+class KnownModelRef(dict):
+    """
+    Base class for a known model reference entry.
+
+    Known model references need to be typed for RESTX to work properly,
+    but they need to be dicts for everywhere else in the code.
+    """
+
+
+class KnownTextModelRef(KnownModelRef):
+    """
+    A known text model reference entry
+    """
+
+
+class KnownImageModelRef(KnownModelRef):
+    """
+    A known image model reference entry
+    """
+
+
+DEFAULT_HORDE_IMAGE_COMPVIS_REFERENCE = (
+    "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json"
+)
+DEFAULT_HORDE_IMAGE_LLM_REFERENCE = "https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json"
+DEFAULT_HORDE_IMAGE_DIFFUSERS_REFERENCE = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/diffusers.json"
+
+SD_BASELINES = {
+    "stable diffusion 1",
+    "stable diffusion 2",
+    "stable diffusion 2 512",
+    "stable_diffusion_xl",
+    "stable_cascade",
+    "flux_1",
+}
+
+
 class ModelReference(PrimaryTimedFunction):
     quorum = None
-    reference = None
-    text_reference = None
-    stable_diffusion_names = set()
-    text_model_names = set()
-    nsfw_models = set()
-    controlnet_models = set()
+    reference: dict[str, KnownImageModelRef] = None
+    text_reference: dict[str, KnownTextModelRef] = None
+    stable_diffusion_names: set[str] = set()
+    text_model_names: set[str] = set()
+    nsfw_models: set[str] = set()
+    controlnet_models: set[str] = set()
+
     # Workaround because users lacking customizer role are getting models not in the reference stripped away.
     # However due to a racing or caching issue, this causes them to still pick jobs using those models
     # Need to investigate more to remove this workaround
     testing_models = {}
 
     def call_function(self):
-        """Retrieves to image and text model reference and stores in it a var"""
-        # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
-        # We don't want to report on any random model name a client might request
+        """
+        Retrieves image and text model references
+        """
         for _riter in range(10):
             try:
-                ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json"
-                if datetime.utcnow() <= datetime(2024, 9, 30):  # Flux Beta
-                    ref_json = (
-                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/flux/stable_diffusion.json"
-                    )
-                    logger.debug("Using flux beta model reference...")
-                self.reference = requests.get(
-                    os.getenv(
-                        "HORDE_IMAGE_COMPVIS_REFERENCE",
-                        ref_json,
-                    ),
-                    timeout=2,
-                ).json()
-                diffusers = requests.get(
-                    os.getenv(
-                        "HORDE_IMAGE_DIFFUSERS_REFERENCE",
-                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/diffusers.json",
-                    ),
-                    timeout=2,
-                ).json()
-                self.reference.update(diffusers)
-                # logger.debug(self.reference)
-                self.stable_diffusion_names = set()
-                for model in self.reference:
-                    if self.reference[model].get("baseline") in {
-                        "stable diffusion 1",
-                        "stable diffusion 2",
-                        "stable diffusion 2 512",
-                        "stable_diffusion_xl",
-                        "stable_cascade",
-                        "flux_1",
-                    }:
-                        self.stable_diffusion_names.add(model)
-                        if self.reference[model].get("nsfw"):
-                            self.nsfw_models.add(model)
-                        if self.reference[model].get("type") == "controlnet":
-                            self.controlnet_models.add(model)
-
+                self._load_image_models()
                 break
             except Exception as e:
-                logger.error(f"Error when downloading nataili models list: {e}")
+                logger.error(f"Error when downloading image models list: {e}")
 
         for _riter in range(10):
             try:
-                self.text_reference = requests.get(
-                    os.getenv(
-                        "HORDE_IMAGE_LLM_REFERENCE",
-                        "https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json",
-                    ),
-                    timeout=2,
-                ).json()
-                # logger.debug(self.reference)
-                self.text_model_names = set()
-                for model in self.text_reference:
-                    self.text_model_names.add(model)
-                    if self.text_reference[model].get("nsfw"):
-                        self.nsfw_models.add(model)
+                self._load_text_models()
                 break
-            except Exception as err:
-                logger.error(f"Error when downloading known models list: {err}")
+            except Exception as e:
+                logger.error(f"Error when downloading text models list: {e}")
+
+    def _load_text_models(self):
+        text_ref_data = requests.get(self._llm_ref_url, timeout=2).json()
+        self.text_reference = {name: KnownTextModelRef(text_ref_data[name]) for name in text_ref_data}
+        self.text_model_names = set()
+        for model in self.text_reference:
+            self.text_model_names.add(model)
+            if self.text_reference[model].get("nsfw"):
+                self.nsfw_models.add(model)
+
+    def _load_image_models(self):
+        sd_ref_data = requests.get(self._compvis_ref_url, timeout=2).json()
+        diffuser_ref_data = requests.get(self._diffusers_ref_url, timeout=2).json()
+        self.reference = {name: KnownImageModelRef(sd_ref_data[name]) for name in sd_ref_data}
+        self.reference.update({name: KnownImageModelRef(diffuser_ref_data[name]) for name in diffuser_ref_data})
+        self.stable_diffusion_names = set()
+        for model in self.reference:
+            if self.reference[model].get("baseline") in SD_BASELINES:
+                self.stable_diffusion_names.add(model)
+                if self.reference[model].get("nsfw"):
+                    self.nsfw_models.add(model)
+                if self.reference[model].get("type") == "controlnet":
+                    self.controlnet_models.add(model)
 
     def get_image_model_names(self):
         return set(self.reference.keys())
@@ -124,7 +137,7 @@ class ModelReference(PrimaryTimedFunction):
         if not self.text_reference.get(model_name):
             return 1
         multiplier = int(self.text_reference[model_name]["parameters"]) / 1000000000
-        logger.debug(f"{model_name} param multiplier: {multiplier}")
+        # logger.debug(f"{model_name} param multiplier: {multiplier}")
         return multiplier
 
     def has_inpainting_models(self, model_names):
@@ -168,6 +181,26 @@ class ModelReference(PrimaryTimedFunction):
         # if self.has_unknown_models(model_names):
         #     return True
         return False
+
+    @property
+    def _compvis_ref_url(self):
+        ref_json = DEFAULT_HORDE_IMAGE_COMPVIS_REFERENCE
+        if datetime.now(timezone.utc) <= datetime(2024, 9, 30, tzinfo=timezone.utc):
+            # Flux Beta
+            # I don't understand how this hack works, but perhaps HORDE_IMAGE_COMPVIS_REFERENCE is unset in prod
+            ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/flux/stable_diffusion.json"
+            logger.debug("Using flux beta model reference...")
+        return os.getenv("HORDE_IMAGE_COMPVIS_REFERENCE", ref_json)
+
+    @property
+    def _llm_ref_url(self):
+        # it may not be necessary to constantly pull this from the environment
+        # but the original code does that so I'm keeping it
+        return os.getenv("HORDE_IMAGE_LLM_REFERENCE", DEFAULT_HORDE_IMAGE_LLM_REFERENCE)
+
+    @property
+    def _diffusers_ref_url(self):
+        return os.getenv("HORDE_IMAGE_DIFFUSERS_REFERENCE", DEFAULT_HORDE_IMAGE_DIFFUSERS_REFERENCE)
 
 
 model_reference = ModelReference(3600, None)

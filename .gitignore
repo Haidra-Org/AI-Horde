@@ -113,6 +113,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env_docker
 
 # Spyder project settings
 .spyderproject

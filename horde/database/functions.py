@@ -265,7 +265,7 @@ def worker_exists(worker_id):
     return wc
 
 
-def get_available_models(filter_model_name: str = None):
+def get_available_models(filter_model_name: str = None) -> list[dict]:
     models_dict = {}
     available_worker_models = None
 

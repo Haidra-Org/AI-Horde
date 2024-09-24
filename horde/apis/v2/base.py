@@ -5,6 +5,7 @@
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import regex as re
@@ -37,6 +38,7 @@ from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.metrics import waitress_metrics
+from horde.model_reference import KnownModelRef, model_reference
 from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
@@ -444,7 +446,7 @@ class JobPopTemplate(Resource):
             self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
         for wp in self.get_sorted_wp():
-            if wp.id not in [wp.id for wp in self.prioritized_wp]:
+            if wp.id not in [pwp.id for pwp in self.prioritized_wp]:
                 self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         while len(self.prioritized_wp) > 0:
@@ -1598,6 +1600,8 @@ class FindUser(Resource):
 
 
 class Models(Resource):
+    MODEL_STATES = ["known", "custom", "all"]
+
     get_parser = reqparse.RequestParser()
     get_parser.add_argument(
         "Client-Agent",
@@ -1637,11 +1641,20 @@ class Models(Resource):
         required=False,
         default="all",
         type=str,
+        choices=MODEL_STATES,
         help=(
             "If 'known', only show stats for known models in the model reference. "
             "If 'custom' only show stats for custom models. "
             "If 'all' shows stats for all models."
         ),
+        location="args",
+    )
+    get_parser.add_argument(
+        "metadata",
+        required=False,
+        default=False,
+        type=bool,
+        help="Include the model reference metadata in the response.",
         location="args",
     )
 
@@ -1657,15 +1670,24 @@ class Models(Resource):
     def get(self):
         """Returns a list of models active currently in this horde"""
         self.args = self.get_parser.parse_args()
-        if self.args.model_state not in ["known", "custom", "all"]:
-            raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
+        if self.args.model_state not in self.MODEL_STATES:
+            raise e.BadRequest(f"'model_state' needs to be one of {self.MODEL_STATES}")
         models_ret = database.retrieve_available_models(
             model_type=self.args.type,
             min_count=self.args.min_count,
             max_count=self.args.max_count,
             model_state=self.args.model_state,
         )
-        return (models_ret, 200)
+
+        # here, augment with the model reference data in "metadata" key
+        # if args.type ever becomes properly optional, this can be done differently
+        if self.args.metadata:
+            if self.args.type == "image":
+                ref = model_reference.reference
+            else:
+                ref = model_reference.text_reference
+            models_ret = [{**model, "metadata": ref.get(model["name"], {})} for model in models_ret]
+        return models_ret, 200
 
 
 class ModelSingle(Resource):
@@ -3128,3 +3150,103 @@ class DocsSponsors(Resource):
         if self.args.format == "markdown":
             return {"markdown": markdownify(html_template).strip("\n")}, 200
         return {"html": html_template}, 200
+
+
+@dataclass
+class KnownModelsReturn:
+    name: str
+    type: str
+    metadata: KnownModelRef
+
+
+def known_models(model_type: str = None, filter_model_name: str = None, exact: bool = None) -> list[KnownModelsReturn]:
+    """
+    Filter known models from the model reference
+
+    :param model_type: The model type to filter by.
+    :param filter_model_name: The model name to filter by.
+    :param exact: If the model name should be an exact match.
+
+    :return: A list of known models.
+    """
+    model_references = {
+        "image": model_reference.reference,
+        "text": model_reference.text_reference,
+    }
+
+    if filter_model_name and not exact:
+        filter_model_name = filter_model_name.lower()
+
+    matched_models = []
+    for slug, source in model_references.items():
+        if model_type and model_type != slug:
+            continue
+        for model_name, metadata in source.items():
+            if filter_model_name:
+                if exact and model_name != filter_model_name:
+                    continue
+                if not exact and filter_model_name not in model_name.lower():
+                    continue
+
+            matched_models.append(
+                KnownModelsReturn(
+                    name=model_name,
+                    type=slug,
+                    metadata=metadata,
+                ),
+            )
+    return matched_models
+
+
+class KnownModels(Resource):
+    args = None
+    parser = reqparse.RequestParser()
+    parser.add_argument(
+        "type",
+        type=str,
+        choices=["text", "image"],
+        required=False,
+        help="The model type to filter by.",
+        location="args",
+    )
+    parser.add_argument(
+        "name",
+        type=str,
+        required=False,
+        help="The model name to filter by.",
+        location="args",
+    )
+
+    @cache.cached(timeout=2, query_string=True)
+    @api.expect(parser)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.marshal_with(
+        models.response_model_known_model,
+        code=200,
+        description="List all known models",
+        as_list=True,
+    )
+    def get(self):
+        """List all known models and their metadata"""
+        self.args = self.parser.parse_args()
+        models_ret = known_models(model_type=self.args.type, filter_model_name=self.args.name)
+        return models_ret, 200
+
+
+class KnownModelSingle(Resource):
+    @cache.cached(timeout=2, query_string=True)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(404, "Model Not Found", models.response_model_error)
+    @api.marshal_with(
+        models.response_model_known_model,
+        code=200,
+        description="Get a known model",
+    )
+    def get(self, model_name):
+        """Get the metadata for a known model"""
+        models_ret = known_models(filter_model_name=model_name, exact=True)
+        if not models_ret:
+            raise e.ThingNotFound("Model", model_name)
+        if len(models_ret) > 1:
+            raise e.BadRequest("More than one model found with the same name.")
+        return models_ret[0], 200
