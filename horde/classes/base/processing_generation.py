@@ -96,6 +96,7 @@ class ProcessingGeneration(db.Model):
         self.seed = kwargs.get("seed", None)
         self.gen_metadata = kwargs.get("gen_metadata", None)
         logger.debug(self.gen_metadata)
+        logger.debug(self.generation)
         kudos = self.get_gen_kudos()
         self.cancelled = False
         self.record(things_per_sec, kudos)
