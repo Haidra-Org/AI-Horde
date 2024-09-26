@@ -78,9 +78,12 @@ class ImageProcessingGeneration(ProcessingGeneration):
         )
 
     def set_generation(self, generation, things_per_sec, **kwargs):
-        if kwargs.get("censored", False):
-            self.censored = True
         state = kwargs.get("state", "ok")
+        for metadata in kwargs.get("gen_metadata", []):
+            if metadata.get('value') == 'csam':
+                state = 'csam'
+            else:
+                state = 'censored'
         if state in ["censored", "csam"]:
             self.censored = True
             db.session.commit()
