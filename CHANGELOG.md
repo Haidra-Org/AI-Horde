@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.43.2
+
+* Horde more accurately reports which images are nsfw or csam censored
+
 # 4.43.1
 
 * Fix to prevent limit_max_steps picking up WPs with empty model lists
