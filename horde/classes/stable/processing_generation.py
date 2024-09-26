@@ -41,7 +41,6 @@ class ImageProcessingGeneration(ProcessingGeneration):
                     generation = convert_pil_to_b64(img)
             else:
                 generation = generate_procgen_download_url(str(self.id), self.wp.shared)
-        logger.debug(self.gen_metadata)
         ret_dict = {
             "img": generation,
             "seed": self.seed,
