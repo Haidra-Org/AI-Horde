@@ -41,6 +41,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
                     generation = convert_pil_to_b64(img)
             else:
                 generation = generate_procgen_download_url(str(self.id), self.wp.shared)
+        logger.debug(self.gen_metadata)
         ret_dict = {
             "img": generation,
             "seed": self.seed,
@@ -78,9 +79,12 @@ class ImageProcessingGeneration(ProcessingGeneration):
         )
 
     def set_generation(self, generation, things_per_sec, **kwargs):
-        if kwargs.get("censored", False):
-            self.censored = True
         state = kwargs.get("state", "ok")
+        for metadata in kwargs.get("gen_metadata", []):
+            if metadata.get('value') == 'csam':
+                state = 'csam'
+            else:
+                state = 'censored'
         if state in ["censored", "csam"]:
             self.censored = True
             db.session.commit()
