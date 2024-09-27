@@ -80,6 +80,9 @@ class ImageProcessingGeneration(ProcessingGeneration):
     def set_generation(self, generation, things_per_sec, **kwargs):
         state = kwargs.get("state", "ok")
         for metadata in kwargs.get("gen_metadata", []):
+            if metadata.get('type') != 'censorship':
+                # this metadata isnt about censorship
+                continue 
             if metadata.get('value') == 'csam':
                 state = 'csam'
             else:
