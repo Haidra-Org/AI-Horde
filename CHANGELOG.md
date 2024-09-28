@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.43.3
+
+* Add new `information` metadata key
+
 # 4.43.2
 
 * Horde more accurately reports which images are nsfw or csam censored

@@ -193,6 +193,7 @@ class ImageModels(v2.Models):
                         "source_mask",
                         "extra_source_images",
                         "batch_index",
+                        "information",
                     ],
                     description="The relevance of the metadata field",
                 ),
