@@ -16,7 +16,6 @@ from horde.r2 import (
     download_procgen_image,
     generate_procgen_download_url,
     upload_generated_image,
-    upload_prompt,
     upload_shared_generated_image,
     upload_shared_metadata,
 )
@@ -91,13 +90,14 @@ class ImageProcessingGeneration(ProcessingGeneration):
         if state in ["censored", "csam"]:
             self.censored = True
             db.session.commit()
-            if state == "csam":
-                prompt_dict = {
-                    "prompt": self.wp.prompt,
-                    "user": self.wp.user.get_unique_alias(),
-                    "type": "clip",
-                }
-                upload_prompt(prompt_dict)
+            # Disabled prompt gathering for now
+            # if state == "csam":
+            #     prompt_dict = {
+            #         "prompt": self.wp.prompt,
+            #         "user": self.wp.user.get_unique_alias(),
+            #         "type": "clip",
+            #     }
+            #     upload_prompt(prompt_dict)
         elif state == "faulted":
             self.wp.n += 1
             self.abort()
