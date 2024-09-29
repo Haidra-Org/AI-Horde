@@ -78,20 +78,21 @@ class ImageProcessingGeneration(ProcessingGeneration):
 
     def set_generation(self, generation, things_per_sec, **kwargs):
         state = kwargs.get("state", "ok")
+        censored = False
         gen_metadata = kwargs.get("gen_metadata") or []
         for metadata in gen_metadata:
             if metadata.get("type") != "censorship":
                 # this metadata isnt about censorship
                 continue
             if metadata.get("value") == "csam":
-                state = "csam"
+                censored = "csam"
             else:
-                state = "censored"
-        if state in ["censored", "csam"]:
+                censored = "nsfw"
+        if censored is not False:
             self.censored = True
             db.session.commit()
             # Disabled prompt gathering for now
-            # if state == "csam":
+            # if censored == "csam":
             #     prompt_dict = {
             #         "prompt": self.wp.prompt,
             #         "user": self.wp.user.get_unique_alias(),
