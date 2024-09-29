@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 import patreon
 from sqlalchemy import func, or_
 
-from horde import horde_redis as hr
 from horde.argparser import args
 from horde.classes.base.user import User
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
@@ -30,6 +29,7 @@ from horde.database.functions import (
 )
 from horde.enums import State
 from horde.flask import HORDE, SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.r2 import delete_source_image

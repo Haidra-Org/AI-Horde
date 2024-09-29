@@ -13,7 +13,7 @@ from unidecode import unidecode
 from horde.argparser import args
 from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
 from horde.flask import HORDE, SQLITE_MODE  # Local Testing
-from horde.horde_redis import horde_r_get
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
 
@@ -82,7 +82,7 @@ class PromptChecker:
             with HORDE.app_context():
                 stored_replacements = retrieve_regex_replacements(filter_type=10)
         else:
-            cached_replacements = horde_r_get("cached_regex_replacements")
+            cached_replacements = hr.horde_r_get("cached_regex_replacements")
             if not cached_replacements:
                 logger.warning("No cached regex replacements found in redis! Check threads!")
                 stored_replacements = []
@@ -97,7 +97,7 @@ class PromptChecker:
                 with HORDE.app_context():
                     stored_filter = compile_regex_filter(_id)
             else:
-                stored_filter = horde_r_get(filter_id)
+                stored_filter = hr.horde_r_get(filter_id)
             # Ensure we don't get catch-all regex
             if not stored_filter:
                 continue

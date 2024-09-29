@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.43.5
+
+* Fix: Added check to ensure the redis servers are still available.
+
 # 4.43.4
 
 * Fix logic error when setting censored key

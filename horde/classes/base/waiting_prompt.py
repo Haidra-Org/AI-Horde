@@ -11,13 +11,13 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.sql import expression
 
-from horde import horde_redis as hr
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.utils import get_db_uuid, get_expiry_date, get_extra_slow_expiry_date
 

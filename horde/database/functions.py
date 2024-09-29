@@ -13,7 +13,6 @@ from sqlalchemy import Boolean, and_, func, not_, or_
 from sqlalchemy.orm import noload
 
 import horde.classes.base.stats as stats
-from horde import horde_redis as hr
 from horde import vars as hv
 from horde.bridge_reference import (
     check_bridge_capability,
@@ -34,6 +33,7 @@ from horde.classes.stable.worker import ImageWorker
 from horde.database.classes import FakeWPRow
 from horde.enums import State
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.utils import hash_api_key, validate_regex

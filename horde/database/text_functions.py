@@ -10,7 +10,6 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import noload
 
 import horde.classes.base.stats as stats
-from horde import horde_redis as hr
 from horde.bridge_reference import (
     is_backed_validated,
 )
@@ -22,6 +21,7 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.database.functions import query_prioritized_wps
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
 

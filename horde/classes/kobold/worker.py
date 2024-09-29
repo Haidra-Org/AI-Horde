@@ -8,12 +8,12 @@ from datetime import timedelta
 from sqlalchemy.dialects.postgresql import UUID
 
 from horde import exceptions as e
-from horde import horde_redis as hr
 from horde.bridge_reference import (
     is_backed_validated,
 )
 from horde.classes.base.worker import Worker
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.utils import sanitize_string
