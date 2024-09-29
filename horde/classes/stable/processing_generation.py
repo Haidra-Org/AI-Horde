@@ -127,7 +127,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
         record_image_statistic(self)
         if self.wp.shared and not self.fake and generation == "R2":
             self.upload_generation_metadata()
-        if state == "csam":
+        if censored == "csam":
             self.wp.user.record_problem_job(
                 procgen=self,
                 ipaddr=self.wp.ipaddr,
