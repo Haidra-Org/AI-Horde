@@ -22,15 +22,16 @@ ipaddr_supicion_db = 4
 ipaddr_timeout_db = 5
 
 
-def is_redis_up() -> bool:
+def is_redis_up(hostname=redis_hostname, port=redis_port) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(3)
         try:
-            return s.connect_ex((redis_hostname, redis_port)) == 0
+            return s.connect_ex((hostname, port)) == 0
         except socket.gaierror as e:
             # connect_ex suppresses exceptions from POSIX connect() call
             # but can still raise gaierror if e.g. the hostname is invalid.
             # This may be transient, so log the error and return False.
-            logger.error(f"Redis server at {redis_hostname}:{redis_port} is not reachable: {e}")
+            logger.error(f"Redis server at {hostname}:{port} is not reachable: {e}")
             return False
 
 
@@ -77,7 +78,13 @@ def get_all_redis_db_servers():
     This allows redis to transparently failover.
     """
     try:
-        return [get_redis_db_server(rs) for rs in json.loads(os.getenv("REDIS_SERVERS"))]
+        working_redis = []
+        for rs in json.loads(os.getenv("REDIS_SERVERS")):
+            if is_redis_up(rs):
+                working_redis.append(get_redis_db_server(rs))
+            else:
+                logger.warning(f"redis server '{rs} appears unreachable. Will not be used set in the cluster")
+        return working_redis
     except Exception:
         logger.error("Error setting up REDIS_SERVERS array. Falling back to loadbalancer.")
         return [get_horde_db()]

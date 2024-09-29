@@ -19,26 +19,16 @@ from horde.redis_ctrl import (
 )
 
 ip_r = None
-logger.init("IP Address Cache", status="Connecting")
+ip_s_r = None
+ip_t_r = None
+logger.init("IP Caches", status="Connecting")
 if is_redis_up():
     ip_r = get_ipaddr_db()
-    logger.init_ok("IP Address Cache", status="Connected")
-else:
-    logger.init_err("IP Address Cache", status="Failed")
-ip_s_r = None
-logger.init("IP Suspicion Cache", status="Connecting")
-if is_redis_up():
     ip_s_r = get_ipaddr_suspicion_db()
-    logger.init_ok("IP Suspicion Cache", status="Connected")
-else:
-    logger.init_err("IP Suspicion Cache", status="Failed")
-ip_t_r = None
-logger.init("IP Timeout Cache", status="Connecting")
-if is_redis_up():
     ip_t_r = get_ipaddr_timeout_db()
-    logger.init_ok("IP Timeout Cache", status="Connected")
+    logger.init_ok("IP Caches", status="Connected")
 else:
-    logger.init_err("IP Timeout Cache", status="Failed")
+    logger.init_err("IP Caches", status="Failed")
 
 test_timeout = 0
 

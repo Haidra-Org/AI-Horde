@@ -18,7 +18,6 @@ from sqlalchemy.exc import IntegrityError, InvalidRequestError
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
-from horde import horde_redis as hr
 from horde.apis.models.v2 import Models, Parsers
 from horde.argparser import args
 from horde.classes.base import settings
@@ -33,6 +32,7 @@ from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.detection import prompt_checker
 from horde.flask import HORDE, cache, db
+from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.logger import logger

@@ -9,11 +9,11 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 
-from horde import horde_redis as hr
 from horde import vars as hv
 from horde.classes.base import settings
 from horde.discord import send_pause_notification
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import get_db_uuid, is_profane, sanitize_string

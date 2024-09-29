@@ -12,12 +12,12 @@ from sqlalchemy import Enum, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 
-from horde import horde_redis as hr
 from horde import vars as hv
 from horde.countermeasures import CounterMeasures
 from horde.discord import send_problem_user_notification
 from horde.enums import UserRecordTypes, UserRoleTypes
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.suspicions import SUSPICION_LOGS, Suspicions
