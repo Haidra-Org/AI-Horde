@@ -300,15 +300,27 @@ class WaitingPrompt(db.Model):
             db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
-                procgen_class.fake == False,  # noqa E712
+                procgen_class.fake.is_(False),
                 or_(
-                    procgen_class.faulted == True,  # noqa E712
+                    procgen_class.faulted.is_(True),
                     procgen_class.generation != None,  # noqa E712
                 ),
             )
             .count()
         )
-        if finished_procgens < self.jobs:
+        processing_procgens = (
+            db.session.query(procgen_class.wp_id)
+            .filter(
+                procgen_class.wp_id == self.id,
+                procgen_class.fake.is_(False),
+                or_(
+                    procgen_class.faulted.is_(False),
+                    procgen_class.generation.is_(None),
+                ),
+            )
+            .count()
+        )
+        if finished_procgens - processing_procgens < self.jobs:
             return False
         return True
 
