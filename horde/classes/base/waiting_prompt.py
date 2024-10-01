@@ -313,10 +313,8 @@ class WaitingPrompt(db.Model):
             .filter(
                 procgen_class.wp_id == self.id,
                 procgen_class.fake.is_(False),
-                or_(
-                    procgen_class.faulted.is_(False),
-                    procgen_class.generation.is_(None),
-                ),
+                procgen_class.faulted.is_(False),
+                procgen_class.generation.is_(None),
             )
             .count()
         )
