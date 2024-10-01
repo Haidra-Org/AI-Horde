@@ -79,7 +79,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
     def set_generation(self, generation, things_per_sec, **kwargs):
         state = kwargs.get("state", "ok")
         censored = False
-        gen_metadata = kwargs.get("gen_metadata") or []
+        gen_metadata = kwargs.get("gen_metadata") if kwargs.get("gen_metadata") is not None else []
         for metadata in gen_metadata:
             if metadata.get("type") != "censorship":
                 # this metadata isnt about censorship
