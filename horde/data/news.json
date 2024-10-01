@@ -1,5 +1,21 @@
 [
     {
+        "date_published": "2024-09-30",
+        "newspiece": "[Flux.1-Schnell](https://blackforestlabs.ai/) is now available on the AI Horde! Remember to adjust your steps and cfg when using it!",
+        "tags": [
+            "nlnet",
+            "tazlin",
+            "db0",
+            "text2img",
+            "flux"
+        ],
+        "importance": "Information",
+        "more_info_urls": [
+            "https://blackforestlabs.ai/"
+        ],
+        "title": "Flux.1-Schnell now available on the AI Horde."
+    },
+    {
         "date_published": "2024-08-07",
         "newspiece": "ArtBot is now an official component of Haidra! You can check the official version at [https://artbot.site](https://artbot.site which is running the latest version of it with a ton of improvements. All kudos to [Rockbandit](https://mastodon.world/@davely)",
         "tags": [
