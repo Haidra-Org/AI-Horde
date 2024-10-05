@@ -168,6 +168,8 @@ class ImageProcessingGeneration(ProcessingGeneration):
         # Flux is way slower than Stable Diffusion
         if any(model_reference.get_model_baseline(mn) in ["flux_1"] for mn in self.wp.get_model_names()):
             self.job_ttl = self.job_ttl * 3
+        if self.job_ttl < 150:
+            self.job_ttl = 150
         if self.worker.extra_slow_worker is True:
             self.job_ttl = self.job_ttl * 3
         db.session.commit()
