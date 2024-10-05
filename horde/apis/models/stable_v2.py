@@ -494,6 +494,7 @@ class ImageModels(v2.Models):
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
+                "ttl": fields.Integer(description="The amount of seconds before this job is considered stale and aborted."),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
                 "model": fields.String(description="Which of the available models to use for this request."),
                 "source_image": fields.String(description="The Base64-encoded webp to use for img2img."),
