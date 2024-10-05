@@ -100,7 +100,8 @@ class ImageProcessingGeneration(ProcessingGeneration):
             #     }
             #     upload_prompt(prompt_dict)
         elif state == "faulted":
-            self.wp.n += 1
+            if self.wp.count_finished_jobs() < self.wp.jobs:
+                self.wp.n += 1
             self.abort()
         if self.is_completed():
             return 0
