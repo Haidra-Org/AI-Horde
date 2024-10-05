@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.43.7
+
+* Prevent anon gens being visible at their profile page
+
 # 4.43.6
 
 * Fix returning `done` when a job was restarted.
