@@ -346,6 +346,8 @@ class WaitingPrompt(db.Model):
 
     def get_generations(self):
         generations = []
+        if self.user.is_anon():
+            return generations
         for procgen in self.processing_gens:
             if procgen.fake:
                 continue
