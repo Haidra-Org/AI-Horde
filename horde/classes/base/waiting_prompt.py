@@ -284,6 +284,7 @@ class WaitingPrompt(db.Model):
             "id": procgen_list[0].id,
             "model": procgen_list[0].model,
             "ids": [g.id for g in procgen_list],
+            "ttl": procgen_list[0].job_ttl,
         }
         if self.extra_source_images and check_bridge_capability("extra_source_images", procgen_list[0].worker.bridge_agent):
             prompt_payload["extra_source_images"] = self.extra_source_images["esi"]

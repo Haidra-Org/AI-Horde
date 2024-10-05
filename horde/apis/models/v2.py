@@ -438,6 +438,7 @@ class Models:
             {
                 "payload": fields.Nested(self.response_model_generation_payload, skip_none=True),
                 "id": fields.String(description="The UUID for this generation."),
+                "ttl": fields.Integer(description="The amount of seconds before this job is considered stale and aborted."),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
             },
         )
