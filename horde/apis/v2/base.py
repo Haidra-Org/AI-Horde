@@ -23,7 +23,7 @@ from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
 from horde.classes.base.news import News
-from horde.classes.base.team import Team, get_all_teams
+from horde.classes.base.team import Team, find_team_by_id, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker
@@ -1072,7 +1072,7 @@ class WorkerSingle(WorkerSingleBase):
                 worker.set_team(None)
                 ret_dict["team"] = "None"
             else:
-                team = database.find_team_by_id(self.args.team)
+                team = find_team_by_id(self.args.team)
                 if not team:
                     raise e.TeamNotFound(self.args.team)
                 ret = worker.set_team(team)
@@ -2003,7 +2003,7 @@ class TeamSingle(Resource):
     @api.response(404, "Team Not Found", models.response_model_error)
     def get(self, team_id=""):
         """Details of a worker Team"""
-        team = database.find_team_by_id(team_id)
+        team = find_team_by_id(team_id)
         if not team:
             raise e.TeamNotFound(team_id)
         details_privilege = 0
@@ -2051,7 +2051,7 @@ class TeamSingle(Resource):
     @api.response(404, "Team Not Found", models.response_model_error)
     def patch(self, team_id=""):
         """Update a Team's information"""
-        team = database.find_team_by_id(team_id)
+        team = find_team_by_id(team_id)
         if not team:
             raise e.TeamNotFound(team_id)
         self.args = self.patch_parser.parse_args()
@@ -2107,7 +2107,7 @@ class TeamSingle(Resource):
         Only the team's creator or a horde moderator can use this endpoint.
         This action is unrecoverable!
         """
-        team = database.find_team_by_id(team_id)
+        team = find_team_by_id(team_id)
         if not team:
             raise e.TeamNotFound(team_id)
         self.args = self.delete_parser.parse_args()
