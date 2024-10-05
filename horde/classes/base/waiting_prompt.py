@@ -290,13 +290,9 @@ class WaitingPrompt(db.Model):
 
         return prompt_payload
 
-    def is_completed(self):
-        if self.faulted:
-            return True
-        if self.needs_gen():
-            return False
+    def count_finished_jobs(self):
         procgen_class = procgen_classes[self.wp_type]
-        finished_procgens = (
+        return (
             db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
@@ -308,7 +304,10 @@ class WaitingPrompt(db.Model):
             )
             .count()
         )
-        processing_procgens = (
+
+    def count_processing_jobs(self):
+        procgen_class = procgen_classes[self.wp_type]
+        return (
             db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
@@ -318,7 +317,13 @@ class WaitingPrompt(db.Model):
             )
             .count()
         )
-        if finished_procgens - processing_procgens < self.jobs:
+
+    def is_completed(self):
+        if self.faulted:
+            return True
+        if self.needs_gen():
+            return False
+        if self.count_finished_jobs() - self.count_processing_jobs() < self.jobs:
             return False
         return True
 
