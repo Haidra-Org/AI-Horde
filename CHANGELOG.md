@@ -8,7 +8,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # 4.43.7
 
-* Prevent anon gens being visible at their profile page
 * fixes setting team for worker
 * aborted jobs can't be restarted anymore
 
