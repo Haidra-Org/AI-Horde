@@ -436,7 +436,6 @@ class ImageAsyncStatus(Resource):
 
     decorators = [limiter.limit("10/minute", key_func=lim.get_request_path)]
 
-    # If I marshal it here, it overrides the marshalling of the child class unfortunately
     @api.expect(get_parser)
     @api.marshal_with(
         models.response_model_wp_status_full,

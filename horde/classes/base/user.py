@@ -880,6 +880,9 @@ class User(db.Model):
             for wp in self.waiting_prompts:
                 if wp.wp_type not in ret_dict["active_generations"]:
                     ret_dict["active_generations"][wp.wp_type] = []
+                # We don't return anon list of gens
+                if self.is_anon():
+                    break
                 ret_dict["active_generations"][wp.wp_type].append(str(wp.id))
         if details_privilege >= 2:
             mk_dict = {
