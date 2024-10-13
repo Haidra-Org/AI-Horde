@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
+from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, UniqueConstraint
+from sqlalchemy import JSON, Table, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.orm import Mapped
 from sqlalchemy.sql import expression
 
 from horde.flask import SQLITE_MODE, db
@@ -17,15 +19,12 @@ json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
 
-class StyleCollectionMapping(db.Model):
-    __tablename__ = "style_collection_mapping"
-    id = db.Column(db.Integer, primary_key=True)
-    style_id = db.Column(uuid_column_type(), db.ForeignKey("styles.id", ondelete="CASCADE"), nullable=False)
-    collection_id = db.Column(
-        uuid_column_type(),
-        db.ForeignKey("style_collections.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+style_collection_mapping = Table(
+    "style_collection_mapping",
+    db.Model.metadata,
+    db.Column("style_id", db.ForeignKey("styles.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("collection_id", db.ForeignKey("style_collections.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class StyleCollection(db.Model):
@@ -34,7 +33,7 @@ class StyleCollection(db.Model):
         UniqueConstraint(
             "owner_id",
             "name",
-            name="collection_user_id_name",
+            name="user_id_name",
         ),
     )
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
@@ -47,7 +46,7 @@ class StyleCollection(db.Model):
 
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     owner = db.relationship("User", back_populates="style_collections")
-    styles = db.relationship("StyleCollectionMapping", secondary="style_collection_mapping")
+    styles: Mapped[list[Style]] = db.relationship(secondary="style_collection_mapping", back_populates="collections")
 
 
 class Style(db.Model):
@@ -73,7 +72,7 @@ class Style(db.Model):
 
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     owner = db.relationship("User", back_populates="styles")
-    collections = db.relationship("StyleCollectionMapping", secondary="style_collection_mapping")
+    collections: Mapped[list[StyleCollection]] = db.relationship(secondary="style_collection_mapping", back_populates="styles")
 
     def create(self):
         db.session.add(self)
