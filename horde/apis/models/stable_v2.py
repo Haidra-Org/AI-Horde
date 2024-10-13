@@ -322,18 +322,13 @@ class ImageModels(v2.Models):
             },
         )
         self.input_model_special_payload = api.model("ModelSpecialPayloadStable", {"*": fields.Wildcard(fields.Raw)})
-        self.root_model_generation_payload_stable = api.model(
-            "ModelPayloadRootStable",
+        self.root_model_generation_payload_style_stable = api.model(
+            "ModelPayloadStyleStable",
             {
                 "sampler_name": fields.String(required=False, default="k_euler_a", enum=list(KNOWN_SAMPLERS)),
                 "cfg_scale": fields.Float(required=False, default=7.5, min=0, max=100),
                 "denoising_strength": fields.Float(required=False, example=0.75, min=0.01, max=1.0),
                 "hires_fix_denoising_strength": fields.Float(required=False, example=0.75, min=0.01, max=1.0),
-                "seed": fields.String(
-                    required=False,
-                    example="The little seed that could",
-                    description="The seed to use to generate this request. You can pass text as well as numbers.",
-                ),
                 "height": fields.Integer(
                     required=False,
                     default=512,
@@ -349,13 +344,6 @@ class ImageModels(v2.Models):
                     min=64,
                     max=3072,
                     multiple=64,
-                ),
-                "seed_variation": fields.Integer(
-                    required=False,
-                    example=1,
-                    min=1,
-                    max=1000,
-                    description="If passed with multiple n, the provided seed will be incremented every time by this value.",
                 ),
                 "post_processing": fields.List(
                     fields.String(
@@ -386,6 +374,38 @@ class ImageModels(v2.Models):
                     max=12,
                     description="The number of CLIP language processor layers to skip.",
                 ),
+                "facefixer_strength": fields.Float(required=False, example=0.75, min=0, max=1.0),
+                "loras": fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
+                "tis": fields.List(fields.Nested(self.input_model_tis, skip_none=True)),
+                "special": fields.Nested(self.input_model_special_payload, skip_none=True),
+                "workflow": fields.String(
+                    required=False,
+                    default=None,
+                    enum=list(KNOWN_WORKFLOWS),
+                    description="Explicitly specify the horde-engine workflow to use.",
+                ),
+                "transparent": fields.Boolean(
+                    default=False,
+                    description="Set to True to generate the image using Layer Diffuse, creating an image with a transparent background.",
+                ),
+            },
+        )
+        self.root_model_generation_payload_stable = api.inherit(
+            "ModelPayloadRootStable",
+            self.root_model_generation_payload_style_stable,
+            {
+                "seed": fields.String(
+                    required=False,
+                    example="The little seed that could",
+                    description="The seed to use to generate this request. You can pass text as well as numbers.",
+                ),
+                "seed_variation": fields.Integer(
+                    required=False,
+                    example=1,
+                    min=1,
+                    max=1000,
+                    description="If passed with multiple n, the provided seed will be incremented every time by this value.",
+                ),
                 "control_type": fields.String(
                     required=False,
                     enum=[
@@ -408,23 +428,10 @@ class ImageModels(v2.Models):
                     default=False,
                     description="Set to True if you want the ControlNet map returned instead of a generated image.",
                 ),
-                "facefixer_strength": fields.Float(required=False, example=0.75, min=0, max=1.0),
-                "loras": fields.List(fields.Nested(self.input_model_loras, skip_none=True)),
-                "tis": fields.List(fields.Nested(self.input_model_tis, skip_none=True)),
-                "special": fields.Nested(self.input_model_special_payload, skip_none=True),
                 "extra_texts": fields.List(fields.Nested(self.model_extra_texts)),
-                "workflow": fields.String(
-                    required=False,
-                    default=None,
-                    enum=list(KNOWN_WORKFLOWS),
-                    description="Explicitly specify the horde-engine workflow to use.",
-                ),
-                "transparent": fields.Boolean(
-                    default=False,
-                    description="Set to True to generate the image using Layer Diffuse, creating an image with a transparent background.",
-                ),
             },
         )
+        # The response for the pop
         self.response_model_generation_payload = api.inherit(
             "ModelPayloadStable",
             self.root_model_generation_payload_stable,
@@ -439,6 +446,7 @@ class ImageModels(v2.Models):
                 ),
             },
         )
+        # The input for the generation
         self.input_model_generation_payload = api.inherit(
             "ModelGenerationInputStable",
             self.root_model_generation_payload_stable,
@@ -698,6 +706,13 @@ class ImageModels(v2.Models):
                         f"Provide a URL where the {horde_title} will send a POST call after each delivered generation. "
                         "The request will include the details of the job as well as the request ID."
                     ),
+                ),
+                "style": fields.String(
+                    required=False,
+                    max_length=1024,
+                    min_length=3,
+                    example="00000000-0000-0000-0000-000000000000",
+                    description=("A horde style ID or name to use for this generation"),
                 ),
             },
         )
@@ -970,5 +985,25 @@ class ImageModels(v2.Models):
                 "day": fields.Nested(self.response_model_model_stats),
                 "month": fields.Nested(self.response_model_model_stats),
                 "total": fields.Nested(self.response_model_model_stats),
+            },
+        )
+
+        # Styles
+        self.input_model_style_params = api.inherit(
+            "ModelStyleInputParamsStable",
+            self.root_model_generation_payload_style_stable,
+            {
+                "steps": fields.Integer(default=30, required=False, min=1, max=500),
+            },
+        )
+        self.input_model_style = api.model(
+            "ModelStyleInputStable",
+            {
+                "prompt": fields.String(
+                    required=True,
+                    description="The prompt which will be sent to Stable Diffusion to generate an image.",
+                    min_length=1,
+                ),
+                "params": fields.Nested(self.input_model_style_params, skip_none=True),
             },
         )

@@ -19,6 +19,7 @@ from horde.bridge_reference import (
     get_supported_samplers,
 )
 from horde.classes.base.detection import Filter
+from horde.classes.base.style import Style, StyleCollection
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WPAllowedWorkers, WPModels
 from horde.classes.base.worker import WorkerModel, WorkerPerformance
@@ -1525,3 +1526,59 @@ def retrieve_regex_replacements(filter_type):
 def get_all_users(sort="kudos", offset=0):
     user_order_by = User.created.asc() if sort == "age" else User.kudos.desc()
     return db.session.query(User).order_by(user_order_by).offset(offset).limit(25).all()
+
+
+def get_style_by_uuid(style_uuid: str):
+    try:
+        style_uuid = uuid.UUID(style_uuid)
+    except ValueError:
+        return None
+    if SQLITE_MODE:
+        style_uuid = str(style_uuid)
+    style = db.session.query(Style).filter_by(id=style_uuid).first()
+    if not style:
+        collection = db.session.query(StyleCollection).filter_by(id=style_uuid).first()
+        return collection
+    else:
+        return style
+
+
+def get_style_by_name(style_name: str):
+    """Goes through the styles and the categories and attempts to find a
+    style or category that matches the given name
+    The user can pre-specify a filter for category or style and/or username
+    by formatting the name like
+    category::db0#1::my_stylename
+    alternatively this format is also allowed to allow multiple users to use the same name
+    style::my_stylename
+    db0#1::my_stylename
+    """
+    style_split = style_name.split("::")
+    user = None
+    if len(style_split) == 2:
+        style_name = style_split[2]
+        if style_split[0] == "collection":
+            is_collection = True
+        elif style_split[0] == "style":
+            is_collection = False
+        user = find_user_by_username(style_split[1])
+    if len(style_split) == 1:
+        style_name = style_split[1]
+        if style_split[0] == "collection":
+            is_collection = True
+        elif style_split[0] == "style":
+            is_collection = False
+        else:
+            user = find_user_by_username(style_split[0])
+    seek_classes = [Style, StyleCollection]
+    if is_collection is True:
+        seek_classes = [StyleCollection]
+    elif is_collection is False:
+        seek_classes = [Style]
+    for class_seek in seek_classes:
+        style_query = db.session.query(class_seek).filter_by(name=style_name)
+        if user is not None:
+            style_query = style_query.filter_by(user_id=user.id)
+        style = style_query.first()
+        if style:
+            return style

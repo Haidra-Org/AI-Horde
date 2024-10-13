@@ -258,6 +258,38 @@ class Parsers:
             location="json",
         )
 
+        # Style Parser
+        self.style_parser = reqparse.RequestParser()
+        self.style_parser.add_argument(
+            "apikey",
+            type=str,
+            required=True,
+            help="The API Key corresponding to a registered user.",
+            location="headers",
+        )
+        self.style_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+        self.style_parser.add_argument(
+            "prompt",
+            type=str,
+            required=True,
+            help="The prompt to generate from.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "params",
+            type=dict,
+            required=False,
+            help="Extra generate params to send to the worker.",
+            location="json",
+        )
+
 
 class Models:
     def __init__(self, api):
@@ -1580,5 +1612,34 @@ class Models:
                     required=False,
                     description="The document in markdown format.",
                 ),
+            },
+        )
+
+        # Styles
+        self.response_model_styles_post = api.model(
+            "StyleModify",
+            {
+                "id": fields.String(
+                    description="The UUID of the style. Use this to use this style of retrieve its information in the future.",
+                ),
+                "message": fields.String(
+                    default=None,
+                    description="Any extra information from the horde about this request.",
+                ),
+                "warnings": fields.List(fields.Nested(self.response_model_warning)),
+            },
+        )
+        self.response_model_style = api.model(
+            "Style",
+            {
+                "id": fields.String(
+                    description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
+                ),
+                "params": fields.String(
+                    default=None,
+                    description="Any extra information from about this request.",
+                ),
+                "models": fields.List(fields.String(description="The models which are allowed to be used in this style")),
+                "use": fields.Integer(description="The amount of times this style has been used by users"),
             },
         )

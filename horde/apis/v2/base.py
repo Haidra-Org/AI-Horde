@@ -3147,7 +3147,6 @@ class StyleTemplate(Resource):
         if self.args.models:
             self.params["models"] = self.args.models.copy()
         self.user = None
-        self.validate()
         return
 
     def post(self):

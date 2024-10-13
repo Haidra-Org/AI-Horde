@@ -40,7 +40,9 @@ class StyleCollection(db.Model):
     style_type = db.Column(db.String(30), nullable=False, index=True)
     info = db.Column(db.String(1000), default="")
     name = db.Column(db.String(100), default="", unique=False, nullable=False, index=True)
-    uses = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
+    use_count = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
+    public = db.Column(db.Boolean, default=False, nullable=False)
+
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -62,7 +64,8 @@ class Style(db.Model):
     style_type = db.Column(db.String(30), nullable=False, index=True)
     info = db.Column(db.String(1000), default="")
     name = db.Column(db.String(100), default="", unique=False, nullable=False, index=True)
-    uses = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
+    use_count = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
+    public = db.Column(db.Boolean, default=False, nullable=False)
 
     prompt = db.Column(db.Text, nullable=False)
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)

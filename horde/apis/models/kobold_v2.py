@@ -107,10 +107,9 @@ class TextModels(v2.Models):
                 "generations": fields.List(fields.Nested(self.response_model_generation_result)),
             },
         )
-        self.root_model_generation_payload_kobold = api.model(
-            "ModelPayloadRootKobold",
+        self.root_model_generation_payload_style_kobold = api.model(
+            "ModelPayloadStyleKobold",
             {
-                "n": fields.Integer(example=1, min=1, max=20),
                 "frmtadsnsp": fields.Boolean(
                     example=False,
                     description=(
@@ -137,18 +136,6 @@ class TextModels(v2.Models):
                         "If the output is less than one sentence long, does nothing."
                     ),
                 ),
-                "max_context_length": fields.Integer(
-                    min=80,
-                    default=1024,
-                    max=32000,
-                    description="Maximum number of tokens to send to the model.",
-                ),
-                "max_length": fields.Integer(
-                    min=16,
-                    max=1024,
-                    default=80,
-                    description="Number of tokens to generate.",
-                ),
                 "rep_pen": fields.Float(description="Base repetition penalty value.", min=1, max=3),
                 "rep_pen_range": fields.Integer(description="Repetition penalty range.", min=0, max=4096),
                 "rep_pen_slope": fields.Float(description="Repetition penalty slope.", min=0, max=10),
@@ -159,12 +146,6 @@ class TextModels(v2.Models):
                         "including the newline."
                     ),
                 ),
-                # "soft_prompt": fields.String(
-                #     description=(
-                #         "Soft prompt to use when generating. If set to the empty string or any other string containing "
-                #         "no non-whitespace characters, uses no soft prompt."
-                #     )
-                # ),
                 "temperature": fields.Float(description="Temperature value.", min=0, max=5.0),
                 "tfs": fields.Float(description="Tail free sampling value.", min=0.0, max=1.0),
                 "top_a": fields.Float(description="Top-a sampling value.", min=0.0, max=1.0),
@@ -202,6 +183,32 @@ class TextModels(v2.Models):
                 ),
             },
         )
+        self.root_model_generation_payload_kobold = api.inherit(
+            "ModelPayloadRootKobold",
+            self.root_model_generation_payload_style_kobold,
+            {
+                "n": fields.Integer(example=1, min=1, max=20),
+                "max_context_length": fields.Integer(
+                    min=80,
+                    default=1024,
+                    max=32000,
+                    description="Maximum number of tokens to send to the model.",
+                ),
+                "max_length": fields.Integer(
+                    min=16,
+                    max=1024,
+                    default=80,
+                    description="Number of tokens to generate.",
+                ),
+                # "soft_prompt": fields.String(
+                #     description=(
+                #         "Soft prompt to use when generating. If set to the empty string or any other string containing "
+                #         "no non-whitespace characters, uses no soft prompt."
+                #     )
+                # ),
+            },
+        )
+        # The pop response playload
         self.response_model_generation_payload = api.inherit(
             "ModelPayloadKobold",
             self.root_model_generation_payload_kobold,
@@ -209,6 +216,7 @@ class TextModels(v2.Models):
                 "prompt": fields.String(description="The prompt which will be sent to KoboldAI to generate the text."),
             },
         )
+        # The generation input
         self.input_model_generation_payload = api.inherit(
             "ModelGenerationInputKobold",
             self.root_model_generation_payload_kobold,
@@ -440,5 +448,23 @@ class TextModels(v2.Models):
             self.input_model_job_submit,
             {
                 "gen_metadata": fields.List(fields.Nested(self.model_job_metadata)),
+            },
+        )
+
+        # Styles
+        self.input_model_style_params = api.inherit(
+            "ModelStyleInputParamsKobold",
+            self.root_model_generation_payload_style_kobold,
+            {},
+        )
+        self.input_model_style = api.model(
+            "ModelStyleInputKobold",
+            {
+                "prompt": fields.String(
+                    required=True,
+                    description="The prompt which will be sent to the LLM to generate an a text.",
+                    min_length=1,
+                ),
+                "params": fields.Nested(self.input_model_style_params, skip_none=True),
             },
         )
