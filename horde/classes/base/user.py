@@ -251,6 +251,8 @@ class User(db.Model):
 
     workers = db.relationship("Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship("Team", back_populates="owner", cascade="all, delete-orphan")
+    styles = db.relationship("Style", back_populates="owner", cascade="all, delete-orphan")
+    style_collections = db.relationship("StyleCollection", back_populates="owner", cascade="all, delete-orphan")
     sharedkeys = db.relationship("UserSharedKey", back_populates="user", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
