@@ -13,32 +13,39 @@ from horde.logger import logger
 from horde.redis_ctrl import ger_cache_url, is_redis_up
 
 cache = None
-HORDE = Flask(__name__)
-HORDE.config.SWAGGER_UI_DOC_EXPANSION = "list"
-HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
-
 SQLITE_MODE = os.getenv("USE_SQLITE", "0") == "1"
 
-if SQLITE_MODE:
-    logger.warning("Using SQLite for database")
-    HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
-else:
-    HORDE.config["SQLALCHEMY_DATABASE_URI"] = (
-        f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:" f"{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
-    )
-    HORDE.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-        "pool_size": 50,
-        "max_overflow": -1,
-        # "pool_pre_ping": True,
-    }
-HORDE.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-db = SQLAlchemy(HORDE)
-db.init_app(HORDE)
 
-if not SQLITE_MODE:
-    with HORDE.app_context():
-        logger.warning(f"pool size = {db.engine.pool.size()}")
-logger.init_ok("Horde Database", status="Started")
+def create_app():
+    HORDE = Flask(__name__)
+    HORDE.config.SWAGGER_UI_DOC_EXPANSION = "list"
+    HORDE.wsgi_app = ProxyFix(HORDE.wsgi_app, x_for=1)
+
+    if SQLITE_MODE:
+        logger.warning("Using SQLite for database")
+        HORDE.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///horde.db"
+    else:
+        HORDE.config["SQLALCHEMY_DATABASE_URI"] = (
+            f"postgresql://{os.getenv('POSTGRES_USER', 'postgres')}:" f"{os.getenv('POSTGRES_PASS')}@{os.getenv('POSTGRES_URL')}"
+        )
+        HORDE.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+            "pool_size": 50,
+            "max_overflow": -1,
+            # "pool_pre_ping": True,
+        }
+    HORDE.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    db.init_app(HORDE)
+
+    if not SQLITE_MODE:
+        with HORDE.app_context():
+            logger.warning(f"pool size = {db.engine.pool.size()}")
+    logger.init_ok("Horde Database", status="Started")
+
+    return HORDE
+
+
+db = SQLAlchemy()
+HORDE = create_app()
 
 if is_redis_up():
     try:

@@ -4,6 +4,8 @@
 
 from pathlib import Path
 
+from sqlalchemy.sql import text
+
 import horde.classes.base.stats  # noqa 401
 from horde.argparser import args
 from horde.classes.base.detection import Filter  # noqa 401
@@ -56,7 +58,7 @@ with HORDE.app_context():
                 if file.suffix == ".sql":
                     logger.info(f"Running {file}")
                     with file.open() as f:
-                        db.session.execute(f.read())
+                        db.session.execute(text(f.read()))
 
         db.session.commit()
 
