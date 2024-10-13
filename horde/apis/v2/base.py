@@ -3128,3 +3128,39 @@ class DocsSponsors(Resource):
         if self.args.format == "markdown":
             return {"markdown": markdownify(html_template).strip("\n")}, 200
         return {"html": html_template}, 200
+
+
+## Styles
+
+
+# I have to put it outside the class as I can't figure out how to extend the argparser
+# and also pass it to the @api.expect decorator inside the class
+class StyleTemplate(Resource):
+    gentype = "template"
+
+    def get(self):
+        self.params = {}
+        self.warnings = set()
+        if self.args.params:
+            self.params = self.args.params
+        self.models = []
+        if self.args.models:
+            self.params["models"] = self.args.models.copy()
+        self.user = None
+        self.validate()
+        return
+
+    def post(self):
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.params = {}
+        self.warnings = set()
+        if self.args.params:
+            self.params = self.args.params
+        # For styles, we just store the models in the params
+        self.models = []
+        if self.args.models:
+            self.params["models"] = self.args.models.copy()
+        self.user = None
+        self.validate()
+        return

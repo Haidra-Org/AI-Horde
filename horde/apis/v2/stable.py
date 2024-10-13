@@ -23,7 +23,6 @@ from horde.classes.stable.interrogation import Interrogation
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.enums import WarningMessage
@@ -34,6 +33,7 @@ from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
 from horde.utils import does_extra_text_reference_exist, hash_dictionary
+from horde.validation import ParamValidator
 from horde.vars import horde_title
 
 models = ImageModels(api)
@@ -105,6 +105,8 @@ class ImageAsyncGenerate(GenerateTemplate):
 
     def validate(self):
         super().validate()
+        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params)
+        self.warnings = param_validator.validate_image_params()
         # During raids, we prevent VPNs
         if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
@@ -137,27 +139,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models
         ):
             raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x", rc="ControlNetUnsupported")
-        for model_req_dict in [model_reference.get_model_requirements(m) for m in self.args.models]:
-            if "clip_skip" in model_req_dict and model_req_dict["clip_skip"] != self.params.get("clip_skip", 1):
-                self.warnings.add(WarningMessage.ClipSkipMismatch)
-            if "min_steps" in model_req_dict and model_req_dict["min_steps"] > self.params.get("steps", 30):
-                self.warnings.add(WarningMessage.StepsTooFew)
-            if "max_steps" in model_req_dict and model_req_dict["max_steps"] < self.params.get("steps", 30):
-                self.warnings.add(WarningMessage.StepsTooMany)
-            if "cfg_scale" in model_req_dict and model_req_dict["cfg_scale"] != self.params.get("cfg_scale", 7.5):
-                self.warnings.add(WarningMessage.CfgScaleMismatch)
-            if "min_cfg_scale" in model_req_dict and model_req_dict["min_cfg_scale"] > self.params.get("cfg_scale", 7.5):
-                self.warnings.add(WarningMessage.CfgScaleTooSmall)
-            if "max_cfg_scale" in model_req_dict and model_req_dict["max_cfg_scale"] < self.params.get("cfg_scale", 7.5):
-                self.warnings.add(WarningMessage.CfgScaleTooLarge)
-            if "samplers" in model_req_dict and self.params.get("sampler_name", "k_euler_a") not in model_req_dict["samplers"]:
-                self.warnings.add(WarningMessage.SamplerMismatch)
-            # FIXME: Scheduler workaround until we support multiple schedulers
-            scheduler = "karras"
-            if not self.params.get("karras", True):
-                scheduler = "simple"
-            if "schedulers" in model_req_dict and scheduler not in model_req_dict["schedulers"]:
-                self.warnings.add(WarningMessage.SchedulerMismatch)
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.", rc="ControlNetUnsupported")
         # if self.params.get("image_is_control"):
@@ -175,25 +156,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.args.models):
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with Flux currently.", rc="ControlNetMismatch")
-            if self.params.get("hires_fix", False) is True:
-                raise e.BadRequest("HiRes Fix does not work with Flux currently.", rc="HiResMismatch")
-        if "loras" in self.params:
-            if len(self.params["loras"]) > 5:
-                raise e.BadRequest("You cannot request more than 5 loras per generation.", rc="TooManyLoras")
-            for lora in self.params["loras"]:
-                if lora.get("is_version") and not lora["name"].isdigit():
-                    raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).", rc="BadLoraVersion")
-        if "tis" in self.params and len(self.params["tis"]) > 20:
-            raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.", rc="TooManyTIs")
         if self.params.get("transparent", False) is True:
-            if any(
-                model_reference.get_model_baseline(model_name) not in ["stable_diffusion_xl", "stable diffusion 1"]
-                for model_name in self.args.models
-            ):
-                raise e.BadRequest(
-                    "Generating Transparent images is only possible for Stable Diffusion 1.5 and XL models.",
-                    rc="InvalidTransparencyModel",
-                )
             if self.args.extra_source_images and len(self.args.extra_source_images) > 0:
                 raise e.BadRequest(
                     "Generating Transparent images is not supported during img2img workflows.",
@@ -217,11 +180,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         if self.params.get("workflow") == "qr_code":
             # QR-code pipeline cannot do batching currently
             self.args["disable_batching"] = True
-            if not all(
-                model_reference.get_model_baseline(model_name) in ["stable diffusion 1", "stable_diffusion_xl"]
-                for model_name in self.args.models
-            ):
-                raise e.BadRequest("QR Code controlnet only works with SD 1.5 and SDXL models currently", rc="ControlNetMismatch.")
             if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
                 raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
             if not does_extra_text_reference_exist(self.params.get("extra_texts"), "qr_code"):
@@ -246,26 +204,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.params["n"] = 2
         #     if any(model_name.startswith("stable_diffusion_2") for model_name in self.args.models):
         #         raise e.UnsupportedModel
-        if len(self.args["prompt"].split()) > 7500:
-            raise e.InvalidPromptSize(self.username)
-        if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
-            raise e.UnsupportedModel(rc="UnexpectedModelName")
-        if self.args.params:
-            upscaler_count = len([pp for pp in self.args.params.get("post_processing", []) if pp in KNOWN_UPSCALERS])
-            if upscaler_count > 1:
-                raise e.BadRequest("Cannot use more than 1 upscaler at a time.", rc="TooManyUpscalers")
-
-            cfg_scale = self.args.params.get("cfg_scale")
-            if cfg_scale is not None:
-                try:
-                    rounded_cfg_scale = round(cfg_scale, 2)
-                    if rounded_cfg_scale != cfg_scale:
-                        raise e.BadRequest("cfg_scale must be rounded to 2 decimal places", rc="BadCFGDecimals")
-                except (TypeError, ValueError):
-                    logger.warning(
-                        f"Invalid cfg_scale: {cfg_scale} for user {self.username} when it should be already validated.",
-                    )
-                    raise e.BadRequest("cfg_scale must be a valid number", rc="BadCFGNumber")
 
         if self.args["Client-Agent"] in ["My-Project:v0.0.1:My-Contact"]:
             raise e.Forbidden(
