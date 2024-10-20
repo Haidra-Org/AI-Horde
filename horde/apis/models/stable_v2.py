@@ -999,11 +999,30 @@ class ImageModels(v2.Models):
         self.input_model_style = api.model(
             "ModelStyleInputStable",
             {
+                "name": fields.String(
+                    required=True,
+                    description="The name for the style. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Extra information about this style.",
+                    min_length=1,
+                    max_length=1000,
+                ),
                 "prompt": fields.String(
                     required=True,
                     description="The prompt which will be sent to Stable Diffusion to generate an image.",
                     min_length=1,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this style will be listed among all styles publicly."
+                        "When false, information about this style can only be seen by people who know its ID or name."
+                    ),
+                ),
             },
         )

@@ -3133,21 +3133,19 @@ class DocsSponsors(Resource):
 ## Styles
 
 
-# I have to put it outside the class as I can't figure out how to extend the argparser
-# and also pass it to the @api.expect decorator inside the class
 class StyleTemplate(Resource):
     gentype = "template"
+    args = None
 
     def get(self):
-        self.params = {}
-        self.warnings = set()
-        if self.args.params:
-            self.params = self.args.params
-        self.models = []
-        if self.args.models:
-            self.params["models"] = self.args.models.copy()
-        self.user = None
-        return
+        if self.args.sort not in ["popular", "age"]:
+            raise e.BadRequest("'model_state' needs to be one of ['popular', 'age']")
+        styles_ret = database.retrieve_available_styles(
+            style_type=self.gentype,
+            sort=self.args.sort,
+            page=self.args.page,
+        )
+        return styles_ret, 200
 
     def post(self):
         # I have to extract and store them this way, because if I use the defaults
@@ -3163,3 +3161,13 @@ class StyleTemplate(Resource):
         self.user = None
         self.validate()
         return
+
+    def validate(self):
+        pass
+
+
+# style: sfw bool
+# style: tags
+# style: transfer kudos on use
+# style: vote and transfer kudos on vote
+# style: sample image

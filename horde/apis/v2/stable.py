@@ -12,8 +12,9 @@ import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
-from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
+from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, StyleTemplate, api
 from horde.classes.base import settings
+from horde.classes.base.style import Style
 from horde.classes.base.user import User
 from horde.classes.stable.genstats import (
     get_compiled_imagegen_stats_models,
@@ -1285,3 +1286,183 @@ class ImageHordeStatsModels(Resource):
         if self.args.model_state not in ["known", "custom", "all"]:
             raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
         return get_compiled_imagegen_stats_models(self.args.model_state), 200
+
+
+## Styles
+
+
+class ImageStyle(StyleTemplate):
+    gentype = "image"
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "sort",
+        required=False,
+        default="popular",
+        type=str,
+        help="How to sort returned styles. 'popular' sorts by usage and 'age' sorts by date added.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "page",
+        required=False,
+        default=1,
+        type=int,
+        help="Which page of results to return. Each page has 25 styles.",
+        location="args",
+    )
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=1, query_string=True)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_style,
+        code=200,
+        description="Lists image styles information",
+        as_list=True,
+    )
+    def get(self):
+        self.args = self.get_parser.parse_args()
+        return super().get()
+
+    decorators = [
+        limiter.limit(
+            limit_value=lim.get_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
+        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+    ]
+
+    @api.expect(parsers.style_parser, models.input_model_style, validate=True)
+    @api.marshal_with(
+        models.response_model_styles_post,
+        code=202,
+        description="Style Added",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(503, "Maintenance Mode", models.response_model_error)
+    @api.response(429, "Too Many Prompts", models.response_model_error)
+    def post(self):
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.params = {}
+        self.warnings = set()
+        if self.args.params:
+            self.params = self.args.params
+        # For styles, we just store the models in the params
+        self.models = []
+        if self.args.models:
+            self.params["models"] = self.args.models.copy()
+        self.user = database.find_user_by_api_key(self.args["apikey"])
+        if not self.user:
+            raise e.InvalidAPIKey("ImageStyle POST")
+        self.validate()
+        new_style = Style(
+            style_type=self.gentype,
+            info=self.args.info if self.args.info else "",
+            name=self.args.name,
+            public=self.args.public,
+            prompt=self.args.prompt,
+            params=self.args.params if self.args.params else {},
+            owner_id=self.user.id,
+        )
+        new_style.create()
+        return {
+            "id": new_style.id,
+            "message": "OK",
+            "warnings": self.warnings,
+        }, 200
+        # return {
+        #     "id": new_style.id,
+        #     "name": new_style.name,
+        #     "info": new_style.info,
+        #     "public": new_style.public,
+        #     "prompt": new_style.prompt,
+        #     "params": new_style.params,
+        # }, 200
+
+    def validate(self):
+        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params)
+        self.warnings = param_validator.validate_image_params()
+
+
+class SingleImageStyle(Resource):
+    gentype = "image"
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=1)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_active_model,
+        code=200,
+        description="Lists specific model stats",
+        as_list=True,
+    )
+    def get(self):
+        self.params = {}
+        self.warnings = set()
+        if self.args.params:
+            self.params = self.args.params
+        self.models = []
+        if self.args.models:
+            self.params["models"] = self.args.models.copy()
+        self.user = None
+        return
+
+    decorators = [
+        limiter.limit(
+            limit_value=lim.get_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
+        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+        limiter.limit(
+            limit_value=lim.get_request_limit_per_apikey,
+            key_func=lim.get_request_api_key,
+        ),
+    ]
+
+    @api.expect(parsers.style_parser, models.input_model_style, validate=True)
+    @api.marshal_with(
+        models.response_model_style,
+        code=202,
+        description="Style Added",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(503, "Maintenance Mode", models.response_model_error)
+    @api.response(429, "Too Many Prompts", models.response_model_error)
+    def post(self):
+        # I have to extract and store them this way, because if I use the defaults
+        # It causes them to be a shared object from the parsers class
+        self.params = {}
+        self.warnings = set()
+        if self.args.params:
+            self.params = self.args.params
+        # For styles, we just store the models in the params
+        self.models = []
+        if self.args.models:
+            self.params["models"] = self.args.models.copy()
+        self.user = None
+        self.validate()
+        return

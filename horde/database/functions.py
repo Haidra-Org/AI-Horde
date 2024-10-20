@@ -1582,3 +1582,12 @@ def get_style_by_name(style_name: str):
         style = style_query.first()
         if style:
             return style
+
+
+def retrieve_available_styles(style_type=None, sort="popular", public_only=True, page=0):
+    """Retrieves all style details from DB."""
+    style_query = db.session.query(Style).filter_by(style_type=style_type)
+    if public_only:
+        style_query = style_query.filter_by(public=True)
+    style_order_by = Style.created.asc() if sort == "age" else Style.use_count.desc()
+    return style_query.order_by(style_order_by).offset(page).limit(25).all()

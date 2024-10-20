@@ -276,6 +276,20 @@ class Parsers:
             location="headers",
         )
         self.style_parser.add_argument(
+            "name",
+            type=str,
+            required=True,
+            help="The name of the style.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "info",
+            type=str,
+            required=True,
+            help="Extra information about this style.",
+            location="json",
+        )
+        self.style_parser.add_argument(
             "prompt",
             type=str,
             required=True,
@@ -287,6 +301,13 @@ class Parsers:
             type=dict,
             required=False,
             help="Extra generate params to send to the worker.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "public",
+            type=bool,
+            default=True,
+            required=False,
             location="json",
         )
 
