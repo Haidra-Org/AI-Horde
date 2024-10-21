@@ -5,6 +5,7 @@
 from loguru import logger
 
 from horde import exceptions as e
+from horde.classes.base.user import User
 from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
 from horde.enums import WarningMessage
 from horde.model_reference import model_reference
@@ -15,12 +16,14 @@ class ParamValidator:
     prompt: str
     models: list
     params: dict
+    user: User
     warnings = set()
 
-    def __init__(self, prompt, models, params):
+    def __init__(self, prompt, models, params, user):
         self.prompt = prompt
         self.models = models
         self.params = params
+        self.user = user
 
     def validate_base_params(self):
         pass
@@ -95,12 +98,12 @@ class ParamValidator:
                 raise e.BadRequest("QR Code controlnet only works with SD 1.5 and SDXL models currently", rc="ControlNetMismatch.")
         if len(self.prompt.split()) > 7500:
             raise e.InvalidPromptSize()
-        if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.args.models):
+        if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.models):
             raise e.UnsupportedModel(rc="UnexpectedModelName")
-        upscaler_count = len([pp for pp in self.args.params.get("post_processing", []) if pp in KNOWN_UPSCALERS])
+        upscaler_count = len([pp for pp in self.params.get("post_processing", []) if pp in KNOWN_UPSCALERS])
         if upscaler_count > 1:
             raise e.BadRequest("Cannot use more than 1 upscaler at a time.", rc="TooManyUpscalers")
-        cfg_scale = self.args.params.get("cfg_scale")
+        cfg_scale = self.params.get("cfg_scale")
         if cfg_scale is not None:
             try:
                 rounded_cfg_scale = round(cfg_scale, 2)
@@ -113,3 +116,22 @@ class ParamValidator:
                 raise e.BadRequest("cfg_scale must be a valid number", rc="BadCFGNumber")
 
         return self.warnings
+
+    def check_for_special(self):
+        if not self.user and self.params.get("special"):
+            raise e.BadRequest("Only special users can send a special field.", "SpecialFieldNeedsSpecialUser")
+        for model in self.models:
+            if "horde_special" in model:
+                if not self.user.special:
+                    raise e.Forbidden("Only special users can request a special model.", "SpecialModelNeedsSpecialUser")
+                usermodel = model.split("::")
+                if len(usermodel) == 1:
+                    raise e.BadRequest(
+                        "Special models must always include the username, in the form of 'horde_special::user#id'",
+                        rc="SpecialMissingUsername",
+                    )
+                user_alias = usermodel[1]
+                if self.user.get_unique_alias() != user_alias:
+                    raise e.Forbidden(f"This model can only be requested by {user_alias}", "SpecialForbidden")
+                if not self.params.get("special"):
+                    raise e.BadRequest("Special models have to include a special payload", rc="SpecialMissingPayload")

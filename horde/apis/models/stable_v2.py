@@ -1024,5 +1024,22 @@ class ImageModels(v2.Models):
                         "When false, information about this style can only be seen by people who know its ID or name."
                     ),
                 ),
+                "nsfw": fields.Boolean(
+                    default=False,
+                    description=("When true, it signified this style is expected to generare NSFW images primarily."),
+                ),
+                "tags": fields.List(
+                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                ),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+            },
+        )
+        self.response_model_style = api.inherit(
+            "StyleStable",
+            self.input_model_style,
+            {
+                "id": fields.String(
+                    description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
+                ),
             },
         )

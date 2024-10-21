@@ -13,7 +13,7 @@ from sqlalchemy.sql import expression
 
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
-from horde.utils import get_db_uuid, is_profane, sanitize_string
+from horde.utils import ensure_clean, get_db_uuid
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
@@ -51,6 +51,30 @@ class StyleCollection(db.Model):
     styles: Mapped[list[Style]] = db.relationship(secondary="style_collection_mapping", back_populates="collections")
 
 
+class StyleTag(db.Model):
+    __tablename__ = "style_tags"
+    id = db.Column(db.Integer, primary_key=True)
+    style_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("styles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    style = db.relationship("Style", back_populates="tags")
+    tag = db.Column(db.String(255), nullable=False, index=True)
+
+
+class StyleModel(db.Model):
+    __tablename__ = "style_models"
+    id = db.Column(db.Integer, primary_key=True)
+    style_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("styles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    style = db.relationship("Style", back_populates="models")
+    model = db.Column(db.String(255), nullable=False, index=True)
+
+
 class Style(db.Model):
     __tablename__ = "styles"
     __table_args__ = (
@@ -64,11 +88,13 @@ class Style(db.Model):
     style_type = db.Column(db.String(30), nullable=False, index=True)
     info = db.Column(db.String(1000), default="")
     name = db.Column(db.String(100), default="", unique=False, nullable=False, index=True)
-    use_count = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
     public = db.Column(db.Boolean, default=False, nullable=False)
-
+    nsfw = db.Column(db.Boolean, default=False, nullable=False)
     prompt = db.Column(db.Text, nullable=False)
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
+
+    use_count = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
+    votes = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
 
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -76,6 +102,8 @@ class Style(db.Model):
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     owner = db.relationship("User", back_populates="styles")
     collections: Mapped[list[StyleCollection]] = db.relationship(secondary="style_collection_mapping", back_populates="styles")
+    models = db.relationship("StyleModel", back_populates="style", cascade="all, delete-orphan")
+    tags = db.relationship("StyleTag", back_populates="style", cascade="all, delete-orphan")
 
     def create(self):
         db.session.add(self)
@@ -84,18 +112,14 @@ class Style(db.Model):
     def set_name(self, new_name):
         if self.name == new_name:
             return "OK"
-        if is_profane(new_name):
-            return "Profanity"
-        self.name = sanitize_string(new_name)
+        self.name = ensure_clean(new_name, "style name")
         db.session.commit()
         return "OK"
 
     def set_info(self, new_info):
         if self.info == new_info:
             return "OK"
-        if is_profane(new_info):
-            return "Profanity"
-        self.info = sanitize_string(new_info)
+        self.info = ensure_clean(new_info, "style info")
         db.session.commit()
         return "OK"
 
@@ -127,3 +151,45 @@ class Style(db.Model):
             "uses": self.uses,
         }
         return ret_dict
+
+    def get_model_names(self):
+        return [m.model for m in self.models]
+
+    def get_tag_names(self):
+        return [t.tag for t in self.tags]
+
+    def parse_tags(self, tags):
+        """Parses the tags provided for the style into a set"""
+        tags = [ensure_clean(tag[0:100], "style tag") for tag in tags]
+        del tags[10:]
+        return set(tags)
+
+    def parse_models(self, models):
+        """Parses the models provided for the style into a set"""
+        models = [ensure_clean(model_name[0:100], "style model") for model_name in models]
+        del models[5:]
+        return set(models)
+
+    def set_models(self, models):
+        models = self.parse_models(models)
+        existing_model_names = set(self.get_model_names())
+        if existing_model_names == models:
+            return
+        db.session.query(StyleModel).filter_by(style_id=self.id).delete()
+        db.session.flush()
+        for model_name in models:
+            model = StyleModel(style_id=self.id, model=model_name)
+            db.session.add(model)
+        db.session.commit()
+
+    def set_tags(self, tags):
+        tags = self.parse_tags(tags)
+        existing_tags = set(self.get_tag_names())
+        if existing_tags == tags:
+            return
+        db.session.query(StyleTag).filter_by(style_id=self.id).delete()
+        db.session.flush()
+        for tag_name in tags:
+            tag = StyleTag(style_id=self.id, tag=tag_name)
+            db.session.add(tag)
+        db.session.commit()

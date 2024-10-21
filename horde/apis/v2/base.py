@@ -3143,8 +3143,20 @@ class StyleTemplate(Resource):
         styles_ret = database.retrieve_available_styles(
             style_type=self.gentype,
             sort=self.args.sort,
-            page=self.args.page,
+            page=self.args.page - 1,
+            tag=self.args.tag,
+            model=self.args.model,
         )
+        styles_ret = [
+            {
+                "id": st.id,
+                "params": st.params,
+                "tags": st.get_tag_names(),
+                "models": st.get_model_names(),
+                "user_count": st.use_count,
+            }
+            for st in styles_ret
+        ]
         return styles_ret, 200
 
     def post(self):

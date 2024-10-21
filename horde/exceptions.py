@@ -151,6 +151,7 @@ KNOWN_RC = [
     "InvalidTransparencyImg2Img",
     "InvalidTransparencyCN",
     "HiResMismatch",
+    "StylesAnonForbidden",
 ]
 
 

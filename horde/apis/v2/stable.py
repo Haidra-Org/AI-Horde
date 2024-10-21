@@ -33,7 +33,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
-from horde.utils import does_extra_text_reference_exist, hash_dictionary
+from horde.utils import does_extra_text_reference_exist, ensure_clean, hash_dictionary
 from horde.validation import ParamValidator
 from horde.vars import horde_title
 
@@ -106,8 +106,9 @@ class ImageAsyncGenerate(GenerateTemplate):
 
     def validate(self):
         super().validate()
-        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params)
+        param_validator = ParamValidator(prompt=self.args.prompt, models=self.args.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
+        param_validator.check_for_special()
         # During raids, we prevent VPNs
         if settings.mode_raid() and not self.user.trusted and not patrons.is_patron(self.user.id):
             self.safe_ip = CounterMeasures.is_ip_safe(self.user_ip)
@@ -119,21 +120,6 @@ class ImageAsyncGenerate(GenerateTemplate):
                 raise e.NotTrusted(rc="UntrustedUnsafeIP")
         if not self.user.special and self.params.get("special"):
             raise e.BadRequest("Only special users can send a special field.", "SpecialFieldNeedsSpecialUser")
-        for model in self.args.models:
-            if "horde_special" in model:
-                if not self.user.special:
-                    raise e.Forbidden("Only special users can request a special model.", "SpecialModelNeedsSpecialUser")
-                usermodel = model.split("::")
-                if len(usermodel) == 1:
-                    raise e.BadRequest(
-                        "Special models must always include the username, in the form of 'horde_special::user#id'",
-                        rc="SpecialMissingUsername",
-                    )
-                user_alias = usermodel[1]
-                if self.user.get_unique_alias() != user_alias:
-                    raise e.Forbidden(f"This model can only be requested by {user_alias}", "SpecialForbidden")
-                if not self.params.get("special"):
-                    raise e.BadRequest("Special models have to include a special payload", rc="SpecialMissingPayload")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(
@@ -1319,6 +1305,20 @@ class ImageStyle(StyleTemplate):
         help="Which page of results to return. Each page has 25 styles.",
         location="args",
     )
+    get_parser.add_argument(
+        "tag",
+        required=False,
+        type=str,
+        help="If included, will only return styles with this tag",
+        location="args",
+    )
+    get_parser.add_argument(
+        "model",
+        required=False,
+        type=str,
+        help="If included, will only return styles using this model",
+        location="args",
+    )
 
     @logger.catch(reraise=True)
     @cache.cached(timeout=1, query_string=True)
@@ -1343,7 +1343,7 @@ class ImageStyle(StyleTemplate):
 
     @api.expect(parsers.style_parser, models.input_model_style, validate=True)
     @api.marshal_with(
-        models.response_model_styles_post,
+        models.response_model_style,
         code=202,
         description="Style Added",
         skip_none=True,
@@ -1357,26 +1357,42 @@ class ImageStyle(StyleTemplate):
         # It causes them to be a shared object from the parsers class
         self.params = {}
         self.warnings = set()
+        self.args = parsers.style_parser.parse_args()
         if self.args.params:
             self.params = self.args.params
         # For styles, we just store the models in the params
         self.models = []
         if self.args.models:
-            self.params["models"] = self.args.models.copy()
+            self.models = self.args.models.copy()
+            if len(self.models) > 5:
+                raise e.BadRequest("A style can only use a maximum of 5 models.")
+            if len(self.models) < 1:
+                raise e.BadRequest("A style has to specify at least one model.")
+        self.tags = []
+        if self.args.tags:
+            self.tags = self.args.tags.copy()
+            if len(self.tags) > 10:
+                raise e.BadRequest("A style can be tagged a maximum of 10 times.")
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
             raise e.InvalidAPIKey("ImageStyle POST")
+        if self.user.is_anon():
+            raise e.Forbidden("Anonymous users cannot create styles", rc="StylesAnonForbidden")
+        self.style_name = ensure_clean(self.args.name, "style name")
         self.validate()
         new_style = Style(
+            owner_id=self.user.id,
             style_type=self.gentype,
-            info=self.args.info if self.args.info else "",
-            name=self.args.name,
+            info=ensure_clean(self.args.info, "style info") if self.args.info else "",
+            name=self.style_name,
             public=self.args.public,
+            nsfw=self.args.nsfw,
             prompt=self.args.prompt,
             params=self.args.params if self.args.params else {},
-            owner_id=self.user.id,
         )
         new_style.create()
+        new_style.set_models(self.models)
+        new_style.set_tags(self.tags)
         return {
             "id": new_style.id,
             "message": "OK",
@@ -1392,8 +1408,16 @@ class ImageStyle(StyleTemplate):
         # }, 200
 
     def validate(self):
-        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params)
+        if database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}"):
+            raise e.BadRequest(
+                (
+                    f"Style with name '{self.style_name}' already exists for user '{self.user.get_unique_alias()}'."
+                    " Please use PATCH to modify an existing style."
+                ),
+            )
+        param_validator = ParamValidator(prompt=self.args.prompt, models=self.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
+        param_validator.check_for_special()
 
 
 class SingleImageStyle(Resource):

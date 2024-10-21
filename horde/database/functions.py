@@ -19,7 +19,7 @@ from horde.bridge_reference import (
     get_supported_samplers,
 )
 from horde.classes.base.detection import Filter
-from horde.classes.base.style import Style, StyleCollection
+from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WPAllowedWorkers, WPModels
 from horde.classes.base.worker import WorkerModel, WorkerPerformance
@@ -1554,15 +1554,18 @@ def get_style_by_name(style_name: str):
     db0#1::my_stylename
     """
     style_split = style_name.split("::")
+    logger.debug(style_name)
+    logger.debug(style_split)
     user = None
-    if len(style_split) == 2:
+    is_collection = None
+    if len(style_split) == 3:
         style_name = style_split[2]
         if style_split[0] == "collection":
             is_collection = True
         elif style_split[0] == "style":
             is_collection = False
         user = find_user_by_username(style_split[1])
-    if len(style_split) == 1:
+    if len(style_split) == 2:
         style_name = style_split[1]
         if style_split[0] == "collection":
             is_collection = True
@@ -1584,10 +1587,25 @@ def get_style_by_name(style_name: str):
             return style
 
 
-def retrieve_available_styles(style_type=None, sort="popular", public_only=True, page=0):
+def retrieve_available_styles(
+    style_type=None,
+    sort="popular",
+    public_only=True,
+    page=0,
+    tag=None,
+    model=None,
+):
     """Retrieves all style details from DB."""
     style_query = db.session.query(Style).filter_by(style_type=style_type)
+    if tag is not None:
+        style_query = style_query.join(StyleTag)
+    if model is not None:
+        style_query = style_query.join(StyleModel)
     if public_only:
-        style_query = style_query.filter_by(public=True)
+        style_query = style_query.filter(Style.public.is_(True))
+    if tag is not None:
+        style_query = style_query.filter(StyleTag.tag == tag)
+    if model is not None:
+        style_query = style_query.filter(StyleModel.model == model)
     style_order_by = Style.created.asc() if sort == "age" else Style.use_count.desc()
     return style_query.order_by(style_order_by).offset(page).limit(25).all()

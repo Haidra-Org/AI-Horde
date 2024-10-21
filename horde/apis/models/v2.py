@@ -310,6 +310,27 @@ class Parsers:
             required=False,
             location="json",
         )
+        self.style_parser.add_argument(
+            "nsfw",
+            type=bool,
+            default=False,
+            required=False,
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "tags",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "models",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
 
 
 class Models:
@@ -1648,19 +1669,5 @@ class Models:
                     description="Any extra information from the horde about this request.",
                 ),
                 "warnings": fields.List(fields.Nested(self.response_model_warning)),
-            },
-        )
-        self.response_model_style = api.model(
-            "Style",
-            {
-                "id": fields.String(
-                    description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
-                ),
-                "params": fields.String(
-                    default=None,
-                    description="Any extra information from about this request.",
-                ),
-                "models": fields.List(fields.String(description="The models which are allowed to be used in this style")),
-                "use": fields.Integer(description="The amount of times this style has been used by users"),
             },
         )
