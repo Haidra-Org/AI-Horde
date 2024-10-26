@@ -258,7 +258,7 @@ class Parsers:
             location="json",
         )
 
-        # Style Parser
+        # Style Parsers
         self.style_parser = reqparse.RequestParser()
         self.style_parser.add_argument(
             "apikey",
@@ -292,7 +292,7 @@ class Parsers:
         self.style_parser.add_argument(
             "prompt",
             type=str,
-            required=True,
+            required=False,
             help="The prompt to generate from.",
             location="json",
         )
@@ -325,6 +325,78 @@ class Parsers:
             location="json",
         )
         self.style_parser.add_argument(
+            "models",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser_patch = reqparse.RequestParser()
+        self.style_parser_patch.add_argument(
+            "apikey",
+            type=str,
+            required=True,
+            help="The API Key corresponding to a registered user.",
+            location="headers",
+        )
+        self.style_parser_patch.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+        self.style_parser_patch.add_argument(
+            "name",
+            type=str,
+            required=False,
+            help="The name of the style.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "info",
+            type=str,
+            required=False,
+            help="Extra information about this style.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "prompt",
+            type=str,
+            required=False,
+            help="The prompt to generate from.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "params",
+            type=dict,
+            required=False,
+            help="Extra generate params to send to the worker.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "public",
+            type=bool,
+            default=True,
+            required=False,
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "nsfw",
+            type=bool,
+            default=False,
+            required=False,
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "tags",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
             "models",
             type=list,
             required=False,

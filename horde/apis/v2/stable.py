@@ -12,7 +12,7 @@ import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
-from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, StyleTemplate, api
+from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, SingleStyleTemplate, StyleTemplate, api
 from horde.classes.base import settings
 from horde.classes.base.style import Style
 from horde.classes.base.user import User
@@ -1343,15 +1343,13 @@ class ImageStyle(StyleTemplate):
 
     @api.expect(parsers.style_parser, models.input_model_style, validate=True)
     @api.marshal_with(
-        models.response_model_style,
+        models.response_model_styles_post,
         code=202,
         description="Style Added",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
-    @api.response(503, "Maintenance Mode", models.response_model_error)
-    @api.response(429, "Too Many Prompts", models.response_model_error)
     def post(self):
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
@@ -1362,14 +1360,16 @@ class ImageStyle(StyleTemplate):
             self.params = self.args.params
         # For styles, we just store the models in the params
         self.models = []
-        if self.args.models:
+        if self.args.models is not None:
             self.models = self.args.models.copy()
             if len(self.models) > 5:
                 raise e.BadRequest("A style can only use a maximum of 5 models.")
             if len(self.models) < 1:
                 raise e.BadRequest("A style has to specify at least one model.")
+        else:
+            raise e.BadRequest("A style has to specify at least one model.")
         self.tags = []
-        if self.args.tags:
+        if self.args.tags is not None:
             self.tags = self.args.tags.copy()
             if len(self.tags) > 10:
                 raise e.BadRequest("A style can be tagged a maximum of 10 times.")
@@ -1383,12 +1383,12 @@ class ImageStyle(StyleTemplate):
         new_style = Style(
             owner_id=self.user.id,
             style_type=self.gentype,
-            info=ensure_clean(self.args.info, "style info") if self.args.info else "",
+            info=ensure_clean(self.args.info, "style info") if self.args.info is not None else "",
             name=self.style_name,
             public=self.args.public,
             nsfw=self.args.nsfw,
             prompt=self.args.prompt,
-            params=self.args.params if self.args.params else {},
+            params=self.args.params if self.args.params is not None else {},
         )
         new_style.create()
         new_style.set_models(self.models)
@@ -1398,14 +1398,6 @@ class ImageStyle(StyleTemplate):
             "message": "OK",
             "warnings": self.warnings,
         }, 200
-        # return {
-        #     "id": new_style.id,
-        #     "name": new_style.name,
-        #     "info": new_style.info,
-        #     "public": new_style.public,
-        #     "prompt": new_style.prompt,
-        #     "params": new_style.params,
-        # }, 200
 
     def validate(self):
         if database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}"):
@@ -1420,38 +1412,19 @@ class ImageStyle(StyleTemplate):
         param_validator.check_for_special()
 
 
-class SingleImageStyle(Resource):
+class SingleImageStyle(SingleStyleTemplate):
     gentype = "image"
 
-    get_parser = reqparse.RequestParser()
-    get_parser.add_argument(
-        "Client-Agent",
-        default="unknown:0:unknown",
-        type=str,
-        required=False,
-        help="The client name and version.",
-        location="headers",
-    )
-
-    @logger.catch(reraise=True)
     @cache.cached(timeout=1)
-    @api.expect(get_parser)
+    @api.expect(SingleStyleTemplate.get_parser)
     @api.marshal_with(
-        models.response_model_active_model,
+        models.response_model_style,
         code=200,
-        description="Lists specific model stats",
-        as_list=True,
+        description="Lists image styles information",
+        as_list=False,
     )
-    def get(self):
-        self.params = {}
-        self.warnings = set()
-        if self.args.params:
-            self.params = self.args.params
-        self.models = []
-        if self.args.models:
-            self.params["models"] = self.args.models.copy()
-        self.user = None
-        return
+    def get(self, style_id):
+        return super().get(style_id)
 
     decorators = [
         limiter.limit(
@@ -1459,34 +1432,48 @@ class SingleImageStyle(Resource):
             key_func=lim.get_request_path,
         ),
         limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
-        limiter.limit(
-            limit_value=lim.get_request_limit_per_apikey,
-            key_func=lim.get_request_api_key,
-        ),
     ]
 
-    @api.expect(parsers.style_parser, models.input_model_style, validate=True)
+    @api.expect(parsers.style_parser_patch, models.patch_model_style, validate=True)
     @api.marshal_with(
-        models.response_model_style,
+        models.response_model_styles_post,
         code=202,
-        description="Style Added",
+        description="Style Updated",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
-    @api.response(503, "Maintenance Mode", models.response_model_error)
-    @api.response(429, "Too Many Prompts", models.response_model_error)
-    def post(self):
-        # I have to extract and store them this way, because if I use the defaults
-        # It causes them to be a shared object from the parsers class
-        self.params = {}
-        self.warnings = set()
-        if self.args.params:
-            self.params = self.args.params
-        # For styles, we just store the models in the params
-        self.models = []
-        if self.args.models:
-            self.params["models"] = self.args.models.copy()
-        self.user = None
-        self.validate()
-        return
+    # @logger.catch(reraise=True)
+    def patch(self, style_id):
+        return super().patch(style_id)
+
+    def validate(self):
+        if (
+            self.style_name is not None
+            and database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}")
+            and self.existing_style.name != self.style_name
+        ):
+            raise e.BadRequest(
+                (
+                    f"Style with name '{self.style_name}' already exists for user '{self.user.get_unique_alias()}'."
+                    " Please use a different name if you want to rename."
+                ),
+            )
+        prompt = self.args.prompt if self.args.prompt is not None else self.existing_style.prompt
+        models = self.models if len(self.models) > 0 else self.existing_style.get_model_names()
+        params = self.args.params if self.args.params is not None else self.existing_style.params
+        param_validator = ParamValidator(prompt=prompt, models=models, params=params, user=self.user)
+        self.warnings = param_validator.validate_image_params()
+        param_validator.check_for_special()
+
+    @api.expect(SingleStyleTemplate.delete_parser)
+    @api.marshal_with(
+        models.response_model_simple_response,
+        code=200,
+        description="Operation Completed",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    def delete(self, style_id):
+        return super().delete(style_id)

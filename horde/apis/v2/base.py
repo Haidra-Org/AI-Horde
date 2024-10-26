@@ -40,7 +40,7 @@ from horde.metrics import waitress_metrics
 from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
-from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
+from horde.utils import ensure_clean, hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_title, horde_url
 
 # Not used yet
@@ -3147,16 +3147,7 @@ class StyleTemplate(Resource):
             tag=self.args.tag,
             model=self.args.model,
         )
-        styles_ret = [
-            {
-                "id": st.id,
-                "params": st.params,
-                "tags": st.get_tag_names(),
-                "models": st.get_model_names(),
-                "user_count": st.use_count,
-            }
-            for st in styles_ret
-        ]
+        styles_ret = [st.get_details() for st in styles_ret]
         return styles_ret, 200
 
     def post(self):
@@ -3176,6 +3167,126 @@ class StyleTemplate(Resource):
 
     def validate(self):
         pass
+
+
+class SingleStyleTemplate(Resource):
+    gentype = "template"
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+
+    def get(self, style_id):
+        existing_style = database.get_style_by_uuid(style_id)
+        if not existing_style:
+            raise e.ThingNotFound("Image Style", style_id)
+        return existing_style.get_details()
+
+    def patch(self, style_id):
+        self.params = {}
+        self.warnings = set()
+        self.args = parsers.style_parser.parse_args()
+        if self.args.params:
+            self.params = self.args.params
+        # For styles, we just store the models in the params
+        self.models = []
+        style_modified = False
+        self.tags = []
+        if self.args.tags:
+            self.tags = self.args.tags.copy()
+            if len(self.tags) > 10:
+                raise e.BadRequest("A style can be tagged a maximum of 10 times.")
+        self.user = database.find_user_by_api_key(self.args["apikey"])
+        if not self.user:
+            raise e.InvalidAPIKey("Style PATCH")
+        if self.user.is_anon():
+            raise e.Forbidden("Anonymous users cannot update styles", rc="StylesAnonForbidden")
+        self.existing_style = database.get_style_by_uuid(style_id)
+        if not self.existing_style:
+            raise e.ThingNotFound("Image Style", style_id)
+        if self.existing_style.owner_id != self.user.id:
+            raise e.Forbidden(f"This Image Style is not owned by user {self.user.get_unique_alias()}")
+        if self.args.models:
+            self.models = self.args.models.copy()
+            if len(self.models) > 5:
+                raise e.BadRequest("A style can only use a maximum of 5 models.")
+            if len(self.models) < 1:
+                raise e.BadRequest("A style has to specify at least one model.")
+        else:
+            self.models = self.existing_style.get_model_names()
+        self.style_name = None
+        if self.args.name:
+            self.style_name = ensure_clean(self.args.name, "style name")
+            style_modified = True
+        self.validate()
+        self.existing_style.name = self.style_name
+        if self.args.info is not None:
+            self.existing_style.info = ensure_clean(self.args.info, "style info")
+            style_modified = True
+        if self.args.public is not None:
+            self.existing_style.public = self.args.public
+            style_modified = True
+        if self.args.nsfw is not None:
+            self.existing_style.nsfw = self.args.nsfw
+            style_modified = True
+        if self.args.prompt is not None:
+            self.existing_style.prompt = self.args.prompt
+            style_modified = True
+        if self.args.params is not None:
+            self.existing_style.params = self.args.params
+            style_modified = True
+        if len(self.models) > 0:
+            style_modified = True
+        if len(self.tags) > 0:
+            style_modified = True
+        if not style_modified:
+            return {
+                "id": self.existing_style.id,
+                "message": "OK",
+            }, 200
+        db.session.commit()
+        self.existing_style.set_models(self.models)
+        self.existing_style.set_tags(self.tags)
+        return {
+            "id": self.existing_style.id,
+            "message": "OK",
+            "warnings": self.warnings,
+        }, 200
+
+    def validate(self):
+        pass
+
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
+    delete_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+
+    def delete(self, style_id):
+        self.args = self.delete_parser.parse_args()
+        self.user = database.find_user_by_api_key(self.args["apikey"])
+        if not self.user:
+            raise e.InvalidAPIKey("Style DELETE")
+        if self.user.is_anon():
+            raise e.Forbidden("Anonymous users cannot delete styles", rc="StylesAnonForbidden")
+        self.existing_style = database.get_style_by_uuid(style_id)
+        if not self.existing_style:
+            raise e.ThingNotFound("Style", style_id)
+        if self.existing_style.owner_id != self.user.id:
+            raise e.Forbidden(f"This Style is not owned by user {self.user.get_unique_alias()}")
+        self.existing_style.delete()
+        return ({"message": "OK"}, 200)
 
 
 # style: sfw bool

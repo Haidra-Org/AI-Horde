@@ -125,8 +125,6 @@ class Style(db.Model):
 
     def delete(self):
         db.session.delete(self)
-        for worker in self.workers:
-            worker.set_team(None)
         db.session.commit()
 
     def record_usage(self):
@@ -147,8 +145,13 @@ class Style(db.Model):
         ret_dict = {
             "name": self.name,
             "id": self.id,
+            "params": self.params,
+            "tags": self.get_tag_names(),
+            "models": self.get_model_names(),
             "creator": self.owner.get_unique_alias(),
-            "uses": self.uses,
+            "use_count": self.use_count,
+            "public": self.public,
+            "nsfw": self.nsfw,
         }
         return ret_dict
 
