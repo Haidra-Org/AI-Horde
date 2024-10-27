@@ -135,3 +135,22 @@ class ParamValidator:
                     raise e.Forbidden(f"This model can only be requested by {user_alias}", "SpecialForbidden")
                 if not self.params.get("special"):
                     raise e.BadRequest("Special models have to include a special payload", rc="SpecialMissingPayload")
+
+    def validate_image_prompt(self, prompt):
+        if "{p}" not in prompt:
+            raise e.BadRequest(
+                "A style prompt must include a dedicated spot where the user's positive prompt will be added, signified with '{p}'",
+                "StylePromptMissingVars",
+            )
+        if "{np}" not in prompt:
+            raise e.BadRequest(
+                "A style prompt must include a dedicated spot where the user's negative prompt will be added, signified with '{np}'",
+                "StylePromptMissingVars",
+            )
+
+    def validate_text_prompt(self, prompt):
+        if "{p}" not in prompt:
+            raise e.BadRequest(
+                "A style prompt must include a dedicated spot where the user's positive prompt will be added, signified with '{p}'",
+                "StylePromptMissingVars",
+            )

@@ -213,10 +213,12 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared = True
         else:
             shared = False
+        self.prompt = self.args.prompt
+        self.apply_style()
         self.wp = ImageWaitingPrompt(
             worker_ids=self.workers,
             models=self.models,
-            prompt=self.args.prompt,
+            prompt=self.prompt,
             user_id=self.user.id,
             params=self.params,
             nsfw=self.args.nsfw,
@@ -346,6 +348,27 @@ class ImageAsyncGenerate(GenerateTemplate):
             source_mask=self.source_mask,
             extra_source_images=self.args.extra_source_images,
         )
+
+    def apply_style(self):
+        if self.args.style is None:
+            return
+        self.existing_style = database.get_style_by_uuid(self.args.style)
+        if not self.existing_style:
+            self.existing_style = database.get_style_by_name(self.args.style)
+        if not self.existing_style:
+            raise e.ThingNotFound("Style", self.args.style)
+        self.models = self.existing_style.get_model_names()
+        self.negprompt = ""
+        if "###" in self.args.prompt:
+            self.prompt, self.negprompt = self.args.prompt.split("###", 1)
+        if "###" not in self.existing_style.prompt and self.negprompt != "" and "###" not in self.negprompt:
+            self.negprompt = "###" + self.negprompt
+        self.prompt = self.existing_style.prompt.format(p=self.prompt, np=self.negprompt)
+        self.params = self.existing_style.params
+        self.nsfw = self.existing_style.nsfw
+        self.existing_style.use_count += 1
+        db.session.commit()
+        logger.debug(f"Style '{self.args.style}' applied.")
 
 
 class ImageAsyncStatus(Resource):
@@ -1275,8 +1298,6 @@ class ImageHordeStatsModels(Resource):
 
 
 ## Styles
-
-
 class ImageStyle(StyleTemplate):
     gentype = "image"
 
@@ -1376,6 +1397,11 @@ class ImageStyle(StyleTemplate):
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
             raise e.InvalidAPIKey("ImageStyle POST")
+        if not self.user.customizer:
+            raise e.Forbidden(
+                "Only customizers can create new styles. You can request this role in our channels.",
+                rc="StylesRequiresCustomizer",
+            )
         if self.user.is_anon():
             raise e.Forbidden("Anonymous users cannot create styles", rc="StylesAnonForbidden")
         self.style_name = ensure_clean(self.args.name, "style name")
@@ -1410,6 +1436,8 @@ class ImageStyle(StyleTemplate):
         param_validator = ParamValidator(prompt=self.args.prompt, models=self.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
         param_validator.check_for_special()
+        logger.debug(self.args.prompt)
+        param_validator.validate_image_prompt(self.args.prompt)
 
 
 class SingleImageStyle(SingleStyleTemplate):
@@ -1443,7 +1471,6 @@ class SingleImageStyle(SingleStyleTemplate):
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
-    # @logger.catch(reraise=True)
     def patch(self, style_id):
         return super().patch(style_id)
 

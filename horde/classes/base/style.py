@@ -86,8 +86,9 @@ class Style(db.Model):
     )
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     style_type = db.Column(db.String(30), nullable=False, index=True)
-    info = db.Column(db.String(1000), default="")
-    name = db.Column(db.String(100), default="", unique=False, nullable=False, index=True)
+    info = db.Column(db.String(1000), nullable=True)
+    showcase = db.Column(db.String(1000), nullable=True)
+    name = db.Column(db.String(100), unique=False, nullable=False, index=True)
     public = db.Column(db.Boolean, default=False, nullable=False)
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     prompt = db.Column(db.Text, nullable=False)
@@ -106,8 +107,10 @@ class Style(db.Model):
     tags = db.relationship("StyleTag", back_populates="style", cascade="all, delete-orphan")
 
     def create(self):
+        logger.debug(self.prompt)
         db.session.add(self)
         db.session.commit()
+        logger.debug(self.prompt)
 
     def set_name(self, new_name):
         if self.name == new_name:
@@ -146,6 +149,7 @@ class Style(db.Model):
             "name": self.name,
             "id": self.id,
             "params": self.params,
+            "prompt": self.prompt,
             "tags": self.get_tag_names(),
             "models": self.get_model_names(),
             "creator": self.owner.get_unique_alias(),

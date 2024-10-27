@@ -142,6 +142,7 @@ class Parsers:
             location="json",
         )
         self.generate_parser.add_argument("webhook", type=str, required=False, location="json")
+        self.generate_parser.add_argument("style", type=str, required=False, location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
@@ -285,7 +286,7 @@ class Parsers:
         self.style_parser.add_argument(
             "info",
             type=str,
-            required=True,
+            required=False,
             help="Extra information about this style.",
             location="json",
         )
@@ -293,6 +294,7 @@ class Parsers:
             "prompt",
             type=str,
             required=False,
+            default="{p}{np}",
             help="The prompt to generate from.",
             location="json",
         )

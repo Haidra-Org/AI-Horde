@@ -126,6 +126,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.shared = False
         self.prepare_job_payload(self.params)
         # Commit will happen in prepare_job_payload()
+        logger.debug(self.params)
+        logger.debug(self.prompt)
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict=None):

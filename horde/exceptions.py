@@ -152,6 +152,8 @@ KNOWN_RC = [
     "InvalidTransparencyCN",
     "HiResMismatch",
     "StylesAnonForbidden",
+    "StylePromptMissingVars",
+    "StylesRequiresCustomizer",
 ]
 
 

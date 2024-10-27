@@ -1007,14 +1007,21 @@ class ImageModels(v2.Models):
                 ),
                 "info": fields.String(
                     required=False,
-                    description="Extra information about this style.",
-                    min_length=1,
+                    description="Some information about this style.",
+                    example="photorealism excellence.",
+                    min_length=10,
                     max_length=1000,
                 ),
                 "prompt": fields.String(
-                    required=True,
-                    description="The prompt which will be sent to Stable Diffusion to generate an image.",
-                    min_length=1,
+                    required=False,
+                    description=(
+                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
+                        "The user's prompt will be injected into this."
+                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected "
+                        "and an {np} where the user's negative prompt will be injected (if any)"
+                    ),
+                    default="{p}{np}",
+                    min_length=7,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
                 "public": fields.Boolean(
@@ -1051,8 +1058,13 @@ class ImageModels(v2.Models):
                 ),
                 "prompt": fields.String(
                     required=False,
-                    description="The prompt which will be sent to Stable Diffusion to generate an image.",
-                    min_length=1,
+                    description=(
+                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
+                        "The user's prompt will be injected into this."
+                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected "
+                        "and an {np} where the user's negative prompt will be injected (if any)"
+                    ),
+                    min_length=7,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
                 "public": fields.Boolean(
