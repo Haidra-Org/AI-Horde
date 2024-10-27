@@ -3209,9 +3209,9 @@ class SingleStyleTemplate(Resource):
             raise e.Forbidden("Anonymous users cannot update styles", rc="StylesAnonForbidden")
         self.existing_style = database.get_style_by_uuid(style_id)
         if not self.existing_style:
-            raise e.ThingNotFound("Image Style", style_id)
-        if self.existing_style.owner_id != self.user.id:
-            raise e.Forbidden(f"This Image Style is not owned by user {self.user.get_unique_alias()}")
+            raise e.ThingNotFound("Style", style_id)
+        if self.existing_style.user_id != self.user.id:
+            raise e.Forbidden(f"This Style is not owned by user {self.user.get_unique_alias()}")
         if self.args.models:
             self.models = self.args.models.copy()
             if len(self.models) > 5:
@@ -3283,7 +3283,7 @@ class SingleStyleTemplate(Resource):
         self.existing_style = database.get_style_by_uuid(style_id)
         if not self.existing_style:
             raise e.ThingNotFound("Style", style_id)
-        if self.existing_style.owner_id != self.user.id:
+        if self.existing_style.user_id != self.user.id:
             raise e.Forbidden(f"This Style is not owned by user {self.user.get_unique_alias()}")
         self.existing_style.delete()
         return ({"message": "OK"}, 200)

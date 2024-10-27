@@ -8,8 +8,9 @@ from flask_restx import Resource, reqparse
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
-from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, api
+from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, SingleStyleTemplate, StyleTemplate, api
 from horde.classes.base import settings
+from horde.classes.base.style import Style
 from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
     get_compiled_textgen_stats_totals,
@@ -22,7 +23,7 @@ from horde.flask import cache, db
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
-from horde.utils import hash_dictionary
+from horde.utils import ensure_clean, hash_dictionary
 from horde.validation import ParamValidator
 from horde.vars import horde_title
 
@@ -82,10 +83,12 @@ class TextAsyncGenerate(GenerateTemplate):
         return (ret_dict, 202)
 
     def initiate_waiting_prompt(self):
+        self.prompt = self.args.prompt
+        self.apply_style()
         self.wp = TextWaitingPrompt(
             worker_ids=self.workers,
             models=self.models,
-            prompt=self.args.prompt,
+            prompt=self.prompt,
             user_id=self.user.id,
             params=self.params,
             softprompt=self.args.softprompt,
@@ -168,6 +171,25 @@ class TextAsyncGenerate(GenerateTemplate):
         params_hash = hash_dictionary(gen_payload)
         # logger.debug([params_hash,gen_payload])
         return params_hash
+
+    def apply_style(self):
+        if self.args.style is None:
+            return
+        self.existing_style = database.get_style_by_uuid(self.args.style)
+        if not self.existing_style:
+            self.existing_style = database.get_style_by_name(self.args.style)
+        if not self.existing_style:
+            raise e.ThingNotFound("Style", self.args.style)
+        if self.existing_style.style_type != "text":
+            raise e.BadRequest("Image styles cannot be used on image requests", "StyleMismatch")
+        self.models = self.existing_style.get_model_names()
+        self.prompt = self.existing_style.prompt.format(p=self.args.prompt)
+        self.params = self.existing_style.params
+        self.nsfw = self.existing_style.nsfw
+        self.existing_style.use_count += 1
+        self.existing_style.user.record_style(2, "text")
+        db.session.commit()
+        logger.debug(f"Style '{self.args.style}' applied.")
 
 
 class TextAsyncStatus(Resource):
@@ -396,3 +418,209 @@ class KoboldKudosTransfer(Resource):
             user.set_trusted(self.args.trusted)
         user.modify_kudos(self.args.kudos_amount, "koboldai")
         return {"new_kudos": user.kudos}, 200
+
+
+## Styles
+class TextStyle(StyleTemplate):
+    gentype = "text"
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "sort",
+        required=False,
+        default="popular",
+        type=str,
+        help="How to sort returned styles. 'popular' sorts by usage and 'age' sorts by date added.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "page",
+        required=False,
+        default=1,
+        type=int,
+        help="Which page of results to return. Each page has 25 styles.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "tag",
+        required=False,
+        type=str,
+        help="If included, will only return styles with this tag",
+        location="args",
+    )
+    get_parser.add_argument(
+        "model",
+        required=False,
+        type=str,
+        help="If included, will only return styles using this model",
+        location="args",
+    )
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=1, query_string=True)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_style,
+        code=200,
+        description="Lists text styles information",
+        as_list=True,
+    )
+    def get(self):
+        self.args = self.get_parser.parse_args()
+        return super().get()
+
+    decorators = [
+        limiter.limit(
+            limit_value=lim.get_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
+        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+    ]
+
+    @api.expect(parsers.style_parser, models.input_model_style, validate=True)
+    @api.marshal_with(
+        models.response_model_styles_post,
+        code=202,
+        description="Style Added",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    def post(self):
+        self.params = {}
+        self.warnings = set()
+        self.args = parsers.style_parser.parse_args()
+        if self.args.params:
+            self.params = self.args.params
+        self.models = []
+        if self.args.models is not None:
+            self.models = self.args.models.copy()
+            if len(self.models) > 5:
+                raise e.BadRequest("A style can only use a maximum of 5 models.")
+            if len(self.models) < 1:
+                raise e.BadRequest("A style has to specify at least one model.")
+        else:
+            raise e.BadRequest("A style has to specify at least one model.")
+        self.tags = []
+        if self.args.tags is not None:
+            self.tags = self.args.tags.copy()
+            if len(self.tags) > 10:
+                raise e.BadRequest("A style can be tagged a maximum of 10 times.")
+        self.user = database.find_user_by_api_key(self.args["apikey"])
+        if not self.user:
+            raise e.InvalidAPIKey("TextStyle POST")
+        if not self.user.customizer:
+            raise e.Forbidden(
+                "Only customizers can create new styles. You can request this role in our channels.",
+                rc="StylesRequiresCustomizer",
+            )
+        if self.user.is_anon():
+            raise e.Forbidden("Anonymous users cannot create styles", rc="StylesAnonForbidden")
+        self.style_name = ensure_clean(self.args.name, "style name")
+        self.validate()
+        new_style = Style(
+            user_id=self.user.id,
+            style_type=self.gentype,
+            info=ensure_clean(self.args.info, "style info") if self.args.info is not None else "",
+            name=self.style_name,
+            public=self.args.public,
+            nsfw=self.args.nsfw,
+            prompt=self.args.prompt,
+            params=self.args.params if self.args.params is not None else {},
+        )
+        new_style.create()
+        new_style.set_models(self.models)
+        new_style.set_tags(self.tags)
+        return {
+            "id": new_style.id,
+            "message": "OK",
+            "warnings": self.warnings,
+        }, 200
+
+    def validate(self):
+        if database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}"):
+            raise e.BadRequest(
+                (
+                    f"Style with name '{self.style_name}' already exists for user '{self.user.get_unique_alias()}'."
+                    " Please use PATCH to modify an existing style."
+                ),
+            )
+        param_validator = ParamValidator(prompt=self.args.prompt, models=self.models, params=self.params, user=self.user)
+        self.warnings = param_validator.validate_text_params()
+        param_validator.check_for_special()
+        param_validator.validate_text_prompt(self.args.prompt)
+
+
+class SingleTextStyle(SingleStyleTemplate):
+    gentype = "text"
+
+    @cache.cached(timeout=30)
+    @api.expect(SingleStyleTemplate.get_parser)
+    @api.marshal_with(
+        models.response_model_style,
+        code=200,
+        description="Lists text styles information",
+        as_list=False,
+    )
+    def get(self, style_id):
+        return super().get(style_id)
+
+    decorators = [
+        limiter.limit(
+            limit_value=lim.get_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
+        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+    ]
+
+    @api.expect(parsers.style_parser_patch, models.patch_model_style, validate=True)
+    @api.marshal_with(
+        models.response_model_styles_post,
+        code=202,
+        description="Style Updated",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    def patch(self, style_id):
+        return super().patch(style_id)
+
+    def validate(self):
+        if (
+            self.style_name is not None
+            and database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}")
+            and self.existing_style.name != self.style_name
+        ):
+            raise e.BadRequest(
+                (
+                    f"Style with name '{self.style_name}' already exists for user '{self.user.get_unique_alias()}'."
+                    " Please use a different name if you want to rename."
+                ),
+            )
+        prompt = self.args.prompt if self.args.prompt is not None else self.existing_style.prompt
+        models = self.models if len(self.models) > 0 else self.existing_style.get_model_names()
+        params = self.args.params if self.args.params is not None else self.existing_style.params
+        param_validator = ParamValidator(prompt=prompt, models=models, params=params, user=self.user)
+        self.warnings = param_validator.validate_text_params()
+        param_validator.check_for_special()
+        param_validator.validate_text_prompt(prompt)
+
+    @api.expect(SingleStyleTemplate.delete_parser)
+    @api.marshal_with(
+        models.response_model_simple_response,
+        code=200,
+        description="Operation Completed",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    def delete(self, style_id):
+        return super().delete(style_id)

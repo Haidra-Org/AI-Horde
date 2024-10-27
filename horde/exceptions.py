@@ -154,6 +154,7 @@ KNOWN_RC = [
     "StylesAnonForbidden",
     "StylePromptMissingVars",
     "StylesRequiresCustomizer",
+    "StyleMismatch",
 ]
 
 

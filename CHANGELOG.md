@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.44.0
+
+* Adds styles
+
 # 4.43.9
 
 * Prevent anon gens being visible at their profile page

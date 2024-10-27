@@ -31,7 +31,7 @@ class StyleCollection(db.Model):
     __tablename__ = "style_collections"
     __table_args__ = (
         UniqueConstraint(
-            "owner_id",
+            "user_id",
             "name",
             name="user_id_name",
         ),
@@ -46,8 +46,8 @@ class StyleCollection(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    owner = db.relationship("User", back_populates="style_collections")
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user = db.relationship("User", back_populates="style_collections")
     styles: Mapped[list[Style]] = db.relationship(secondary="style_collection_mapping", back_populates="collections")
 
 
@@ -79,7 +79,7 @@ class Style(db.Model):
     __tablename__ = "styles"
     __table_args__ = (
         UniqueConstraint(
-            "owner_id",
+            "user_id",
             "name",
             name="style_user_id_name",
         ),
@@ -100,8 +100,8 @@ class Style(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    owner_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    owner = db.relationship("User", back_populates="styles")
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user = db.relationship("User", back_populates="styles")
     collections: Mapped[list[StyleCollection]] = db.relationship(secondary="style_collection_mapping", back_populates="styles")
     models = db.relationship("StyleModel", back_populates="style", cascade="all, delete-orphan")
     tags = db.relationship("StyleTag", back_populates="style", cascade="all, delete-orphan")
@@ -152,7 +152,7 @@ class Style(db.Model):
             "prompt": self.prompt,
             "tags": self.get_tag_names(),
             "models": self.get_model_names(),
-            "creator": self.owner.get_unique_alias(),
+            "creator": self.user.get_unique_alias(),
             "use_count": self.use_count,
             "public": self.public,
             "nsfw": self.nsfw,

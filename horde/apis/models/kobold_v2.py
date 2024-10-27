@@ -460,11 +460,97 @@ class TextModels(v2.Models):
         self.input_model_style = api.model(
             "ModelStyleInputKobold",
             {
-                "prompt": fields.String(
+                "name": fields.String(
                     required=True,
-                    description="The prompt which will be sent to the LLM to generate an a text.",
+                    description="The name for the style. Case-sensitive and unique per user.",
                     min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Some information about this style.",
+                    example="photorealism excellence.",
+                    min_length=10,
+                    max_length=1000,
+                ),
+                "prompt": fields.String(
+                    required=False,
+                    description=(
+                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
+                        "The user's prompt will be injected into this."
+                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected."
+                    ),
+                    default="{p}",
+                    min_length=7,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this style will be listed among all styles publicly."
+                        "When false, information about this style can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "nsfw": fields.Boolean(
+                    default=False,
+                    description=("When true, it signified this style is expected to generare NSFW images primarily."),
+                ),
+                "tags": fields.List(
+                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                ),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+            },
+        )
+        self.patch_model_style = api.model(
+            "ModelStylePatchStable",
+            {
+                "name": fields.String(
+                    required=False,
+                    description="The name for the style. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Extra information about this style.",
+                    min_length=1,
+                    max_length=1000,
+                ),
+                "prompt": fields.String(
+                    required=False,
+                    description=(
+                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
+                        "The user's prompt will be injected into this."
+                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected."
+                    ),
+                    min_length=7,
+                ),
+                "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this style will be listed among all styles publicly."
+                        "When false, information about this style can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "nsfw": fields.Boolean(
+                    default=False,
+                    description=("When true, it signified this style is expected to generare NSFW images primarily."),
+                ),
+                "tags": fields.List(
+                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                ),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+            },
+        )
+        self.response_model_style = api.inherit(
+            "StyleKobold",
+            self.input_model_style,
+            {
+                "id": fields.String(
+                    description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
+                    example="00000000-0000-0000-0000-000000000000",
+                ),
+                "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
             },
         )

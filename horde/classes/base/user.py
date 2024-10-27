@@ -251,8 +251,8 @@ class User(db.Model):
 
     workers = db.relationship("Worker", back_populates="user", cascade="all, delete-orphan")
     teams = db.relationship("Team", back_populates="owner", cascade="all, delete-orphan")
-    styles = db.relationship("Style", back_populates="owner", cascade="all, delete-orphan")
-    style_collections = db.relationship("StyleCollection", back_populates="owner", cascade="all, delete-orphan")
+    styles = db.relationship("Style", back_populates="user", cascade="all, delete-orphan")
+    style_collections = db.relationship("StyleCollection", back_populates="user", cascade="all, delete-orphan")
     sharedkeys = db.relationship("UserSharedKey", back_populates="user", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
@@ -613,6 +613,14 @@ class User(db.Model):
             self.check_for_trust()
         else:
             self.modify_kudos(kudos, "accumulated")
+
+    def record_style(self, kudos, contrib_type):
+        self.update_user_record(
+            record_type=UserRecordTypes.STYLE,
+            record=contrib_type,
+            increment_value=1,
+        )
+        self.modify_kudos(kudos, "styled")
 
     def check_for_trust(self):
         """After a user passes the evaluation threshold (?? kudos)

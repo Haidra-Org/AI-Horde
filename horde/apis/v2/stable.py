@@ -357,6 +357,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.existing_style = database.get_style_by_name(self.args.style)
         if not self.existing_style:
             raise e.ThingNotFound("Style", self.args.style)
+        if self.existing_style.style_type != "image":
+            raise e.BadRequest("Text styles cannot be used on image requests", "StyleMismatch")
         self.models = self.existing_style.get_model_names()
         self.negprompt = ""
         if "###" in self.args.prompt:
@@ -367,6 +369,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.params = self.existing_style.params
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
+        self.existing_style.user.record_style(2, "image")
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
 
@@ -1342,7 +1345,7 @@ class ImageStyle(StyleTemplate):
     )
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=1, query_string=True)
+    @cache.cached(timeout=30, query_string=True)
     @api.expect(get_parser)
     @api.marshal_with(
         models.response_model_style,
@@ -1372,14 +1375,11 @@ class ImageStyle(StyleTemplate):
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def post(self):
-        # I have to extract and store them this way, because if I use the defaults
-        # It causes them to be a shared object from the parsers class
         self.params = {}
         self.warnings = set()
         self.args = parsers.style_parser.parse_args()
         if self.args.params:
             self.params = self.args.params
-        # For styles, we just store the models in the params
         self.models = []
         if self.args.models is not None:
             self.models = self.args.models.copy()
@@ -1407,7 +1407,7 @@ class ImageStyle(StyleTemplate):
         self.style_name = ensure_clean(self.args.name, "style name")
         self.validate()
         new_style = Style(
-            owner_id=self.user.id,
+            user_id=self.user.id,
             style_type=self.gentype,
             info=ensure_clean(self.args.info, "style info") if self.args.info is not None else "",
             name=self.style_name,
@@ -1436,14 +1436,13 @@ class ImageStyle(StyleTemplate):
         param_validator = ParamValidator(prompt=self.args.prompt, models=self.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
         param_validator.check_for_special()
-        logger.debug(self.args.prompt)
         param_validator.validate_image_prompt(self.args.prompt)
 
 
 class SingleImageStyle(SingleStyleTemplate):
     gentype = "image"
 
-    @cache.cached(timeout=1)
+    @cache.cached(timeout=30)
     @api.expect(SingleStyleTemplate.get_parser)
     @api.marshal_with(
         models.response_model_style,
@@ -1492,6 +1491,7 @@ class SingleImageStyle(SingleStyleTemplate):
         param_validator = ParamValidator(prompt=prompt, models=models, params=params, user=self.user)
         self.warnings = param_validator.validate_image_params()
         param_validator.check_for_special()
+        param_validator.validate_image_prompt(prompt)
 
     @api.expect(SingleStyleTemplate.delete_parser)
     @api.marshal_with(

@@ -165,7 +165,7 @@ class WaitingPrompt(db.Model):
             model_entry = WPModels(model=model, wp_id=self.id)
             db.session.add(model_entry)
 
-    def activate(self, downgrade_wp_priority=False, extra_source_images=None):
+    def activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         """
@@ -187,6 +187,7 @@ class WaitingPrompt(db.Model):
             self.extra_source_images = {"esi": extra_source_images}
             # Extra source images add more infrastructure costs, which are represented with a kudos tax
             horde_tax += 5 * len(extra_source_images)
+        horde_tax += kudos_adjustment
         self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
         # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
         db.session.commit()

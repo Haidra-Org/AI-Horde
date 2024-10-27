@@ -909,6 +909,10 @@ class Models:
                     default=0,
                     description="The amount of Kudos this user has been awarded from things like rating images.",
                 ),
+                "styled": fields.Float(
+                    default=0,
+                    description="The amount of Kudos this user has been awarded for styling other people's requests.",
+                ),
             },
         )
 
@@ -1037,11 +1041,11 @@ class Models:
             "UserAmountRecords",
             {
                 "image": fields.Integer(
-                    description="How many images this user has generated or requested.",
+                    description="How many images this user has generated, requested or styled.",
                     default=0,
                 ),
                 "text": fields.Integer(
-                    description="How many texts this user has generated or requested.",
+                    description="How many texts this user has generated, requested or styled.",
                     default=0,
                 ),
                 "interrogation": fields.Integer(
@@ -1058,6 +1062,7 @@ class Models:
                 "contribution": fields.Nested(self.response_model_user_thing_records),
                 "fulfillment": fields.Nested(self.response_model_user_amount_records),
                 "request": fields.Nested(self.response_model_user_amount_records),
+                "style": fields.Nested(self.response_model_user_amount_records),
             },
         )
 
