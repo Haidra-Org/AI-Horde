@@ -873,6 +873,17 @@ class User(db.Model):
             # unnecessary information, since the workers themselves wil be visible
             # "public_workers": self.public_workers,
         }
+        styles_array = []
+        for s in self.styles:
+            if s.public or details_privilege >= 1:
+                styles_array.append(
+                    {
+                        "name": s.get_unique_name(),
+                        "id": str(s.id),
+                        "type": str(s.style_type),
+                    },
+                )
+        ret_dict["styles"] = styles_array
         if self.public_workers or details_privilege >= 1:
             workers_array = []
             for worker in self.workers:

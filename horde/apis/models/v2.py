@@ -1090,6 +1090,24 @@ class Models:
             },
         )
 
+        self.response_model_user_styles = api.model(
+            "UserStyles",
+            {
+                "name": fields.String(
+                    description="The unique name for this style",
+                    example="db0#1::style::my awesome style",
+                ),
+                "id": fields.String(
+                    description="The ID of this style",
+                    example="00000000-0000-0000-0000-000000000000",
+                ),
+                "type": fields.String(
+                    description="The style type, image or text",
+                    enum=["image", "text"],
+                ),
+            },
+        )
+
         self.response_model_user_details = api.model(
             "UserDetails",
             {
@@ -1127,6 +1145,7 @@ class Models:
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
+                "styles": fields.List(fields.Nested(self.response_model_user_styles)),
                 "sharedkey_ids": fields.List(
                     fields.String(
                         description="(Privileged) The list of shared key IDs created by this user.",

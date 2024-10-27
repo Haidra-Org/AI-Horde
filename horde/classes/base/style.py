@@ -200,3 +200,6 @@ class Style(db.Model):
             tag = StyleTag(style_id=self.id, tag=tag_name)
             db.session.add(tag)
         db.session.commit()
+
+    def get_unique_name(self):
+        return f"{self.user.get_unique_alias()}::style::{self.name}"
