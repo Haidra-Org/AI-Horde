@@ -357,6 +357,13 @@ class TextModels(v2.Models):
                         "The request will include the details of the job as well as the request ID."
                     ),
                 ),
+                "style": fields.String(
+                    required=False,
+                    max_length=1024,
+                    min_length=3,
+                    example="00000000-0000-0000-0000-000000000000",
+                    description=("A horde style ID or name to use for this generation"),
+                ),
                 "extra_slow_workers": fields.Boolean(
                     default=False,
                     description=(
@@ -481,7 +488,7 @@ class TextModels(v2.Models):
                         " This argument MUST include a {p} which specifies the part where the user's prompt will be injected."
                     ),
                     default="{p}",
-                    min_length=7,
+                    min_length=3,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
                 "public": fields.Boolean(

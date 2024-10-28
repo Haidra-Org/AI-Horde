@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from collections import defaultdict
 from datetime import datetime
 
 import requests
@@ -12,7 +13,15 @@ import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
-from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, SingleStyleTemplate, StyleTemplate, api
+from horde.apis.v2.base import (
+    GenerateTemplate,
+    JobPopTemplate,
+    JobSubmitTemplate,
+    SingleStyleTemplate,
+    SingleStyleTemplateGet,
+    StyleTemplate,
+    api,
+)
 from horde.classes.base import settings
 from horde.classes.base.style import Style
 from horde.classes.base.user import User
@@ -365,7 +374,9 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.prompt, self.negprompt = self.args.prompt.split("###", 1)
         if "###" not in self.existing_style.prompt and self.negprompt != "" and "###" not in self.negprompt:
             self.negprompt = "###" + self.negprompt
-        self.prompt = self.existing_style.prompt.format(p=self.prompt, np=self.negprompt)
+        # We need to use defaultdict to avoid getting keyerrors in case the style author added
+        # Erroneous keys in the string
+        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.args.prompt, np=self.negprompt))
         self.params = self.existing_style.params
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
@@ -1451,7 +1462,7 @@ class SingleImageStyle(SingleStyleTemplate):
         as_list=False,
     )
     def get(self, style_id):
-        return super().get(style_id)
+        return super().get_through_id(style_id)
 
     decorators = [
         limiter.limit(
@@ -1504,3 +1515,21 @@ class SingleImageStyle(SingleStyleTemplate):
     @api.response(401, "Invalid API Key", models.response_model_error)
     def delete(self, style_id):
         return super().delete(style_id)
+
+
+class SingleImageStyleByName(SingleStyleTemplateGet):
+    gentype = "image"
+
+    @cache.cached(timeout=30)
+    @api.expect(SingleStyleTemplate.get_parser)
+    @api.marshal_with(
+        models.response_model_style,
+        code=200,
+        description="Lists image style information by name",
+        as_list=False,
+    )
+    def get(self, style_name):
+        self.existing_style = database.get_style_by_name(style_name)
+        if not self.existing_style:
+            raise e.ThingNotFound("Style", style_name)
+        return super().get_existing_style()

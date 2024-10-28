@@ -3169,7 +3169,7 @@ class StyleTemplate(Resource):
         pass
 
 
-class SingleStyleTemplate(Resource):
+class SingleStyleTemplateGet(Resource):
     gentype = "template"
 
     get_parser = reqparse.RequestParser()
@@ -3182,11 +3182,22 @@ class SingleStyleTemplate(Resource):
         location="headers",
     )
 
-    def get(self, style_id):
-        existing_style = database.get_style_by_uuid(style_id)
-        if not existing_style:
+    def get_existing_style(self):
+        if self.existing_style.style_type != self.gentype:
+            raise e.BadRequest(
+                f"Style was found but was of the wrong type: {self.existing_style.style_type} != {self.gentype}",
+                "StyleGetMistmatch",
+            )
+        return self.existing_style.get_details()
+
+    def get_through_id(self, style_id):
+        self.existing_style = database.get_style_by_uuid(style_id)
+        if not self.existing_style:
             raise e.ThingNotFound("Image Style", style_id)
-        return existing_style.get_details()
+        return self.get_existing_style()
+
+
+class SingleStyleTemplate(SingleStyleTemplateGet):
 
     def patch(self, style_id):
         self.params = {}

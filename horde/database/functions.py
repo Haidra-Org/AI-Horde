@@ -1554,8 +1554,6 @@ def get_style_by_name(style_name: str):
     db0#1::my_stylename
     """
     style_split = style_name.split("::")
-    logger.debug(style_name)
-    logger.debug(style_split)
     user = None
     is_collection = None
     if len(style_split) == 3:

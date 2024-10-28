@@ -155,6 +155,7 @@ KNOWN_RC = [
     "StylePromptMissingVars",
     "StylesRequiresCustomizer",
     "StyleMismatch",
+    "StyleGetMistmatch",
 ]
 
 

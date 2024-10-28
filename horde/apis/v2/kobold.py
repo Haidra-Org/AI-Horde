@@ -2,13 +2,23 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from collections import defaultdict
+
 from flask import request
 from flask_restx import Resource, reqparse
 
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
-from horde.apis.v2.base import GenerateTemplate, JobPopTemplate, JobSubmitTemplate, SingleStyleTemplate, StyleTemplate, api
+from horde.apis.v2.base import (
+    GenerateTemplate,
+    JobPopTemplate,
+    JobSubmitTemplate,
+    SingleStyleTemplate,
+    SingleStyleTemplateGet,
+    StyleTemplate,
+    api,
+)
 from horde.classes.base import settings
 from horde.classes.base.style import Style
 from horde.classes.kobold.genstats import (
@@ -66,10 +76,11 @@ class TextAsyncGenerate(GenerateTemplate):
         self.args = parsers.generate_parser.parse_args()
         try:
             super().post()
-        except KeyError:
+        except KeyError as e:
             logger.error("caught missing Key.")
             logger.error(self.args)
             logger.error(self.args.params)
+            raise e
             return {"message": "Internal Server Error"}, 500
         if self.args.dry_run:
             ret_dict = {"kudos": round(self.kudos)}
@@ -158,7 +169,7 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def validate(self):
         super().validate()
-        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params)
+        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
             raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
@@ -178,12 +189,15 @@ class TextAsyncGenerate(GenerateTemplate):
         self.existing_style = database.get_style_by_uuid(self.args.style)
         if not self.existing_style:
             self.existing_style = database.get_style_by_name(self.args.style)
+        logger.debug(self.existing_style)
         if not self.existing_style:
             raise e.ThingNotFound("Style", self.args.style)
         if self.existing_style.style_type != "text":
             raise e.BadRequest("Image styles cannot be used on image requests", "StyleMismatch")
         self.models = self.existing_style.get_model_names()
-        self.prompt = self.existing_style.prompt.format(p=self.args.prompt)
+        # We need to use defaultdict to avoid getting keyerrors in case the style author added
+        # Erroneous keys in the string
+        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.args.prompt))
         self.params = self.existing_style.params
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
@@ -571,7 +585,7 @@ class SingleTextStyle(SingleStyleTemplate):
         as_list=False,
     )
     def get(self, style_id):
-        return super().get(style_id)
+        return super().get_through_id(style_id)
 
     decorators = [
         limiter.limit(
@@ -624,3 +638,21 @@ class SingleTextStyle(SingleStyleTemplate):
     @api.response(401, "Invalid API Key", models.response_model_error)
     def delete(self, style_id):
         return super().delete(style_id)
+
+
+class SingleImageStyleByName(SingleStyleTemplateGet):
+    gentype = "text"
+
+    @cache.cached(timeout=30)
+    @api.expect(SingleStyleTemplate.get_parser)
+    @api.marshal_with(
+        models.response_model_style,
+        code=200,
+        description="Lists image style information by name",
+        as_list=False,
+    )
+    def get(self, style_name):
+        self.existing_style = database.get_style_by_name(style_name)
+        if not self.existing_style:
+            raise e.ThingNotFound("Style", style_name)
+        return super().get_existing_style()
