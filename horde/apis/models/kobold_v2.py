@@ -509,7 +509,7 @@ class TextModels(v2.Models):
             },
         )
         self.patch_model_style = api.model(
-            "ModelStylePatchStable",
+            "ModelStylePatchKobold",
             {
                 "name": fields.String(
                     required=False,

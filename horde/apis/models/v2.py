@@ -1090,8 +1090,8 @@ class Models:
             },
         )
 
-        self.response_model_user_styles = api.model(
-            "UserStyles",
+        self.response_model_styles_short = api.model(
+            "ResponseModelStylesShort",
             {
                 "name": fields.String(
                     description="The unique name for this style",
@@ -1101,6 +1101,13 @@ class Models:
                     description="The ID of this style",
                     example="00000000-0000-0000-0000-000000000000",
                 ),
+            },
+        )
+
+        self.response_model_styles_user = api.inherit(
+            "ResponseModelStylesUser",
+            self.response_model_styles_short,
+            {
                 "type": fields.String(
                     description="The style type, image or text",
                     enum=["image", "text"],
@@ -1145,7 +1152,7 @@ class Models:
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
-                "styles": fields.List(fields.Nested(self.response_model_user_styles)),
+                "styles": fields.List(fields.Nested(self.response_model_styles_user)),
                 "sharedkey_ids": fields.List(
                     fields.String(
                         description="(Privileged) The list of shared key IDs created by this user.",
@@ -1767,5 +1774,67 @@ class Models:
                     description="Any extra information from the horde about this request.",
                 ),
                 "warnings": fields.List(fields.Nested(self.response_model_warning)),
+            },
+        )
+
+        # Collections
+
+        self.input_model_collection = api.model(
+            "InputModelCollection",
+            {
+                "name": fields.String(
+                    required=False,
+                    description="The name for the collection. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Extra information about this collection.",
+                    min_length=1,
+                    max_length=1000,
+                ),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this collection will be listed among all collections publicly."
+                        "When false, information about this collection can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "styles": fields.List(fields.String(description="The styles to use in this collection.", min_length=1)),
+            },
+        )
+
+        self.response_model_collection = api.model(
+            "ResponseModelCollection",
+            {
+                "id": fields.String(
+                    description="The UUID of the collection. Use this to use this collection of retrieve its information in the future.",
+                ),
+                "name": fields.String(
+                    required=False,
+                    description="The name for the collection. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "type": fields.String(
+                    required=False,
+                    description="The kind of styles stored in this collection.",
+                    enum=["image", "text"],
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Extra information about this collection.",
+                    min_length=1,
+                    max_length=1000,
+                ),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this collection will be listed among all collection publicly."
+                        "When false, information about this collection can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "styles": fields.List(fields.Nested(self.response_model_styles_short)),
             },
         )

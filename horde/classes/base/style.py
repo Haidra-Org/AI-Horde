@@ -50,6 +50,38 @@ class StyleCollection(db.Model):
     user = db.relationship("User", back_populates="style_collections")
     styles: Mapped[list[Style]] = db.relationship(secondary="style_collection_mapping", back_populates="collections")
 
+    def create(self, styles):
+        for st in styles:
+            self.styles.append(st)
+        db.session.add(self)
+        db.session.commit()
+
+    # Should be extended by each specific horde
+    @logger.catch(reraise=True)
+    def get_details(self, details_privilege=0):
+        """We display these in the collections list json"""
+        ret_dict = {
+            "name": self.name,
+            "id": self.id,
+            "creator": self.user.get_unique_alias(),
+            "use_count": self.use_count,
+            "public": self.public,
+            "type": self.style_type,
+        }
+        styles_array = []
+        for s in self.styles:
+            styles_array.append(
+                {
+                    "name": s.get_unique_name(),
+                    "id": str(s.id),
+                },
+            )
+        ret_dict["styles"] = styles_array
+        return ret_dict
+
+    def get_model_names(self):
+        return [m.model for m in self.models]
+
 
 class StyleTag(db.Model):
     __tablename__ = "style_tags"
@@ -107,10 +139,8 @@ class Style(db.Model):
     tags = db.relationship("StyleTag", back_populates="style", cascade="all, delete-orphan")
 
     def create(self):
-        logger.debug(self.prompt)
         db.session.add(self)
         db.session.commit()
-        logger.debug(self.prompt)
 
     def set_name(self, new_name):
         if self.name == new_name:
@@ -144,7 +174,7 @@ class Style(db.Model):
     # Should be extended by each specific horde
     @logger.catch(reraise=True)
     def get_details(self, details_privilege=0):
-        """We display these in the workers list json"""
+        """We display these in the styles list json"""
         ret_dict = {
             "name": self.name,
             "id": self.id,

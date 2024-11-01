@@ -1607,3 +1607,20 @@ def retrieve_available_styles(
         style_query = style_query.filter(StyleModel.model == model)
     style_order_by = Style.created.asc() if sort == "age" else Style.use_count.desc()
     return style_query.order_by(style_order_by).offset(page).limit(25).all()
+
+
+def retrieve_available_collections(
+    collection_type=None,
+    sort="popular",
+    public_only=True,
+    page=0,
+):
+    """Retrieves all collection details from DB."""
+    logger.debug([collection_type, sort, public_only, page])
+    style_query = db.session.query(StyleCollection)
+    if collection_type is not None:
+        style_query = style_query.filter_by(style_type=collection_type)
+    if public_only:
+        style_query = style_query.filter(StyleCollection.public.is_(True))
+    style_order_by = StyleCollection.created.asc() if sort == "age" else StyleCollection.use_count.desc()
+    return style_query.order_by(style_order_by).offset(page).limit(25).all()

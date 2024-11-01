@@ -1355,7 +1355,6 @@ class ImageStyle(StyleTemplate):
         location="args",
     )
 
-    @logger.catch(reraise=True)
     @cache.cached(timeout=30, query_string=True)
     @api.expect(get_parser)
     @api.marshal_with(

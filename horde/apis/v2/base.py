@@ -23,6 +23,7 @@ from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
 from horde.classes.base.news import News
+from horde.classes.base.style import StyleCollection
 from horde.classes.base.team import Team, find_team_by_id, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -3294,10 +3295,178 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         self.existing_style = database.get_style_by_uuid(style_id)
         if not self.existing_style:
             raise e.ThingNotFound("Style", style_id)
-        if self.existing_style.user_id != self.user.id:
+        if self.existing_style.user_id != self.user.id and not self.existing_style.user.moderator:
             raise e.Forbidden(f"This Style is not owned by user {self.user.get_unique_alias()}")
+        if self.existing_style.user_id != self.user.id and self.existing_style.user.moderator:
+            logger.info(f"Moderator {self.existing_style.user.moderator} deleted style {self.existing_style.id}")
         self.existing_style.delete()
         return ({"message": "OK"}, 200)
+
+
+## Collections
+
+
+class Collection(Resource):
+    args = None
+
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "sort",
+        required=False,
+        default="popular",
+        type=str,
+        help="How to sort returned styles. 'popular' sorts by usage and 'age' sorts by date added.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "page",
+        required=False,
+        default=1,
+        type=int,
+        help="Which page of results to return. Each page has 25 styles.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "type",
+        required=False,
+        default="all",
+        type=str,
+        help="Filter by type. Accepts either 'image', 'text' or 'all'.",
+        location="args",
+    )
+
+    @cache.cached(timeout=30, query_string=True)
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_collection,
+        code=200,
+        description="Lists collection information",
+        as_list=True,
+    )
+    def get(self):
+        self.args = self.get_parser.parse_args()
+        if self.args.sort not in ["popular", "age"]:
+            raise e.BadRequest("'model_state' needs to be one of ['popular', 'age']")
+        if self.args.type not in ["all", "image", "text"]:
+            raise e.BadRequest("'type' needs to be one of ['all', 'image', 'text']")
+        logger.debug([self.args.sort, self.args.page - 1, self.args.type])
+        collections = database.retrieve_available_collections(
+            sort=self.args.sort,
+            page=self.args.page - 1,
+            collection_type=self.args.type if self.args.type in ["image", "text"] else None,
+        )
+        logger.debug(collections)
+        collections_ret = [co.get_details() for co in collections]
+        return collections_ret, 200
+
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument(
+        "apikey",
+        type=str,
+        required=True,
+        help="The API Key corresponding to a registered user.",
+        location="headers",
+    )
+    post_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+    post_parser.add_argument(
+        "name",
+        type=str,
+        required=True,
+        location="json",
+    )
+    post_parser.add_argument(
+        "info",
+        type=str,
+        required=False,
+        location="json",
+    )
+    post_parser.add_argument(
+        "public",
+        type=bool,
+        default=True,
+        required=False,
+        location="json",
+    )
+    post_parser.add_argument(
+        "styles",
+        type=list,
+        required=False,
+        location="json",
+    )
+
+    decorators = [
+        limiter.limit(
+            limit_value=lim.get_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
+        ),
+        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+    ]
+
+    @api.expect(post_parser, models.input_model_collection, validate=True)
+    @api.marshal_with(
+        models.response_model_styles_post,
+        code=202,
+        description="Collection Added",
+        skip_none=True,
+    )
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    def post(self):
+        self.warnings = set()
+        # For styles, we just store the models in the params
+        self.styles = []
+        styles_type = None
+        self.args = self.post_parser.parse_args()
+        if self.args.styles:
+            if len(self.args.styles) < 1:
+                raise e.BadRequest("A collection has to include at least 1 style")
+        else:
+            raise e.BadRequest("A collection has to include at least 1 style")
+        self.user = database.find_user_by_api_key(self.args["apikey"])
+        if not self.user:
+            raise e.InvalidAPIKey("Collection POST")
+        if self.user.is_anon():
+            raise e.Forbidden("Anonymous users cannot create collections", rc="StylesAnonForbidden")
+        for st in self.args.styles:
+            existing_style = database.get_style_by_uuid(st)
+            if not existing_style:
+                existing_style = database.get_style_by_name(st)
+                if not existing_style:
+                    raise e.BadRequest(f"A style with name '{st}' cannot be found")
+                if styles_type is None:
+                    styles_type = existing_style.style_type
+                elif styles_type != existing_style.style_type:
+                    raise e.BadRequest("Cannot mix image and text styles in the same collection")
+            self.styles.append(existing_style)
+        self.collection_name = ensure_clean(self.args.name, "collection name")
+        new_collection = StyleCollection(
+            user_id=self.user.id,
+            style_type=styles_type,
+            info=ensure_clean(self.args.info, "collection info") if self.args.info is not None else "",
+            name=self.collection_name,
+            public=self.args.public,
+        )
+        new_collection.create(self.styles)
+        return {
+            "id": new_collection.id,
+            "message": "OK",
+            "warnings": self.warnings,
+        }, 200
 
 
 # style: sfw bool
