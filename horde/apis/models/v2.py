@@ -11,6 +11,29 @@ from horde.vars import horde_noun, horde_title
 
 class Parsers:
     def __init__(self):
+        # A Basic parser which only expects a Client-Agent
+        self.basic_parser = reqparse.RequestParser()
+        self.basic_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+
+        # A Basic parser which only expects a Client-Agent and an API Key
+        self.apikey_parser = reqparse.RequestParser()
+        self.apikey_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
+        self.apikey_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+
         self.generate_parser = reqparse.RequestParser()
         self.generate_parser.add_argument(
             "apikey",

@@ -577,7 +577,7 @@ class SingleTextStyle(SingleStyleTemplate):
     gentype = "text"
 
     @cache.cached(timeout=30)
-    @api.expect(SingleStyleTemplate.get_parser)
+    @api.expect(parsers.basic_parser)
     @api.marshal_with(
         models.response_model_style,
         code=200,
@@ -627,7 +627,7 @@ class SingleTextStyle(SingleStyleTemplate):
         param_validator.check_for_special()
         param_validator.validate_text_prompt(prompt)
 
-    @api.expect(SingleStyleTemplate.delete_parser)
+    @api.expect(parsers.apikey_parser)
     @api.marshal_with(
         models.response_model_simple_response,
         code=200,
@@ -644,7 +644,7 @@ class SingleImageStyleByName(SingleStyleTemplateGet):
     gentype = "text"
 
     @cache.cached(timeout=30)
-    @api.expect(SingleStyleTemplate.get_parser)
+    @api.expect(parsers.basic_parser)
     @api.marshal_with(
         models.response_model_style,
         code=200,
@@ -652,7 +652,7 @@ class SingleImageStyleByName(SingleStyleTemplateGet):
         as_list=False,
     )
     def get(self, style_name):
-        self.existing_style = database.get_style_by_name(style_name)
+        self.existing_style = database.get_style_by_name(style_name, is_collection=False)
         if not self.existing_style:
             raise e.ThingNotFound("Style", style_name)
         return super().get_existing_style()

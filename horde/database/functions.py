@@ -1528,22 +1528,24 @@ def get_all_users(sort="kudos", offset=0):
     return db.session.query(User).order_by(user_order_by).offset(offset).limit(25).all()
 
 
-def get_style_by_uuid(style_uuid: str):
+def get_style_by_uuid(style_uuid: str, is_collection=None):
     try:
         style_uuid = uuid.UUID(style_uuid)
     except ValueError:
         return None
     if SQLITE_MODE:
         style_uuid = str(style_uuid)
-    style = db.session.query(Style).filter_by(id=style_uuid).first()
-    if not style:
+    style = None
+    if is_collection is not True:
+        style = db.session.query(Style).filter_by(id=style_uuid).first()
+    if is_collection is True or not style:
         collection = db.session.query(StyleCollection).filter_by(id=style_uuid).first()
         return collection
     else:
         return style
 
 
-def get_style_by_name(style_name: str):
+def get_style_by_name(style_name: str, is_collection=None):
     """Goes through the styles and the categories and attempts to find a
     style or category that matches the given name
     The user can pre-specify a filter for category or style and/or username
@@ -1555,20 +1557,24 @@ def get_style_by_name(style_name: str):
     """
     style_split = style_name.split("::")
     user = None
-    is_collection = None
+    # We don't change the is_collection if it comes preset in kwargs, as we then want it explicitly to return none
+    # When searching for styles in collections and vice-versa
     if len(style_split) == 3:
         style_name = style_split[2]
-        if style_split[0] == "collection":
-            is_collection = True
-        elif style_split[0] == "style":
-            is_collection = False
+        if is_collection is None:
+            if style_split[0] == "collection":
+                is_collection = True
+            elif style_split[0] == "style":
+                is_collection = False
         user = find_user_by_username(style_split[1])
     if len(style_split) == 2:
         style_name = style_split[1]
         if style_split[0] == "collection":
-            is_collection = True
+            if is_collection is None:
+                is_collection = True
         elif style_split[0] == "style":
-            is_collection = False
+            if is_collection is None:
+                is_collection = False
         else:
             user = find_user_by_username(style_split[0])
     seek_classes = [Style, StyleCollection]
@@ -1616,7 +1622,6 @@ def retrieve_available_collections(
     page=0,
 ):
     """Retrieves all collection details from DB."""
-    logger.debug([collection_type, sort, public_only, page])
     style_query = db.session.query(StyleCollection)
     if collection_type is not None:
         style_query = style_query.filter_by(style_type=collection_type)

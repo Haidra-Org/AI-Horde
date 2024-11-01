@@ -82,6 +82,10 @@ class StyleCollection(db.Model):
     def get_model_names(self):
         return [m.model for m in self.models]
 
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+
 
 class StyleTag(db.Model):
     __tablename__ = "style_tags"
