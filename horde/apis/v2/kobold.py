@@ -609,7 +609,7 @@ class SingleTextStyle(SingleStyleTemplate):
     @api.expect(parsers.style_parser_patch, models.patch_model_style, validate=True)
     @api.marshal_with(
         models.response_model_styles_post,
-        code=0,
+        code=200,
         description="Style Updated",
         skip_none=True,
     )
