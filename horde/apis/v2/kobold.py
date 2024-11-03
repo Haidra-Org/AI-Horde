@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import random
 from collections import defaultdict
 
 from flask import request
@@ -20,7 +21,7 @@ from horde.apis.v2.base import (
     api,
 )
 from horde.classes.base import settings
-from horde.classes.base.style import Style
+from horde.classes.base.style import Style, StyleCollection
 from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
     get_compiled_textgen_stats_totals,
@@ -194,6 +195,11 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e.ThingNotFound("Style", self.args.style)
         if self.existing_style.style_type != "text":
             raise e.BadRequest("Image styles cannot be used on image requests", "StyleMismatch")
+        if isinstance(self.existing_style, StyleCollection):
+            colstyles = self.existing_style.styles
+            random.shuffle(colstyles)
+            self.existing_style.use_count += 1
+            self.existing_style = colstyles[0]
         self.models = self.existing_style.get_model_names()
         # We need to use defaultdict to avoid getting keyerrors in case the style author added
         # Erroneous keys in the string

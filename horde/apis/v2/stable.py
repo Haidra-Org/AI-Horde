@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import random
 from collections import defaultdict
 from datetime import datetime
 
@@ -23,7 +24,7 @@ from horde.apis.v2.base import (
     api,
 )
 from horde.classes.base import settings
-from horde.classes.base.style import Style
+from horde.classes.base.style import Style, StyleCollection
 from horde.classes.base.user import User
 from horde.classes.stable.genstats import (
     get_compiled_imagegen_stats_models,
@@ -368,6 +369,11 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.ThingNotFound("Style", self.args.style)
         if self.existing_style.style_type != "image":
             raise e.BadRequest("Text styles cannot be used on image requests", "StyleMismatch")
+        if isinstance(self.existing_style, StyleCollection):
+            colstyles = self.existing_style.styles
+            random.shuffle(colstyles)
+            self.existing_style.use_count += 1
+            self.existing_style = colstyles[0]
         self.models = self.existing_style.get_model_names()
         self.negprompt = ""
         if "###" in self.args.prompt:
