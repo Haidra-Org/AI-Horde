@@ -769,6 +769,7 @@ def count_things_for_specific_model(wp_class, procgen_class, model_name):
     return things, jobs
 
 
+@logger.catch(reraise=True)
 def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, priority_user_ids=None, page=0):
     # This is just the top 3 - Adjusted method to send ImageWorker object. Filters to add.
     # TODO: Filter by ImageWorker not in WP.tricked_worker
@@ -777,10 +778,8 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     final_wp_list = (
         db.session.query(ImageWaitingPrompt)
         .options(noload(ImageWaitingPrompt.processing_gens))
-        .outerjoin(
-            WPModels,
-            WPAllowedWorkers,
-        )
+        .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
+        .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.active == True,  # noqa E712
