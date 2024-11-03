@@ -155,7 +155,7 @@ class WorkerTemplate(db.Model):
     def speed(cls):
         performance_avg = db.select(func.avg(WorkerPerformance.performance)).where(WorkerPerformance.worker_id == cls.id).label("speed")
         return db.case(
-            [(performance_avg == None, 1 * hv.thing_divisors[cls.wtype])],  # noqa E712
+            (performance_avg == None, 1 * hv.thing_divisors[cls.wtype]),  # noqa E712
             else_=performance_avg,
         )
 

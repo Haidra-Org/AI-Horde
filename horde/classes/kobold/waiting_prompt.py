@@ -62,10 +62,10 @@ class TextWaitingPrompt(WaitingPrompt):
         self.gen_payload["n"] = 1
         db.session.commit()
 
-    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None):
+    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None, kudos_adjustment=0):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images)
+        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images, kudos_adjustment=kudos_adjustment)
         proxied_account = ""
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"

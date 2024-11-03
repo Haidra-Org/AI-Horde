@@ -1,4 +1,3 @@
--- SPDX-FileCopyrightText: 2024 2022 Tazlin
 -- SPDX-FileCopyrightText: 2024 Tazlin
 --
 -- SPDX-License-Identifier: AGPL-3.0-or-later

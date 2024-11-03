@@ -26,6 +26,7 @@ class UserRecordTypes(enum.Enum):
     USAGE = 1
     FULFILLMENT = 3
     REQUEST = 4
+    STYLE = 5
 
 
 class UserRoleTypes(enum.Enum):

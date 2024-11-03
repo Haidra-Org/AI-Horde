@@ -107,10 +107,9 @@ class TextModels(v2.Models):
                 "generations": fields.List(fields.Nested(self.response_model_generation_result)),
             },
         )
-        self.root_model_generation_payload_kobold = api.model(
-            "ModelPayloadRootKobold",
+        self.root_model_generation_payload_style_kobold = api.model(
+            "ModelPayloadStyleKobold",
             {
-                "n": fields.Integer(example=1, min=1, max=20),
                 "frmtadsnsp": fields.Boolean(
                     example=False,
                     description=(
@@ -137,18 +136,6 @@ class TextModels(v2.Models):
                         "If the output is less than one sentence long, does nothing."
                     ),
                 ),
-                "max_context_length": fields.Integer(
-                    min=80,
-                    default=1024,
-                    max=32000,
-                    description="Maximum number of tokens to send to the model.",
-                ),
-                "max_length": fields.Integer(
-                    min=16,
-                    max=1024,
-                    default=80,
-                    description="Number of tokens to generate.",
-                ),
                 "rep_pen": fields.Float(description="Base repetition penalty value.", min=1, max=3),
                 "rep_pen_range": fields.Integer(description="Repetition penalty range.", min=0, max=4096),
                 "rep_pen_slope": fields.Float(description="Repetition penalty slope.", min=0, max=10),
@@ -159,12 +146,6 @@ class TextModels(v2.Models):
                         "including the newline."
                     ),
                 ),
-                # "soft_prompt": fields.String(
-                #     description=(
-                #         "Soft prompt to use when generating. If set to the empty string or any other string containing "
-                #         "no non-whitespace characters, uses no soft prompt."
-                #     )
-                # ),
                 "temperature": fields.Float(description="Temperature value.", min=0, max=5.0),
                 "tfs": fields.Float(description="Tail free sampling value.", min=0.0, max=1.0),
                 "top_a": fields.Float(description="Top-a sampling value.", min=0.0, max=1.0),
@@ -202,6 +183,32 @@ class TextModels(v2.Models):
                 ),
             },
         )
+        self.root_model_generation_payload_kobold = api.inherit(
+            "ModelPayloadRootKobold",
+            self.root_model_generation_payload_style_kobold,
+            {
+                "n": fields.Integer(example=1, min=1, max=20),
+                "max_context_length": fields.Integer(
+                    min=80,
+                    default=1024,
+                    max=32000,
+                    description="Maximum number of tokens to send to the model.",
+                ),
+                "max_length": fields.Integer(
+                    min=16,
+                    max=1024,
+                    default=80,
+                    description="Number of tokens to generate.",
+                ),
+                # "soft_prompt": fields.String(
+                #     description=(
+                #         "Soft prompt to use when generating. If set to the empty string or any other string containing "
+                #         "no non-whitespace characters, uses no soft prompt."
+                #     )
+                # ),
+            },
+        )
+        # The pop response playload
         self.response_model_generation_payload = api.inherit(
             "ModelPayloadKobold",
             self.root_model_generation_payload_kobold,
@@ -209,6 +216,7 @@ class TextModels(v2.Models):
                 "prompt": fields.String(description="The prompt which will be sent to KoboldAI to generate the text."),
             },
         )
+        # The generation input
         self.input_model_generation_payload = api.inherit(
             "ModelGenerationInputKobold",
             self.root_model_generation_payload_kobold,
@@ -349,6 +357,13 @@ class TextModels(v2.Models):
                         "The request will include the details of the job as well as the request ID."
                     ),
                 ),
+                "style": fields.String(
+                    required=False,
+                    max_length=1024,
+                    min_length=3,
+                    example="00000000-0000-0000-0000-000000000000",
+                    description=("A horde style ID or name to use for this generation"),
+                ),
                 "extra_slow_workers": fields.Boolean(
                     default=False,
                     description=(
@@ -440,5 +455,122 @@ class TextModels(v2.Models):
             self.input_model_job_submit,
             {
                 "gen_metadata": fields.List(fields.Nested(self.model_job_metadata)),
+            },
+        )
+
+        # Styles
+        self.input_model_style_params = api.inherit(
+            "ModelStyleInputParamsKobold",
+            self.root_model_generation_payload_style_kobold,
+            {},
+        )
+        self.input_model_style = api.model(
+            "ModelStyleInputKobold",
+            {
+                "name": fields.String(
+                    required=True,
+                    example="My Awesome Text Style",
+                    description="The name for the style. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Some information about this style.",
+                    example="Dark, brooding vibes",
+                    min_length=10,
+                    max_length=1000,
+                ),
+                "prompt": fields.String(
+                    required=False,
+                    description=(
+                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
+                        "The user's prompt will be injected into this."
+                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
+                    ),
+                    default="{p}",
+                    min_length=3,
+                ),
+                "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this style will be listed among all styles publicly."
+                        "When false, information about this style can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "nsfw": fields.Boolean(
+                    default=False,
+                    description=("When true, it signified this style is expected to generare NSFW images primarily."),
+                ),
+                "tags": fields.List(
+                    fields.String(
+                        description="Tags describing this style. Used for filtering and discovery.",
+                        min_length=1,
+                        max_length=25,
+                        example="dark",
+                    ),
+                ),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1, example="llama3")),
+            },
+        )
+        self.patch_model_style = api.model(
+            "ModelStylePatchKobold",
+            {
+                "name": fields.String(
+                    required=False,
+                    example="My Awesome Text Style",
+                    description="The name for the style. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    example="Dark, brooding vibes",
+                    description="Extra information about this style.",
+                    min_length=1,
+                    max_length=1000,
+                ),
+                "prompt": fields.String(
+                    required=False,
+                    description=(
+                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
+                        "The user's prompt will be injected into this."
+                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
+                    ),
+                    min_length=7,
+                ),
+                "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this style will be listed among all styles publicly."
+                        "When false, information about this style can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "nsfw": fields.Boolean(
+                    default=False,
+                    description=("When true, it signified this style is expected to generare NSFW images primarily."),
+                ),
+                "tags": fields.List(
+                    fields.String(
+                        description="Tags describing this style. Used for filtering and discovery.",
+                        min_length=1,
+                        max_length=25,
+                        example="dark",
+                    ),
+                ),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1, example="llama3")),
+            },
+        )
+        self.response_model_style = api.inherit(
+            "StyleKobold",
+            self.input_model_style,
+            {
+                "id": fields.String(
+                    description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
+                    example="00000000-0000-0000-0000-000000000000",
+                ),
+                "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
             },
         )

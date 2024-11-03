@@ -151,6 +151,13 @@ KNOWN_RC = [
     "InvalidTransparencyImg2Img",
     "InvalidTransparencyCN",
     "HiResMismatch",
+    "StylesAnonForbidden",
+    "StylePromptMissingVars",
+    "StylesRequiresCustomizer",
+    "StyleMismatch",
+    "StyleGetMistmatch",
+    "TooManyStyleExamples",
+    "ExampleURLAlreadyInUse",
 ]
 
 
@@ -217,9 +224,9 @@ class InvalidSize(wze.BadRequest):
 
 
 class InvalidPromptSize(wze.BadRequest):
-    def __init__(self, username, rc="InvalidPromptSize"):
+    def __init__(self, rc="InvalidPromptSize"):
         self.specific = "Too large prompt. Please reduce the amount of tokens contained."
-        self.log = f"User '{username}' sent an invalid size. Aborting!"
+        self.log = None
         self.rc = rc
 
 

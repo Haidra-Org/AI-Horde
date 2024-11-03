@@ -11,6 +11,29 @@ from horde.vars import horde_noun, horde_title
 
 class Parsers:
     def __init__(self):
+        # A Basic parser which only expects a Client-Agent
+        self.basic_parser = reqparse.RequestParser()
+        self.basic_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+
+        # A Basic parser which only expects a Client-Agent and an API Key
+        self.apikey_parser = reqparse.RequestParser()
+        self.apikey_parser.add_argument("apikey", type=str, required=True, help="A mod API key.", location="headers")
+        self.apikey_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+
         self.generate_parser = reqparse.RequestParser()
         self.generate_parser.add_argument(
             "apikey",
@@ -142,6 +165,7 @@ class Parsers:
             location="json",
         )
         self.generate_parser.add_argument("webhook", type=str, required=False, location="json")
+        self.generate_parser.add_argument("style", type=str, required=False, location="json")
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()
@@ -255,6 +279,153 @@ class Parsers:
             type=list,
             required=False,
             help="Metadata about this job such as defaulted components due to failures.",
+            location="json",
+        )
+
+        # Style Parsers
+        self.style_parser = reqparse.RequestParser()
+        self.style_parser.add_argument(
+            "apikey",
+            type=str,
+            required=True,
+            help="The API Key corresponding to a registered user.",
+            location="headers",
+        )
+        self.style_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+        self.style_parser.add_argument(
+            "name",
+            type=str,
+            required=True,
+            help="The name of the style.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "info",
+            type=str,
+            required=False,
+            help="Extra information about this style.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "prompt",
+            type=str,
+            required=False,
+            default="{p}{np}",
+            help="The prompt to generate from.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "params",
+            type=dict,
+            required=False,
+            help="Extra generate params to send to the worker.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "public",
+            type=bool,
+            default=True,
+            required=False,
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "nsfw",
+            type=bool,
+            default=False,
+            required=False,
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "tags",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "models",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser_patch = reqparse.RequestParser()
+        self.style_parser_patch.add_argument(
+            "apikey",
+            type=str,
+            required=True,
+            help="The API Key corresponding to a registered user.",
+            location="headers",
+        )
+        self.style_parser_patch.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version",
+            location="headers",
+        )
+        self.style_parser_patch.add_argument(
+            "name",
+            type=str,
+            required=False,
+            help="The name of the style.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "info",
+            type=str,
+            required=False,
+            help="Extra information about this style.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "prompt",
+            type=str,
+            required=False,
+            help="The prompt to generate from.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "params",
+            type=dict,
+            required=False,
+            help="Extra generate params to send to the worker.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "public",
+            type=bool,
+            default=True,
+            required=False,
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "nsfw",
+            type=bool,
+            default=False,
+            required=False,
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "tags",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser_patch.add_argument(
+            "models",
+            type=list,
+            required=False,
+            help="Tags describing this style. Can be used for style discovery.",
             location="json",
         )
 
@@ -761,6 +932,10 @@ class Models:
                     default=0,
                     description="The amount of Kudos this user has been awarded from things like rating images.",
                 ),
+                "styled": fields.Float(
+                    default=0,
+                    description="The amount of Kudos this user has been awarded for styling other people's requests.",
+                ),
             },
         )
 
@@ -889,11 +1064,11 @@ class Models:
             "UserAmountRecords",
             {
                 "image": fields.Integer(
-                    description="How many images this user has generated or requested.",
+                    description="How many images this user has generated, requested or styled.",
                     default=0,
                 ),
                 "text": fields.Integer(
-                    description="How many texts this user has generated or requested.",
+                    description="How many texts this user has generated, requested or styled.",
                     default=0,
                 ),
                 "interrogation": fields.Integer(
@@ -910,6 +1085,7 @@ class Models:
                 "contribution": fields.Nested(self.response_model_user_thing_records),
                 "fulfillment": fields.Nested(self.response_model_user_amount_records),
                 "request": fields.Nested(self.response_model_user_amount_records),
+                "style": fields.Nested(self.response_model_user_amount_records),
             },
         )
 
@@ -933,6 +1109,31 @@ class Models:
                         description="(Privileged) The list of active alchemy generation IDs requested by this user.",
                         example="00000000-0000-0000-0000-000000000000",
                     ),
+                ),
+            },
+        )
+
+        self.response_model_styles_short = api.model(
+            "ResponseModelStylesShort",
+            {
+                "name": fields.String(
+                    description="The unique name for this style",
+                    example="db0#1::style::my awesome style",
+                ),
+                "id": fields.String(
+                    description="The ID of this style",
+                    example="00000000-0000-0000-0000-000000000000",
+                ),
+            },
+        )
+
+        self.response_model_styles_user = api.inherit(
+            "ResponseModelStylesUser",
+            self.response_model_styles_short,
+            {
+                "type": fields.String(
+                    description="The style type, image or text",
+                    enum=["image", "text"],
                 ),
             },
         )
@@ -974,6 +1175,7 @@ class Models:
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
+                "styles": fields.List(fields.Nested(self.response_model_styles_user)),
                 "sharedkey_ids": fields.List(
                     fields.String(
                         description="(Privileged) The list of shared key IDs created by this user.",
@@ -1580,5 +1782,85 @@ class Models:
                     required=False,
                     description="The document in markdown format.",
                 ),
+            },
+        )
+
+        # Styles
+        self.response_model_styles_post = api.model(
+            "StyleModify",
+            {
+                "id": fields.String(
+                    example="00000000-0000-0000-0000-000000000000",
+                    description="The UUID of the style. Use this to use this style of retrieve its information in the future.",
+                ),
+                "message": fields.String(
+                    default=None,
+                    description="Any extra information from the horde about this request.",
+                ),
+                "warnings": fields.List(fields.Nested(self.response_model_warning)),
+            },
+        )
+
+        # Collections
+
+        self.input_model_collection = api.model(
+            "InputModelCollection",
+            {
+                "name": fields.String(
+                    required=False,
+                    example="My Awesome Collection",
+                    description="The name for the collection. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "info": fields.String(
+                    required=False,
+                    example="Collection of optimistic styles",
+                    description="Extra information about this collection.",
+                    min_length=1,
+                    max_length=1000,
+                ),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this collection will be listed among all collections publicly."
+                        "When false, information about this collection can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "styles": fields.List(fields.String(description="The styles to use in this collection.", min_length=1)),
+            },
+        )
+
+        self.response_model_collection = api.model(
+            "ResponseModelCollection",
+            {
+                "id": fields.String(
+                    description="The UUID of the collection. Use this to use this collection of retrieve its information in the future.",
+                ),
+                "name": fields.String(
+                    required=False,
+                    description="The name for the collection. Case-sensitive and unique per user.",
+                    min_length=1,
+                    max_length=100,
+                ),
+                "type": fields.String(
+                    required=False,
+                    description="The kind of styles stored in this collection.",
+                    enum=["image", "text"],
+                ),
+                "info": fields.String(
+                    required=False,
+                    description="Extra information about this collection.",
+                    min_length=1,
+                    max_length=1000,
+                ),
+                "public": fields.Boolean(
+                    default=True,
+                    description=(
+                        "When true this collection will be listed among all collection publicly."
+                        "When false, information about this collection can only be seen by people who know its ID or name."
+                    ),
+                ),
+                "styles": fields.List(fields.Nested(self.response_model_styles_short)),
             },
         )

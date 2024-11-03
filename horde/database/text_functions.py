@@ -52,10 +52,8 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(noload(TextWaitingPrompt.processing_gens))
-        .outerjoin(
-            WPModels,
-            WPAllowedWorkers,
-        )
+        .outerjoin(WPModels, TextWaitingPrompt.id == WPModels.wp_id)
+        .outerjoin(WPAllowedWorkers, TextWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.max_length <= worker.max_length,

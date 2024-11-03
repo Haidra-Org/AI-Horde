@@ -126,6 +126,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.shared = False
         self.prepare_job_payload(self.params)
         # Commit will happen in prepare_job_payload()
+        # logger.debug(self.params)
+        # logger.debug(self.prompt)
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict=None):
@@ -227,10 +229,10 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([payload,prompt_payload])
         return prompt_payload
 
-    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None):
+    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None, kudos_adjustment=0):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images)
+        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images, kudos_adjustment=kudos_adjustment)
         if source_image or source_mask:
             self.source_image = source_image
             self.source_mask = source_mask
