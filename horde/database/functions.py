@@ -935,10 +935,8 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     open_wp_list = (
         db.session.query(ImageWaitingPrompt)
         .options(noload(ImageWaitingPrompt.processing_gens))
-        .outerjoin(
-            WPModels,
-            WPAllowedWorkers,
-        )
+        .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
+        .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.active == True,  # noqa E712
