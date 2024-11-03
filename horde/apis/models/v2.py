@@ -1790,6 +1790,7 @@ class Models:
             "StyleModify",
             {
                 "id": fields.String(
+                    example="00000000-0000-0000-0000-000000000000",
                     description="The UUID of the style. Use this to use this style of retrieve its information in the future.",
                 ),
                 "message": fields.String(
@@ -1807,12 +1808,14 @@ class Models:
             {
                 "name": fields.String(
                     required=False,
+                    example="My Awesome Collection",
                     description="The name for the collection. Case-sensitive and unique per user.",
                     min_length=1,
                     max_length=100,
                 ),
                 "info": fields.String(
                     required=False,
+                    example="Collection of optimistic styles",
                     description="Extra information about this collection.",
                     min_length=1,
                     max_length=1000,

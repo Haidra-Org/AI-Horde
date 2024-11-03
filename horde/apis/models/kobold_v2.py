@@ -469,6 +469,7 @@ class TextModels(v2.Models):
             {
                 "name": fields.String(
                     required=True,
+                    example="My Awesome Text Style",
                     description="The name for the style. Case-sensitive and unique per user.",
                     min_length=1,
                     max_length=100,
@@ -476,7 +477,7 @@ class TextModels(v2.Models):
                 "info": fields.String(
                     required=False,
                     description="Some information about this style.",
-                    example="photorealism excellence.",
+                    example="Dark, brooding vibes",
                     min_length=10,
                     max_length=1000,
                 ),
@@ -485,7 +486,7 @@ class TextModels(v2.Models):
                     description=(
                         "The prompt template which will be sent to Stable Diffusion to generate an image. "
                         "The user's prompt will be injected into this."
-                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected."
+                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
                     ),
                     default="{p}",
                     min_length=3,
@@ -503,9 +504,14 @@ class TextModels(v2.Models):
                     description=("When true, it signified this style is expected to generare NSFW images primarily."),
                 ),
                 "tags": fields.List(
-                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                    fields.String(
+                        description="Tags describing this style. Used for filtering and discovery.",
+                        min_length=1,
+                        max_length=25,
+                        example="dark",
+                    ),
                 ),
-                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1, example="llama3")),
             },
         )
         self.patch_model_style = api.model(
@@ -513,12 +519,14 @@ class TextModels(v2.Models):
             {
                 "name": fields.String(
                     required=False,
+                    example="My Awesome Text Style",
                     description="The name for the style. Case-sensitive and unique per user.",
                     min_length=1,
                     max_length=100,
                 ),
                 "info": fields.String(
                     required=False,
+                    example="Dark, brooding vibes",
                     description="Extra information about this style.",
                     min_length=1,
                     max_length=1000,
@@ -528,7 +536,7 @@ class TextModels(v2.Models):
                     description=(
                         "The prompt template which will be sent to Stable Diffusion to generate an image. "
                         "The user's prompt will be injected into this."
-                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected."
+                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
                     ),
                     min_length=7,
                 ),
@@ -545,9 +553,14 @@ class TextModels(v2.Models):
                     description=("When true, it signified this style is expected to generare NSFW images primarily."),
                 ),
                 "tags": fields.List(
-                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                    fields.String(
+                        description="Tags describing this style. Used for filtering and discovery.",
+                        min_length=1,
+                        max_length=25,
+                        example="dark",
+                    ),
                 ),
-                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1, example="llama3")),
             },
         )
         self.response_model_style = api.inherit(

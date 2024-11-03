@@ -1001,6 +1001,7 @@ class ImageModels(v2.Models):
             {
                 "name": fields.String(
                     required=True,
+                    example="My Awesome Image Style",
                     description="The name for the style. Case-sensitive and unique per user.",
                     min_length=1,
                     max_length=100,
@@ -1017,8 +1018,8 @@ class ImageModels(v2.Models):
                     description=(
                         "The prompt template which will be sent to Stable Diffusion to generate an image. "
                         "The user's prompt will be injected into this."
-                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected "
-                        "and an {np} where the user's negative prompt will be injected (if any)"
+                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected "
+                        "and an '{np}' where the user's negative prompt will be injected (if any)"
                     ),
                     default="{p}{np}",
                     min_length=7,
@@ -1036,9 +1037,16 @@ class ImageModels(v2.Models):
                     description=("When true, it signified this style is expected to generare NSFW images primarily."),
                 ),
                 "tags": fields.List(
-                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                    fields.String(
+                        description="Tags describing this style. Used for filtering and discovery.",
+                        min_length=1,
+                        max_length=25,
+                        example="photorealistic",
+                    ),
                 ),
-                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+                "models": fields.List(
+                    fields.String(description="The models to use with this style.", min_length=1, example="stable_diffusion"),
+                ),
             },
         )
         self.patch_model_style = api.model(
@@ -1046,12 +1054,14 @@ class ImageModels(v2.Models):
             {
                 "name": fields.String(
                     required=False,
+                    example="My Awesome Image Style",
                     description="The name for the style. Case-sensitive and unique per user.",
                     min_length=1,
                     max_length=100,
                 ),
                 "info": fields.String(
                     required=False,
+                    example="photorealism excellence.",
                     description="Extra information about this style.",
                     min_length=1,
                     max_length=1000,
@@ -1061,8 +1071,8 @@ class ImageModels(v2.Models):
                     description=(
                         "The prompt template which will be sent to Stable Diffusion to generate an image. "
                         "The user's prompt will be injected into this."
-                        " This argument MUST include a {p} which specifies the part where the user's prompt will be injected "
-                        "and an {np} where the user's negative prompt will be injected (if any)"
+                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected "
+                        "and an '{np}' where the user's negative prompt will be injected (if any)"
                     ),
                     min_length=7,
                 ),
@@ -1079,11 +1089,58 @@ class ImageModels(v2.Models):
                     description=("When true, it signified this style is expected to generare NSFW images primarily."),
                 ),
                 "tags": fields.List(
-                    fields.String(description="Tags describing this style. Used for filtering and discovery.", min_length=1, max_length=25),
+                    fields.String(
+                        description="Tags describing this style. Used for filtering and discovery.",
+                        min_length=1,
+                        max_length=25,
+                        example="photorealistic",
+                    ),
                 ),
-                "models": fields.List(fields.String(description="The models to use with this style.", min_length=1)),
+                "models": fields.List(
+                    fields.String(description="The models to use with this style.", min_length=1, example="stable_diffusion"),
+                ),
             },
         )
+        self.input_model_style_example_post = api.model(
+            "InputStyleExamplePost",
+            {
+                "url": fields.String(
+                    example="https://lemmy.dbzer0.com/pictrs/image/c9915186-ca30-4f5a-873c-a91287fb4419.webp",
+                    required=True,
+                    description="Any extra information from the horde about this request.",
+                ),
+                "primary": fields.Boolean(
+                    required=True,
+                    default=False,
+                    description="When true this image is to be used as the primary example for this style.",
+                ),
+            },
+        )
+        self.input_model_style_example_patch = api.model(
+            "InputStyleExamplePost",
+            {
+                "url": fields.String(
+                    example="https://lemmy.dbzer0.com/pictrs/image/c9915186-ca30-4f5a-873c-a91287fb4419.webp",
+                    required=False,
+                    description="Any extra information from the horde about this request.",
+                ),
+                "primary": fields.Boolean(
+                    required=False,
+                    description="When true this image is to be used as the primary example for this style.",
+                ),
+            },
+        )
+        self.response_model_style_example = api.inherit(
+            "StyleExample",
+            self.input_model_style_example_post,
+            {
+                "id": fields.String(
+                    example="00000000-0000-0000-0000-000000000000",
+                    description="The UUID of this example.",
+                ),
+            },
+        )
+
         self.response_model_style = api.inherit(
             "StyleStable",
             self.input_model_style,
@@ -1093,5 +1150,6 @@ class ImageModels(v2.Models):
                     example="00000000-0000-0000-0000-000000000000",
                 ),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
+                "examples": fields.List(fields.Nested(self.response_model_style_example, skip_none=True)),
             },
         )

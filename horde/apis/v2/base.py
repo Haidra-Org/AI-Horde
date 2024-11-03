@@ -3272,7 +3272,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         self.existing_style = database.get_style_by_uuid(style_id, is_collection=False)
         if not self.existing_style:
             raise e.ThingNotFound("Style", style_id)
-        if self.existing_style.user_id != self.user.id and not self.existing_style.user.moderator:
+        if self.existing_style.user_id != self.user.id and not self.user.moderator:
             raise e.Forbidden(f"This Style is not owned by user {self.user.get_unique_alias()}")
         if self.existing_style.user_id != self.user.id and self.user.moderator:
             logger.info(f"Moderator {self.user.moderator} deleted style {self.existing_style.id}")
@@ -3329,6 +3329,7 @@ class Collection(Resource):
         as_list=True,
     )
     def get(self):
+        """Displays all existing collections. Can filter by type"""
         self.args = self.get_parser.parse_args()
         if self.args.sort not in ["popular", "age"]:
             raise e.BadRequest("'model_state' needs to be one of ['popular', 'age']")
@@ -3395,13 +3396,14 @@ class Collection(Resource):
     @api.expect(post_parser, models.input_model_collection, validate=True)
     @api.marshal_with(
         models.response_model_styles_post,
-        code=202,
+        code=200,
         description="Collection Added",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def post(self):
+        """Creates a new style collection."""
         self.warnings = set()
         # For styles, we just store the models in the params
         self.styles = []
@@ -3465,6 +3467,7 @@ class SingleCollection(SingleCollectionGet):
         as_list=False,
     )
     def get(self, collection_id):
+        """Displays information about a single style collection."""
         return super().get_through_id(collection_id)
 
     patch_parser = reqparse.RequestParser()
@@ -3519,13 +3522,14 @@ class SingleCollection(SingleCollectionGet):
     @api.expect(patch_parser, models.input_model_collection, validate=True)
     @api.marshal_with(
         models.response_model_styles_post,
-        code=202,
+        code=200,
         description="Collection Modified",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def patch(self, collection_id):
+        """Modifies an existing style collection."""
         self.warnings = set()
         # For styles, we just store the models in the params
         self.styles = []
@@ -3592,6 +3596,7 @@ class SingleCollection(SingleCollectionGet):
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def delete(self, collection_id):
+        """Deletes a style collection."""
         self.args = parsers.apikey_parser.parse_args()
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
@@ -3617,14 +3622,11 @@ class SingleCollectionByName(SingleCollectionGet):
         as_list=False,
     )
     def get(self, collection_name):
+        """Seeks an style collection by name and displays its information."""
         self.existing_collection = database.get_style_by_name(collection_name)
         if not self.existing_collection:
             raise e.ThingNotFound("Collection", collection_name)
         return self.existing_collection.get_details()
 
 
-# style: sfw bool
-# style: tags
-# style: transfer kudos on use
-# style: vote and transfer kudos on vote
-# style: sample image
+# TODO: vote and transfer kudos on vote

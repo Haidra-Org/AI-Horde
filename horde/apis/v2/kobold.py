@@ -494,6 +494,9 @@ class TextStyle(StyleTemplate):
         as_list=True,
     )
     def get(self):
+        """Retrieves information about all text styles
+        Can be filtered based on model or tags
+        """
         self.args = self.get_parser.parse_args()
         return super().get()
 
@@ -508,13 +511,14 @@ class TextStyle(StyleTemplate):
     @api.expect(parsers.style_parser, models.input_model_style, validate=True)
     @api.marshal_with(
         models.response_model_styles_post,
-        code=202,
+        code=200,
         description="Style Added",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def post(self):
+        """Creates a new text style"""
         self.params = {}
         self.warnings = set()
         self.args = parsers.style_parser.parse_args()
@@ -591,6 +595,7 @@ class SingleTextStyle(SingleStyleTemplate):
         as_list=False,
     )
     def get(self, style_id):
+        """Displays information about a single text style."""
         return super().get_through_id(style_id)
 
     decorators = [
@@ -604,13 +609,14 @@ class SingleTextStyle(SingleStyleTemplate):
     @api.expect(parsers.style_parser_patch, models.patch_model_style, validate=True)
     @api.marshal_with(
         models.response_model_styles_post,
-        code=202,
+        code=0,
         description="Style Updated",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def patch(self, style_id):
+        """Modifies a text style."""
         return super().patch(style_id)
 
     def validate(self):
@@ -637,12 +643,13 @@ class SingleTextStyle(SingleStyleTemplate):
     @api.marshal_with(
         models.response_model_simple_response,
         code=200,
-        description="Operation Completed",
+        description="Style Deleted",
         skip_none=True,
     )
     @api.response(400, "Validation Error", models.response_model_validation_errors)
     @api.response(401, "Invalid API Key", models.response_model_error)
     def delete(self, style_id):
+        """Deletes a text style."""
         return super().delete(style_id)
 
 
@@ -654,10 +661,11 @@ class SingleImageStyleByName(SingleStyleTemplateGet):
     @api.marshal_with(
         models.response_model_style,
         code=200,
-        description="Lists image style information by name",
+        description="Lists text style information by name",
         as_list=False,
     )
     def get(self, style_name):
+        """Seeks a text style by name and displays its information."""
         self.existing_style = database.get_style_by_name(style_name, is_collection=False)
         if not self.existing_style:
             raise e.ThingNotFound("Style", style_name)

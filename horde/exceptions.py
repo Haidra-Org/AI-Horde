@@ -156,6 +156,8 @@ KNOWN_RC = [
     "StylesRequiresCustomizer",
     "StyleMismatch",
     "StyleGetMistmatch",
+    "TooManyStyleExamples",
+    "ExampleURLAlreadyInUse",
 ]
 
 

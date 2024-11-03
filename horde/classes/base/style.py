@@ -111,6 +111,19 @@ class StyleModel(db.Model):
     model = db.Column(db.String(255), nullable=False, index=True)
 
 
+class StyleExample(db.Model):
+    __tablename__ = "style_examples"
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    style_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("styles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    style = db.relationship("Style", back_populates="examples")
+    url = db.Column(db.Text, nullable=False, index=True)
+    primary = db.Column(db.Boolean, default=False, nullable=False)
+
+
 class Style(db.Model):
     __tablename__ = "styles"
     __table_args__ = (
@@ -134,13 +147,14 @@ class Style(db.Model):
     votes = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
 
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, onupdate=datetime.utcnow)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="styles")
     collections: Mapped[list[StyleCollection]] = db.relationship(secondary="style_collection_mapping", back_populates="styles")
     models = db.relationship("StyleModel", back_populates="style", cascade="all, delete-orphan")
     tags = db.relationship("StyleTag", back_populates="style", cascade="all, delete-orphan")
+    examples = db.relationship("StyleExample", back_populates="style", cascade="all, delete-orphan")
 
     def create(self):
         db.session.add(self)
@@ -186,6 +200,7 @@ class Style(db.Model):
             "prompt": self.prompt,
             "tags": self.get_tag_names(),
             "models": self.get_model_names(),
+            "examples": self.examples,
             "creator": self.user.get_unique_alias(),
             "use_count": self.use_count,
             "public": self.public,
