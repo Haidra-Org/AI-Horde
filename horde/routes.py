@@ -399,7 +399,7 @@ def assets(filename):
 @HORDE.route("/.well-known/serviceinfo")
 def serviceinfo():
     return {
-        "version": "0.1",  # This is .well-known version
+        "version": "0.2",
         "software": {
             "name": horde_title,
             "version": HORDE_VERSION,
@@ -412,6 +412,7 @@ def serviceinfo():
                 "name": "AI Horde API",
                 "version": HORDE_API_VERSION,
                 "base_url": f"{horde_url}/api/v2",
+                "rel_url": "/api/v2",
                 "documentation": f"{horde_url}/api",
             },
         },
