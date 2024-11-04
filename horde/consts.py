@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 HORDE_VERSION = "4.44.0"
+HORDE_API_VERSION = "2.5"
 
 WHITELISTED_SERVICE_IPS = {
     "212.227.227.178",  # Turing Bot

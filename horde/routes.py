@@ -20,7 +20,7 @@ from horde.argparser import maintenance
 from horde.classes.base import settings
 from horde.classes.base.news import News
 from horde.classes.base.user import User
-from horde.consts import HORDE_VERSION
+from horde.consts import HORDE_API_VERSION, HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.flask import HORDE, cache, db
@@ -410,7 +410,7 @@ def serviceinfo():
         "api": {
             "aihorde": {
                 "name": "AI Horde API",
-                "version": 2.20,
+                "version": HORDE_API_VERSION,
                 "base_url": f"{horde_url}/api/v2",
                 "documentation": f"{horde_url}/api",
             },
