@@ -20,6 +20,7 @@ from horde.argparser import maintenance
 from horde.classes.base import settings
 from horde.classes.base.news import News
 from horde.classes.base.user import User
+from horde.consts import HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.flask import HORDE, cache, db
@@ -29,6 +30,8 @@ from horde.utils import ConvertAmount, hash_api_key, is_profane, sanitize_string
 from horde.vars import (
     google_verification_string,
     horde_contact_email,
+    horde_logo,
+    horde_repository,
     horde_title,
     horde_url,
     img_url,
@@ -391,3 +394,25 @@ def terms():
 @HORDE.route("/assets/<filename>")
 def assets(filename):
     return send_from_directory("../assets", filename)
+
+
+@HORDE.route("/.well-known/serviceinfo")
+def serviceinfo():
+    return {
+        "version": "0.1",  # This is .well-known version
+        "software": {
+            "name": horde_title,
+            "version": HORDE_VERSION,
+            "repository": horde_repository,
+            "homepage": horde_url,
+            "logo": horde_logo,
+        },
+        "api": {
+            "aihorde": {
+                "name": "AI Horde API",
+                "version": 2.20,
+                "base_url": f"{horde_url}/api/v2",
+                "documentation": f"{horde_url}/api",
+            },
+        },
+    }, 200

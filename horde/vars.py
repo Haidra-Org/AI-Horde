@@ -42,5 +42,7 @@ img_url = os.getenv("HORDE_LOGO", "https://raw.githubusercontent.com/db0/Stable-
 horde_title = os.getenv("HORDE_TITLE", "AI Horde")
 horde_noun = os.getenv("HORDE_noun", "horde")
 horde_url = os.getenv("HORDE_URL", "https://aihorde.net")
+horde_repository = os.getenv("HORDE_REPOSITORY", "https://github.com/Haidra-Org/AI-Horde")
+horde_logo = os.getenv("HORDE_logo", "https://aihorde.net/assets/img/logo.png")
 horde_contact_email = os.getenv("HORDE_EMAIL", "aihorde@dbzer0.com")
 horde_instance_id = str(uuid4())
