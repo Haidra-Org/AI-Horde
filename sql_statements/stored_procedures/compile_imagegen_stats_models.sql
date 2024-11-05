@@ -1,4 +1,4 @@
--- SPDX-FileCopyrightText: 2024 Tazlin
+-- SPDX-FileCopyrightText: 2024 Tazlin <tazlin.on.github@gmail.com>
 --
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
