@@ -6,9 +6,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.44.1
+
+* Various fixes around styles
+* Added `/.well-known/serviceinfo`
+
 # 4.44.0
 
 * Adds styles
+* Adds TabbyAPI as approved LLM backend
 
 # 4.43.9
 

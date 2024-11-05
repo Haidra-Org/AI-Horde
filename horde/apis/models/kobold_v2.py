@@ -571,6 +571,7 @@ class TextModels(v2.Models):
                     description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
                     example="00000000-0000-0000-0000-000000000000",
                 ),
+                "use_count": fields.Integer(description="The amount of times this style has been used in generations."),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
             },
         )
