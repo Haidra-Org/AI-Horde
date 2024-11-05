@@ -195,6 +195,7 @@ class Style(db.Model):
         """We display these in the styles list json"""
         ret_dict = {
             "name": self.name,
+            "info": self.info,
             "id": self.id,
             "params": self.params,
             "prompt": self.prompt,

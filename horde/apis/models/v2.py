@@ -1862,5 +1862,6 @@ class Models:
                     ),
                 ),
                 "styles": fields.List(fields.Nested(self.response_model_styles_short)),
+                "use_count": fields.Integer(description="The amount of times this collection has been used in generations."),
             },
         )
