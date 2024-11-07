@@ -190,7 +190,6 @@ class TextAsyncGenerate(GenerateTemplate):
         self.existing_style = database.get_style_by_uuid(self.args.style)
         if not self.existing_style:
             self.existing_style = database.get_style_by_name(self.args.style)
-        logger.debug(self.existing_style)
         if not self.existing_style:
             raise e.ThingNotFound("Style", self.args.style)
         if self.existing_style.style_type != "text":
@@ -209,7 +208,9 @@ class TextAsyncGenerate(GenerateTemplate):
         self.params["n"] = requested_n
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
-        self.existing_style.user.record_style(2, "text")
+        if self.existing_style.user != self.user:
+            self.existing_style.user.record_style(2, "text")
+            self.style_kudos = True
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
 

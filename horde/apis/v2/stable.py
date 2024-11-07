@@ -357,6 +357,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             source_image=self.source_image,
             source_mask=self.source_mask,
             extra_source_images=self.args.extra_source_images,
+            kudos_adjustment=2 if self.existing_style is not None else 0,
         )
 
     def apply_style(self):
@@ -372,8 +373,8 @@ class ImageAsyncGenerate(GenerateTemplate):
         if isinstance(self.existing_style, StyleCollection):
             colstyles = self.existing_style.styles
             random.shuffle(colstyles)
-            self.existing_style.use_count += 1
             self.existing_style = colstyles[0]
+            self.existing_style.use_count += 1
         self.models = self.existing_style.get_model_names()
         self.negprompt = ""
         if "###" in self.args.prompt:
@@ -388,7 +389,10 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.params["n"] = requested_n
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
-        self.existing_style.user.record_style(2, "image")
+        # We don't reward kudos to ourselves
+        if self.existing_style.user != self.user:
+            self.existing_style.user.record_style(2, "image")
+            self.style_kudos = True
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
 

@@ -10,6 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 * Allow trusted users to also create styles
 * Fix styles always returning 1 image
+* Fix style reward not being taken from the requesting user
 
 # 4.44.1
 

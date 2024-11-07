@@ -123,6 +123,7 @@ class GenerateTemplate(Resource):
         # It causes them to be a shared object from the parsers class
         self.params = {}
         self.warnings = set()
+        self.style_kudos = False
         if self.args.params:
             self.params = self.args.params
         self.models = []
@@ -349,7 +350,11 @@ class GenerateTemplate(Resource):
                     _,
                     _,
                 ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
-        self.wp.activate(self.downgrade_wp_priority, extra_source_images=self.args.extra_source_images)
+        self.wp.activate(
+            self.downgrade_wp_priority,
+            extra_source_images=self.args.extra_source_images,
+            kudos_adjustment=2 if self.style_kudos is True else 0,
+        )
 
 
 class SyncGenerate(GenerateTemplate):
