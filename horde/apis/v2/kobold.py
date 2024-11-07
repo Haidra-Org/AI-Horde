@@ -505,7 +505,7 @@ class TextStyle(StyleTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value=lim.get_request_90min_limit_per_ip,
+            limit_value="20/hour",
             key_func=lim.get_request_path,
         ),
         limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
