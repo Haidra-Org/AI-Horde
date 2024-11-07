@@ -383,7 +383,9 @@ class ImageAsyncGenerate(GenerateTemplate):
         # We need to use defaultdict to avoid getting keyerrors in case the style author added
         # Erroneous keys in the string
         self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.args.prompt, np=self.negprompt))
+        requested_n = self.params.get("n", 1)
         self.params = self.existing_style.params
+        self.params["n"] = requested_n
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
         self.existing_style.user.record_style(2, "image")
@@ -1417,9 +1419,9 @@ class ImageStyle(StyleTemplate):
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
             raise e.InvalidAPIKey("ImageStyle POST")
-        if not self.user.customizer:
+        if not self.user.customizer and not self.user.trusted:
             raise e.Forbidden(
-                "Only customizers can create new styles. You can request this role in our channels.",
+                "Only customizers and trusted users can create new styles. You can request the customizer role in our channels.",
                 rc="StylesRequiresCustomizer",
             )
         if self.user.is_anon():
