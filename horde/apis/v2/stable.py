@@ -357,7 +357,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             source_image=self.source_image,
             source_mask=self.source_mask,
             extra_source_images=self.args.extra_source_images,
-            kudos_adjustment=2 if self.existing_style is not None else 0,
+            kudos_adjustment=2 if self.style_kudos is not None else 0,
         )
 
     def apply_style(self):
