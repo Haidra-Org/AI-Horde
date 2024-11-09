@@ -115,6 +115,8 @@ class ImageAsyncGenerate(GenerateTemplate):
         )
 
     def validate(self):
+        self.prompt = self.args.prompt
+        self.apply_style()
         super().validate()
         param_validator = ParamValidator(prompt=self.args.prompt, models=self.args.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
@@ -223,8 +225,6 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared = True
         else:
             shared = False
-        self.prompt = self.args.prompt
-        self.apply_style()
         self.wp = ImageWaitingPrompt(
             worker_ids=self.workers,
             models=self.models,

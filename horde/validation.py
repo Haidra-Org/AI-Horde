@@ -24,6 +24,7 @@ class ParamValidator:
         self.models = models
         self.params = params
         self.user = user
+        self.warnings = set()
 
     def validate_base_params(self):
         pass

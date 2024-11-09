@@ -95,8 +95,6 @@ class TextAsyncGenerate(GenerateTemplate):
         return (ret_dict, 202)
 
     def initiate_waiting_prompt(self):
-        self.prompt = self.args.prompt
-        self.apply_style()
         self.wp = TextWaitingPrompt(
             worker_ids=self.workers,
             models=self.models,
@@ -169,6 +167,8 @@ class TextAsyncGenerate(GenerateTemplate):
         )
 
     def validate(self):
+        self.prompt = self.args.prompt
+        self.apply_style()
         super().validate()
         param_validator = ParamValidator(self.args.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()

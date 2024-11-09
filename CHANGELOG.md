@@ -6,6 +6,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.44.3
+
+* Fix image validation warnings being sent to the wrong requests
+* Validate request with styles, only after style is applied
+
 # 4.44.2
 
 * Allow trusted users to also create styles
