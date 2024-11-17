@@ -86,7 +86,7 @@ You can use any service powered by the AI Horde either with a registered account
 
 ## OAuth2 Registered Account (Recommended)
 
-> Note: The only information we store from your account is your unique ID. We do not other use your id for any purpose. See our [privacy policy](https://aihorde.net/privacy) for more details.
+> Note: The only information we store from your account is your unique ID. We do not use your id for any other purpose. See our [privacy policy](https://aihorde.net/privacy) for more details.
 
 - Visit [AI Horde Registration](https://aihorde.net/register)
 - Log in using one of the supported OAuth2 services
