@@ -122,6 +122,7 @@ The main benefit of registration is participating in the kudos system. Kudos det
 - Running a worker to help process other users' requests
 - Receiving kudos as a thank-you for donations (though kudos cannot be directly bought or sold)
 - Being online and available as a worker
+- Participating in the kudos economy on the [official discord](https://discord.gg/3DxrhksKzn) by logging in with the bot. (Use the command `/login` in any channel, click the blue button and enter your API key at the popup).
 
 Remember: AI Horde is committed to remaining free and accessible. While the kudos system provides priority benefits, it's designed to encourage community contribution rather than commercialization. All users, even anonymous ones, can access the service's core features. Read about this on the [official developer's blog.](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/)
 
