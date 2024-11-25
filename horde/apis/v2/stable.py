@@ -118,7 +118,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.prompt = self.args.prompt
         self.apply_style()
         super().validate()
-        param_validator = ParamValidator(prompt=self.args.prompt, models=self.args.models, params=self.params, user=self.user)
+        param_validator = ParamValidator(prompt=self.prompt, models=self.args.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
         param_validator.check_for_special()
         # During raids, we prevent VPNs
@@ -377,13 +377,13 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.existing_style.use_count += 1
         self.models = self.existing_style.get_model_names()
         self.negprompt = ""
-        if "###" in self.args.prompt:
-            self.prompt, self.negprompt = self.args.prompt.split("###", 1)
+        if "###" in self.prompt:
+            self.prompt, self.negprompt = self.prompt.split("###", 1)
         if "###" not in self.existing_style.prompt and self.negprompt != "" and "###" not in self.negprompt:
             self.negprompt = "###" + self.negprompt
         # We need to use defaultdict to avoid getting keyerrors in case the style author added
         # Erroneous keys in the string
-        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.args.prompt, np=self.negprompt))
+        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
         requested_n = self.params.get("n", 1)
         self.params = self.existing_style.params
         self.params["n"] = requested_n

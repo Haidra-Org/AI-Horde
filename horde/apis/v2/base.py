@@ -258,40 +258,40 @@ class GenerateTemplate(Resource):
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
             # logger.warning(datetime.utcnow())
-            prompt_suspicion, _ = prompt_checker(self.args.prompt)
+            prompt_suspicion, _ = prompt_checker(self.prompt)
             # logger.warning(datetime.utcnow())
             prompt_replaced = False
             if prompt_suspicion >= 2 and self.gentype != "text":
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
                 if self.args.replacement_filter or self.user.education:
-                    if not prompt_checker.check_prompt_replacement_length(self.args.prompt):
+                    if not prompt_checker.check_prompt_replacement_length(self.prompt):
                         raise e.BadRequest("Prompt has to be below 7000 chars when replacement filter is on")
-                    self.args.prompt = prompt_checker.apply_replacement_filter(self.args.prompt)
+                    self.prompt = prompt_checker.apply_replacement_filter(self.prompt)
                     # If it returns None, it means it replaced everything with an empty string
-                    if self.args.prompt is not None:
+                    if self.prompt is not None:
                         prompt_replaced = True
                 if not prompt_replaced:
                     # Moderators do not get ip blocked to allow for experiments
                     if not self.user.moderator:
                         prompt_dict = {
-                            "prompt": self.args.prompt,
+                            "prompt": self.prompt,
                             "user": self.username,
                             "type": "regex",
                         }
                         upload_prompt(prompt_dict)
                         self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
-                    raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt)
-            if_nsfw_model = prompt_checker.check_nsfw_model_block(self.args.prompt, self.models)
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
+            if_nsfw_model = prompt_checker.check_nsfw_model_block(self.prompt, self.models)
             if if_nsfw_model or self.user.flagged:
                 # For NSFW models and flagged users, we always do replacements
                 # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
-                self.args.prompt = prompt_checker.nsfw_model_prompt_replace(
-                    self.args.prompt,
+                self.prompt = prompt_checker.nsfw_model_prompt_replace(
+                    self.prompt,
                     self.models,
                     already_replaced=prompt_replaced,
                 )
-                if self.args.prompt is None:
+                if self.prompt is None:
                     prompt_replaced = False
                 elif prompt_replaced is False:
                     prompt_replaced = True
@@ -303,16 +303,16 @@ class GenerateTemplate(Resource):
                     )
                     if self.user.flagged and not if_nsfw_model:
                         msg = "To prevent generation of unethical images, we cannot allow this prompt."
-                    raise e.CorruptPrompt(self.username, self.user_ip, self.args.prompt, message=msg)
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
             # Disabling as this is handled by the worker-csam-filter now
             # If I re-enable it, also make it use the prompt replacement
             # if not prompt_replaced:
-            #     csam_trigger_check = prompt_checker.check_csam_triggers(self.args.prompt)
+            #     csam_trigger_check = prompt_checker.check_csam_triggers(self.prompt)
             #     if csam_trigger_check is not False and self.gentype != "text":
             #         raise e.CorruptPrompt(
             #             self.username,
             #             self.user_ip,
-            #             self.args.prompt,
+            #             self.prompt,
             #             message = (f"The trigger '{csam_trigger_check}' has been detected to generate "
             #                       "unethical images on its own and as such has had to be prevented from use. "
             #                        "Thank you for understanding.")
@@ -1599,7 +1599,7 @@ class FindUser(Resource):
                     skname = f": {sk.name}"
                 user_details["username"] = user_details["username"] + f" (Shared Key{skname})"
             if hr.horde_r:
-                hr.horde_r_setex_json(cache_name, timedelta(seconds=300), user_details)
+                hr.horde_r_setex_json(cache_name, timedelta(seconds=30), user_details)
         return (user_details, 200)
 
 

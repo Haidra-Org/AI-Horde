@@ -170,7 +170,7 @@ class TextAsyncGenerate(GenerateTemplate):
         self.prompt = self.args.prompt
         self.apply_style()
         super().validate()
-        param_validator = ParamValidator(self.args.prompt, self.args.models, self.params, self.user)
+        param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
             raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
@@ -202,7 +202,7 @@ class TextAsyncGenerate(GenerateTemplate):
         self.models = self.existing_style.get_model_names()
         # We need to use defaultdict to avoid getting keyerrors in case the style author added
         # Erroneous keys in the string
-        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.args.prompt))
+        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt))
         requested_n = self.params.get("n", 1)
         self.params = self.existing_style.params
         self.params["n"] = requested_n
