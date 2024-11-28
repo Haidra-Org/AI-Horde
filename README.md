@@ -78,7 +78,7 @@ There are also individual readmes for each specific mode supported by the AI Hor
 - [Text generation Readme](README_KoboldAIHorde.md)
 - [Docker Readme](README_docker.md)
 
-For other questions, check the [FAQ](FAQ.md).
+For common questions, check the [FAQ](FAQ.md). If you'd like more details on features of the horde or the reasoning behind it, see the [documentation which goes greater into depth](https://github.com/Haidra-Org/haidra-assets/tree/main/docs).
 
 # Getting Started with AI Horde
 
