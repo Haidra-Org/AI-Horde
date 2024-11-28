@@ -66,7 +66,7 @@ The AI Horde middleware can also be deployed privately within any enterprise env
 - **Python**: 3.9 or later
 - **PostgreSQL**
 - **Redis**: For caching
-- **Docker**- support for full containerization
+- **Docker** support for full containerization
 
 ### How It Works
 
