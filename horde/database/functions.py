@@ -473,13 +473,22 @@ def transfer_kudos(source_user, dest_user, amount):
 
 def transfer_kudos_to_username(source_user, dest_username, amount):
     dest_user = find_user_by_username(dest_username)
+    shared_key = None
     if not dest_user:
-        return [0, "Invalid target username.", "InvalidTargetUsername"]
+        shared_key = find_sharedkey(dest_username)
+        if not shared_key:
+            return [0, "Invalid target username.", "InvalidTargetUsername"]
+        if shared_key.is_expired():
+            return [0, "This shared key has expired", "SharedKeyExpired"]
+        dest_user = shared_key.user
     if dest_user == get_anon():
         return [0, "Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.", "KudosTransferToAnon"]
     if dest_user == source_user:
         return [0, "Cannot send kudos to yourself, ya monkey!", "KudosTransferToSelf"]
     kudos = transfer_kudos(source_user, dest_user, amount)
+    if kudos[0] > 0 and shared_key is not None:
+        shared_key.kudos += kudos[0]
+        db.session.commit()
     return kudos
 
 

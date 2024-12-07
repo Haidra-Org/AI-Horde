@@ -648,7 +648,7 @@ class TransferKudos(Resource):
         "username",
         type=str,
         required=True,
-        help="The user ID which will receive the kudos.",
+        help="The user or shared key ID which will receive the kudos.",
         location="json",
     )
     parser.add_argument(

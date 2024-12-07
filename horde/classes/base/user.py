@@ -176,10 +176,16 @@ class UserSharedKey(db.Model):
     def is_valid(self):
         if self.kudos == 0:
             return False, "This shared key has run out of kudos.", "SharedKeyEmpty"
-        if self.expiry is not None and self.expiry < datetime.utcnow():
+        if self.is_expired():
             return False, "This shared key has expired", "SharedKeyExpired"
         else:
             return True, None, None
+
+    def is_expired(self) -> bool:
+        """Returns true if the key has expired"""
+        if self.expiry is not None and self.expiry < datetime.utcnow():
+            return True
+        return False
 
     def is_job_within_limits(
         self,
