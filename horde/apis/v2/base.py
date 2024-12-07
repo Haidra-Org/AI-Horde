@@ -187,7 +187,7 @@ class GenerateTemplate(Resource):
             # If this is set, it means we've already found an active shared key through an applied style.
             if self.sharedkey:
                 self.user = self.sharedkey.user
-                logger.debug(f"Using style {self.sharedkey.id} from {self.user.id}")
+                logger.debug(f"Using style-specified shared key {self.sharedkey.id} from user #{self.user.id}")
             elif self.apikey:
                 self.sharedkey = database.find_sharedkey(self.apikey)
                 if self.sharedkey:
