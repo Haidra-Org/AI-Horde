@@ -1,2 +1,5 @@
-ALTER TYPE userrecordtypes ADD VALUE 'STYLE';
-alter sequence interrogation_worker_forms_id_seq cycle;
+ALTER TABLE styles
+ADD COLUMN sharedkey_id UUID,
+ADD CONSTRAINT styles_sharedkey_id_fkey
+FOREIGN KEY (sharedkey_id)
+REFERENCES user_sharedkeys(id);
