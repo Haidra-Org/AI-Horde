@@ -1047,6 +1047,13 @@ class ImageModels(v2.Models):
                 "models": fields.List(
                     fields.String(description="The models to use with this style.", min_length=1, example="stable_diffusion"),
                 ),
+                "sharedkey": fields.String(
+                    required=False,
+                    min_length=36,
+                    max_length=36,
+                    description="The UUID of a shared key which will be used to fulfil this style when active.",
+                    example="00000000-0000-0000-0000-000000000000",
+                ),
             },
         )
         self.patch_model_style = api.model(
@@ -1099,6 +1106,13 @@ class ImageModels(v2.Models):
                 "models": fields.List(
                     fields.String(description="The models to use with this style.", min_length=1, example="stable_diffusion"),
                 ),
+                "sharedkey": fields.String(
+                    required=False,
+                    min_length=36,
+                    max_length=36,
+                    description="The UUID of a shared key which will be used to fulfil this style when active.",
+                    example="00000000-0000-0000-0000-000000000000",
+                ),
             },
         )
         self.input_model_style_example_post = api.model(
@@ -1147,10 +1161,13 @@ class ImageModels(v2.Models):
             {
                 "id": fields.String(
                     description="The UUID of the style. Use this to use the style or retrieve its information in the future.",
+                    min_length=36,
+                    max_length=36,
                     example="00000000-0000-0000-0000-000000000000",
                 ),
                 "use_count": fields.Integer(description="The amount of times this style has been used in generations."),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
                 "examples": fields.List(fields.Nested(self.response_model_style_example, skip_none=True)),
+                "shared_key": fields.Nested(self.response_model_sharedkey_details),
             },
         )

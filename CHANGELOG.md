@@ -6,6 +6,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.45.0
+
+* Can now assign shared keys to styles. When a shared key is assigned to a style, if it is still valid (i.e. not expired and has kudos)
+   when that style is applied, it will use that shared key instead of the api key provided by the user.
+   This can allow someone to share a simple style name with their friends and allow them to use their higher priority.
+
+   * Shared keys assigned to styles cannot be used in isolation. They can only be used as part of that style.
+   * A single shared key can be assigned to more than 1 style
+   * The shared key assigned to a style is always visible in the style description and therefore considered public information.
+* People can now transfer kudos to shared keys. This works on both the web interface and the API. Simply provide the shared key ID instead of a username.
+   When a kudos is transferred to a shared key, the kudos is transferred to the shared key owner, and the shared key kudos is increased by the same amount if it isn't unlimited (-1)
+
 # 4.44.3
 
 * Fix image validation warnings being sent to the wrong requests

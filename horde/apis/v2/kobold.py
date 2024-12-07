@@ -109,7 +109,7 @@ class TextAsyncGenerate(GenerateTemplate):
             ipaddr=self.user_ip,
             safe_ip=True,
             client_agent=self.args["Client-Agent"],
-            sharedkey_id=self.args.apikey if self.sharedkey else None,
+            sharedkey_id=self.sharedkey.id if self.sharedkey else None,
             proxied_account=self.args["proxied_account"],
             webhook=self.args.webhook,
         )
@@ -157,8 +157,11 @@ class TextAsyncGenerate(GenerateTemplate):
                 text_tokens=self.wp.max_length,
             )
             if not is_in_limit:
-                self.wp.delete()
-                raise e.BadRequest(fail_message)
+                # If we are using the shared key assigned to a style, then we bypass the shared key requirements
+                # since its owner explicitly allowed to be used with a style exceeding them
+                if not (self.existing_style and self.existing_style.sharedkey and self.existing_style.sharedkey.id == self.sharedkey.id):
+                    self.wp.delete()
+                    raise e.BadRequest(fail_message)
 
     def get_size_too_big_message(self):
         return (
@@ -168,6 +171,7 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def validate(self):
         self.prompt = self.args.prompt
+        self.apikey = self.args.apikey
         self.apply_style()
         super().validate()
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
@@ -187,11 +191,8 @@ class TextAsyncGenerate(GenerateTemplate):
     def apply_style(self):
         if self.args.style is None:
             return
-        self.existing_style = database.get_style_by_uuid(self.args.style)
-        if not self.existing_style:
-            self.existing_style = database.get_style_by_name(self.args.style)
-        if not self.existing_style:
-            raise e.ThingNotFound("Style", self.args.style)
+        # The super() ensures the common parts of applying a style
+        super().apply_style()
         if self.existing_style.style_type != "text":
             raise e.BadRequest("Image styles cannot be used on image requests", "StyleMismatch")
         if isinstance(self.existing_style, StyleCollection):
@@ -495,6 +496,7 @@ class TextStyle(StyleTemplate):
         code=200,
         description="Lists text styles information",
         as_list=True,
+        skip_none=True,
     )
     def get(self):
         """Retrieves information about all text styles
@@ -562,6 +564,7 @@ class TextStyle(StyleTemplate):
             nsfw=self.args.nsfw,
             prompt=self.args.prompt,
             params=self.args.params if self.args.params is not None else {},
+            sharedkey_id=self.sharedkey.id if self.sharedkey else None,
         )
         new_style.create()
         new_style.set_models(self.models)
@@ -573,6 +576,7 @@ class TextStyle(StyleTemplate):
         }, 200
 
     def validate(self):
+        super().validate()
         if database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}"):
             raise e.BadRequest(
                 (
@@ -596,6 +600,7 @@ class SingleTextStyle(SingleStyleTemplate):
         code=200,
         description="Lists text styles information",
         as_list=False,
+        skip_none=True,
     )
     def get(self, style_id):
         """Displays information about a single text style."""
@@ -666,6 +671,7 @@ class SingleImageStyleByName(SingleStyleTemplateGet):
         code=200,
         description="Lists text style information by name",
         as_list=False,
+        skip_none=True,
     )
     def get(self, style_name):
         """Seeks a text style by name and displays its information."""

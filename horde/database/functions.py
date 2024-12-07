@@ -486,7 +486,7 @@ def transfer_kudos_to_username(source_user, dest_username, amount):
     if dest_user == source_user:
         return [0, "Cannot send kudos to yourself, ya monkey!", "KudosTransferToSelf"]
     kudos = transfer_kudos(source_user, dest_user, amount)
-    if kudos[0] > 0 and shared_key is not None:
+    if kudos[0] > 0 and shared_key is not None and shared_key.kudos != -1:
         shared_key.kudos += kudos[0]
         db.session.commit()
     return kudos

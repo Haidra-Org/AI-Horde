@@ -143,6 +143,7 @@ class UserSharedKey(db.Model):
         passive_deletes=True,
         cascade="all, delete-orphan",
     )
+    styles = db.relationship("Style", back_populates="sharedkey")
     max_image_pixels = db.Column(db.Integer, default=-1, nullable=False)
     max_image_steps = db.Column(db.Integer, default=-1, nullable=False)
     max_text_tokens = db.Column(db.Integer, default=-1, nullable=False)
@@ -183,9 +184,11 @@ class UserSharedKey(db.Model):
 
     def is_expired(self) -> bool:
         """Returns true if the key has expired"""
-        if self.expiry is not None and self.expiry < datetime.utcnow():
-            return True
-        return False
+        return self.expiry is not None and self.expiry < datetime.utcnow()
+
+    def is_adhoc(self) -> bool:
+        """Returns true if the key is not assigned to any styles"""
+        return len(self.styles) == 0
 
     def is_job_within_limits(
         self,
