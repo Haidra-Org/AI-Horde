@@ -356,6 +356,13 @@ class Parsers:
             help="Tags describing this style. Can be used for style discovery.",
             location="json",
         )
+        self.style_parser.add_argument(
+            "sharedkey",
+            type=str,
+            required=False,
+            help="The UUID of a shared key which will be used to generate with this style if active.",
+            location="json",
+        )
         self.style_parser_patch = reqparse.RequestParser()
         self.style_parser_patch.add_argument(
             "apikey",
@@ -426,6 +433,13 @@ class Parsers:
             type=list,
             required=False,
             help="Tags describing this style. Can be used for style discovery.",
+            location="json",
+        )
+        self.style_parser.add_argument(
+            "sharedkey",
+            type=str,
+            required=False,
+            help="The UUID of a shared key which will be used to generate with this style if active.",
             location="json",
         )
 

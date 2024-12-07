@@ -151,6 +151,8 @@ class Style(db.Model):
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="styles")
+    sharedkey_id = db.Column(uuid_column_type(), db.ForeignKey("user_sharedkeys.id"), nullable=True)
+    sharedkey = db.relationship("UserSharedKey", back_populates="styles")
     collections: Mapped[list[StyleCollection]] = db.relationship(secondary="style_collection_mapping", back_populates="styles")
     models = db.relationship("StyleModel", back_populates="style", cascade="all, delete-orphan")
     tags = db.relationship("StyleTag", back_populates="style", cascade="all, delete-orphan")
@@ -206,6 +208,7 @@ class Style(db.Model):
             "use_count": self.use_count,
             "public": self.public,
             "nsfw": self.nsfw,
+            "shared_key": self.sharedkey.get_details() if self.sharedkey else None,
         }
         return ret_dict
 

@@ -138,6 +138,8 @@ class GenerateTemplate(Resource):
         if self.args.workers:
             self.workers = self.args.workers
         self.user = None
+        self.apikey = None
+        self.sharedkey = None
         self.user_ip = request.remote_addr
         # For now this is checked on validate()
         self.safe_ip = True
@@ -182,9 +184,11 @@ class GenerateTemplate(Resource):
         if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
         with HORDE.app_context():  # TODO DOUBLE CHECK THIS
-            # logger.warning(datetime.utcnow())
-            if self.args.apikey:
-                self.sharedkey = database.find_sharedkey(self.args.apikey)
+            # If this is set, it means we've already found an active shared key through an applied style.
+            if self.sharedkey:
+                self.user = self.sharedkey.user
+            elif self.apikey:
+                self.sharedkey = database.find_sharedkey(self.apikey)
                 if self.sharedkey:
                     is_valid, error_msg, rc = self.sharedkey.is_valid()
                     if not is_valid:
@@ -192,9 +196,14 @@ class GenerateTemplate(Resource):
                             self.downgrade_wp_priority = True
                         else:
                             raise e.Forbidden(message=error_msg, rc=rc)
+                    if not self.sharedkey.is_adhoc():
+                        raise e.Forbidden(
+                            message="This shared key cannot be used as it has been assigned to specific styles only",
+                            rc="SharedKeyAssignedStyles",
+                        )
                     self.user = self.sharedkey.user
                 if not self.user:
-                    self.user = database.find_user_by_api_key(self.args.apikey)
+                    self.user = database.find_user_by_api_key(self.apikey)
             # logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey("generation")
@@ -355,6 +364,17 @@ class GenerateTemplate(Resource):
             extra_source_images=self.args.extra_source_images,
             kudos_adjustment=2 if self.style_kudos is True else 0,
         )
+
+    def apply_style(self):
+        # If it reaches this method, we've already made sure  self.args.style isn't empty.
+        self.existing_style = database.get_style_by_uuid(self.args.style)
+        if not self.existing_style:
+            self.existing_style = database.get_style_by_name(self.args.style)
+        if not self.existing_style:
+            raise e.ThingNotFound("Style", self.args.style)
+        # If there's an attached shared key to the style, and it's not empty or expired, we use it.
+        if self.existing_style.sharedkey and self.existing_style.sharedkey.is_valid()[0] is True:
+            self.sharedkey = self.existing_style.sharedkey
 
 
 class SyncGenerate(GenerateTemplate):
@@ -3172,7 +3192,14 @@ class StyleTemplate(Resource):
         return
 
     def validate(self):
-        pass
+        self.sharedkey = None
+        if self.args.sharedkey:
+            self.sharedkey = database.find_sharedkey(self.args.sharedkey)
+            if self.sharedkey is None:
+                raise e.BadRequest("This shared key does not exist", "SharedKeyInvalid")
+            shared_key_validity = self.sharedkey.is_valid()
+            if shared_key_validity[0] is False:
+                raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
 
 
 class SingleStyleTemplateGet(Resource):
@@ -3250,6 +3277,9 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
             style_modified = True
         if len(self.tags) > 0:
             style_modified = True
+        if self.sharedkey is not None:
+            self.existing_style.sharedkey_id = self.sharedkey.id
+            style_modified = True
         if not style_modified:
             return {
                 "id": self.existing_style.id,
@@ -3265,7 +3295,14 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         }, 200
 
     def validate(self):
-        pass
+        self.sharedkey = None
+        if self.args.sharedkey:
+            self.shared_key = database.find_sharedkey(self.args.sharedkey)
+            if self.sharedkey is None:
+                raise e.BadRequest("This shared key does not exist", "SharedKeyInvalid")
+            shared_key_validity = self.sharedkey.is_valid()
+            if shared_key_validity[0] is False:
+                raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
 
     def delete(self, style_id):
         self.args = parsers.apikey_parser.parse_args()
