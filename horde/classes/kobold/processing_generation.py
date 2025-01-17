@@ -124,7 +124,9 @@ class TextProcessingGeneration(ProcessingGeneration):
         # but new paradigms, backends and breakthroughs have made these numbers increasingly inaccurate or irrelevant.
 
         max_speed_per_multiplier = {
-            1: 100,
+            70: 30,
+            14: 100,
+            8: 150,
         }
 
         for params_count in max_speed_per_multiplier:
