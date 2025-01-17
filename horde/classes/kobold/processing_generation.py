@@ -111,13 +111,22 @@ class TextProcessingGeneration(ProcessingGeneration):
             return
         param_multiplier = model_reference.get_text_model_multiplier(self.model)
         unreasonable_speed = hv.suspicion_thresholds["text"]
+
+        # max_speed_per_multiplier = {
+        # 70: 12,
+        # 40: 22,
+        # 20: 35,
+        # 13: 50,
+        # 7: 70,
+        # }
+
+        # Once upon a time, before batching and other optimizations, these were the speeds we considered unreasonable
+        # but new paradigms, backends and breakthroughs have made these numbers increasingly inaccurate or irrelevant.
+
         max_speed_per_multiplier = {
-            70: 12,
-            40: 22,
-            20: 35,
-            13: 50,
-            7: 70,
+            1: 100,
         }
+
         for params_count in max_speed_per_multiplier:
             if param_multiplier >= params_count:
                 unreasonable_speed = max_speed_per_multiplier[params_count]
