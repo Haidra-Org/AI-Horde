@@ -190,8 +190,8 @@ class TextModels(v2.Models):
                 "n": fields.Integer(example=1, min=1, max=20),
                 "max_context_length": fields.Integer(
                     min=80,
-                    default=1024,
-                    max=32768,
+                    default=2048,
+                    max=1_048_576,
                     description="Maximum number of tokens to send to the model.",
                 ),
                 "max_length": fields.Integer(
