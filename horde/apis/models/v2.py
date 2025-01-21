@@ -747,6 +747,54 @@ class Models:
                 ),
             },
         )
+
+        self.response_model_message = api.model(
+            "ResponseModelMessagePop",
+            {
+                "id": fields.String(
+                    description="The ID of this message",
+                    example="00000000-0000-0000-0000-000000000000",
+                    required=True,
+                ),
+                "message": fields.String(
+                    description="The message sent",
+                    example="Hello Worker!",
+                    required=True,
+                ),
+                "origin": fields.String(
+                    description="The origin of this message. Typically this will be the horde moderators.",
+                    example="moderator",
+                ),
+                "expiry": fields.DateTime(
+                    dt_format="rfc822",
+                    description="The date at which this message will expire.",
+                    required=True,
+                ),
+            },
+        )
+
+        self.response_model_message_full = api.inherit(
+            "ResponseModelMessage",
+            self.response_model_message,
+            {
+                "worker_id": fields.String(
+                    description="The ID of the worker this message is intended for.",
+                    example="00000000-0000-0000-0000-000000000000",
+                    required=True,
+                ),
+                "user_id": fields.String(
+                    description="The ID of owning user",
+                    example="00000000-0000-0000-0000-000000000000",
+                    required=True,
+                ),
+                "created": fields.DateTime(
+                    dt_format="rfc822",
+                    description="The date at which this message was created.",
+                    required=True,
+                ),
+            },
+        )
+
         self.response_model_worker_details = api.inherit(
             "WorkerDetails",
             self.response_model_worker_details_lite,
@@ -859,6 +907,7 @@ class Models:
                     description="The maximum tokens this worker can read.",
                 ),
                 "tokens_generated": fields.Float(description="How many tokens this worker has generated until now."),
+                "messages": fields.List(fields.Nested(self.response_model_message_full, skip_none=True)),
             },
         )
 
@@ -1795,6 +1844,32 @@ class Models:
                 "markdown": fields.String(
                     required=False,
                     description="The document in markdown format.",
+                ),
+            },
+        )
+
+        self.input_model_message = api.model(
+            "ResponseModelMessage",
+            {
+                "message": fields.String(
+                    description="The message sent",
+                    example="Hello Worker!",
+                    min_length=1,
+                    max_length=1024 * 10,
+                    required=True,
+                ),
+                "origin": fields.String(
+                    description="The origin of this message. Typically this will be the horde moderators.",
+                    min_length=1,
+                    max_length=255,
+                    example="AI Horde Moderators",
+                ),
+                "expiry": fields.Integer(
+                    min=1,
+                    max=30 * 24,
+                    default=12,
+                    description="The number of hours after which this message expires.",
+                    required=False,
                 ),
             },
         )

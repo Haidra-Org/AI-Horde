@@ -22,7 +22,7 @@ from horde.classes.base.detection import Filter
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WPAllowedWorkers, WPModels
-from horde.classes.base.worker import WorkerModel, WorkerPerformance
+from horde.classes.base.worker import WorkerMessage, WorkerModel, WorkerPerformance
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
@@ -1635,3 +1635,30 @@ def retrieve_available_collections(
         style_query = style_query.filter(StyleCollection.public.is_(True))
     style_order_by = StyleCollection.created.asc() if sort == "age" else StyleCollection.use_count.desc()
     return style_query.order_by(style_order_by).offset(page).limit(25).all()
+
+
+def get_all_active_worker_messages(worker_id):
+    return (
+        db.session.query(WorkerMessage)
+        .filter(
+            or_(
+                WorkerMessage.worker_id == worker_id,
+                WorkerMessage.worker_id.is_(None),
+            ),
+            WorkerMessage.expiry > datetime.utcnow(),
+        )
+        .all()
+    )
+
+
+def get_worker_messages(user_id=None, worker_id=None, validity="all", page=0):
+    wmquery = db.session.query(WorkerMessage)
+    if user_id is not None:
+        wmquery = wmquery.filter(or_(WorkerMessage.user_id == user_id, WorkerMessage.worker_id.is_(None)))
+    if worker_id is not None:
+        wmquery = wmquery.filter(WorkerMessage.worker_id == worker_id)
+    if validity == "active":
+        wmquery = wmquery.filter(WorkerMessage.expiry > datetime.utcnow())
+    if validity == "expired":
+        wmquery = wmquery.filter(WorkerMessage.expiry <= datetime.utcnow())
+    return wmquery.offset(page).limit(50).all()

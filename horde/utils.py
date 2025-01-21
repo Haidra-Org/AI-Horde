@@ -98,6 +98,10 @@ def hash_dictionary(dictionary):
     return hash_object.hexdigest()
 
 
+def get_message_expiry_date():
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+12)
+
+
 def get_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)
 

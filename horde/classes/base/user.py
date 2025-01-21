@@ -270,6 +270,7 @@ class User(db.Model):
     problem_jobs = db.relationship("UserProblemJobs", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
     interrogations = db.relationship("Interrogation", back_populates="user", cascade="all, delete-orphan")
+    worker_messages = db.relationship("WorkerMessage", back_populates="user", cascade="all, delete-orphan")
     filters = db.relationship("Filter", back_populates="user")
 
     ## TODO: Figure out how to make the below work

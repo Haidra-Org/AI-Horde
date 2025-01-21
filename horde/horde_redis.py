@@ -5,7 +5,7 @@
 import json
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Lock
 
 from horde.logger import logger
@@ -72,7 +72,13 @@ class HordeRedis:
         """Same as horde_r_setex()
         but also converts the python builtin value to json
         """
-        self.horde_r_setex(key, expiry, json.dumps(value))
+
+        def default_converter(o):
+            if isinstance(o, datetime):
+                return o.strftime("%a, %d %b %Y %H:%M:%S +0000")
+            raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+        self.horde_r_setex(key, expiry, json.dumps(value, default=default_converter))
 
     def horde_r_local_set_to_json(self, key, value):
         if self.horde_local_r:
