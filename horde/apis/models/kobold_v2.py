@@ -260,6 +260,7 @@ class TextModels(v2.Models):
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
+                "messages": fields.List(fields.Nested(self.response_model_message, skip_none=True)),
                 "ttl": fields.Integer(description="The amount of seconds before this job is considered stale and aborted."),
                 "extra_source_images": fields.List(fields.Nested(self.model_extra_source_images)),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),

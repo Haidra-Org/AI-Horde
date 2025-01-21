@@ -16,7 +16,7 @@ from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.suspicions import SUSPICION_LOGS, Suspicions
-from horde.utils import get_db_uuid, is_profane, sanitize_string
+from horde.utils import get_db_uuid, get_message_expiry_date, is_profane, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -86,6 +86,23 @@ class WorkerModel(db.Model):
     model = db.Column(db.String(255))  # TODO model should be a foreign key to a model table
 
 
+class WorkerMessage(db.Model):
+    __tablename__ = "worker_messages"
+    id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
+    worker_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("workers.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    worker = db.relationship("Worker", back_populates="messages")
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
+    user = db.relationship("User", back_populates="worker_messages")
+    message = db.Column(db.Text)
+    origin = db.Column(db.String(255))
+    expiry = db.Column(db.DateTime, default=get_message_expiry_date, index=True)
+    created = db.Column(db.DateTime, default=datetime.utcnow())
+
+
 class WorkerTemplate(db.Model):
     __tablename__ = "workers"
     __mapper_args__ = {
@@ -135,6 +152,7 @@ class WorkerTemplate(db.Model):
     performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete-orphan")
     suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
     problem_jobs = db.relationship("UserProblemJobs", back_populates="worker", cascade="all, delete-orphan")
+    messages = db.relationship("WorkerMessage", back_populates="worker", cascade="all, delete-orphan")
 
     require_upfront_kudos = False
     prioritized_users = []
@@ -444,6 +462,9 @@ class WorkerTemplate(db.Model):
             db.session.add(new_suspicion)
         db.session.commit()
 
+    def get_active_messages(self):
+        return [m for m in self.messages if m.expiry > datetime.utcnow()]
+
     # Should be extended by each specific horde
     @logger.catch(reraise=True)
     def get_details(self, details_privilege=0):
@@ -472,6 +493,19 @@ class WorkerTemplate(db.Model):
             ret_dict["suspicious"] = len(self.suspicions)
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict["owner"] = self.user.get_unique_alias()
+            msgs = []
+            for m in self.get_active_messages():
+                msgs.append(
+                    {
+                        "worker_id": str(self.id),
+                        "user_id": m.user_id,
+                        "message": m.message,
+                        "origin": m.origin,
+                        "created": m.created,
+                        "expiry": m.expiry,
+                    },
+                )
+            ret_dict["messages"] = msgs
         if details_privilege >= 1:
             ret_dict["ipaddr"] = self.ipaddr
             ret_dict["contact"] = self.user.contact
