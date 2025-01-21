@@ -27,10 +27,10 @@ class TextWaitingPrompt(WaitingPrompt):
     )
     max_context_length = db.Column(
         db.Integer,
-        default=1024,
+        default=2048,
         nullable=False,
         index=True,
-        server_default=expression.literal(1024),
+        server_default=expression.literal(2048),
     )
     softprompt = db.Column(db.String(255), default=None, nullable=True)
     processing_gens = db.relationship(
@@ -44,7 +44,7 @@ class TextWaitingPrompt(WaitingPrompt):
         self.n = self.params.pop("n", 1)
         self.jobs = self.n
         self.max_length = self.params.get("max_length", 80)
-        self.max_context_length = self.params.get("max_context_length", 1024)
+        self.max_context_length = self.params.get("max_context_length", 2048)
         # To avoid unnecessary calculations, we do it once here.
         self.things = self.max_length
         # The total amount of to pixelsteps requested.

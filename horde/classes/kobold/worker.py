@@ -40,7 +40,7 @@ class TextWorker(Worker):
     }
     # TODO: Switch to max_power
     max_length = db.Column(db.Integer, default=80, nullable=False)
-    max_context_length = db.Column(db.Integer, default=1024, nullable=False)
+    max_context_length = db.Column(db.Integer, default=2048, nullable=False)
 
     softprompts = db.relationship("TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan")
     wtype = "text"
@@ -110,7 +110,7 @@ class TextWorker(Worker):
     def calculate_uptime_reward(self):
         model = self.get_model_names()[0]
         # The base amount of kudos one gets is based on the max context length they've loaded
-        base_kudos = 25 + (15 * min(self.max_context_length, 16384) / 1024)
+        base_kudos = 25 + (15 * min(self.max_context_length, 262_144) / 1024)
         if not model_reference.is_known_text_model(model):
             return base_kudos * 0.5
         # We consider the 7B models the baseline here
