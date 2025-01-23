@@ -23,7 +23,7 @@ from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
 from horde.classes.base.news import News
-from horde.classes.base.team import Team, find_team_by_id, get_all_teams
+from horde.classes.base.team import Team, find_team_by_id, find_team_by_name, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker, WorkerMessage
@@ -1979,7 +1979,7 @@ class Teams(Resource):
         ret_dict = {}
 
         self.team_name = sanitize_string(self.args.name)
-        self.team = database.find_team_by_name(self.team_name)
+        self.team = find_team_by_name(self.team_name)
         self.team_info = self.args.info
         if self.team_info is not None:
             self.team_info = sanitize_string(self.team_info)
