@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.46.1
+
+Fixes crash when trying to set messages to foreign workers
+
 # 4.46.0
 
 * Adds worker messages in `api/v2/workers/messages` endpoints. Worker messages can be set by horde moderators or by their own workers and will (soon) be returned to the workers every time they pop a request as a way to send them important messages since when we don't have any other method of communication with them.

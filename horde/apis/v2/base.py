@@ -3298,8 +3298,8 @@ class WorkerMessages(Resource):
                 raise e.WorkerNotFound(self.args.worker_id)
         if not user.moderator:
             self.origin = str(user.id)
-            if worker and worker.user_id != self.user.id:
-                raise e.Forbidden("You can only send messages to your own workers.")
+            if worker and worker.user_id != user.id:
+                raise e.Forbidden("You can only send messages to your own workers.", rc="MessagesOnlyOwnWorkers")
         self.expiry = self.args.expiry
         # Max expiry is 30 days
         if self.expiry and self.expiry > 30 * 24:

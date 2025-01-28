@@ -160,6 +160,7 @@ KNOWN_RC = [
     "StyleGetMistmatch",
     "TooManyStyleExamples",
     "ExampleURLAlreadyInUse",
+    "MessagesOnlyOwnWorkers",
 ]
 
 
