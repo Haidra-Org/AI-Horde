@@ -3190,6 +3190,8 @@ class WorkerMessages(Resource):
         required=False,
         type=str,
         location="args",
+        help="Filter messages based on whether they're expired or not. Possible values are 'active', 'expired' and 'all",
+        default="active",
     )
     get_parser.add_argument(
         "page",
@@ -3201,7 +3203,7 @@ class WorkerMessages(Resource):
     )
 
     # @cache.cached(timeout=60)
-    @api.expect(get_parser)
+    @api.expect(get_parser, validate=True)
     @api.marshal_with(
         models.response_model_message_full,
         code=200,
@@ -3222,11 +3224,13 @@ class WorkerMessages(Resource):
             self.args.user_id = user.id
         if not user.moderator and user.id != self.args.user_id:
             raise e.Forbidden("You can only view your own messages.")
+        if self.args.validity and self.args.validity not in {"active", "expired", "all"}:
+            raise e.BadRequest("validity can only be one of 'active, 'expired', or 'all'")
         return (
             database.get_worker_messages(
                 user_id=self.args.user_id,
                 worker_id=self.args.worker_id,
-                validity=self.args.validity,
+                validity=self.args.validity if self.args.validity else "active",
                 page=self.args.page - 1,
             ),
             200,
@@ -3273,7 +3277,7 @@ class WorkerMessages(Resource):
     )
 
     @cache.cached(timeout=60)
-    @api.expect(post_parser)
+    @api.expect(post_parser, models.input_model_message, validate=True)
     @api.marshal_with(
         models.response_model_message_full,
         code=200,

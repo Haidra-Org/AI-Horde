@@ -506,6 +506,8 @@ class Models:
                 "worker_id": fields.String(
                     title="Worker ID",
                     description="The UUID of the worker which generated this image.",
+                    min_length=36,
+                    max_length=36,
                 ),
                 "worker_name": fields.String(
                     title="Worker Name",
@@ -781,6 +783,8 @@ class Models:
                     description="The ID of the worker this message is intended for.",
                     example="00000000-0000-0000-0000-000000000000",
                     required=True,
+                    min_length=36,
+                    max_length=36,
                 ),
                 "user_id": fields.String(
                     description="The ID of owning user",
@@ -1236,6 +1240,8 @@ class Models:
                     fields.String(
                         description="Privileged or public when the user has explicitly allows it to be public.",
                         example="00000000-0000-0000-0000-000000000000",
+                        min_length=36,
+                        max_length=36,
                     ),
                 ),
                 "styles": fields.List(fields.Nested(self.response_model_styles_user)),
@@ -1851,6 +1857,13 @@ class Models:
         self.input_model_message = api.model(
             "ResponseModelMessage",
             {
+                "worker_id": fields.String(
+                    description="The ID of the worker this message is intended for.",
+                    example="00000000-0000-0000-0000-000000000000",
+                    required=False,
+                    min_length=36,
+                    max_length=36,
+                ),
                 "message": fields.String(
                     description="The message sent",
                     example="Hello Worker!",
