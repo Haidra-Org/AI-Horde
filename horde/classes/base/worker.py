@@ -259,7 +259,7 @@ class WorkerTemplate(db.Model):
         return "OK"
 
     def set_team(self, new_team):
-        self.team_id = new_team.id
+        self.team_id = new_team.id if new_team else None
         db.session.commit()
         return "OK"
 
