@@ -9,6 +9,20 @@ from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
 
 
+def get_default_keys_of_model(model):
+    def_keys = set()
+    for key in model.keys():
+        if model[key].default is not None:
+            def_keys.add(key)
+    return def_keys
+
+
+def remove_all_model_default_params(model):
+    def_keys = get_default_keys_of_model(model)
+    for key in def_keys:
+        model[key].default = None
+
+
 class Parsers:
     def __init__(self):
         # A Basic parser which only expects a Client-Agent
