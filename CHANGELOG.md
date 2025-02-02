@@ -6,6 +6,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.46.2
+
+* Fixes crash when styles included comfyUI-style {randomized|strings}
+* Allows styles to avoid falling back to default params such as width/height. When a style doesn't have a width/height specified, and the user provided values for them, they will be used for the style instead of the horde defaults.
+
+
 # 4.46.1
 
 Fixes crash when trying to set messages to foreign workers

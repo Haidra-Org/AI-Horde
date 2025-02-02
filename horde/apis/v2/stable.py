@@ -9,12 +9,12 @@ from datetime import datetime
 import requests
 from flask import request
 from flask_restx import Resource, reqparse
+from loguru import logger
 
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
-from horde.apis.models.v2 import get_default_keys_of_model
 from horde.apis.v2.base import (
     GenerateTemplate,
     JobPopTemplate,
@@ -38,7 +38,6 @@ from horde.enums import WarningMessage
 from horde.flask import HORDE, cache, db
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
-from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
 from horde.utils import does_extra_text_reference_exist, hash_dictionary
@@ -382,13 +381,23 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.negprompt = "###" + self.negprompt
         # We need to use defaultdict to avoid getting keyerrors in case the style author added
         # Erroneous keys in the string
-        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
+        # We have to do this sort of replacement to prevent randomized comfyUI strings from getting confused
+        # With the {p}/{np} prompt replacement areas
+        self.prompt = (
+            self.existing_style.prompt.replace("{", "{{")
+            .replace("}", "}}")
+            .replace("{{p}}", "{p}")
+            .replace("{{np}}", "{np}")
+            .format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
+        )
+        # self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
         requested_n = self.params.get("n", 1)
         user_params = self.params
         self.params = self.existing_style.params
         self.params["n"] = requested_n
-        # This is to prevent mandatory params from going missing after applying a style which doesn't provide them.
-        for default_param in get_default_keys_of_model(models.input_model_generation_payload):
+        # This allows a style without specified width/height to receive these variables from the user.
+        default_params = {"width", "height"}
+        for default_param in default_params:
             if default_param not in self.params and default_param in user_params:
                 self.params[default_param] = user_params[default_param]
         self.nsfw = self.existing_style.nsfw
