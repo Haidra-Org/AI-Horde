@@ -1003,7 +1003,7 @@ class ImageModels(v2.Models):
             "ModelStyleInputParamsStable",
             self.root_model_generation_payload_style_stable_nodefaults,
             {
-                "steps": fields.Integer(default=30, required=False, min=1, max=500),
+                "steps": fields.Integer(required=False, min=1, max=500),
             },
         )
         self.input_model_style = api.model(
@@ -1178,6 +1178,6 @@ class ImageModels(v2.Models):
                 "use_count": fields.Integer(description="The amount of times this style has been used in generations."),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
                 "examples": fields.List(fields.Nested(self.response_model_style_example, skip_none=True)),
-                "shared_key": fields.Nested(self.response_model_sharedkey_details),
+                "shared_key": fields.Nested(self.response_model_sharedkey_details, skip_none=True),
             },
         )
