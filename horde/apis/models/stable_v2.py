@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import copy
+
 from flask_restx import fields
 
 from horde.apis.models import v2
@@ -389,6 +391,13 @@ class ImageModels(v2.Models):
                     description="Set to True to generate the image using Layer Diffuse, creating an image with a transparent background.",
                 ),
             },
+        )
+        # We have to do this to remove the defaults for styles
+        temp_model_copy = copy.deepcopy(self.root_model_generation_payload_style_stable)
+        v2.remove_all_model_default_params(temp_model_copy)
+        self.root_model_generation_payload_style_stable_nodefaults = api.inherit(
+            "ModelStyleInputParamsStableNoDefaults",
+            temp_model_copy,
         )
         self.root_model_generation_payload_stable = api.inherit(
             "ModelPayloadRootStable",
@@ -992,7 +1001,7 @@ class ImageModels(v2.Models):
         # Styles
         self.input_model_style_params = api.inherit(
             "ModelStyleInputParamsStable",
-            self.root_model_generation_payload_style_stable,
+            self.root_model_generation_payload_style_stable_nodefaults,
             {
                 "steps": fields.Integer(default=30, required=False, min=1, max=500),
             },
