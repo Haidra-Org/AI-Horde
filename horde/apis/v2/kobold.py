@@ -202,7 +202,7 @@ class TextAsyncGenerate(GenerateTemplate):
         # Erroneous keys in the string
         self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt))
         requested_n = self.params.get("n", 1)
-        self.params = self.existing_style.params
+        self.params = self.existing_style.params.copy()
         self.params["n"] = requested_n
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1

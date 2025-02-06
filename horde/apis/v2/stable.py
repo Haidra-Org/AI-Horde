@@ -393,7 +393,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         # self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
         requested_n = self.params.get("n", 1)
         user_params = self.params
-        self.params = self.existing_style.params
+        self.params = self.existing_style.params.copy()
         self.params["n"] = requested_n
         # This allows a style without specified width/height to receive these variables from the user.
         default_params = {"width", "height"}
