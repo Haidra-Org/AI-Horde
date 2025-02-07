@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import copy
 import random
 from collections import defaultdict
 
@@ -202,7 +203,7 @@ class TextAsyncGenerate(GenerateTemplate):
         # Erroneous keys in the string
         self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt))
         requested_n = self.params.get("n", 1)
-        self.params = self.existing_style.params.deepcopy()
+        self.params = copy.deepcopy(self.existing_style.params)
         self.params["n"] = requested_n
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1

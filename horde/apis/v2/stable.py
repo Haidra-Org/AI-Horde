@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import copy
 import random
 from collections import defaultdict
 from datetime import datetime
@@ -393,7 +394,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         # self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
         requested_n = self.params.get("n", 1)
         user_params = self.params
-        self.params = self.existing_style.params.deepcopy()
+        self.params = copy.deepcopy(self.existing_style.params)
         self.params["n"] = requested_n
         # This allows a style without specified width/height to receive these variables from the user.
         default_params = {"width", "height"}
