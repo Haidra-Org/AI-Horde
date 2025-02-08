@@ -99,9 +99,9 @@ class ModelReference(PrimaryTimedFunction):
 
     def get_model_baseline(self, model_name):
         model_details = self.reference.get(model_name, {})
-        if model_details is None and "[SDXL]" in model_name:
+        if not model_details and "[SDXL]" in model_name:
             return "stable_diffusion_xl"
-        if model_details is None and "[Flux]" in model_name:
+        if not model_details and "[Flux]" in model_name:
             return "flux_1"
         return model_details.get("baseline", "stable diffusion 1")
 
