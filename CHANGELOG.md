@@ -6,6 +6,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.46.3
+
+* Can now specify `[SDXL]` or `[Flux]` on a custom model name, and it will be treated as having SDXL or flux baseline respectively.
+* Removing teams from workers should now work properly (Thanks @bosconian-dynamics)
+* Avoids style params getting overriden by user params (Thanks @amiantos)
+
 # 4.46.2
 
 * Fixes crash when styles included comfyUI-style {randomized|strings}
