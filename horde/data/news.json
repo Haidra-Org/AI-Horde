@@ -1,5 +1,17 @@
 [
     {
+        "date_published": "2025-01-27",
+        "newspiece": "AI Horde workers can now receive messages from the horde, or even send messages to themselves. Frontends like Artbot and Horde-NG will also display these messages when you login.",
+        "tags": [
+            "messages",
+            "db0"
+        ],
+        "importance": "Workers",
+        "more_info_urls": [
+        ],
+        "title": "Worker messages."
+    },
+    {
         "date_published": "2024-12-23",
         "newspiece": "A new tool has just been released by a third party integrator: [AI Horde Monitor](https://monitor.fyrean.com/) which will show you some stats over time about your account and your requests. It doesn't store any of your info and [it can also be self-hosted](https://github.com/MangoLion/aihorde-monitor)!",
         "tags": [
