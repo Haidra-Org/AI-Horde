@@ -46,6 +46,14 @@ arg_parser.add_argument(
     help="Provide a different port to start with",
 )
 arg_parser.add_argument(
+    "--listen",
+    action="store",
+    default="0.0.0.0",
+    required=False,
+    type=str,
+    help="Provide a different listen IP to listen to",
+)
+arg_parser.add_argument(
     "--horde",
     action="store",
     default="stable",
