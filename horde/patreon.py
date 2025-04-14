@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import os
 
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -13,6 +14,9 @@ class PatreonCache(PrimaryTimedFunction):
     patrons = {}
 
     def call_function(self):
+        if os.environ.get("PATREON_CREATOR_ACCESS_TOKEN"):
+            logger.warning("PATREON_CREATOR_ACCESS_TOKEN not set. No patreon cache will be retrieved.")
+            return
         try:
             patrons_json = json.loads(hr.horde_r_get("patreon_cache"))
             # json keys are always strings, so we need to convert them to ints to easily index user ids later

@@ -185,6 +185,14 @@ def find_user_by_id(user_id):
     return user
 
 
+def find_user_by_contact(contact):
+    user_query = db.session.query(User).filter_by(contact=contact)
+    selected_user = user_query.first()
+    if user_query.count() == 0:
+        logger.warning(f"Multiple users found with the same contact {contact}! Returning first found {selected_user.id}")
+    return selected_user
+
+
 def find_user_by_api_key(api_key):
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return None

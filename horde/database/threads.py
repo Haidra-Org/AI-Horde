@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta
 
 import patreon
+import stripe
 from sqlalchemy import func, or_
 
 from horde.argparser import args
@@ -21,6 +22,7 @@ from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.database.functions import (
     compile_regex_filter,
     count_totals,
+    find_user_by_contact,
     get_active_workers,
     get_available_models,
     prune_expired_stats,
@@ -298,6 +300,8 @@ def prune_stats():
 
 @logger.catch(reraise=True)
 def store_patreon_members():
+    if not os.getenv("PATREON_CREATOR_ACCESS_TOKEN"):
+        return
     api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
     # campaign_id = api_client.get_campaigns(10).data()[0].id()
     if api_client is None:
@@ -357,6 +361,52 @@ def store_patreon_members():
     cached_patreons = json.dumps(active_members)
     logger.info(f"patreon_cache ({len(active_members)}): {sorted(active_members.keys())}")
     hr.horde_r_set("patreon_cache", cached_patreons)
+
+
+@logger.catch(reraise=True)
+def store_stripe_members():
+    if not os.environ.get("STRIPE_API_KEY"):
+        return
+    stripe.api_key = os.environ.get("STRIPE_API_KEY")
+    subscriptions = stripe.Subscription.list()
+    members = []
+    for subscription in subscriptions:
+        product_id = subscription["items"]["data"][0]["price"]["product"]
+        product = stripe.Product.retrieve(product_id)
+        subscription["product_name"] = product["name"]
+        subscription["metadata"] = subscription.get("metadata", {})
+        customer = stripe.Customer.retrieve(subscription["customer"])
+        subscription["customer_email"] = customer.get("email", "Unknown")
+        subscription["name"] = customer.get("name", "Unknown")
+        members.append(
+            {
+                "product_name": subscription["product_name"],
+                "email": subscription["customer_email"],
+                "name": subscription["name"],
+                "horde_id": subscription["metadata"].get("horde"),
+                "alias": subscription["metadata"].get("alias"),
+                "sponsor_link": subscription["metadata"].get("sponsor_link"),
+                "status": subscription["status"],
+            },
+        )
+    active_members = {}
+    for member in members:
+        if member["status"] != "active":
+            continue
+        # If we do not have a user ID or email, we cannot use it
+        if member.get("horde_id") in [None, ""]:
+            if member.get("email") in [None, ""]:
+                continue
+            existing_user = find_user_by_contact(member["email"])
+            member["horde_id"] = existing_user.get_unique_alias()
+        user_id = member["horde_id"]
+        if "#" in user_id:
+            user_id = user_id.split("#")[-1]
+        user_id = int(user_id)
+        active_members[user_id] = member
+    cached_stripe = json.dumps(active_members)
+    logger.info(f"stripe_cache ({len(active_members)}): {sorted(active_members.keys())}")
+    hr.horde_r_set("stripe_cache", cached_stripe)
 
 
 @logger.catch(reraise=True)

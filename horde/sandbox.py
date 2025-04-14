@@ -2,8 +2,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import os
 import pprint
 import sys
+
+import stripe
 
 import horde.classes.base.stats as stats
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
@@ -11,6 +14,7 @@ from horde.classes.stable.worker import ImageWorker
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.database import threads as threads
+from horde.database.threads import store_stripe_members
 from horde.detection import prompt_checker
 from horde.discord import send_pause_notification, send_problem_user_notification
 from horde.flask import HORDE, db
@@ -62,8 +66,10 @@ def test():
         #     logger.debug(w.calculate_uptime_reward())
         pass
 
-    with HORDE.app_context():
-        logger.debug(db.session.query(StyleCollection).offset(0).limit(25).all())
-        logger.debug(database.retrieve_available_collections())
+    # with HORDE.app_context():
+    #     logger.debug(db.session.query(StyleCollection).offset(0).limit(25).all())
+    #     logger.debug(database.retrieve_available_collections())
 
+    # store_stripe_members()
+    # from horde.stripe_subs import stripe_subs
     sys.exit()

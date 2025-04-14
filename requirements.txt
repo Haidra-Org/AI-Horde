@@ -34,3 +34,4 @@ emoji
 semver >= 3.0.2
 numpy ~= 1.26.4 # better_profanity fails on later versions of numpy
 markdownify
+stripe

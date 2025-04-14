@@ -80,7 +80,7 @@ arg_parser.add_argument(
 )
 arg_parser.add_argument("--disable_filters", action="store_true", help="Testing filter work")
 arg_parser.add_argument(
-    "--force_patreon",
+    "--force_subscription",
     action="store",
     required=False,
     type=int,
