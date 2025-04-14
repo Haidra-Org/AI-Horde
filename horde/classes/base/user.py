@@ -20,6 +20,7 @@ from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
+from horde.stripe_subs import stripe_subs
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import generate_client_id, get_db_uuid, is_profane, sanitize_string
 
@@ -702,6 +703,7 @@ class User(db.Model):
         if self.moderator:
             base_amount += 300000
         base_amount += patrons.get_monthly_kudos(self.id)
+        base_amount += stripe_subs.get_monthly_kudos(self.id)
         return base_amount
 
     def modify_kudos(self, kudos, action="accumulated"):
