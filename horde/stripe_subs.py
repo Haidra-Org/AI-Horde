@@ -59,12 +59,16 @@ class StripeCache(PrimaryTimedFunction):
             return 200_000
         if product_name == "Treasured":
             return 700_000
+        if product_name == "Celebrated":
+            return 1_500_000
+        if product_name == "Sponsor":
+            return 1_500_000
         logger.warning(f"Found patron '{user_id}' with non-standard product: {product_name}")
         return 0
 
     def get_sponsors(self):
         sponsors = []
-        for product in {"Recognised", "Cherised", "Treasured"}:
+        for product in {"Recognised", "Cherised", "Treasured", "Celebrated", "Sponsor"}:
             for patron in self.get_patrons(product_name=product).values():
                 logger.debug(patron)
                 sponsors.append(

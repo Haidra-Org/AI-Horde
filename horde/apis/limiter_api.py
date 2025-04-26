@@ -58,6 +58,6 @@ def get_request_api_key():
 
 def get_request_limit_per_apikey():
     apikey = request.headers.get("apikey", "0000000000")
-    if apikey == "0000000000":
+    if apikey == "0000000000" or dynamic_ip_whitelist.is_ip_whitelisted(request.remote_addr):
         return "60/second"
     return "2/second"
