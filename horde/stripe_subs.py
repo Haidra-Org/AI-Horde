@@ -14,7 +14,7 @@ class StripeCache(PrimaryTimedFunction):
     patrons = {}
 
     def call_function(self):
-        if os.environ.get("STRIPE_API_KEY"):
+        if not os.environ.get("STRIPE_API_KEY"):
             logger.warning("STRIPE_API_KEY not set. No stripe cache will be retrieved.")
             return
         try:

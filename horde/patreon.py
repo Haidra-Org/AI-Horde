@@ -14,7 +14,7 @@ class PatreonCache(PrimaryTimedFunction):
     patrons = {}
 
     def call_function(self):
-        if os.environ.get("PATREON_CREATOR_ACCESS_TOKEN"):
+        if not os.environ.get("PATREON_CREATOR_ACCESS_TOKEN"):
             logger.warning("PATREON_CREATOR_ACCESS_TOKEN not set. No patreon cache will be retrieved.")
             return
         try:
