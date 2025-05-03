@@ -193,15 +193,18 @@ class GenerateTemplate(Resource):
                     is_valid, error_msg, rc = self.sharedkey.is_valid()
                     if not is_valid:
                         if rc == "SharedKeyEmpty" and self.args.allow_downgrade:
+                            self.apikey = "0000000000"
                             self.downgrade_wp_priority = True
+                            self.user = database.find_user_by_api_key(self.apikey)
                         else:
                             raise e.Forbidden(message=error_msg, rc=rc)
+                    else:
+                        self.user = self.sharedkey.user
                     if not self.sharedkey.is_adhoc():
                         raise e.Forbidden(
                             message="This shared key cannot be used as it has been assigned to specific styles only",
                             rc="SharedKeyAssignedStyles",
                         )
-                    self.user = self.sharedkey.user
                 if not self.user:
                     self.user = database.find_user_by_api_key(self.apikey)
             # logger.warning(datetime.utcnow())
