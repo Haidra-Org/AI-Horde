@@ -149,7 +149,7 @@ class TextModels(v2.Models):
                 "temperature": fields.Float(description="Temperature value.", min=0, max=5.0),
                 "tfs": fields.Float(description="Tail free sampling value.", min=0.0, max=1.0),
                 "top_a": fields.Float(description="Top-a sampling value.", min=0.0, max=1.0),
-                "top_k": fields.Integer(description="Top-k sampling value.", min=0, max=100),
+                "top_k": fields.Integer(description="Top-k sampling value.", min=0, max=200),
                 "top_p": fields.Float(description="Top-p sampling value.", min=0.001, max=1.0),
                 "typical": fields.Float(description="Typical sampling value.", min=0.0, max=1.0),
                 "sampler_order": fields.List(
