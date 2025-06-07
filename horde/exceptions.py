@@ -165,6 +165,7 @@ KNOWN_RC = [
     "CannotDeleteMod",
     "UserNotDeleted",
     "DeletedUser",
+    "CannotWipeActiveUser",
 ]
 
 

@@ -1630,7 +1630,7 @@ class UserSingle(Resource):
             raise e.Forbidden("Only the user themselves or a moderator can delete a user", rc="NotUserOrMod")
         if user.deleted:
             if user.last_active > datetime.now() - timedelta(days=30):
-                raise e.Forbidden("You cannot permanently delete a user that was active in the last 30 days. ")
+                raise e.Forbidden("You cannot permanently wipe a user that was active in the last 30 days.", rc="CannotWipeActiveUser")
             # If the user is already deleted, we will delete them permanently
             logger.warning(f"{requesting_user.get_unique_alias()} permanently wiped user: {user.get_unique_alias()}")
             user.wipe()
