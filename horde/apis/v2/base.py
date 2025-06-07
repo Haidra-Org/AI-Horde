@@ -1599,7 +1599,7 @@ class UserSingle(Resource):
     )
 
     @api.expect(delete_parser)
-    @api.marshal_with(models.response_model_deleted_team, code=200, description="Delete Team")
+    @api.marshal_with(models.response_model_simple_response, code=200, description="Delete Team")
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(403, "Access Denied", models.response_model_error)
     @api.response(404, "User Not Found", models.response_model_error)
@@ -1632,11 +1632,11 @@ class UserSingle(Resource):
             if user.last_active > datetime.now() - timedelta(days=30):
                 raise e.Forbidden("You cannot permanently delete a user that was active in the last 30 days. ")
             # If the user is already deleted, we will delete them permanently
-            logger.warning(f"{requesting_user.get_unique_alias()} permanently wiped user: {user.username}")
+            logger.warning(f"{requesting_user.get_unique_alias()} permanently wiped user: {user.get_unique_alias()}")
             user.wipe()
             return ({"message": "OK"}, 200)
         else:
-            logger.warning(f"{requesting_user.get_unique_alias()} marked user as deleted: {user.username}")
+            logger.warning(f"{requesting_user.get_unique_alias()} marked user as deleted: {user.get_unique_alias()}")
             user.set_deleted(True)
             return ({"message": "OK"}, 200)
 
