@@ -1628,7 +1628,7 @@ class UserSingle(Resource):
             )
         if not requesting_user.moderator and requesting_user.id != user.id:
             raise e.Forbidden("Only the user themselves or a moderator can delete a user", rc="NotUserOrMod")
-        if user.deleted():
+        if user.deleted:
             if user.last_active > datetime.now() - timedelta(days=30):
                 raise e.Forbidden("You cannot permanently delete a user that was active in the last 30 days. ")
             # If the user is already deleted, we will delete them permanently
