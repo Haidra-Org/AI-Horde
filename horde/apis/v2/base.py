@@ -212,6 +212,8 @@ class GenerateTemplate(Resource):
                 raise e.InvalidAPIKey("generation")
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
+            if self.user.deleted:
+                raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
             if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
                 if len(self.args.extra_source_images) > 5:
                     raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages.")
@@ -545,6 +547,8 @@ class JobPopTemplate(Resource):
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
             raise e.InvalidAPIKey("prompt pop")
+        if self.user.deleted:
+            raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         if self.user.flagged:
             raise e.WorkerMaintenance(
                 "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn",
@@ -752,6 +756,8 @@ class AwardKudos(Resource):
         user = database.find_user_by_api_key(self.args["apikey"])
         if not user:
             raise e.InvalidAPIKey("kudos transfer to: " + self.args["username"])
+        if user.deleted:
+            raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         if user.id not in {1}:
             raise e.NotPrivileged(
                 user.get_unique_alias(),
@@ -1410,6 +1416,7 @@ class UserSingle(Resource):
         help="When set to true, the user will be marked as special.",
         location="json",
     )
+    parser.add_argument("undelete", type=bool, required=False, location="json")
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
@@ -1520,6 +1527,20 @@ class UserSingle(Resource):
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
             user.reset_suspicion()
             ret_dict["new_suspicion"] = user.get_suspicion()
+        if self.args.admin_comment is not None:
+            if not admin.moderator:
+                raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
+            if admin.is_anon():
+                raise e.AnonForbidden(rc="AnonForbiddenUserMod")
+            ret = user.set_admin_comment(self.args.admin_comment)
+            if ret == "Profanity":
+                raise e.Profanity(
+                    admin.get_unique_alias(),
+                    self.args.admin_comment,
+                    "user admin_comment",
+                    rc="ProfaneAdminComment",
+                )
+            ret_dict["admin_comment"] = user.admin_comment
         # User Access
         if self.args.public_workers is not None:
             if not admin.moderator and admin != user:
@@ -1548,24 +1569,76 @@ class UserSingle(Resource):
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.contact, "user contact", rc="ProfaneUserContact")
             ret_dict["contact"] = user.contact
-        if self.args.admin_comment is not None:
-            if not admin.moderator:
+        if self.args.undelete is not None:
+            if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
-            if admin.is_anon():
-                raise e.AnonForbidden(rc="AnonForbiddenUserMod")
-            ret = user.set_admin_comment(self.args.admin_comment)
-            if ret == "Profanity":
-                raise e.Profanity(
-                    admin.get_unique_alias(),
-                    self.args.admin_comment,
-                    "user admin_comment",
-                    rc="ProfaneAdminComment",
-                )
-            ret_dict["admin_comment"] = user.admin_comment
+            if not user.deleted:
+                raise e.BadRequest("User is not deleted, cannot undelete!", rc="UserNotDeleted")
+            user.set_deleted(False)
+            ret_dict["undeleted"] = True
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!", rc="NoUserModSelected")
         user.refresh_cache()
         return (ret_dict, 200)
+
+    delete_parser = reqparse.RequestParser()
+    delete_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+    delete_parser.add_argument(
+        "apikey",
+        type=str,
+        required=True,
+        help="The Moderator or User API key.",
+        location="headers",
+    )
+
+    @api.expect(delete_parser)
+    @api.marshal_with(models.response_model_deleted_team, code=200, description="Delete Team")
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(403, "Access Denied", models.response_model_error)
+    @api.response(404, "User Not Found", models.response_model_error)
+    def delete(self, user_id=""):
+        """Delete the user entry
+        Only the user or a horde moderator can use this endpoint.
+        A deleted user will initially be hidden and cannot be used anymore
+        After a month of being set as deleted, the same request will wipe the user permanently this action is then irreversible!
+        """
+        if not user_id.isdigit():
+            raise e.UserNotFound("Please use only the numerical part of the userID. E.g. the '1' in 'db0#1'")
+        self.args = self.get_parser.parse_args()
+        if self.args.apikey:
+            requesting_user = database.find_user_by_api_key(self.args["apikey"])
+            if not requesting_user:
+                raise e.InvalidAPIKey("User action: " + "DELETE UserSingle")
+        user = database.find_user_by_id(user_id)
+        if not user:
+            raise e.UserNotFound(user_id)
+        if requesting_user.is_anon():
+            raise e.AnonForbidden(rc="AnonForbiddenUser")
+        if user.moderator:
+            raise e.Forbidden(
+                "You cannot delete a user that is a moderator. Please contact an admin.",
+                rc="CannotDeleteMod",
+            )
+        if not requesting_user.moderator and requesting_user.id != user.id:
+            raise e.Forbidden("Only the user themselves or a moderator can delete a user", rc="NotUserOrMod")
+        if user.deleted():
+            if user.last_active > datetime.now() - timedelta(days=30):
+                raise e.Forbidden("You cannot permanently delete a user that was active in the last 30 days. ")
+            # If the user is already deleted, we will delete them permanently
+            logger.warning(f"{requesting_user.get_unique_alias()} permanently wiped user: {user.username}")
+            user.wipe()
+            return ({"message": "OK"}, 200)
+        else:
+            logger.warning(f"{requesting_user.get_unique_alias()} marked user as deleted: {user.username}")
+            user.set_deleted(True)
+            return ({"message": "OK"}, 200)
 
 
 class FindUser(Resource):

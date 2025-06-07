@@ -438,11 +438,41 @@ class User(db.Model):
         )
         return cls.id == subquery
 
+    @hybrid_property
+    def deleted(self) -> bool:
+        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.DELETED).first()
+        return user_role is not None and user_role.value
+
+    @deleted.expression
+    def deleted(cls):
+        subquery = (
+            db.session.query(UserRole.user_id)
+            .filter(
+                UserRole.user_role == UserRoleTypes.DELETED,
+                UserRole.value == True,  # noqa E712
+                UserRole.user_id == cls.id,
+            )
+            .correlate(cls)
+            .as_scalar()
+        )
+        return cls.id == subquery
+
     def create(self):
         self.check_for_bad_actor()
         db.session.add(self)
         db.session.commit()
         logger.info(f"New User Created {self.get_unique_alias()}")
+
+    def wipe(self):
+        logger.info(f"User Wiped {self.get_unique_alias()}")
+        self.username = "<wiped>"
+        self.oauth_id = "<wiped>"
+        self.contact = "<wiped>"
+        for worker in self.workers:
+            worker.delete()
+        for sk in self.sharedkeys:
+            db.session.delete(sk)
+        db.session.commit()
 
     def get_min_kudos(self):
         if self.is_anon():
@@ -558,6 +588,13 @@ class User(db.Model):
         if self.is_anon():
             return
         self.set_user_role(UserRoleTypes.SPECIAL, is_special)
+
+    def set_deleted(self, is_deleted):
+        if self.is_anon():
+            return
+        if self.moderator:
+            return
+        self.set_user_role(UserRoleTypes.DELETED, is_deleted)
 
     def set_public_workers(self, has_public_workers):
         if self.is_anon():
@@ -880,6 +917,7 @@ class User(db.Model):
             "worker_count": self.count_workers(),
             "account_age": (datetime.utcnow() - self.created).total_seconds(),
             "service": self.service,
+            "deleted": self.deleted,
             "education": self.education,
             "customizer": self.customizer,
             # unnecessary information, since the workers themselves wil be visible

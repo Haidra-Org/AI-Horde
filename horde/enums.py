@@ -38,6 +38,7 @@ class UserRoleTypes(enum.Enum):
     SPECIAL = 6
     SERVICE = 7
     EDUCATION = 8
+    DELETED = 9
 
 
 class ReturnedEnum(enum.Enum):
