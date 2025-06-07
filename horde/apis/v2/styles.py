@@ -59,7 +59,7 @@ class StyleTemplate(Resource):
             if shared_key_validity[0] is False:
                 raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
         if self.user.deleted:
-            raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+            raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
 
 
 class SingleStyleTemplateGet(Resource):
@@ -320,7 +320,7 @@ class Collection(Resource):
         if not self.user:
             raise e.InvalidAPIKey("Collection POST")
         if self.user.deleted:
-            raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+            raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         if self.user.is_anon():
             raise e.Forbidden("Anonymous users cannot create collections", rc="StylesAnonForbidden")
         for st in self.args.styles:

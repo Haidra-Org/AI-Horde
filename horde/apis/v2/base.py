@@ -213,7 +213,7 @@ class GenerateTemplate(Resource):
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
             if self.user.deleted:
-                raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+                raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
             if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
                 if len(self.args.extra_source_images) > 5:
                     raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages.")
@@ -548,7 +548,7 @@ class JobPopTemplate(Resource):
         if not self.user:
             raise e.InvalidAPIKey("prompt pop")
         if self.user.deleted:
-            raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+            raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         if self.user.flagged:
             raise e.WorkerMaintenance(
                 "Your user has been flagged by our community for suspicious activity. Please contact us on discord: https://discord.gg/3DxrhksKzn",
@@ -757,7 +757,7 @@ class AwardKudos(Resource):
         if not user:
             raise e.InvalidAPIKey("kudos transfer to: " + self.args["username"])
         if user.deleted:
-            raise e.BadRequest(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+            raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         if user.id not in {1}:
             raise e.NotPrivileged(
                 user.get_unique_alias(),
