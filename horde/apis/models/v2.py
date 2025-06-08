@@ -1298,6 +1298,10 @@ class Models:
                     example=False,
                     description="(Privileged) This user has been given the Special role.",
                 ),
+                "deleted": fields.Boolean(
+                    example=False,
+                    description="This user has been marked for deletion.",
+                ),
                 "suspicious": fields.Integer(
                     example=0,
                     description="(Privileged) How much suspicion this user has accumulated.",
@@ -1393,6 +1397,10 @@ class Models:
                     example=False,
                     description="When set to true, The user can send special payloads.",
                 ),
+                "undelete": fields.Boolean(
+                    example=False,
+                    description="When set to true, A user's who's marked to be deleted will become active again.",
+                ),
                 "filtered": fields.Boolean(
                     example=False,
                     description="When set to true, the replacement filter will always be applied against this user",
@@ -1446,6 +1454,7 @@ class Models:
                 "service": fields.Boolean(description="The user's new service status."),
                 "education": fields.Boolean(description="The user's new education status."),
                 "special": fields.Boolean(description="The user's new special status."),
+                "undeleted": fields.Boolean(description="True if the user was undeleted with this operation."),
                 "new_suspicion": fields.Integer(description="The user's new suspiciousness rating."),
                 "contact": fields.String(example="email@example.com", description="The new contact details."),
                 "admin_comment": fields.String(

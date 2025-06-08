@@ -161,6 +161,11 @@ KNOWN_RC = [
     "TooManyStyleExamples",
     "ExampleURLAlreadyInUse",
     "MessagesOnlyOwnWorkers",
+    "NotUserOrMod",
+    "CannotDeleteMod",
+    "UserNotDeleted",
+    "DeletedUser",
+    "CannotWipeActiveUser",
 ]
 
 

@@ -174,19 +174,19 @@ def find_user_by_username(username):
     except Exception:
         return None
     # This approach handles someone cheekily putting # in their username
-    user = db.session.query(User).filter_by(id=int(ulist[-1])).first()
+    user = db.session.query(User).filter_by(id=int(ulist[-1])).filter(User.oauth_id != "<wiped>").first()
     return user
 
 
 def find_user_by_id(user_id):
     if int(user_id) == 0 and not ALLOW_ANONYMOUS:
         return None
-    user = db.session.query(User).filter_by(id=user_id).first()
+    user = db.session.query(User).filter_by(id=user_id).filter(User.oauth_id != "<wiped>").first()
     return user
 
 
 def find_user_by_contact(contact):
-    user_query = db.session.query(User).filter_by(contact=contact)
+    user_query = db.session.query(User).filter_by(contact=contact).filter(User.oauth_id != "<wiped>")
     selected_user = user_query.first()
     if user_query.count() == 0:
         logger.warning(f"Multiple users found with the same contact {contact}! Returning first found {selected_user.id}")
@@ -196,7 +196,7 @@ def find_user_by_contact(contact):
 def find_user_by_api_key(api_key):
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return None
-    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).first()
+    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).filter(User.oauth_id != "<wiped>").first()
     return user
 
 
@@ -458,6 +458,10 @@ def transfer_kudos(source_user, dest_user, amount):
         ]
     if dest_user.flagged:
         return [0, "Your account has been flagged for suspicious activity. Please contact the mods.", "TargetAccountFlagged"]
+    if dest_user.deleted:
+        return [0, "This destination account has been scheduled for deletion and is disabled", "DeletedUser"]
+    if source_user.deleted:
+        return [0, "This source account has been scheduled for deletion and is disabled", "DeletedUser"]
     if amount < 0:
         return [0, "Nice try...", "NegativeKudosTransfer"]
     if amount > source_user.kudos - source_user.get_min_kudos():
@@ -1539,7 +1543,7 @@ def retrieve_regex_replacements(filter_type):
 
 def get_all_users(sort="kudos", offset=0):
     user_order_by = User.created.asc() if sort == "age" else User.kudos.desc()
-    return db.session.query(User).order_by(user_order_by).offset(offset).limit(25).all()
+    return db.session.query(User).filter(User.oauth_id != "<wiped>").order_by(user_order_by).offset(offset).limit(25).all()
 
 
 def get_style_by_uuid(style_uuid: str, is_collection=None):
