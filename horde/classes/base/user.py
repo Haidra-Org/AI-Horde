@@ -458,9 +458,9 @@ class User(db.Model):
         return cls.id == subquery
 
     def create(self):
-        self.check_for_bad_actor()
         db.session.add(self)
         db.session.commit()
+        self.check_for_bad_actor()
         logger.info(f"New User Created {self.get_unique_alias()}")
 
     def wipe(self):
