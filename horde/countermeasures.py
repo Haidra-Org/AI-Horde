@@ -133,7 +133,8 @@ class CounterMeasures:
     def retrieve_timeout(ipaddr, ignore_blocks=False):
         """Checks if an IP address is still in timeout"""
         if not ip_t_r:
-            return test_timeout * 3 * 60
+            return 0
+            # return test_timeout * 3 * 60
         has_timeout = ip_t_r.get(ipaddr)
         if not bool(has_timeout):
             if ignore_blocks is True:
