@@ -166,6 +166,7 @@ KNOWN_RC = [
     "UserNotDeleted",
     "DeletedUser",
     "CannotWipeActiveUser",
+    "NonServiceForbidden",
 ]
 
 

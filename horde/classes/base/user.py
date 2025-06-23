@@ -22,7 +22,7 @@ from horde.logger import logger
 from horde.patreon import patrons
 from horde.stripe_subs import stripe_subs
 from horde.suspicions import SUSPICION_LOGS, Suspicions
-from horde.utils import generate_client_id, get_db_uuid, is_profane, sanitize_string
+from horde.utils import generate_api_key, generate_client_id, get_db_uuid, is_profane, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -248,6 +248,7 @@ class User(db.Model):
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     contact = db.Column(db.String(50), default=None)
     admin_comment = db.Column(db.Text, default=None)
+    proxy_passkey = db.Column(db.String(100), default=None)
 
     kudos = db.Column(db.BigInteger, default=0, nullable=False, index=True)
     monthly_kudos = db.Column(db.Integer, default=0, nullable=False)
@@ -516,6 +517,12 @@ class User(db.Model):
         if is_profane(new_comment):
             return "Profanity"
         self.admin_comment = sanitize_string(new_comment)
+        db.session.commit()
+        return "OK"
+
+    def generate_proxy_passkey(self):
+        passkey = generate_api_key()
+        self.proxy_passkey = passkey
         db.session.commit()
         return "OK"
 
@@ -964,6 +971,7 @@ class User(db.Model):
             ret_dict["monthly_kudos"] = mk_dict
             ret_dict["suspicious"] = len(self.suspicions)
             ret_dict["admin_comment"] = self.admin_comment
+            ret_dict["proxy_passkey"] = self.proxy_passkey
         return ret_dict
 
     def import_suspicions(self, suspicions):

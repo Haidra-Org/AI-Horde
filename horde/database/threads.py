@@ -24,6 +24,7 @@ from horde.database.functions import (
     count_totals,
     find_user_by_contact,
     get_active_workers,
+    get_all_users_passkeys,
     get_available_models,
     prune_expired_stats,
     query_prioritized_wps,
@@ -470,3 +471,9 @@ def store_known_image_models():
 
         else:
             logger.debug("No known image models to store from the model reference")
+
+
+def refresh_passkeys(self):
+    with HORDE.app_context():
+        logger.debug(get_all_users_passkeys())
+        return get_all_users_passkeys()

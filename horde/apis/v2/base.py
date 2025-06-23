@@ -1420,6 +1420,7 @@ class UserSingle(Resource):
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
+    parser.add_argument("generate_proxy_passkey", type=bool, required=False, location="json")
 
     decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]  # FIXME: required? #noqa PIE794
 
@@ -1569,6 +1570,13 @@ class UserSingle(Resource):
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.contact, "user contact", rc="ProfaneUserContact")
             ret_dict["contact"] = user.contact
+        if self.args.generate_proxy_passkey is not None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
+            if not admin.service:
+                raise e.Forbidden("Only Service Accounts can set a proxy passkey", rc="NonServiceForbidden")
+            user.generate_proxy_passkey()
+            ret_dict["proxy_passkey"] = user.proxy_passkey
         if self.args.undelete is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")

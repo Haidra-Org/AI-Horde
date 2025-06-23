@@ -1674,3 +1674,8 @@ def get_worker_messages(user_id=None, worker_id=None, validity="all", page=0):
     if validity == "expired":
         wmquery = wmquery.filter(WorkerMessage.expiry <= datetime.utcnow())
     return wmquery.offset(page).limit(50).all()
+
+
+def get_all_users_passkeys():
+    """Retrieves all users passkeys."""
+    return db.session.query(User.proxy_passkey).filter(User.proxy_passkey.isnot_(None)).all()

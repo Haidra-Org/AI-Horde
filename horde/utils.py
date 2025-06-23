@@ -84,6 +84,11 @@ def sanitize_string(text):
     return bleach.clean(text).lstrip().rstrip()
 
 
+def generate_api_key():
+    """Generates a random API key."""
+    return secrets.token_urlsafe(16)
+
+
 def hash_api_key(unhashed_api_key):
     salt = os.getenv("secret_key", "s0m3s3cr3t")  # Note default here, just so it can run without env file #noqa SIM112
     return hashlib.sha256(salt.encode() + unhashed_api_key.encode()).hexdigest()

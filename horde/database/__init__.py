@@ -4,7 +4,7 @@
 
 import horde.database.threads as threads
 from horde.argparser import args
-from horde.database.classes import Quorum
+from horde.database.classes import CachedPasskeys, Quorum
 from horde.logger import logger
 from horde.threads import PrimaryTimedFunction
 
@@ -25,6 +25,7 @@ priority_increaser = PrimaryTimedFunction(10, threads.increment_extra_priority, 
 compiled_filter_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)
 regex_replacements_cacher = PrimaryTimedFunction(10, threads.store_compiled_filter_regex_replacements, quorum=quorum)
 known_image_models_cacher = PrimaryTimedFunction(300, threads.store_known_image_models, quorum=quorum)
+cached_passkeys = CachedPasskeys(5, threads.refresh_passkeys)
 
 if args.reload_all_caches:
     logger.info("store_prioritized_wp_queue()")

@@ -1318,6 +1318,10 @@ class Models:
                     example="User is sus",
                     description="(Privileged) Information about this users by the admins",
                 ),
+                "proxy_passkey": fields.String(
+                    example="0000000000000000",
+                    description="(Privileged) This service user's proxy passkey.",
+                ),
                 "account_age": fields.Integer(
                     example=60,
                     description="How many seconds since this account was created.",
@@ -1406,6 +1410,7 @@ class Models:
                     description="When set to true, the replacement filter will always be applied against this user",
                 ),
                 "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
+                "generate_proxy_passkey": fields.Boolean(description="(Re)Generate a service account proxy passkey."),
                 "contact": fields.String(
                     example="email@example.com",
                     description=(
@@ -1462,6 +1467,12 @@ class Models:
                     description="The new admin comment.",
                     min_length=5,
                     max_length=500,
+                ),
+                "proxy_passkey": fields.String(
+                    example="0000000000000000",
+                    description="The new service account proxy passkey.",
+                    min_length=16,
+                    max_length=16,
                 ),
             },
         )
