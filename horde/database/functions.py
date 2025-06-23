@@ -1683,7 +1683,7 @@ def get_all_users_passkeys():
         for user in db.session.query(User.proxy_passkey, User.id)
         .filter(
             User.proxy_passkey.is_not(None),
-            User.flagged.is_(False),
+            # User.flagged.is_(False),
         )
         .all()
     }
