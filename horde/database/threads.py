@@ -475,5 +475,4 @@ def store_known_image_models():
 
 def refresh_passkeys():
     with HORDE.app_context():
-        logger.debug(get_all_users_passkeys())
         return get_all_users_passkeys()

@@ -19,6 +19,7 @@ import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.v2 import Models, Parsers
+from horde.apis.request_utils import get_remoteaddr
 from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
@@ -139,7 +140,7 @@ class GenerateTemplate(Resource):
         self.user = None
         self.apikey = None
         self.sharedkey = None
-        self.user_ip = request.remote_addr
+        self.user_ip = get_remoteaddr()
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()

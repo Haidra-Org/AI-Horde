@@ -6,6 +6,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.48.0
+
+* Service accounts can now generate a proxy_passkey (using PUT on user). This key can be sent in the Proxy-Authorization header which will allow the AI Horde to accept their Proxy-For IP
+* Service accounts can now send a Proxy-for header containing the actual IP of the user they're proxying for. This will allow the AI Horde to provide rate limiting based on the origin user, rather than the proxy service's IP. For the AI Horde to accept the Proxy-For IP, the service account has to generate and send an Proxy-Authorization along with it.
+
 # 4.46.3
 
 * Can now specify `[SDXL]` or `[Flux]` on a custom model name, and it will be treated as having SDXL or flux baseline respectively.

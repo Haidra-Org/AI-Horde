@@ -5,10 +5,9 @@
 from datetime import datetime, timedelta
 
 from flask import request
-from loguru import logger
 
+from horde.apis.request_utils import get_remoteaddr
 from horde.consts import WHITELISTED_SERVICE_IPS
-from horde.database import cached_passkeys
 from horde.utils import hash_api_key
 
 
@@ -27,19 +26,6 @@ class DynamicIPWhitelist:
 
 
 dynamic_ip_whitelist = DynamicIPWhitelist()
-
-
-def get_remoteaddr():
-    """Returns the remote address of the request, accounting for proxies"""
-    remoteaddr = request.remote_addr
-    passkey = request.headers.get("Proxy-Authorization", None)
-    if passkey:
-        if cached_passkeys.is_passkey_known(passkey):
-            remoteaddr = request.headers.get("Proxied-For", remoteaddr)
-        else:
-            logger.info(f"Unknown passkey {passkey} from {remoteaddr}. Ignoring Proxied-For header.")
-    logger.debug(f"Remote address: {remoteaddr}")
-    return remoteaddr
 
 
 # Used to for the flask limiter, to limit requests per url paths
