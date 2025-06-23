@@ -1690,4 +1690,5 @@ def get_all_users_passkeys():
             # User.flagged.is_(False),
         )
         .all()
+        if user.flagged is False or user.flagged is None
     }
