@@ -1678,4 +1678,4 @@ def get_worker_messages(user_id=None, worker_id=None, validity="all", page=0):
 
 def get_all_users_passkeys():
     """Retrieves all users passkeys."""
-    return db.session.query(User.proxy_passkey).filter(User.proxy_passkey.isnot_(None)).all()
+    return db.session.query(User.proxy_passkey).filter(User.proxy_passkey.is_not_(None)).all()
