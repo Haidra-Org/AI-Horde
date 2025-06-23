@@ -32,6 +32,7 @@ from horde.consts import HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.detection import prompt_checker
+from horde.discord import send_problem_user_notification
 from horde.flask import HORDE, cache, db
 from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
@@ -116,6 +117,7 @@ def check_for_mod(api_key, operation, whitelisted_users=None):
 # and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
     gentype = "template"
+    proxied_request = False
 
     def post(self):
         # logger.warning(datetime.utcnow())
@@ -141,6 +143,8 @@ class GenerateTemplate(Resource):
         self.apikey = None
         self.sharedkey = None
         self.user_ip = get_remoteaddr()
+        if request.remote_addr != self.user_ip:
+            self.proxied_request = True
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
@@ -224,7 +228,8 @@ class GenerateTemplate(Resource):
                         rc="MoreThanMinExtraSourceImage.",
                     )
             if self.user.education or self.user.trusted or self.user.service:
-                lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
+                if not self.proxied_request:
+                    lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
             if self.args["prompt"] == "":
@@ -296,7 +301,16 @@ class GenerateTemplate(Resource):
                         upload_prompt(prompt_dict)
                         self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
-                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
+                    if self.proxied_request:
+                        sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
+                        if sus > 10:
+                            send_problem_user_notification(
+                                f"Proxy Service from IP {request.remote_addr} and Client-Agent '{self.args['Client-Agent']}'"
+                                " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
+                            )
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, proxy_service_ip=request.remote_addr)
+                    else:
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
             if_nsfw_model = prompt_checker.check_nsfw_model_block(self.prompt, self.models)
             if if_nsfw_model or self.user.flagged:
                 # For NSFW models and flagged users, we always do replacements
@@ -318,7 +332,16 @@ class GenerateTemplate(Resource):
                     )
                     if self.user.flagged and not if_nsfw_model:
                         msg = "To prevent generation of unethical images, we cannot allow this prompt."
-                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
+                    if self.proxied_request:
+                        sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
+                        if sus > 10:
+                            send_problem_user_notification(
+                                f"Proxy Service from IP {request.remote_addr} and Client-Agent '{self.args['Client-Agent']}'"
+                                " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
+                            )
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg, proxy_service_ip=request.remote_addr)
+                    else:
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
             # Disabling as this is handled by the worker-csam-filter now
             # If I re-enable it, also make it use the prompt replacement
             # if not prompt_replaced:

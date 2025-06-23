@@ -199,7 +199,7 @@ class MissingPrompt(wze.BadRequest):
 
 
 class CorruptPrompt(wze.BadRequest):
-    def __init__(self, username, ip, prompt, message=None, rc="CorruptPrompt"):
+    def __init__(self, username, ip, prompt, message=None, rc="CorruptPrompt", proxy_service_ip=None):
         if message:
             self.specific = message
         else:
@@ -208,6 +208,8 @@ class CorruptPrompt(wze.BadRequest):
                 "Please contact us if you think this is an error."
             )
         self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
+        if proxy_service_ip:
+            self.log += f" Proxy IP: {proxy_service_ip}"
         self.rc = rc
 
 
