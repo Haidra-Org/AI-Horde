@@ -38,7 +38,6 @@ class CachedPasskeys(PrimaryTimedFunction):
         logger.debug(f"Cached passkeys: {self.passkeys}")
 
     def is_passkey_known(self, passkey):
-        logger.debug(self.passkeys.values())
         return list(self.passkeys.values())
 
     def get_passkey_owner(self, passkey):
