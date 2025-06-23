@@ -5,8 +5,6 @@
 import uuid
 from datetime import datetime
 
-from loguru import logger
-
 from horde.threads import PrimaryTimedFunction
 from horde.vars import horde_instance_id
 
@@ -35,7 +33,6 @@ class CachedPasskeys(PrimaryTimedFunction):
 
     def call_function(self):
         self.passkeys = self.function(*self.args, **self.kwargs)
-        logger.debug(f"Cached passkeys: {self.passkeys}")
 
     def is_passkey_known(self, passkey):
         return list(self.passkeys.values())
