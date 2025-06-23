@@ -473,7 +473,7 @@ def store_known_image_models():
             logger.debug("No known image models to store from the model reference")
 
 
-def refresh_passkeys(self):
+def refresh_passkeys():
     with HORDE.app_context():
         logger.debug(get_all_users_passkeys())
         return get_all_users_passkeys()

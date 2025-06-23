@@ -1410,7 +1410,10 @@ class Models:
                     description="When set to true, the replacement filter will always be applied against this user",
                 ),
                 "reset_suspicion": fields.Boolean(description="Set the user's suspicion back to 0."),
-                "generate_proxy_passkey": fields.Boolean(description="(Re)Generate a service account proxy passkey."),
+                "generate_proxy_passkey": fields.Boolean(
+                    description="(Re)Generate a service account proxy passkey.",
+                    default=False,
+                ),
                 "contact": fields.String(
                     example="email@example.com",
                     description=(
