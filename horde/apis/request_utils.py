@@ -18,3 +18,10 @@ def get_remoteaddr():
         else:
             logger.info(f"Unknown passkey {passkey} from {remoteaddr}. Ignoring Proxied-For header.")
     return remoteaddr
+
+
+def get_current_passkey_owner():
+    """Returns the user ID of the owner of the passkey"""
+    passkey = request.headers.get("Proxy-Authorization", None)
+    if passkey:
+        return cached_passkeys.get_passkey_owner(passkey)

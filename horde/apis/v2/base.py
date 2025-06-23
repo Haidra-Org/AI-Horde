@@ -19,7 +19,7 @@ import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.v2 import Models, Parsers
-from horde.apis.request_utils import get_remoteaddr
+from horde.apis.request_utils import get_current_passkey_owner, get_remoteaddr
 from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
@@ -305,7 +305,7 @@ class GenerateTemplate(Resource):
                         sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
                         if sus > 10:
                             send_problem_user_notification(
-                                f"Proxy Service from IP {request.remote_addr} and Client-Agent '{self.args['Client-Agent']}'"
+                                f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
                                 " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
                             )
                         raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, proxy_service_ip=request.remote_addr)
@@ -336,7 +336,7 @@ class GenerateTemplate(Resource):
                         sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
                         if sus > 10:
                             send_problem_user_notification(
-                                f"Proxy Service from IP {request.remote_addr} and Client-Agent '{self.args['Client-Agent']}'"
+                                f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
                                 " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
                             )
                         raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg, proxy_service_ip=request.remote_addr)

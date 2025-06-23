@@ -29,10 +29,16 @@ class Quorum(PrimaryTimedFunction):
 
 
 class CachedPasskeys(PrimaryTimedFunction):
-    passkeys = []
+    passkeys = {}
 
     def call_function(self):
         self.passkeys = self.function(*self.args, **self.kwargs)
 
     def is_passkey_known(self, passkey):
-        return passkey in self.passkeys
+        return list(self.passkeys.values())
+
+    def get_passkey_owner(self, passkey):
+        for user_id, pk in self.passkeys.items():
+            if pk == passkey:
+                return user_id
+        return None
