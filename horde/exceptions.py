@@ -209,7 +209,7 @@ class CorruptPrompt(wze.BadRequest):
             )
         self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
         if proxy_service_ip:
-            self.log += f" Proxy IP: {proxy_service_ip}"
+            self.log += f" Service Proxy IP: {proxy_service_ip}"
         self.rc = rc
 
 
