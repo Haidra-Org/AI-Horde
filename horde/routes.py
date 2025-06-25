@@ -4,7 +4,6 @@
 
 import os
 import random
-import secrets
 from uuid import uuid4
 
 import oauthlib
@@ -26,7 +25,7 @@ from horde.database import functions as database
 from horde.flask import HORDE, cache, db
 from horde.logger import logger
 from horde.patreon import patrons
-from horde.utils import ConvertAmount, hash_api_key, is_profane, sanitize_string
+from horde.utils import ConvertAmount, generate_api_key, hash_api_key, is_profane, sanitize_string
 from horde.vars import (
     google_verification_string,
     horde_contact_email,
@@ -245,7 +244,7 @@ def register():
                     page_title="Recaptcha Submit Error!",
                     use_recaptcha=False,
                 )
-        api_key = secrets.token_urlsafe(16)
+        api_key = generate_api_key()
         hashed_api_key = hash_api_key(api_key)
         if user:
             username = sanitize_string(request.form["username"])

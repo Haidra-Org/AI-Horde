@@ -113,6 +113,24 @@ class CounterMeasures:
         return timeout
 
     @staticmethod
+    def report_proxy_suspicion(ipaddr):
+        """Increases the suspicion of proxy service's IP in redis temporarily"""
+        if not ip_s_r:
+            global test_timeout
+            test_timeout = test_timeout + test_timeout + 1
+            timeout = test_timeout * 3
+            logger.debug(f"Redis not available, so setting test_timeout to {test_timeout}")
+            CounterMeasures.set_timeout(ipaddr, timeout)
+            return test_timeout
+        current_suspicion = ip_s_r.get(ipaddr)
+        if current_suspicion is None:
+            current_suspicion = 0
+        current_suspicion = int(current_suspicion)
+        suspicion_timeout = 1
+        ip_s_r.setex(ipaddr, timedelta(hours=suspicion_timeout), current_suspicion + 1)
+        return current_suspicion
+
+    @staticmethod
     def retrieve_suspicion(ipaddr):
         """Checks the current suspicion of an IP address"""
         if not ip_s_r:

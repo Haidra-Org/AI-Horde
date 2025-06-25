@@ -19,6 +19,7 @@ import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.v2 import Models, Parsers
+from horde.apis.request_utils import get_current_passkey_owner, get_remoteaddr
 from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
@@ -31,6 +32,7 @@ from horde.consts import HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.detection import prompt_checker
+from horde.discord import send_problem_user_notification
 from horde.flask import HORDE, cache, db
 from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
@@ -115,6 +117,7 @@ def check_for_mod(api_key, operation, whitelisted_users=None):
 # and also pass it to the @api.expect decorator inside the class
 class GenerateTemplate(Resource):
     gentype = "template"
+    proxied_request = False
 
     def post(self):
         # logger.warning(datetime.utcnow())
@@ -139,7 +142,9 @@ class GenerateTemplate(Resource):
         self.user = None
         self.apikey = None
         self.sharedkey = None
-        self.user_ip = request.remote_addr
+        self.user_ip = get_remoteaddr()
+        if request.remote_addr != self.user_ip:
+            self.proxied_request = True
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
@@ -223,7 +228,8 @@ class GenerateTemplate(Resource):
                         rc="MoreThanMinExtraSourceImage.",
                     )
             if self.user.education or self.user.trusted or self.user.service:
-                lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
+                if not self.proxied_request:
+                    lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
             if self.args["prompt"] == "":
@@ -295,7 +301,16 @@ class GenerateTemplate(Resource):
                         upload_prompt(prompt_dict)
                         self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
                         CounterMeasures.report_suspicion(self.user_ip)
-                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
+                    if self.proxied_request:
+                        sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
+                        if sus > 10:
+                            send_problem_user_notification(
+                                f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
+                                " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
+                            )
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, proxy_service_ip=request.remote_addr)
+                    else:
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
             if_nsfw_model = prompt_checker.check_nsfw_model_block(self.prompt, self.models)
             if if_nsfw_model or self.user.flagged:
                 # For NSFW models and flagged users, we always do replacements
@@ -317,7 +332,16 @@ class GenerateTemplate(Resource):
                     )
                     if self.user.flagged and not if_nsfw_model:
                         msg = "To prevent generation of unethical images, we cannot allow this prompt."
-                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
+                    if self.proxied_request:
+                        sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
+                        if sus > 10:
+                            send_problem_user_notification(
+                                f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
+                                " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
+                            )
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg, proxy_service_ip=request.remote_addr)
+                    else:
+                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
             # Disabling as this is handled by the worker-csam-filter now
             # If I re-enable it, also make it use the prompt replacement
             # if not prompt_replaced:
@@ -1420,6 +1444,7 @@ class UserSingle(Resource):
     parser.add_argument("contact", type=str, required=False, location="json")
     parser.add_argument("admin_comment", type=str, required=False, location="json")
     parser.add_argument("reset_suspicion", type=bool, required=False, location="json")
+    parser.add_argument("generate_proxy_passkey", type=bool, required=False, location="json")
 
     decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]  # FIXME: required? #noqa PIE794
 
@@ -1569,6 +1594,13 @@ class UserSingle(Resource):
             if ret == "Profanity":
                 raise e.Profanity(admin.get_unique_alias(), self.args.contact, "user contact", rc="ProfaneUserContact")
             ret_dict["contact"] = user.contact
+        if self.args.generate_proxy_passkey is not None:
+            if not admin.moderator and admin != user:
+                raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")
+            if not admin.service:
+                raise e.Forbidden("Only Service Accounts can set a proxy passkey", rc="NonServiceForbidden")
+            user.generate_proxy_passkey()
+            ret_dict["proxy_passkey"] = user.proxy_passkey
         if self.args.undelete is not None:
             if not admin.moderator and admin != user:
                 raise e.NotModerator(admin.get_unique_alias(), "PUT UserSingle")

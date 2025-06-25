@@ -24,6 +24,7 @@ from horde.database.functions import (
     count_totals,
     find_user_by_contact,
     get_active_workers,
+    get_all_users_passkeys,
     get_available_models,
     prune_expired_stats,
     query_prioritized_wps,
@@ -390,20 +391,21 @@ def store_stripe_members():
             },
         )
     active_members = {}
-    for member in members:
-        if member["status"] != "active":
-            continue
-        # If we do not have a user ID or email, we cannot use it
-        if member.get("horde_id") in [None, ""]:
-            if member.get("email") in [None, ""]:
+    with HORDE.app_context():
+        for member in members:
+            if member["status"] != "active":
                 continue
-            existing_user = find_user_by_contact(member["email"])
-            member["horde_id"] = existing_user.get_unique_alias()
-        user_id = member["horde_id"]
-        if "#" in user_id:
-            user_id = user_id.split("#")[-1]
-        user_id = int(user_id)
-        active_members[user_id] = member
+            # If we do not have a user ID or email, we cannot use it
+            if member.get("horde_id") in [None, ""]:
+                if member.get("email") in [None, ""]:
+                    continue
+                existing_user = find_user_by_contact(member["email"])
+                member["horde_id"] = existing_user.get_unique_alias()
+            user_id = member["horde_id"]
+            if "#" in user_id:
+                user_id = user_id.split("#")[-1]
+            user_id = int(user_id)
+            active_members[user_id] = member
     cached_stripe = json.dumps(active_members)
     logger.info(f"stripe_cache ({len(active_members)}): {sorted(active_members.keys())}")
     hr.horde_r_set("stripe_cache", cached_stripe)
@@ -470,3 +472,8 @@ def store_known_image_models():
 
         else:
             logger.debug("No known image models to store from the model reference")
+
+
+def refresh_passkeys():
+    with HORDE.app_context():
+        return get_all_users_passkeys()
