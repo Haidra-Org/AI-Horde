@@ -61,7 +61,7 @@ class PatreonCache(PrimaryTimedFunction):
         # Yearly amounts with discounts
         # 10 per month
         # Amount changes a bit randomly
-        if eamount > 105 and eamount < 109:
+        if eamount > 101 and eamount < 109:
             return 150_000
         # Monthly amounts
         if eamount == 100:

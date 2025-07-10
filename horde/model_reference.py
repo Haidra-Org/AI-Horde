@@ -5,6 +5,7 @@
 import os
 from datetime import datetime
 
+import regex as re
 import requests
 
 from horde.logger import logger
@@ -155,7 +156,12 @@ class ModelReference(PrimaryTimedFunction):
         usermodel = model_name.split("::")
         if len(usermodel) == 2:
             model_name = usermodel[0]
-        return model_name in self.get_text_model_names()
+        if model_name in self.get_text_model_names():
+            return True
+        model_name_no_q = re.sub(r"-[a-zA-Z]+?Q(-[Ii]nt)?[0-9]([_-][a-zA-Z]+)*", "", model_name)
+        if model_name_no_q in self.get_text_model_names():
+            return True
+        return False
 
     def has_unknown_models(self, model_names):
         if len(model_names) == 0:
