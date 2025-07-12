@@ -24,6 +24,7 @@ class ModelReference(PrimaryTimedFunction):
     # However due to a racing or caching issue, this causes them to still pick jobs using those models
     # Need to investigate more to remove this workaround
     testing_models = {}
+    no_q_regex = re.compile(r"[.,-][a-zA-Z0-9]+?-?Q(-[Ii]nt)?[2-9]{1,2}([_.-][0-9a-zA-Z]+)*")
 
     def call_function(self):
         """Retrieves to image and text model reference and stores in it a var"""
@@ -127,8 +128,12 @@ class ModelReference(PrimaryTimedFunction):
         if len(usermodel) == 2:
             model_name = usermodel[0]
         if not self.text_reference.get(model_name):
-            return 1
-        multiplier = int(self.text_reference[model_name]["parameters"]) / 1000000000
+            model_name_no_q = self.no_q_regex.sub("", model_name)
+            if model_name_no_q in self.get_text_model_names():
+                model_name = model_name_no_q
+            else:
+                return 1
+        multiplier = int(self.text_reference[model_name]["parameters"]) / 1_000_000_000
         logger.debug(f"{model_name} param multiplier: {multiplier}")
         return multiplier
 
@@ -158,7 +163,7 @@ class ModelReference(PrimaryTimedFunction):
             model_name = usermodel[0]
         if model_name in self.get_text_model_names():
             return True
-        model_name_no_q = re.sub(r"-[a-zA-Z]+?Q(-[Ii]nt)?[0-9]([_-][a-zA-Z]+)*", "", model_name)
+        model_name_no_q = self.no_q_regex.sub("", model_name)
         if model_name_no_q in self.get_text_model_names():
             return True
         return False
