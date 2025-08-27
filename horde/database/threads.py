@@ -384,7 +384,11 @@ def store_stripe_members():
                 "product_name": subscription["product_name"],
                 "email": subscription["customer_email"],
                 "name": subscription["name"],
-                "horde_id": subscription["metadata"].get("horde"),
+                "horde_id": (
+                    subscription["metadata"].get("horde_id")
+                    if subscription["metadata"].get("horde_id")
+                    else subscription["metadata"].get("horde")
+                ),
                 "alias": subscription["metadata"].get("alias"),
                 "sponsor_link": subscription["metadata"].get("sponsor_link"),
                 "status": subscription["status"],
