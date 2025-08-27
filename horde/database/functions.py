@@ -188,7 +188,7 @@ def find_user_by_id(user_id):
 def find_user_by_contact(contact):
     user_query = db.session.query(User).filter_by(contact=contact).filter(User.oauth_id != "<wiped>")
     selected_user = user_query.first()
-    if user_query.count() == 0:
+    if user_query.count() > 1:
         logger.warning(f"Multiple users found with the same contact {contact}! Returning first found {selected_user.id}")
     return selected_user
 

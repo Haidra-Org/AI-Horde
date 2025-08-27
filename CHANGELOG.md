@@ -6,6 +6,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.48.2
+
+Fix bug when seeking users by contact details
+
+# 4.48.1
+
+* Allows matching text models which include quant information in the filename.
+
 # 4.48.0
 
 * Service accounts can now generate a proxy_passkey (using PUT on user). This key can be sent in the Proxy-Authorization header which will allow the AI Horde to accept their Proxy-For IP

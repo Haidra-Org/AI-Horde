@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-HORDE_VERSION = "4.48.0"
+HORDE_VERSION = "4.48.2"
 HORDE_API_VERSION = "2.5"
 
 WHITELISTED_SERVICE_IPS = {
