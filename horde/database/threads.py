@@ -400,6 +400,9 @@ def store_stripe_members():
                 if member.get("email") in [None, ""]:
                     continue
                 existing_user = find_user_by_contact(member["email"])
+                if existing_user is None:
+                    logger.warning(f"Could not find horde user to match stripe member: {member}")
+                    continue
                 member["horde_id"] = existing_user.get_unique_alias()
             user_id = member["horde_id"]
             if "#" in user_id:
