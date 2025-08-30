@@ -36,6 +36,7 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.r2 import delete_source_image
+from horde.stripe_subs import stripe_subs
 from horde.vars import horde_instance_id
 
 
@@ -65,12 +66,14 @@ def get_quorum():
 def assign_monthly_kudos():
     with HORDE.app_context():
         patron_ids = patrons.get_ids()
+        stripe_ids = stripe_subs.get_ids()
         # for pid in patron_ids:
         #     logger.debug([pid, patrons.get_monthly_kudos(pid)])
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
         or_conditions.append(User.moderator == True)  # noqa E712
         or_conditions.append(User.id.in_(patron_ids))
+        or_conditions.append(User.id.in_(stripe_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
         all_users = users.all()
         logger.info(f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}")
