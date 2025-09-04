@@ -733,7 +733,8 @@ class User(db.Model):
             )
             # Not committing as it'll happen in modify_kudos() anyway
             if not self.monthly_kudos_last_received:
-                self.monthly_kudos_last_received = datetime.utcnow() + dateutil.relativedelta.relativedelta(months=+1)
+                self.monthly_kudos_last_received = datetime.utcnow()
+            # We increase the last received date by 1 exact month from the previous reward time, to avoid date creeping forward
             elif not prevent_date_change:
                 self.monthly_kudos_last_received = self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
             self.modify_kudos(kudos_amount, "recurring")
