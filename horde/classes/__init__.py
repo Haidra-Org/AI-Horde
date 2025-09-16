@@ -47,6 +47,7 @@ with HORDE.app_context():
         "cron/",  # Must be first
         "stored_procedures/",
         "stored_procedures/cron_jobs/",
+        "meta_statistics/",
     ]
 
     all_dirs_to_run = [sql_statement_dir / dir for dir in all_dirs_to_run]
