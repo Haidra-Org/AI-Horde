@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.48.3
+
+Qwen-Image Beta
+
 # 4.48.2
 
 Fix bug when seeking users by contact details
