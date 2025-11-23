@@ -33,11 +33,11 @@ class ModelReference(PrimaryTimedFunction):
         for _riter in range(10):
             try:
                 ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json"
-                if datetime.utcnow() <= datetime(2024, 9, 30):  # Flux Beta
+                if datetime.utcnow() <= datetime(2025, 12, 30):  # Qwen beta
                     ref_json = (
-                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/flux/stable_diffusion.json"
+                        "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/qwen/stable_diffusion.json"
                     )
-                    logger.debug("Using flux beta model reference...")
+                    logger.debug("Using qwen beta model reference...")
                 self.reference = requests.get(
                     os.getenv(
                         "HORDE_IMAGE_COMPVIS_REFERENCE",
@@ -63,6 +63,7 @@ class ModelReference(PrimaryTimedFunction):
                         "stable_diffusion_xl",
                         "stable_cascade",
                         "flux_1",
+                        "qwen_image",
                     }:
                         self.stable_diffusion_names.add(model)
                         if self.reference[model].get("nsfw"):
@@ -105,6 +106,8 @@ class ModelReference(PrimaryTimedFunction):
             return "stable_diffusion_xl"
         if not model_details and "[Flux]" in model_name:
             return "flux_1"
+        if not model_details and "[Qwen]" in model_name:
+            return "qwen_image"
         return model_details.get("baseline", "stable diffusion 1")
 
     def get_all_model_baselines(self, model_names):

@@ -63,8 +63,8 @@ class ImageProcessingGeneration(ProcessingGeneration):
             if self.wp.params.get("hires_fix", False):
                 return self.wp.kudos * 7
             return self.wp.kudos * 4
-        if model_reference.get_model_baseline(self.model) in ["flux_1"]:
-            # Flux is double the size of SDXL and much slower, so it gives double the rewards from it.
+        if model_reference.get_model_baseline(self.model) in ["flux_1", "qwen_image"]:
+            # Flux and Qwen is double the size of SDXL and much slower, so it gives double the rewards from it.
             return self.wp.kudos * 8
         return self.wp.kudos
 
@@ -165,8 +165,8 @@ class ImageProcessingGeneration(ProcessingGeneration):
         # CN is 3 times slower
         if self.wp.gen_payload.get("control_type"):
             self.job_ttl = self.job_ttl * 2
-        # Flux is way slower than Stable Diffusion
-        if any(model_reference.get_model_baseline(mn) in ["flux_1"] for mn in self.wp.get_model_names()):
+        # Flux and Qwen is way slower than Stable Diffusion
+        if any(model_reference.get_model_baseline(mn) in ["flux_1", "qwen_image"] for mn in self.wp.get_model_names()):
             self.job_ttl = self.job_ttl * 3
         if self.job_ttl < 150:
             self.job_ttl = 150

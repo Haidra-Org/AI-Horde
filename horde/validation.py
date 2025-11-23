@@ -74,6 +74,9 @@ class ParamValidator:
         if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.models):
             if self.params.get("hires_fix", False) is True:
                 raise e.BadRequest("HiRes Fix does not work with Flux currently.", rc="HiResMismatch")
+        if any(model_reference.get_model_baseline(model_name).startswith("Qwen") for model_name in self.models):
+            if self.params.get("hires_fix", False) is True:
+                raise e.BadRequest("HiRes Fix does not work with Qwen currently.", rc="HiResMismatch")
         if "loras" in self.params:
             if len(self.params["loras"]) > 5:
                 raise e.BadRequest("You cannot request more than 5 loras per generation.", rc="TooManyLoras")
