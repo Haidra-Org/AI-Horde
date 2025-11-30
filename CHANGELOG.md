@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Changelog
 
+# 4.48.4
+
+Z-Image-Turbo Beta
+
 # 4.48.3
 
 Qwen-Image Beta

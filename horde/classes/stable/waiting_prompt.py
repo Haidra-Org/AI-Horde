@@ -472,8 +472,10 @@ class ImageWaitingPrompt(WaitingPrompt):
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1
         if model_reference.get_model_baseline(model_name) in ["stable_cascade"]:
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 4) + 1
-        if model_reference.get_model_baseline(model_name) in ["flux_1", "qwen_image"]:
+        if model_reference.get_model_baseline(model_name) in ["flux_1", "z_image_turbo"]:
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 8) + 1
+        if model_reference.get_model_baseline(model_name) in ["qwen_image"]:
+            return (self.calculate_extra_kudos_burn(kudos) * self.n * 12) + 1
         # The +1 is the extra kudos burn per request
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1
 

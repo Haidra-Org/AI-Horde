@@ -45,6 +45,7 @@ HEAVY_POST_PROCESSORS = {
 BASELINE_BATCHING_MULTIPLIERS = {
     "flux_1": 5,
     "qwen_image": 10,
+    "z_image_turbo": 5,
 }
 
 

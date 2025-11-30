@@ -154,9 +154,12 @@ class ImageAsyncGenerate(GenerateTemplate):
         if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.args.models):
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with Flux currently.", rc="ControlNetMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("Qwen") for model_name in self.args.models):
+        if any(model_reference.get_model_baseline(model_name).startswith("qwen_image") for model_name in self.args.models):
             if "control_type" in self.params:
                 raise e.BadRequest("ControlNet does not work with Qwen currently.", rc="ControlNetMismatch")
+        if any(model_reference.get_model_baseline(model_name).startswith("z_image_turbo") for model_name in self.args.models):
+            if "control_type" in self.params:
+                raise e.BadRequest("ControlNet does not work with Z-Image currently.", rc="ControlNetMismatch")
         if self.params.get("transparent", False) is True:
             if self.args.extra_source_images and len(self.args.extra_source_images) > 0:
                 raise e.BadRequest(
