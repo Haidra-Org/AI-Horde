@@ -1,5 +1,19 @@
 [
     {
+        "date_published": "2025-12-16",
+        "newspiece": "You can now manage your user profile and see detailed information about Workers and Models directly on [AIHorde.net](https://aihorde.net). Check out our [devlog](https://haidra.net/user-profile-management-and-worker-model-details-now-on-aihorde-net/) for more information.",
+        "tags": [
+            "aihorde.net",
+            "tazlin"
+        ],
+        "importance": "Information",
+        "more_info_urls": [
+            "https://aihorde.net",
+            "https://haidra.net/user-profile-management-and-worker-model-details-now-on-aihorde-net/"
+        ],
+        "title": "User profile management and Worker/Model details now on AIHorde.net" 
+    },
+    {
         "date_published": "2025-06-25",
         "newspiece": "Haidra has deployed [a new OpenAI Proxy](https://oai.aihorde.net) and AI Horde now also allow easier onboarding of new proxy services. Check out our [devlog](https://haidra.net/proxies/)",
         "tags": [
