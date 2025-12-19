@@ -40,7 +40,7 @@ class ImageWaitingPrompt(WaitingPrompt):
     width = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
     height = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
     source_image = db.Column(db.Text, default=None)
-    source_processing = db.Column(db.String(10), default="img2img", nullable=False, server_default="img2img")
+    source_processing = db.Column(db.String(12), default="img2img", nullable=False, server_default="img2img")
     source_mask = db.Column(db.Text, default=None)
     censor_nsfw = db.Column(
         db.Boolean,
