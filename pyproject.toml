@@ -5,7 +5,7 @@
 
 [project]
 name = "AI-Horde"
-version = "5.0.2"
+version = "5.0.3"
 description = "A Crowdsourced Generative AI cluster for everyone."
 authors = [
     {name = "db0", email = "mail@dbzer0.com"},
