@@ -1,0 +1,1 @@
+ALTER TABLE waiting_prompts ALTER COLUMN source_processing TYPE VARCHAR(12);
