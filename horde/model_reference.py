@@ -33,7 +33,7 @@ class ModelReference(PrimaryTimedFunction):
         for _riter in range(10):
             try:
                 ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/main/stable_diffusion.json"
-                if datetime.utcnow() <= datetime(2025, 12, 30):  # Qwen and Zmodel beta
+                if datetime.utcnow() <= datetime(2026, 1, 30):  # Qwen and Zmodel beta
                     ref_json = "https://raw.githubusercontent.com/Haidra-Org/AI-Horde-image-model-reference/refs/heads/zmodel/stable_diffusion.json"
                     logger.debug("Using qwen and zmodel beta model reference...")
                 self.reference = requests.get(
