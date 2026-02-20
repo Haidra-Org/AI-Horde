@@ -151,7 +151,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         ret_payload = copy.deepcopy(self.gen_payload)
         # If self.seed is None, we randomize the seed we send to the worker each time.
         if self.seed is None:
-            ret_payload["seed"] = self.seed_to_int(self.seed)
+            ret_payload["seed"] = self.seed_to_int(None) # Always generate a new random seed if one wasn't provided
         elif self.seed_variation:
             ret_payload["seed"] = self.seed + (self.seed_variation * current_n)
             while ret_payload["seed"] >= 2**32:
