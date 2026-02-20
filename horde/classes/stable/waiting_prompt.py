@@ -5,6 +5,7 @@
 import copy
 import os
 import random
+import math
 
 from sqlalchemy.sql import expression
 
@@ -394,13 +395,34 @@ class ImageWaitingPrompt(WaitingPrompt):
         """Ensures this WP requirements are not exceeding upfront kudos requirements"""
         self.slow_workers = True
         downgraded = False
-        while self.width * self.height > max_resolution * max_resolution:
+
+        area_limit = max_resolution * max_resolution
+        area = self.width * self.height
+        if area > area_limit:
             downgraded = True
-            self.width -= 64
-            self.height -= 64
-            # Break, just in case we went too low
-            if self.width * self.height < 512 * 512:
-                break
+            
+            # Scale to fit into max_resolution
+            scale = math.sqrt(area_limit / area)
+            new_width = int(self.width * scale)
+            new_height = int(self.height * scale)
+            
+            # Snap down to multiple of 64
+            new_width = (new_width // 64) * 64
+            new_height = (new_height // 64) * 64
+            
+            # Decrement more if needed (just in case we missed some edge case)
+            while new_width * new_height > area_limit:
+                if new_width >= new_height:
+                    new_width -= 64
+                else:
+                    new_height -= 64
+                    
+            # Minimum size
+            if new_width * new_height < 512 * 512:
+                new_width = 512
+                new_height = 512
+            self.width = new_width
+            self.height = new_height
         max_steps = min(model_reference.get_model_requirements(mn).get("max_steps", 30) for mn in self.get_model_names())
         if self.params.get("control_type"):
             max_steps = 20
@@ -499,3 +521,4 @@ class ImageWaitingPrompt(WaitingPrompt):
 
     def count_pp(self):
         return len(self.params.get("post_processing", []))
+
