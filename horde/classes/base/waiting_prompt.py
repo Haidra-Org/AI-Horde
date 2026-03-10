@@ -221,17 +221,23 @@ class WaitingPrompt(db.Model):
         return self.n > 0
 
     def start_generation(self, worker, amount=1):
-        # # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
-        # myself_refresh = db.session.query(
-        #     type(self)
-        # ).filter(
-        #     type(self).id == self.id,
-        #     type(self).n > 0
-        # ).with_for_update().populate_existing().first()
-        # if not myself_refresh:
-        #     return None
-        # myself_refresh.n -= 1
-        safe_amount = worker.get_safe_amount(amount, self)
+        # Fix #188: Use Redis distributed lock to prevent race conditions
+        lock_key = f"wp_lock:{self.id}"
+        lock_value = f"{worker.id}:{secrets.token_hex(8)}"
+        
+        # Try to acquire lock with 5 second expiry (prevents deadlocks)
+        if not hr.hset(lock_key, lock_value, "1", nx=True, ex=5):
+            logger.debug(f"Worker {worker.id} failed to acquire lock for WP {self.id}")
+            return None
+        
+        try:
+            # Re-check n value after acquiring lock
+            self.refresh()
+            if self.n <= 0:
+                hr.hdel(lock_key, lock_value)
+                return None
+            
+            safe_amount = worker.get_safe_amount(amount, self)
         if safe_amount > self.n:
             safe_amount = self.n
         if self.disable_batching:
@@ -241,13 +247,18 @@ class WaitingPrompt(db.Model):
         # can we can't ensure a race-condition won't have changed self.n between iterations
         current_n = self.n
         self.n -= safe_amount
-        payload = self.get_job_payload(current_n)
-        # This does a commit as well
-        self.refresh(worker)
-        procgen_class = procgen_classes[self.wp_type]
-        gens_list = []
-        model = None
-        while safe_amount >= 1:
+        try:
+            payload = self.get_job_payload(current_n)
+            # This does a commit as well
+            self.refresh(worker)
+            procgen_class = procgen_classes[self.wp_type]
+            gens_list = []
+            model = None
+            while safe_amount >= 1:
+        finally:
+            # Always release lock
+            hr.hdel(lock_key, lock_value)
+            logger.debug(f"Worker {worker.id} released lock for WP {self.id}")
             safe_amount -= 1
             current_n -= 1
             new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, model=model)
