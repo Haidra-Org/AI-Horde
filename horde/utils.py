@@ -23,7 +23,11 @@ profanity.load_censor_words()
 
 # Fix: Use PID + timestamp + secrets for unique seeding to prevent race conditions
 # Original: random.seed(random.SystemRandom().randint(0, 2**32 - 1))
+# This ensures uniqueness across multiple API nodes starting simultaneously
 random.seed((os.getpid() << 32) | int(datetime.now().timestamp() * 1000000) ^ secrets.randbits(32))
+
+# Global counter for additional uniqueness per request
+_request_counter = 0
 
 
 def is_profane(text):
