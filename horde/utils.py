@@ -21,7 +21,9 @@ from horde.flask import SQLITE_MODE
 
 profanity.load_censor_words()
 
-random.seed(random.SystemRandom().randint(0, 2**32 - 1))
+# Fix: Use PID + timestamp + secrets for unique seeding to prevent race conditions
+# Original: random.seed(random.SystemRandom().randint(0, 2**32 - 1))
+random.seed((os.getpid() << 32) | int(datetime.now().timestamp() * 1000000) ^ secrets.randbits(32))
 
 
 def is_profane(text):
