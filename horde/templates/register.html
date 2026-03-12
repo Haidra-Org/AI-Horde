@@ -6,76 +6,223 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 {% extends "master.html" %}
 {% block content %}
-    {% if oauth_id is none and pseudonymous is false %}
-    <div class="container">
-        <p style="color:#333;">You are not logged in, Click one of the below links to sign in.</p>
-        <div class="login-btn">
-            <a href="/google/register" class="google-btn">
-            <div class="login-icon-wrapper">
-                <img class="login-icon" src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg"/>
-            </div>
-            <p class="btn-text"><b>Sign in with google</b></p>
-            </a>
-            <a href="/discord/register" class="discord-btn">
-            <div class="login-icon-wrapper">
-                <img class="login-icon" src="https://assets-global.website-files.com/6257adef93867e50d84d30e2/62595384e89d1d54d704ece7_3437c10597c1526c3dbd98c737c2bcae.svg"/>
-            </div>
-            <p class="btn-text"><b>Sign in with discord</b></p>
-            </a>
-            <a href="/github/register" class="github-btn">
-            <div class="login-icon-wrapper">
-                <img class="login-icon" src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"/>
-            </div>
-            <p class="btn-text"><b>Sign in with github</b></p>
-            </a>
-            <!-- <a href="/patreon/register" class="patreon-btn">
-            <div class="login-icon-wrapper">
-                <img class="login-icon" src="https://c5.patreon.com/external/logo/guidelines/logo-standard-lockups.png"/>
-            </div>
-            <p class="btn-text"><b>Sign in with patreon</b></p>
-            </a> -->
-        </div>
+<script>
+  /* Runs synchronously to apply the correct theme class before any content is painted, preventing a flash of unstyled content. */
+  (function () {
+    var stored = localStorage.getItem('ah-theme');
+    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (stored === 'dark' || (stored === null && prefersDark)) {
+      document.documentElement.classList.add('dark');
+    }
+  })();
+</script>
+<style>
+  :root {
+    --ah-purple: #9333ea;
+    --ah-purple-hover: #7e22ce;
+    --ah-text: rgb(17 24 39);
+    --ah-text-dim: rgb(107 114 128);
+    --ah-glass: rgb(255 255 255 / 0.6);
+    --ah-glass-heavy: rgb(255 255 255 / 0.85);
+    --ah-border: rgb(255 255 255 / 0.18);
+    --ah-shadow: 0 4px 24px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
+    --ah-shadow-hover: 0 8px 32px rgb(0 0 0 / 0.1), 0 2px 4px rgb(0 0 0 / 0.06);
+  }
+  .dark {
+    --ah-text: #fff;
+    --ah-text-dim: rgb(156 163 175);
+    --ah-glass: rgb(31 41 55 / 0.5);
+    --ah-glass-heavy: rgb(31 41 55 / 0.75);
+    --ah-border: rgb(255 255 255 / 0.06);
+    --ah-shadow: 0 4px 24px rgb(0 0 0 / 0.25);
+    --ah-shadow-hover: 0 8px 32px rgb(0 0 0 / 0.35);
+  }
+
+  .ah-page { max-width: 72rem; margin: 0 auto; padding: 3rem 2.5rem; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: var(--ah-text); }
+  .ah-card { background: var(--ah-glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--ah-border); border-radius: 1rem; box-shadow: var(--ah-shadow); padding: 3rem; margin-bottom: 2.5rem; transition: box-shadow 0.2s; }
+  .ah-card:hover { box-shadow: var(--ah-shadow-hover); }
+
+  .ah-h1 { font-size: 3rem; font-weight: 800; letter-spacing: -0.025em; margin: 0 0 1rem; }
+  .ah-h2 { font-size: 2.25rem; font-weight: 700; margin: 2.5rem 0 1.25rem; }
+  .ah-h2:first-child { margin-top: 0; }
+  .ah-text { font-size: 1.3125rem; line-height: 1.7; color: var(--ah-text-dim); margin: 0 0 1.25rem; }
+  .ah-text strong { color: var(--ah-text); }
+
+  .ah-login-buttons { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-top: 0.75rem; }
+  .ah-login-btn { display: inline-flex; align-items: center; gap: 1rem; padding: 1.125rem 2rem; border-radius: 0.75rem; border: 1px solid var(--ah-border); background: var(--ah-glass-heavy); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: var(--ah-shadow); text-decoration: none; font-size: 1.25rem; font-weight: 600; color: var(--ah-text); transition: box-shadow 0.2s, border-color 0.2s; }
+  .ah-login-btn:hover { box-shadow: var(--ah-shadow-hover); }
+  .ah-login-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(147 51 234 / 0.4); }
+  .ah-login-btn img { width: 2rem; height: 2rem; flex-shrink: 0; }
+
+  .ah-alert { padding: 1.25rem 1.5rem; border-radius: 0.75rem; border: 1px solid transparent; font-size: 1.25rem; line-height: 1.6; margin-bottom: 1.25rem; }
+  .ah-alert--danger { background: rgb(254 226 226 / 0.7); border-color: rgb(252 165 165); color: rgb(153 27 27); }
+  .dark .ah-alert--danger { background: rgb(127 29 29 / 0.3); border-color: rgb(185 28 28 / 0.5); color: rgb(254 202 202); }
+  .ah-alert--warning { background: rgb(254 243 199 / 0.7); border-color: rgb(253 224 71); color: rgb(133 77 14); }
+  .dark .ah-alert--warning { background: rgb(146 64 14 / 0.3); border-color: rgb(217 119 6 / 0.5); color: rgb(253 230 138); }
+
+  .ah-callout-accent { padding: 1.5rem 2rem; border-radius: 0.75rem; border: 2px solid rgb(147 51 234 / 0.5); background: rgb(250 245 255 / 0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); margin-bottom: 2rem; }
+  .dark .ah-callout-accent { border-color: rgb(168 85 247 / 0.5); background: rgb(88 28 135 / 0.25); }
+  .ah-callout-accent p { margin: 0; font-size: 1.25rem; line-height: 1.7; color: var(--ah-text-dim); }
+  .ah-callout-accent strong { color: var(--ah-text); }
+
+  .ah-form-group { display: flex; flex-direction: column; gap: 0.625rem; margin-bottom: 2rem; }
+  .ah-form-label { font-size: 1.25rem; font-weight: 500; }
+  .ah-form-input { padding: 1rem 1.25rem; font-size: 1.3125rem; border-radius: 0.75rem; border: 1px solid rgb(229 231 235); background: var(--ah-glass-heavy); color: var(--ah-text); outline: none; width: 100%; box-sizing: border-box; transition: border-color 0.2s, box-shadow 0.2s; }
+  .ah-form-input:focus { border-color: var(--ah-purple); box-shadow: 0 0 0 3px rgb(147 51 234 / 0.2); }
+
+  .ah-btn-primary { padding: 1rem 2.5rem; font-size: 1.25rem; font-weight: 600; color: #fff; background: var(--ah-purple); border: none; border-radius: 0.75rem; cursor: pointer; transition: background 0.2s; }
+  .ah-btn-primary:hover { background: var(--ah-purple-hover); }
+  .ah-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(147 51 234 / 0.4); }
+
+  .ah-api-key { display: block; padding: 1.25rem 1.5rem; background: rgb(254 243 199 / 0.6); border: 1px solid rgb(253 224 71 / 0.5); border-radius: 0.75rem; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 1.3125rem; word-break: break-all; color: rgb(133 77 14); user-select: all; }
+  .dark .ah-api-key { background: rgb(146 64 14 / 0.25); border-color: rgb(217 119 6 / 0.4); color: rgb(253 230 138); }
+
+  .ah-privacy { font-size: 1.1875rem; color: var(--ah-text-dim); line-height: 1.7; }
+  .ah-privacy p { margin: 0 0 0.625rem; }
+
+  .ah-back-link { font-size: 1.25rem; font-weight: 500; color: var(--ah-purple); text-decoration: none; }
+  .ah-back-link:hover { color: var(--ah-purple-hover); text-decoration: underline; }
+
+  /* Hide the floating reCAPTCHA badge — disclosure text is shown inline near the submit button instead,
+     which satisfies Google's requirement: https://developers.google.com/recaptcha/docs/faq#id-like-to-hide-the-recaptcha-badge.-what-is-allowed */
+  .grecaptcha-badge { visibility: hidden !important; }
+
+  .ah-recaptcha-notice { font-size: 1rem; color: var(--ah-text-dim); margin-top: 0.75rem; line-height: 1.6; }
+  .ah-recaptcha-notice a { color: var(--ah-purple); text-decoration: none; }
+  .ah-recaptcha-notice a:hover { text-decoration: underline; }
+
+  html { transition: background-color 0.2s; }
+  html.dark, html.dark body { background-color: rgb(17 24 39); color-scheme: dark; }
+
+  .ah-card-header { position: relative; }
+  .ah-theme-toggle { position: absolute; top: 0; right: 0; width: 2.5rem; height: 2.5rem; border-radius: 50%; border: 1px solid var(--ah-border); background: var(--ah-glass-heavy); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; font-size: 1.125rem; display: flex; align-items: center; justify-content: center; box-shadow: var(--ah-shadow); color: var(--ah-text); transition: box-shadow 0.2s, background 0.2s; }
+  .ah-theme-toggle:hover { box-shadow: var(--ah-shadow-hover); }
+  .ah-theme-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(147 51 234 / 0.4); }
+</style>
+
+<div class="ah-page">
+
+  {% if oauth_id is none and pseudonymous is false %}
+  <div class="ah-card">
+    <p class="ah-text">You are not currently signed in. Select a provider below to continue:</p>
+    <div class="ah-login-buttons">
+      <a href="/google/register" class="ah-login-btn">
+      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" xmlns:xlink="http://www.w3.org/1999/xlink" style="display: block; width: 24px; height: 24px;" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+        <path fill="none" d="M0 0h48v48H0z"></path>
+      </svg>
+        <span>Sign in with Google</span>
+      </a>
+      <a href="/discord/register" class="ah-login-btn">
+        <img src="https://assets-global.website-files.com/6257adef93867e50d84d30e2/62595384e89d1d54d704ece7_3437c10597c1526c3dbd98c737c2bcae.svg" alt="" aria-hidden="true">
+        <span>Sign in with Discord</span>
+      </a>
+      <a href="/github/register" class="ah-login-btn">
+        <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="" aria-hidden="true">
+        <span>Sign in with GitHub</span>
+      </a>
     </div>
+  </div>
+  {% endif %}
+
+  <div class="ah-card">
+    <div class="ah-card-header">
+      <button id="ah-theme-toggle" class="ah-theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+        <span id="ah-theme-icon" aria-hidden="true"></span>
+      </button>
+    </div>
+    {% if oauth_id is not none and pseudonymous is not true %}
+      <h1 class="ah-h1">{{ welcome }}</h1>
+      <h2 class="ah-h2">Set Display Name</h2>
+      <p class="ah-text">Changing your username will generate a new API key.</p>
+    {% else %}
+      <h1 class="ah-h1">Welcome</h1>
+      <h2 class="ah-h2">Set Display Name</h2>
+
+      <div class="ah-alert ah-alert--danger" role="alert">
+        <strong>Warning:</strong> You are not currently signed in.
+      </div>
+
+      <p class="ah-text">Submitting a username without signing in will create an anonymous account with a randomly generated API key. <strong>This key cannot be linked to you or recovered by our team.</strong></p>
+      <p class="ah-text">If you lose or forget this API key, it cannot be recovered, you will need to register a new account, and any kudos in the account will be lost.</p>
+      <p class="ah-text">To prevent this, sign in using one of the providers above before proceeding.</p>
     {% endif %}
-   <div class="container">
-        {% if oauth_id is not none and pseudonymous is not true %}
-        <h1>{{ welcome }}</h1>
-        <h2>Set Display Name</h2>
-        <p>Note: Changing your username will generate a new API key!</p>
+
+    <div class="ah-callout-accent">
+      <p><strong>Note:</strong> If you were directed here from a third-party client that charges fees or displays ads, AI Horde is a <strong>fully volunteer-run service</strong>. AI generation here is always free of charge.</p>
+    </div>
+
+    <form method="POST" id="main-form">
+      <div class="ah-form-group">
+        <label for="username" class="ah-form-label">Display Name <span aria-label="required">*</span></label>
+        {% if username is none %}
+          <input type="text" class="ah-form-input" id="username" name="username" placeholder="Enter Display Name" required>
         {% else %}
-        <h1>Welcome</h1>
-        <h2>Set Display Name</h2>
-        <p style="background-color:Tomato;">WARNING: You are not logged in!</p>
-        <p>If you submit a username, it will create a new user with a random API key <b>which cannot be maintained by us!</b></p>
-        <p>If you forget/lose this API Key, there's nothing we can do to recover it. You'll have to create a new account.</p>
-        <p>To ensure you avoid this fate, please login using one of the buttons above first!</p>
+          <input type="text" class="ah-form-input" id="username" name="username" placeholder="Enter Display Name" value="{{ username }}" required>
         {% endif %}
-        <p><strong>IMPORTANT:</strong> If you have been redirected here from a paid or ad-based client, please be aware that <strong>this is a fully volunteer-run service</strong>. You can always generate images for free here, without paying!</p>
-        <form method="POST" id="main-form">
-            <div class="form-group">
-                <label for="username">Display Name *</label>
-                {% if username is none %}
-                <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" required>
-                {% else %}
-                <input type="text" class="form-control" id="username" name="username" placeholder="Enter Display Name" value="{{ username }}" required>
-                {% endif %}
-            </div>
-            <script>
-                function onSubmit(token) {
-                  document.getElementById("main-form").submit();
-                }
-            </script>
-            <button type="submit" class="btn btn-default g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback='onSubmit' data-action='submit'>Submit</button>
-        </form>
-        {% if api_key is not none %}
-        <h2>API Key</h2>
-        <p>Your new API Key is below. It will not be displayed again. Submit this form to generate a new one. Use this key in your client and in your bridge to identify your user</p>
-        <p><b>Do not share this with anyone!</b></p>
-        <p style="background-color:darkorange;">{{ api_key }}</p>
-        {% endif %}
-        <h2>Privacy Policy</h2>
-        <p>The only information we store from your account is your unique ID for uniqueness.</p>
-        <p>We do not other use your id for any purpose.</p>
-   </div>
-<p><a href="/">Back to Main page</a></p>
+      </div>
+      <script>
+        function onSubmit(token) {
+          document.getElementById("main-form").submit();
+        }
+      </script>
+      <button type="submit" class="ah-btn-primary g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback="onSubmit" data-action="submit">Submit</button>
+      <p class="ah-recaptcha-notice">This site is protected by reCAPTCHA and the Google <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="https://policies.google.com/terms" target="_blank" rel="noopener">Terms of Service</a> apply.</p>
+    </form>
+
+    {% if api_key is not none %}
+      <h2 class="ah-h2">API Key</h2>
+      <p class="ah-text">Your new API key is displayed below. It will not be shown again, so store it somewhere safe. Re-submitting this form will generate a new key. Use this key in your client and worker bridge to authenticate your account.</p>
+      <div class="ah-alert ah-alert--warning" role="alert">
+        <strong>Treat this API key like a password.</strong>
+      </div>
+      <code class="ah-api-key">{{ api_key }}</code>
+    {% endif %}
+
+    <h2 class="ah-h2">Privacy Policy</h2>
+    <div class="ah-privacy">
+      <p>The only information we store is your provider account ID, used solely to identify your account within the service.</p>
+      <p>We do not use this information for any other purpose.</p>
+    </div>
+  </div>
+
+  <a href="/" class="ah-back-link">&#8592; Back to Main Page</a>
+</div>
+
+<script>
+  (function () {
+    var html = document.documentElement;
+    var icon = document.getElementById('ah-theme-icon');
+
+    function applyTheme(dark) {
+      if (dark) {
+        html.classList.add('dark');
+        icon.textContent = '\u2600\uFE0F'; /* ☀️ */
+      } else {
+        html.classList.remove('dark');
+        icon.textContent = '\uD83C\uDF19'; /* 🌙 */
+      }
+    }
+
+    var stored = localStorage.getItem('ah-theme');
+    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(stored === 'dark' || (stored === null && prefersDark));
+
+    document.getElementById('ah-theme-toggle').addEventListener('click', function () {
+      var nowDark = !html.classList.contains('dark');
+      applyTheme(nowDark);
+      localStorage.setItem('ah-theme', nowDark ? 'dark' : 'light');
+    });
+
+    /* Sync with OS preference changes only when the user hasn't set a manual preference */
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+      if (localStorage.getItem('ah-theme') === null) {
+        applyTheme(e.matches);
+      }
+    });
+  })();
+</script>
 {% endblock %}
