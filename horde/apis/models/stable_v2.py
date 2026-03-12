@@ -52,7 +52,7 @@ class ImageParsers(v2.Parsers):
             "models",
             type=list,
             required=False,
-            default=["stable_diffusion"],
+            default=[],
             help="The acceptable models with which to generate.",
             location="json",
         )
