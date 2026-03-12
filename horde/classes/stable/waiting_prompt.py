@@ -245,12 +245,27 @@ class ImageWaitingPrompt(WaitingPrompt):
         proxied_account = ""
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
-        logger.info(
+        log_msg = (
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} "
             f"({self.ipaddr}) ({self.client_agent}): "
             f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} "
-            f"== {self.total_usage} Total MPs for {self.kudos} kudos.",
+            f"using model(s) {', '.join(self.get_model_names())} "
         )
+        if self.params.get("post_processing"):
+            log_msg += f"| post processing {', '.join(self.params['post_processing'])} "
+        if self.params.get("control_type"):
+            log_msg += f"| control type {self.params['control_type']} "
+        if self.params.get("loras"):
+            log_msg += f"| loras {', '.join(lora['name'] for lora in self.params['loras'])} "
+        if self.params.get("tis"):
+            log_msg += f"| tis {', '.join(ti['name'] for ti in self.params['tis'])} "
+        log_msg += f"| workers {', '.join(str(w.worker_id) for w in self.workers) if self.workers else 'any'} "
+        if self.worker_blacklist:
+            log_msg += f"| blacklist {self.worker_blacklist} "
+        if self.slow_workers:
+            log_msg += f"| slow_workers {self.slow_workers} "
+        log_msg += f"== {self.total_usage} Total MPs for {self.kudos} kudos."
+        logger.info(log_msg)
 
     def seed_to_int(self, s=None):
         if isinstance(s, int):
