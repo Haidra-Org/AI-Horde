@@ -83,6 +83,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   .ah-back-link { font-size: 1.25rem; font-weight: 500; color: var(--ah-purple); text-decoration: none; }
   .ah-back-link:hover { color: var(--ah-purple-hover); text-decoration: underline; }
 
+  /* Hide the floating reCAPTCHA badge — disclosure text is shown inline near the submit button instead,
+     which satisfies Google's requirement: https://developers.google.com/recaptcha/docs/faq#id-like-to-hide-the-recaptcha-badge.-what-is-allowed */
+  .grecaptcha-badge { visibility: hidden !important; }
+
+  .ah-recaptcha-notice { font-size: 1rem; color: var(--ah-text-dim); margin-top: 0.75rem; line-height: 1.6; }
+  .ah-recaptcha-notice a { color: var(--ah-purple); text-decoration: none; }
+  .ah-recaptcha-notice a:hover { text-decoration: underline; }
+
   html { transition: background-color 0.2s; }
   html.dark, html.dark body { background-color: rgb(17 24 39); color-scheme: dark; }
 
@@ -156,6 +164,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
         }
       </script>
       <button type="submit" class="ah-btn-primary g-recaptcha" data-sitekey="{{ recaptcha_site }}" data-callback="onSubmit" data-action="submit">Submit</button>
+      <p class="ah-recaptcha-notice">This site is protected by reCAPTCHA and the Google <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="https://policies.google.com/terms" target="_blank" rel="noopener">Terms of Service</a> apply.</p>
     </form>
 
     {% if api_key is not none %}
