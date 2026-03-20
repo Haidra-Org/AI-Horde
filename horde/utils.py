@@ -155,3 +155,23 @@ def ensure_clean(string, key):
     if is_profane(string):
         raise e.BadRequest(f"{key} contains profanity")
     return sanitize_string(string)
+
+
+# Compiled as a constant to improve performance during high-volume JSON parsing
+ISO_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
+
+def datetime_parser(json_dict):
+    """
+    Hook for json.loads to convert ISO 8601 strings back to datetime objects.
+    Uses a pre-compiled regex for efficiency.
+    """
+    for key, value in json_dict.items():
+        # Check if it's a string and matches the ISO format pattern
+        if isinstance(value, str) and ISO_DATETIME_RE.match(value):
+            try:
+                json_dict[key] = datetime.fromisoformat(value)
+            except (ValueError, TypeError):
+                # Fallback if it looks like a date but doesn't parse correctly
+                pass
+    return json_dict

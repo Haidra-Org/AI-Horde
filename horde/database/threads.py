@@ -4,7 +4,7 @@
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import patreon
 import stripe
@@ -109,6 +109,13 @@ def store_prioritized_wp_queue():
 @logger.catch(reraise=True)
 def store_worker_list():
     """Stores the retrieved worker details as json for 300 seconds horde-wide"""
+
+    def json_serial(obj):
+        """JSON serializer for objects not serializable by default json code"""
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+
     with HORDE.app_context():
         serialized_workers = []
         serialized_workers_privileged = []
@@ -117,8 +124,8 @@ def store_worker_list():
         for worker in get_active_workers():
             serialized_workers.append(worker.get_details())
             serialized_workers_privileged.append(worker.get_details(2))
-        json_workers = json.dumps(serialized_workers)
-        json_workers_privileged = json.dumps(serialized_workers_privileged)
+        json_workers = json.dumps(serialized_workers, default=json_serial)
+        json_workers_privileged = json.dumps(serialized_workers_privileged, default=json_serial)
         try:
             hr.horde_r_setex("worker_cache", timedelta(seconds=300), json_workers)
             hr.horde_r_setex(
