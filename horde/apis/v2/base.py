@@ -42,7 +42,7 @@ from horde.metrics import waitress_metrics
 from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
-from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
+from horde.utils import datetime_parser, hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_title, horde_url
 
 # Not used yet
@@ -873,7 +873,7 @@ class Workers(Resource):
             else:
                 hr.horde_local_setex_to_json("worker_cache", 300, workers)
             return workers
-        return self.parse_worker_by_query(json.loads(cached_workers))
+        return self.parse_worker_by_query(json.loads(cached_workers, object_hook=datetime_parser))
 
     def get_worker_info_list(self, details_privilege):
         workers_ret = []

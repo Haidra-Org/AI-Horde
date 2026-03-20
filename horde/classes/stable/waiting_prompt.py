@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import copy
+import math
 import os
 import random
-import math
 
 from sqlalchemy.sql import expression
 
@@ -400,23 +400,23 @@ class ImageWaitingPrompt(WaitingPrompt):
         area = self.width * self.height
         if area > area_limit:
             downgraded = True
-            
+
             # Scale to fit into max_resolution
             scale = math.sqrt(area_limit / area)
             new_width = int(self.width * scale)
             new_height = int(self.height * scale)
-            
+
             # Snap down to multiple of 64
             new_width = (new_width // 64) * 64
             new_height = (new_height // 64) * 64
-            
+
             # Decrement more if needed (just in case we missed some edge case)
             while new_width * new_height > area_limit:
                 if new_width >= new_height:
                     new_width -= 64
                 else:
                     new_height -= 64
-                    
+
             # Minimum size
             if new_width * new_height < 512 * 512:
                 new_width = 512
@@ -521,4 +521,3 @@ class ImageWaitingPrompt(WaitingPrompt):
 
     def count_pp(self):
         return len(self.params.get("post_processing", []))
-
