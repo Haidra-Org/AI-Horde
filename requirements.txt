@@ -36,3 +36,4 @@ numpy ~= 1.26.4 # better_profanity fails on later versions of numpy
 markdownify
 stripe
 environs
+setuptools<82
