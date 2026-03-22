@@ -890,7 +890,6 @@ class Workers(Resource):
 
 
 class WorkerSingleBase(Resource):
-
     def get_worker_by_id(self, worker_id):
         cache_exists = True
         details_privilege = 0

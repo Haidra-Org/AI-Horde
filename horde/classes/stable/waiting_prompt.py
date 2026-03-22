@@ -248,8 +248,8 @@ class ImageWaitingPrompt(WaitingPrompt):
         log_msg = (
             f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} "
             f"({self.ipaddr}) ({self.client_agent}): "
-            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} " +
-            (f"using model(s) {', '.join(self.get_model_names())} " if self.get_model_names() else "(no model specified) ")
+            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} "
+            + (f"using model(s) {', '.join(self.get_model_names())} " if self.get_model_names() else "(no model specified) ")
         )
         if self.params.get("post_processing"):
             log_msg += f"| post processing {', '.join(self.params['post_processing'])} "

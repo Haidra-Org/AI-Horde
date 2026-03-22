@@ -81,7 +81,6 @@ class SingleStyleTemplateGet(Resource):
 
 
 class SingleStyleTemplate(SingleStyleTemplateGet):
-
     def patch(self, style_id):
         self.params = {}
         self.warnings = set()
@@ -351,7 +350,6 @@ class Collection(Resource):
 
 
 class SingleCollectionGet(Resource):
-
     def get_through_id(self, style_id):
         self.existing_collection = database.get_style_by_uuid(style_id, is_collection=True)
         if not self.existing_collection:
