@@ -147,3 +147,6 @@ apikey.txt
 .vscode/
 
 horde_sdk**
+
+.env_*
+.venv*
