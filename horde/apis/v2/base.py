@@ -248,9 +248,9 @@ class GenerateTemplate(Resource):
                 )
                 # logger.warning(datetime.utcnow())
             if len(self.workers):
-                for worker_id in self.workers:
-                    if not database.worker_exists(worker_id):
-                        raise e.WorkerNotFound(worker_id)
+                missing_workers = database.workers_exist(self.workers)
+                if missing_workers:
+                    raise e.WorkerNotFound(missing_workers.pop())
             # logger.warning(datetime.utcnow())
             n = 1
             if self.args.params:

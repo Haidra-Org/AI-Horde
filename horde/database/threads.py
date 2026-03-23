@@ -37,6 +37,7 @@ from horde.logger import logger
 from horde.patreon import patrons
 from horde.r2 import delete_source_image
 from horde.stripe_subs import stripe_subs
+from horde import vars as hv
 from horde.vars import horde_instance_id
 
 
@@ -88,7 +89,10 @@ def store_prioritized_wp_queue():
         for wp_type in ["image", "text"]:
             wp_queue = query_prioritized_wps(wp_type)
             serialized_wp_list = []
-            for wp in wp_queue:
+            queue_positions = {}
+            things_ahead_in_queue = 0
+            n_ahead_in_queue = 0
+            for idx, wp in enumerate(wp_queue):
                 wp_json = {
                     "id": str(wp.id),
                     "things": wp.things,
@@ -97,11 +101,18 @@ def store_prioritized_wp_queue():
                     "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 serialized_wp_list.append(wp_json)
+                queued_things = round(wp.things * wp.n / hv.thing_divisors["image"], 2)
+                things_ahead_in_queue += queued_things
+                n_ahead_in_queue += wp.n
+                queue_positions[str(wp.id)] = [idx, round(things_ahead_in_queue, 2), n_ahead_in_queue]
             try:
                 cached_queue = json.dumps(serialized_wp_list)
                 # We set the expiry in redis to 10 seconds, in case the primary thread dies
                 # However the primary thread is set to set the cache every 1 second
                 hr.horde_r_setex(f"{wp_type}_wp_cache", timedelta(seconds=5), cached_queue)
+                hr.horde_r_setex(
+                    f"{wp_type}_wp_queue_positions", timedelta(seconds=5), json.dumps(queue_positions)
+                )
             except (TypeError, OverflowError) as err:
                 logger.error(f"Failed serializing with error: {err}")
 

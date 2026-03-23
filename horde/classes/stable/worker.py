@@ -67,6 +67,9 @@ class ImageWorker(Worker):
         can_generate = super().can_generate(waiting_prompt)
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
+        # Cache these to avoid repeated Redis lookups within this method
+        my_model_names = self.get_model_names()
+        my_baselines = model_reference.get_all_model_baselines(my_model_names)
         # logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not check_bridge_capability("img2img", self.bridge_agent):
             return [False, "img2img"]
@@ -77,7 +80,7 @@ class ImageWorker(Worker):
         ]:
             if not check_bridge_capability("inpainting", self.bridge_agent):
                 return [False, "painting"]
-            if not model_reference.has_inpainting_models(self.get_model_names()):
+            if not model_reference.has_inpainting_models(my_model_names):
                 return [False, "models"]
             if not self.allow_painting:
                 return [False, "painting"]
@@ -85,7 +88,7 @@ class ImageWorker(Worker):
         if waiting_prompt.source_processing not in [
             "inpainting",
             "outpainting",
-        ] and model_reference.has_only_inpainting_models(self.get_model_names()):
+        ] and model_reference.has_only_inpainting_models(my_model_names):
             return [False, "models"]
         if not check_sampler_capability(
             waiting_prompt.gen_payload.get("sampler_name", "k_euler_a"),
@@ -131,17 +134,17 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not check_bridge_capability("qr_code", self.bridge_agent):
                 return [False, "bridge_version"]
-            if "stable_diffusion_xl" in model_reference.get_all_model_baselines(self.get_model_names()) and not self.allow_sdxl_controlnet:
+            if "stable_diffusion_xl" in my_baselines and not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if (
             waiting_prompt.params.get("hires_fix")
-            and "stable_cascade" in model_reference.get_all_model_baselines(self.get_model_names())
+            and "stable_cascade" in my_baselines
             and not check_bridge_capability("stable_cascade_2pass", self.bridge_agent)
         ):
             return [False, "bridge_version"]
-        if "flux_1" in model_reference.get_all_model_baselines(self.get_model_names()) and not check_bridge_capability(
+        if "flux_1" in my_baselines and not check_bridge_capability(
             "flux",
             self.bridge_agent,
         ):
@@ -172,7 +175,7 @@ class ImageWorker(Worker):
                         return [False, "step_count"]
             else:
                 # If the request has an empty model list, we compare instead to the worker's model list
-                for mn in self.get_model_names():
+                for mn in my_model_names:
                     avg_steps = (
                         int(
                             model_reference.get_model_requirements(mn).get("min_steps", 20)
