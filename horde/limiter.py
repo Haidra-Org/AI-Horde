@@ -16,7 +16,7 @@ if is_redis_up():
     # if is_redis_up():
     try:
         limiter = Limiter(
-            HORDE,
+            app=HORDE,
             key_func=get_remote_address,
             storage_uri=ger_limiter_url(),
             # storage_options={"connect_timeout": 30},
@@ -31,7 +31,7 @@ if is_redis_up():
 # Allow local workstation run
 if limiter is None:
     limiter = Limiter(
-        HORDE,
+        app=HORDE,
         key_func=get_remote_address,
         default_limits=["90 per minute"],
         headers_enabled=True,

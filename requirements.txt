@@ -5,7 +5,7 @@
 werkzeug~=2.2.2
 Flask~=2.2.2
 flask-restx
-flask_limiter~=2.8.1
+flask_limiter~=3.0
 Flask-Caching
 waitress~=2.1.2
 requests >= 2.27
