@@ -636,8 +636,10 @@ class Worker(WorkerTemplate):
         if waiting_prompt.tricked_worker(self):
             return [False, "secret"]
         # logger.warning(datetime.utcnow())
-        if any(b.word.lower() in waiting_prompt.prompt.lower() for b in self.blacklist):
-            return [False, "blacklist"]
+        if self.blacklist:
+            prompt_lower = waiting_prompt.prompt.lower()
+            if any(b.word.lower() in prompt_lower for b in self.blacklist):
+                return [False, "blacklist"]
         # Skips working prompts which require a specific worker from a list, and our ID is not in that list
         if waiting_prompt.worker_blacklist:
             if len(waiting_prompt.workers) and self.id in waiting_prompt.get_worker_ids():

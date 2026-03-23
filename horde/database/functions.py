@@ -9,8 +9,8 @@ import urllib.parse
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import Boolean, and_, func, not_, or_
-from sqlalchemy.orm import noload
+from sqlalchemy import Boolean, and_, case, func, not_, or_
+from sqlalchemy.orm import contains_eager, noload, selectinload
 
 import horde.classes.base.stats as stats
 from horde import vars as hv
@@ -272,6 +272,28 @@ def worker_exists(worker_id):
     if not wc:
         wc = db.session.query(InterrogationWorker).filter_by(id=worker_uuid).count()
     return wc
+
+
+def workers_exist(worker_ids):
+    """Check multiple worker IDs in a single query. Returns set of IDs that do NOT exist."""
+    uuid_values = []
+    invalid_ids = set()
+    for wid in worker_ids:
+        try:
+            uuid_values.append(uuid.UUID(wid))
+        except ValueError:
+            invalid_ids.add(wid)
+    if invalid_ids:
+        return invalid_ids
+    if SQLITE_MODE:
+        uuid_values = [str(u) for u in uuid_values]
+    found = set()
+    for worker_class in [ImageWorker, TextWorker, InterrogationWorker]:
+        rows = db.session.query(worker_class.id).filter(worker_class.id.in_(uuid_values)).all()
+        found.update(str(r[0]) for r in rows)
+        if len(found) == len(worker_ids):
+            break
+    return {wid for wid in worker_ids if wid not in found and str(uuid.UUID(wid)) not in found}
 
 
 def get_available_models(filter_model_name: str = None):
@@ -795,7 +817,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     # This is just the top 3 - Adjusted method to send ImageWorker object. Filters to add.
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
-    PER_PAGE = 3  # how many requests we're picking up to filter further
+    PER_PAGE = 10  # how many requests we're picking up to filter further
     final_wp_list = (
         db.session.query(ImageWaitingPrompt)
         .options(noload(ImageWaitingPrompt.processing_gens))
@@ -951,30 +973,42 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
 
 
 def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_user_ids=None):
-    ## FIXME: Massively costly approach, doing 1 new query per count. Not sure about it.
-    ret_dict = {}
-    open_wp_list = (
-        db.session.query(ImageWaitingPrompt)
-        .options(noload(ImageWaitingPrompt.processing_gens))
-        .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
-        .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
-        .filter(
-            ImageWaitingPrompt.n > 0,
-            ImageWaitingPrompt.active == True,  # noqa E712
-            ImageWaitingPrompt.faulted == False,  # noqa E712
-            ImageWaitingPrompt.expiry > datetime.utcnow(),
-        )
-    )
-    skipped_models = open_wp_list.filter(
-        and_(
-            WPModels.model.not_in(models_list),
-            WPModels.id != None,  # noqa E712
-        ),
-    ).count()
-    if skipped_models > 0:
-        ret_dict["models"] = skipped_models
-    skipped_workers = open_wp_list.filter(
-        or_(
+    ## Consolidated into a single query with conditional aggregation (replaces 15+ separate count queries).
+    bridge_agent = worker.bridge_agent
+    can_img2img = check_bridge_capability("img2img", bridge_agent)
+    can_inpainting = check_bridge_capability("inpainting", bridge_agent)
+    can_lora = check_bridge_capability("lora", bridge_agent)
+    can_ti = check_bridge_capability("textual_inversion", bridge_agent)
+    can_pp = check_bridge_capability("post-processing", bridge_agent)
+    can_controlnet = check_bridge_capability("controlnet", bridge_agent)
+    can_hires = check_bridge_capability("hires_fix", bridge_agent)
+    can_return_ctrl = check_bridge_capability("return_control_map", bridge_agent)
+    can_tiling = check_bridge_capability("tiling", bridge_agent)
+    can_layer_diffuse = check_bridge_capability("layer_diffuse", bridge_agent)
+
+    available_samplers = get_supported_samplers(bridge_agent, karras=False)
+    available_karras_samplers = get_supported_samplers(bridge_agent, karras=True)
+
+    # Base filters (shared across all counts)
+    base_filters = [
+        ImageWaitingPrompt.n > 0,
+        ImageWaitingPrompt.active == True,  # noqa E712
+        ImageWaitingPrompt.faulted == False,  # noqa E712
+        ImageWaitingPrompt.expiry > datetime.utcnow(),
+    ]
+
+    # Build all conditional count expressions
+    count_exprs = {}
+
+    # models: WP specifies models that worker doesn't serve
+    count_exprs["models"] = func.sum(case(
+        (and_(WPModels.model.not_in(models_list), WPModels.id != None), 1),  # noqa E712
+        else_=0,
+    ))
+
+    # worker_id: WP targets specific workers (allowlist/blocklist)
+    count_exprs["worker_id"] = func.sum(case(
+        (or_(
             WPAllowedWorkers.id != None,  # noqa E712
             and_(
                 ImageWaitingPrompt.worker_blacklist.is_(False),
@@ -984,155 +1018,204 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
                 ImageWaitingPrompt.worker_blacklist.is_(True),
                 WPAllowedWorkers.worker_id == worker.id,
             ),
-        ),
-    ).count()
-    if skipped_workers > 0:
-        ret_dict["worker_id"] = skipped_workers
-    max_pixels = open_wp_list.filter(
-        ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels,
-    ).count()
-    # Count skipped max pixels
-    if max_pixels > 0:
-        ret_dict["max_pixels"] = max_pixels
-    # Count skipped img2img
-    if worker.allow_img2img is False or not check_bridge_capability("img2img", worker.bridge_agent):
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.source_image != None,  # noqa E712
-        ).count()
-        if skipped_wps > 0:
-            if worker.allow_img2img is False:
-                ret_dict["img2img"] = skipped_wps
-            else:
-                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
-    # Count skipped inpainting
-    if worker.allow_painting is False or not check_bridge_capability("inpainting", worker.bridge_agent):
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.source_processing.in_(["inpainting", "outpainting"]),
-        ).count()
-        if skipped_wps > 0:
-            if worker.allow_painting is False:
-                ret_dict["painting"] = skipped_wps
-            else:
-                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
-    # Count skipped unsafe ips
+        ), 1),
+        else_=0,
+    ))
+
+    # max_pixels
+    count_exprs["max_pixels"] = func.sum(case(
+        (ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels, 1),
+        else_=0,
+    ))
+
+    # img2img (only counted if worker can't do it)
+    if worker.allow_img2img is False or not can_img2img:
+        count_exprs["_img2img_raw"] = func.sum(case(
+            (ImageWaitingPrompt.source_image != None, 1),  # noqa E712
+            else_=0,
+        ))
+
+    # painting (only counted if worker can't do it)
+    if worker.allow_painting is False or not can_inpainting:
+        count_exprs["_painting_raw"] = func.sum(case(
+            (ImageWaitingPrompt.source_processing.in_(["inpainting", "outpainting"]), 1),
+            else_=0,
+        ))
+
+    # unsafe_ip
     if worker.allow_unsafe_ipaddr is False:
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.safe_ip == False,  # noqa E712
-        ).count()
-        if skipped_wps > 0:
-            ret_dict["unsafe_ip"] = skipped_wps
-    # Count skipped nsfw
+        count_exprs["unsafe_ip"] = func.sum(case(
+            (ImageWaitingPrompt.safe_ip == False, 1),  # noqa E712
+            else_=0,
+        ))
+
+    # nsfw
     if worker.nsfw is False:
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.nsfw == True,  # noqa E712
-        ).count()
-        if skipped_wps > 0:
-            ret_dict["nsfw"] = skipped_wps
-    # Count skipped lora
-    if worker.allow_lora is False or not check_bridge_capability("lora", worker.bridge_agent):
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key("loras"),
-        ).count()
-        if skipped_wps > 0:
-            if worker.allow_lora is False:
-                ret_dict["lora"] = skipped_wps
-            else:
-                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
-    # Count skipped TI
-    if not check_bridge_capability("textual_inversion", worker.bridge_agent):
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key("tis"),
-        ).count()
-        if skipped_wps > 0:
-            ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
-    # Count skipped PP
-    if worker.allow_post_processing is False or not check_bridge_capability("post-processing", worker.bridge_agent):
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key("post-processing"),
-        ).count()
-        if skipped_wps > 0:
-            if worker.allow_post_processing is False:
-                ret_dict["post-processing"] = skipped_wps
-            else:
-                ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
-    # TODO: Figure this out.
-    # Can't figure out how to check to do something like any(pp not in available_pp for pp in params['post-processing'])
-    # else:
-    #     available_pp = list(get_supported_pp(worker.bridge_agent))
-    #     skipped_wps = open_wp_list.filter(
-    #         ImageWaitingPrompt.params.has_key('post-processing'),
-    #         ImageWaitingPrompt.params.contains({'post-processing': available_pp}),
-    #     ).count()
-    #     if skipped_wps > 0:
-    #         ret_dict["bridge_version"] = ret_dict.get("bridge_version",0) + skipped_wps
-    if worker.allow_controlnet is False or not check_bridge_capability("controlnet", worker.bridge_agent):
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.params.has_key("control_type"),
-        ).count()
-        if worker.allow_controlnet is False:
-            ret_dict["controlnet"] = skipped_wps
-        else:
-            ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_wps
-    # Count skipped request for fast workers
-    if worker.speed <= 500000:  # 0.5 MPS/s
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.slow_workers == False,  # noqa E712
-        ).count()
-        if skipped_wps > 0:
-            ret_dict["performance"] = skipped_wps
+        count_exprs["nsfw"] = func.sum(case(
+            (ImageWaitingPrompt.nsfw == True, 1),  # noqa E712
+            else_=0,
+        ))
+
+    # lora
+    if worker.allow_lora is False or not can_lora:
+        count_exprs["_lora_raw"] = func.sum(case(
+            (ImageWaitingPrompt.params.has_key("loras"), 1),
+            else_=0,
+        ))
+
+    # TI
+    if not can_ti:
+        count_exprs["_ti_raw"] = func.sum(case(
+            (ImageWaitingPrompt.params.has_key("tis"), 1),
+            else_=0,
+        ))
+
+    # post-processing
+    if worker.allow_post_processing is False or not can_pp:
+        count_exprs["_pp_raw"] = func.sum(case(
+            (ImageWaitingPrompt.params.has_key("post-processing"), 1),
+            else_=0,
+        ))
+
+    # controlnet
+    if worker.allow_controlnet is False or not can_controlnet:
+        count_exprs["_controlnet_raw"] = func.sum(case(
+            (ImageWaitingPrompt.params.has_key("control_type"), 1),
+            else_=0,
+        ))
+
+    # performance (slow workers)
+    if worker.speed <= 500000:
+        count_exprs["_perf_slow"] = func.sum(case(
+            (ImageWaitingPrompt.slow_workers == False, 1),  # noqa E712
+            else_=0,
+        ))
+
+    # performance (extra slow workers)
     if worker.extra_slow_worker is True:
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.extra_slow_workers == False,  # noqa E712
-        ).count()
-        if skipped_wps > 0:
-            ret_dict["performance"] = ret_dict.get("performance", 0) + skipped_wps
-    # Count skipped WPs requiring trusted workers
+        count_exprs["_perf_extra_slow"] = func.sum(case(
+            (ImageWaitingPrompt.extra_slow_workers == False, 1),  # noqa E712
+            else_=0,
+        ))
+
+    # untrusted
     if worker.user.trusted is False:
-        skipped_wps = open_wp_list.filter(
-            ImageWaitingPrompt.trusted_workers == True,  # noqa E712
-        ).count()
-        if skipped_wps > 0:
-            ret_dict["untrusted"] = skipped_wps
-    available_samplers = get_supported_samplers(worker.bridge_agent, karras=False)
-    available_karras_samplers = get_supported_samplers(worker.bridge_agent, karras=True)
-    # TODO: Add the rest of the bridge_version checks.
-    skipped_bv = open_wp_list.filter(
-        or_(
-            and_(
-                ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_samplers),
-                ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(False),
-            ),
-            and_(
-                ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_karras_samplers),
-                ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(True),
-            ),
-            and_(
-                not check_bridge_capability("hires_fix", worker.bridge_agent),
-                ImageWaitingPrompt.params["hires_fix"].astext.cast(Boolean).is_(True),
-            ),
-            and_(
-                not check_bridge_capability("return_control_map", worker.bridge_agent),
-                ImageWaitingPrompt.params["return_control_map"].astext.cast(Boolean).is_(True),
-            ),
-            and_(
-                not check_bridge_capability("tiling", worker.bridge_agent),
-                ImageWaitingPrompt.params["tiling"].astext.cast(Boolean).is_(True),
-            ),
-            and_(
-                not check_bridge_capability("layer_diffuse", worker.bridge_agent),
-                ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(True),
-            ),
-        ),
-    ).count()
-    if skipped_bv > 0:
-        ret_dict["bridge_version"] = ret_dict.get("bridge_version", 0) + skipped_bv
-    # TODO: Will need some sql function to be able to calculate this one demand
-    # skipped_kudos = open_wp_list.filter(
-    # ).count()
-    # TODO: Implement the below counts
-    # 'worker_id': ,
-    # 'blacklist': ,
-    # 'kudos': skipped_kudos, # Not Implemented: See skipped_kudos TODO.
+        count_exprs["untrusted"] = func.sum(case(
+            (ImageWaitingPrompt.trusted_workers == True, 1),  # noqa E712
+            else_=0,
+        ))
+
+    # bridge_version (sampler + capability checks)
+    bv_conditions = []
+    bv_conditions.append(and_(
+        ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_samplers),
+        ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(False),
+    ))
+    bv_conditions.append(and_(
+        ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_karras_samplers),
+        ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(True),
+    ))
+    if not can_hires:
+        bv_conditions.append(ImageWaitingPrompt.params["hires_fix"].astext.cast(Boolean).is_(True))
+    if not can_return_ctrl:
+        bv_conditions.append(ImageWaitingPrompt.params["return_control_map"].astext.cast(Boolean).is_(True))
+    if not can_tiling:
+        bv_conditions.append(ImageWaitingPrompt.params["tiling"].astext.cast(Boolean).is_(True))
+    if not can_layer_diffuse:
+        bv_conditions.append(ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(True))
+
+    count_exprs["_bv_sampler"] = func.sum(case(
+        (or_(*bv_conditions), 1),
+        else_=0,
+    ))
+
+    # Execute single query
+    query = (
+        db.session.query(*count_exprs.values())
+        .select_from(ImageWaitingPrompt)
+        .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
+        .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
+        .filter(*base_filters)
+    )
+
+    row = query.one()
+    raw = dict(zip(count_exprs.keys(), row))
+
+    # Now map raw results to the return dictionary with the bridge_version aggregation logic
+    ret_dict = {}
+    bridge_version_count = 0
+
+    if raw.get("models", 0) > 0:
+        ret_dict["models"] = raw["models"]
+    if raw.get("worker_id", 0) > 0:
+        ret_dict["worker_id"] = raw["worker_id"]
+    if raw.get("max_pixels", 0) > 0:
+        ret_dict["max_pixels"] = raw["max_pixels"]
+
+    # img2img — attribute to setting or bridge depending on which is the cause
+    img2img_count = raw.get("_img2img_raw", 0) or 0
+    if img2img_count > 0:
+        if worker.allow_img2img is False:
+            ret_dict["img2img"] = img2img_count
+        else:
+            bridge_version_count += img2img_count
+
+    # painting
+    painting_count = raw.get("_painting_raw", 0) or 0
+    if painting_count > 0:
+        if worker.allow_painting is False:
+            ret_dict["painting"] = painting_count
+        else:
+            bridge_version_count += painting_count
+
+    if raw.get("unsafe_ip", 0) > 0:
+        ret_dict["unsafe_ip"] = raw["unsafe_ip"]
+    if raw.get("nsfw", 0) > 0:
+        ret_dict["nsfw"] = raw["nsfw"]
+
+    # lora
+    lora_count = raw.get("_lora_raw", 0) or 0
+    if lora_count > 0:
+        if worker.allow_lora is False:
+            ret_dict["lora"] = lora_count
+        else:
+            bridge_version_count += lora_count
+
+    # TI
+    ti_count = raw.get("_ti_raw", 0) or 0
+    if ti_count > 0:
+        bridge_version_count += ti_count
+
+    # post-processing
+    pp_count = raw.get("_pp_raw", 0) or 0
+    if pp_count > 0:
+        if worker.allow_post_processing is False:
+            ret_dict["post-processing"] = pp_count
+        else:
+            bridge_version_count += pp_count
+
+    # controlnet
+    controlnet_count = raw.get("_controlnet_raw", 0) or 0
+    if controlnet_count > 0:
+        if worker.allow_controlnet is False:
+            ret_dict["controlnet"] = controlnet_count
+        else:
+            bridge_version_count += controlnet_count
+
+    # performance
+    perf_count = (raw.get("_perf_slow", 0) or 0) + (raw.get("_perf_extra_slow", 0) or 0)
+    if perf_count > 0:
+        ret_dict["performance"] = perf_count
+
+    if raw.get("untrusted", 0) > 0:
+        ret_dict["untrusted"] = raw["untrusted"]
+
+    # bridge_version sampler/capability
+    bv_sampler = raw.get("_bv_sampler", 0) or 0
+    bridge_version_count += bv_sampler
+    if bridge_version_count > 0:
+        ret_dict["bridge_version"] = bridge_version_count
+
     for key in [
         "bridge_version",
         "untrusted",
@@ -1198,19 +1281,45 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_i
 # Returns the queue position of the provided WP based on kudos
 # Also returns the amount of things until the wp is generated
 # Also returns the amount of different gens queued
+# Returns the queue position of the provided WP based on kudos
+# Also returns the amount of things until the wp is generated
+# Also returns the amount of different gens queued
+# In-process cache for pre-computed queue positions (refreshed at most once per second)
+_wp_queue_positions_cache = {"image": {}, "text": {}}
+_wp_queue_positions_time = {"image": 0.0, "text": 0.0}
+
+
 def get_wp_queue_stats(wp):
     if not wp.needs_gen():
         return (-1, 0, 0)
+    wp_type = wp.wp_type
+    now = time.time()
+    # Refresh in-process cache at most once per second per wp_type
+    if now - _wp_queue_positions_time.get(wp_type, 0) > 1:
+        cached_positions = hr.horde_r_get(f"{wp_type}_wp_queue_positions")
+        if cached_positions is not None:
+            try:
+                parsed = json.loads(cached_positions)
+                _wp_queue_positions_cache[wp_type] = parsed
+                _wp_queue_positions_time[wp_type] = now
+            except (TypeError, ValueError):
+                pass
+    positions = _wp_queue_positions_cache.get(wp_type, {})
+    wp_stats = positions.get(str(wp.id))
+    if wp_stats is not None:
+        return tuple(wp_stats)
+    # Check if we have positions data at all; if so, WP is not in the queue
+    if positions:
+        return (-1, 0, 0)
+    # Fall back to legacy computation if pre-computed positions unavailable
     things_ahead_in_queue = 0
     n_ahead_in_queue = 0
     priority_sorted_list = retrieve_prioritized_wp_queue(wp.wp_type)
-    # In case the primary thread has borked, we fall back to the DB
     if priority_sorted_list is None:
         logger.warning(
             "Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!",
         )
         priority_sorted_list = query_prioritized_wps(wp.wp_type)
-    # logger.info(priority_sorted_list)
     for riter in range(len(priority_sorted_list)):
         iter_wp = priority_sorted_list[riter]
         queued_things = round(iter_wp.things * iter_wp.n / hv.thing_divisors["image"], 2)
@@ -1219,7 +1328,6 @@ def get_wp_queue_stats(wp):
         if iter_wp.id == wp.id:
             things_ahead_in_queue = round(things_ahead_in_queue, 2)
             return (riter, things_ahead_in_queue, n_ahead_in_queue)
-    # -1 means the WP is done and not in the queue
     return (-1, 0, 0)
 
 
@@ -1335,15 +1443,14 @@ def get_request_avg(request_type="image"):
 
 
 def wp_has_valid_workers(wp):
-    # return True # FIXME: Still too heavy on the amount of data retrieved
     cached_validity = hr.horde_r_get(f"wp_validity_{wp.id}")
     if cached_validity is not None:
         return bool(int(cached_validity))
     # tic = time.time()
     if wp.faulted:
-        return []
+        return False
     if wp.expiry < datetime.utcnow():
-        return []
+        return False
     worker_class = ImageWorker
     if wp.wp_type == "text":
         worker_class = TextWorker
@@ -1357,6 +1464,9 @@ def wp_has_valid_workers(wp):
             noload(worker_class.performance),
             noload(worker_class.suspicions),
             noload(worker_class.stats),
+            # Eagerly load relationships accessed by can_generate() to avoid N+1 queries
+            selectinload(worker_class.blacklist),
+            contains_eager(worker_class.user),
         )
         .outerjoin(
             WorkerModel,
@@ -1463,6 +1573,7 @@ def wp_has_valid_workers(wp):
     for worker in final_worker_list.all():
         if worker.can_generate(wp)[0]:
             worker_found = True
+            break
     # logger.debug(time.time() - tic)
     hr.horde_r_setex(f"wp_validity_{wp.id}", timedelta(seconds=60), int(worker_found))
     return worker_found

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import functools
+
 import semver
 
 from horde.consts import KNOWN_POST_PROCESSORS
@@ -173,6 +175,7 @@ LLM_VALIDATED_BACKENDS = {
 }
 
 
+@functools.lru_cache(maxsize=256)
 @logger.catch(reraise=True)
 def parse_bridge_agent(bridge_agent):
     try:
@@ -189,6 +192,7 @@ def parse_bridge_agent(bridge_agent):
     return bridge_name, bridge_semver
 
 
+@functools.lru_cache(maxsize=1024)
 @logger.catch(reraise=True)
 def check_bridge_capability(capability, bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
@@ -212,6 +216,7 @@ def is_backed_validated(bridge_agent):
     return bridge_name in LLM_VALIDATED_BACKENDS
 
 
+@functools.lru_cache(maxsize=256)
 @logger.catch(reraise=True)
 def get_supported_samplers(bridge_agent, karras=True):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
@@ -229,7 +234,7 @@ def get_supported_samplers(bridge_agent, karras=True):
             if not karras:
                 available_samplers.update(BRIDGE_SAMPLERS[bridge_name][version]["no karras"])
     # logger.debug([available_samplers, sampler, sampler in available_samplers])
-    return available_samplers
+    return frozenset(available_samplers)
 
 
 @logger.catch(reraise=True)
@@ -237,6 +242,7 @@ def check_sampler_capability(sampler, bridge_agent, karras=True):
     return sampler in get_supported_samplers(bridge_agent, karras)
 
 
+@functools.lru_cache(maxsize=256)
 @logger.catch(reraise=True)
 def get_supported_pp(bridge_agent):
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
@@ -251,7 +257,7 @@ def get_supported_pp(bridge_agent):
             for capability in BRIDGE_CAPABILITIES[bridge_name][version]:
                 if capability in KNOWN_POST_PROCESSORS:
                     available_pp.add(capability)
-    return available_pp
+    return frozenset(available_pp)
 
 
 @logger.catch(reraise=True)
