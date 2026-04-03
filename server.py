@@ -45,13 +45,14 @@ if __name__ == "__main__":
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # Disable this on prod
         url_scheme = "http"
         logger.init_warn("WSGI Mode", status="Insecure")
+
     waitress.serve(
         HORDE,
         host=args.listen,
         port=args.port,
         url_scheme=url_scheme,
-        threads=45,
-        connection_limit=1024,
+        threads=args.waitress_threads,
+        connection_limit=args.waitress_connection_limit,
         asyncore_use_poll=True,
     )
     # HORDE.run(debug=True,host="0.0.0.0",port="5001")

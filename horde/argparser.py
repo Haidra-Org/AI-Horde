@@ -92,6 +92,22 @@ arg_parser.add_argument(
     required=False,
     help="If true will prevent changing the reward date when forcing patreon rewards.",
 )
+arg_parser.add_argument(
+    "--waitress_threads",
+    action="store",
+    default=45,
+    required=False,
+    type=int,
+    help="Number of threads to use for waitress. Default is 45",
+)
+arg_parser.add_argument(
+    "--waitress_connection_limit",
+    action="store",
+    default=1024,
+    required=False,
+    type=int,
+    help="Number of maximum connections to use for waitress. Default is 1024",
+)
 arg_parser.add_argument("--test", action="store_true", help="Test")
 arg_parser.add_argument("--color", default=False, action="store_true", help="Enabled colorized logs")
 args = arg_parser.parse_args()
