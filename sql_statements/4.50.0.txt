@@ -1,0 +1,4 @@
+ALTER TABLE known_image_models ALTER COLUMN description TYPE VARCHAR(1024);
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN minute_pixels TYPE BIGINT;
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN hour_pixels TYPE BIGINT;
+ALTER TABLE compiled_image_gen_stats_totals ALTER COLUMN day_pixels TYPE BIGINT;
