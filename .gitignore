@@ -150,3 +150,5 @@ horde_sdk**
 
 .env_*
 .venv*
+.env_docker
+.env_telemetry
