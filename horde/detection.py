@@ -7,6 +7,7 @@ from datetime import datetime
 
 import dateutil.relativedelta
 import emoji
+import logfire
 import regex as re
 from unidecode import unidecode
 
@@ -118,6 +119,10 @@ class PromptChecker:
     def __call__(self, prompt, _id=None):
         if args.disable_filters:
             return 0, []
+        with logfire.span("horde.detection.prompt_check"):
+            return self._run_prompt_check(prompt, _id)
+
+    def _run_prompt_check(self, prompt, _id=None):
         self.refresh_regex()
         prompt_suspicion = 0
         if "###" in prompt:
@@ -233,6 +238,10 @@ class PromptChecker:
         # logger.debug([prompt, models])
         if not model_reference.has_nsfw_models(models):
             return False
+        with logfire.span("horde.detection.nsfw_model_block", model_count=len(models)):
+            return self._run_nsfw_model_block(prompt, models)
+
+    def _run_nsfw_model_block(self, prompt, models):
         if "###" in prompt:
             prompt, negprompt = prompt.split("###", 1)
         prompt = self.normalize_prompt(prompt)

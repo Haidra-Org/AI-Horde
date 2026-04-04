@@ -103,7 +103,19 @@ class KudosModel:
     model = None
     """Instance copy - use this"""
 
+    _instance = None
+    """Process-wide singleton; KudosModel() returns this after the first call.
+
+    Inference is read-only (torch.no_grad forward pass), so a single shared
+    model object is safe across threads. The previous design did a full
+    copy.deepcopy(_model) AND re-ran the basis-time inference on every
+    instantiation, which was the dominant cost of WP.activate() under load.
+    """
+
     def __new__(cls):
+        if cls._instance is not None:
+            return cls._instance
+
         # Our basis time
         cls.time_basis = 0
 
@@ -116,11 +128,20 @@ class KudosModel:
         if not cls._model:
             cls._model = cls.load_model(cls)
 
-        return super().__new__(cls)
+        instance = super().__new__(cls)
+        cls._instance = instance
+        return instance
 
     def __init__(self):
-        self.model = KudosModel.copy_model()
+        # __init__ still runs on every KudosModel() call even with __new__
+        # returning a cached instance. Make it idempotent so we don't re-run
+        # deepcopy + calculate_basis_time on every request.
+        if getattr(self, "_initialized", False):
+            return
+        # Share the singleton model; inference is read-only under torch.no_grad
+        self.model = KudosModel._model
         self.calculate_basis_time()
+        self._initialized = True
 
     # Payload to kudos
     def calculate_kudos(self, payload, basis_adjustment=1, basis_scale=1):

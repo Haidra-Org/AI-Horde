@@ -8,6 +8,7 @@ from io import BytesIO
 from uuid import uuid4
 
 import boto3
+import logfire
 from botocore.exceptions import ClientError
 from PIL import Image
 
@@ -101,6 +102,11 @@ def delete_source_image(source_image_uuid):
 
 
 def upload_image(client, bucket, image, filename, quality=100):
+    with logfire.span("horde.r2.upload_image", bucket=bucket, filename=filename):
+        return _upload_image(client, bucket, image, filename, quality)
+
+
+def _upload_image(client, bucket, image, filename, quality=100):
     image_io = BytesIO()
     image.save(image_io, format="WebP", quality=quality, exact=True)
     image_io.seek(0)
@@ -113,8 +119,11 @@ def upload_image(client, bucket, image, filename, quality=100):
 
 
 def download_image(client, bucket, key):
-    # if not file_exists(client, f"{procgen_id}.webp"):
-    #     client = old_r2
+    with logfire.span("horde.r2.download_image", bucket=bucket, key=key):
+        return _download_image(client, bucket, key)
+
+
+def _download_image(client, bucket, key):
     try:
         response = client.get_object(Bucket=bucket, Key=key)
         img = response["Body"].read()
@@ -171,6 +180,11 @@ def upload_shared_metadata(filename):
 
 
 def upload_prompt(prompt_dict):
+    with logfire.span("horde.r2.upload_prompt"):
+        return _upload_prompt(prompt_dict)
+
+
+def _upload_prompt(prompt_dict):
     filename = f"{uuid4()}.json"
     json_object = json.dumps(prompt_dict, indent=4)
     # Writing to sample.json

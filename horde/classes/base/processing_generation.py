@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import random
+import time
 from datetime import datetime
 
+import logfire
 import requests
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -61,6 +63,14 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
         if kwargs.get("model") is None:
             worker_models = list(self.worker.get_model_names())
+            # Under load, cache/session staleness can return an empty model list right
+            # after check-in updates. Fall back to a direct DB read before giving up.
+            if len(worker_models) == 0:
+                from horde.classes.base.worker import WorkerModel
+
+                worker_models = [
+                    row.model for row in db.session.query(WorkerModel.model).filter(WorkerModel.worker_id == self.worker_id).all()
+                ]
             # If we reached this point, it means there is at least 1 matching model between worker and client
             # so we pick the first one.
             wp_models = list(self.wp.get_model_names())
@@ -89,10 +99,41 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):
-        if self.is_completed():
-            return 0
-        # We return -1 to know to send a different error
-        if self.is_faulted():
+        from horde.metrics import submit_record_duration, submit_webhook_call_duration, submit_commit_duration
+
+        # Use an atomic compare-and-set update so exactly one concurrent submit
+        # can transition this procgen from pending -> completed.
+        sanitized_generation = generation.replace("\x00", "\ufffd")
+        seed = kwargs.get("seed", self.seed)
+        gen_metadata = kwargs.get("gen_metadata", self.gen_metadata)
+        kudos = self.get_gen_kudos()
+
+        updated_rows = (
+            db.session
+            .query(type(self))
+            .filter(
+                type(self).id == self.id,
+                type(self).generation.is_(None),
+                type(self).faulted.is_(False),
+            )
+            .update(
+                {
+                    type(self).generation: sanitized_generation,
+                    type(self).seed: seed,
+                    type(self).gen_metadata: gen_metadata,
+                    type(self).cancelled: False,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated_rows == 0:
+            current_procgen = db.session.query(type(self)).filter(type(self).id == self.id).populate_existing().first()
+            if current_procgen is None:
+                return -1
+            if current_procgen.is_faulted():
+                return -1
+            if current_procgen.is_completed():
+                return 0
             return -1
         # Sanitize NUL char away from string literal we store in the DB
         self.generation = generation.replace("\x00", "\ufffd")
@@ -101,9 +142,16 @@ class ProcessingGeneration(db.Model):
         self.gen_metadata = kwargs.get("gen_metadata", None)
         kudos = self.get_gen_kudos()
         self.cancelled = False
+        _t = time.monotonic()
         self.record(things_per_sec, kudos)
-        self.send_webhook(kudos)
+        submit_record_duration.record(time.monotonic() - _t)
+        _t = time.monotonic()
         db.session.commit()
+        submit_commit_duration.record(time.monotonic() - _t)
+        # Send webhook after commit so external I/O does not hold DB locks.
+        _t = time.monotonic()
+        self.send_webhook(kudos)
+        submit_webhook_call_duration.record(time.monotonic() - _t)
         return kudos
 
     def cancel(self):
@@ -120,19 +168,27 @@ class ProcessingGeneration(db.Model):
         return kudos * self.worker.get_bridge_kudos_multiplier()
 
     def record(self, things_per_sec, kudos):
+        from horde.metrics import submit_worker_contrib_duration, submit_wp_record_usage_duration
+
         cancel_txt = ""
         if self.cancelled:
             cancel_txt = " Cancelled"
         if self.fake and self.worker.user == self.wp.user:
             # We do not record usage for paused workers, unless the requestor was the same owner as the worker
+            _t = time.monotonic()
             self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
+            submit_worker_contrib_duration.record(time.monotonic() - _t)
             logger.info(
                 f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: "
                 f"{self.worker.name} for wp {self.wp.id}",
             )
         else:
+            _t = time.monotonic()
             self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
-            self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos))
+            submit_worker_contrib_duration.record(time.monotonic() - _t)
+            _t = time.monotonic()
+            self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos), commit=False)
+            submit_wp_record_usage_duration.record(time.monotonic() - _t)
             log_string = (
                 f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
             )
@@ -213,23 +269,53 @@ class ProcessingGeneration(db.Model):
     def send_webhook(self, kudos):
         if not self.wp.webhook:
             return
-        data = self.get_details()
-        data["request"] = str(self.wp.id)
-        data["id"] = str(self.id)
-        data["kudos"] = kudos
-        data["worker_id"] = str(data["worker_id"])
-        for riter in range(3):
-            try:
-                req = requests.post(self.wp.webhook, json=data, timeout=3)
-                if not req.ok:
-                    logger.debug(
-                        f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
-                        f"Will retry {3 - riter - 1} more times...",
+        with logfire.span("horde.webhook.send", wp_id=str(self.wp.id), procgen_id=str(self.id)) as span:
+            from horde.metrics import webhook_duration, webhook_outcomes
+
+            data = self.get_details()
+            data["request"] = str(self.wp.id)
+            data["id"] = str(self.id)
+            data["kudos"] = kudos
+            data["worker_id"] = str(data["worker_id"])
+            outcome = "giveup"
+            attempts = 0
+            import time as _time
+
+            for riter in range(3):
+                attempts += 1
+                t0 = _time.monotonic()
+                status_code = None
+                attempt_outcome = "exception"
+                try:
+                    req = requests.post(self.wp.webhook, json=data, timeout=3)
+                    status_code = req.status_code
+                    if not req.ok:
+                        attempt_outcome = "http_error"
+                        webhook_duration.record(
+                            _time.monotonic() - t0,
+                            {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
+                        )
+                        logger.debug(
+                            f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
+                            f"Will retry {3 - riter - 1} more times...",
+                        )
+                        continue
+                    attempt_outcome = "ok"
+                    outcome = "ok"
+                    webhook_duration.record(
+                        _time.monotonic() - t0,
+                        {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
                     )
-                    continue
-                break
-            except Exception as err:
-                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3 - riter - 1} more times...")
+                    break
+                except Exception as err:
+                    webhook_duration.record(
+                        _time.monotonic() - t0,
+                        {"attempt": riter, "outcome": attempt_outcome},
+                    )
+                    logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3 - riter - 1} more times...")
+            webhook_outcomes.add(1, {"outcome": outcome})
+            span.set_attribute("horde.webhook.outcome", outcome)
+            span.set_attribute("horde.webhook.attempts", attempts)
 
     def set_job_ttl(self):
         """Returns how many seconds each job request should stay waiting before considering it stale and cancelling it

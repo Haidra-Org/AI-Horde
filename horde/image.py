@@ -5,6 +5,7 @@
 import base64
 from io import BytesIO
 
+import logfire
 import requests
 from PIL import Image, UnidentifiedImageError
 
@@ -105,6 +106,11 @@ def upload_source_image_to_r2(source_image_b64, uuid_string):
 
 
 def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=False):
+    with logfire.span("horde.image.ensure_uploaded", is_url=source_image_string.startswith("http"), force_r2=force_r2):
+        return _ensure_source_image_uploaded(source_image_string, uuid_string, force_r2)
+
+
+def _ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=False):
     if source_image_string.startswith("http"):
         try:
             with requests.get(source_image_string, stream=True, timeout=2) as r:

@@ -4,8 +4,10 @@
 
 import ipaddress
 import os
+import time as _time
 from datetime import timedelta
 
+import logfire
 import requests
 
 from horde.argparser import args
@@ -17,6 +19,7 @@ from horde.redis_ctrl import (
     get_ipaddr_timeout_db,
     is_redis_up,
 )
+from horde.metrics import ip_check_duration
 
 ip_r = None
 ip_s_r = None
@@ -58,6 +61,16 @@ class CounterMeasures:
         Else return true
         This function is a bit obscured with env vars to prevent defeat
         """
+        with logfire.span("horde.countermeasures.is_ip_safe", cached=False) as ip_span:
+            return CounterMeasures._is_ip_safe(ipaddr, ip_span)
+
+    @staticmethod
+    def _is_ip_safe(ipaddr, ip_span):
+        """Returns False if the IP is not false
+        Else return true
+        This function is a bit obscured with env vars to prevent defeat
+        """
+        t0 = _time.monotonic()
         # return True # FIXME: Until I figure this out
         if args.allow_all_ips or os.getenv("IP_CHECKER", "") == "":
             return True
@@ -90,6 +103,9 @@ class CounterMeasures:
                 probability = float(result.content)
                 is_safe = CounterMeasures.set_safe(ipaddr, probability < safety_threshold)
             logger.debug(f"IP {ipaddr} has a probability of {probability}. Safe = {is_safe}")
+        else:
+            ip_span.set_attribute("cached", True)
+        ip_check_duration.record(_time.monotonic() - t0, {"horde.cached": is_safe is not None})
         return is_safe
 
     @staticmethod

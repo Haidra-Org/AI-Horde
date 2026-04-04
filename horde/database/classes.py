@@ -24,7 +24,7 @@ class Quorum(PrimaryTimedFunction):
     def call_function(self):
         self.quorum = self.function(*self.args, **self.kwargs)
 
-    def is_primary(self):
+    def is_primary(self) -> bool:
         return self.quorum == horde_instance_id
 
 
@@ -34,8 +34,8 @@ class CachedPasskeys(PrimaryTimedFunction):
     def call_function(self):
         self.passkeys = self.function(*self.args, **self.kwargs)
 
-    def is_passkey_known(self, passkey):
-        return list(self.passkeys.values())
+    def is_passkey_known(self, passkey) -> bool:
+        return bool(self.passkeys.values())
 
     def get_passkey_owner(self, passkey):
         for user_id, pk in self.passkeys.items():

@@ -34,7 +34,8 @@ class ImageWorker(Worker):
     wtype = "image"
 
     def check_in(self, max_pixels, **kwargs):
-        super().check_in(**kwargs)
+        if not super().check_in(**kwargs):
+            return
         if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072:  # FIXME #noqa SIM102
             if not self.user.trusted:
                 self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)

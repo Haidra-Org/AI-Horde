@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Locust configuration for AI Horde stress tests.
+#
+# Copy this file to locust.conf and edit for your environment:
+#     cp locust.conf.example locust.conf
+#
+# locust.conf is gitignored and supports Locust's built-in options only.
+# Custom AI Horde options (API keys, models, etc.) must be set via CLI args
+# or environment variables — see the "Custom options" section below for the
+# env var names, or run:
+#     locust -f locustfile.py --help
+#
+# Running:
+#     cd tests/stress && locust                          # auto-finds locust.conf here
+#     locust -f tests/stress/locustfile.py --config tests/stress/locust.conf   # from repo root
+
+# ---------------------------------------------------------------------------
+# Locust built-in options (set in this file, CLI, or LOCUST_* env vars)
+# ---------------------------------------------------------------------------
+
+locustfile = locustfile.py
+host = http://localhost:7001
+users = 20
+spawn-rate = 5
+# run-time = 5m
+# headless = true
+
+# ---------------------------------------------------------------------------
+# Custom AI Horde options — set via CLI args or env vars (NOT this file)
+# ---------------------------------------------------------------------------
+#
+# API Keys (required for meaningful tests):
+#   --requestor-api-keys / HORDE_REQUESTOR_API_KEYS
+#       Comma-separated API keys for users submitting generation requests.
+#       If empty, --bootstrap-requestors users will be auto-registered.
+#
+#   --worker-api-keys / HORDE_WORKER_API_KEYS
+#       Comma-separated API keys for simulated workers popping/submitting jobs.
+#       If empty, --bootstrap-workers users will be auto-registered.
+#
+#   --anonymous-api-key / HORDE_ANONYMOUS_API_KEY
+#       API key for anonymous requests (default: 0000000000).
+#
+# Auto-bootstrap (local-only — fails silently if reCAPTCHA is enabled):
+#   --bootstrap-requestors / HORDE_BOOTSTRAP_REQUESTORS    (default: 4)
+#   --bootstrap-workers / HORDE_BOOTSTRAP_WORKERS          (default: 8)
+#       NOTE: Untrusted users are capped at 3 distinct workers each. If you run
+#             many WorkerSimulator/TextWorker/InterrogationWorker users, make
+#             sure --bootstrap-workers >= ceil(total_worker_sims / 3).
+#   --bootstrap-fail-hard / HORDE_BOOTSTRAP_FAIL_HARD      (default: false)
+#       Abort the run if auto-registration fails instead of falling back to anon.
+#
+# Models:
+#   --horde-models / HORDE_MODELS
+#       Comma-separated model names (default: Fustercluck,AlbedoBase XL (SDXL),stable_diffusion,waifu_diffusion).
+#
+# Identity:
+#   --client-agent / HORDE_CLIENT_AGENT
+#       Client-Agent header (default: aihorde_stress_test:1.0.0:(discord)stress_tester).
+#
+# Generation parameters (standard):
+#   --gen-width / HORDE_GEN_WIDTH             (default: 512)
+#   --gen-height / HORDE_GEN_HEIGHT           (default: 512)
+#   --gen-steps / HORDE_GEN_STEPS             (default: 20)
+#   --gen-cfg-scale / HORDE_GEN_CFG_SCALE     (default: 7.0)
+#
+# Generation parameters (large/high-res):
+#   --large-gen-width / HORDE_LARGE_GEN_WIDTH     (default: 1024)
+#   --large-gen-height / HORDE_LARGE_GEN_HEIGHT   (default: 1024)
+#   --large-gen-steps / HORDE_LARGE_GEN_STEPS     (default: 30)
+#
+# Worker simulation:
+#   --worker-max-pixels / HORDE_WORKER_MAX_PIXELS         (default: 4194304)
+#   --worker-bridge-agent / HORDE_WORKER_BRIDGE_AGENT     (default: AI Horde Worker reGen:9.0.1-stress:...)
+#   --sim-gen-time-min / HORDE_SIM_GEN_TIME_MIN           (default: 4.0 seconds)
+#   --sim-gen-time-max / HORDE_SIM_GEN_TIME_MAX           (default: 30.0 seconds)
+#
+# User behavior:
+#   --anon-chance-poller / HORDE_ANON_CHANCE_POLLER       (default: 0.75)
+#   --anon-chance-requester / HORDE_ANON_CHANCE_REQUESTER (default: 0.65)

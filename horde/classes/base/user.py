@@ -164,7 +164,7 @@ class UserSharedKey(db.Model):
         }
         return ret_dict
 
-    def consume_kudos(self, kudos):
+    def consume_kudos(self, kudos, commit=True):
         if self.kudos == 0:
             return
         if self.kudos != -1:
@@ -173,7 +173,8 @@ class UserSharedKey(db.Model):
                 self.kudos = 0
         self.utilized = round(self.utilized + kudos, 2)
         logger.debug(f"Utilized {kudos} from shared key {self.id}. {self.kudos} remaining.")
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
     def is_valid(self):
         if self.kudos == 0:
@@ -287,15 +288,26 @@ class User(db.Model):
     #         ).as_scalar()
     #     return cls.id == subquery
 
+    # Role hybrid_property getters iterate ``self.roles`` so the entire
+    # user_roles row set is loaded once per user (first access triggers one
+    # SELECT; subsequent accesses use the in-session cache). Separate
+    # ``UserRole.query.filter_by(...).first()`` calls per role type added
+    # 5–15 ms per request under load via 6–7 round-trips.
+    def _has_role(self, role_type) -> bool:
+        for role in self.roles:
+            if role.user_role == role_type:
+                return bool(role.value)
+        return False
+
     @hybrid_property
     def trusted(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.TRUSTED).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.TRUSTED)
 
     @trusted.expression
     def trusted(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.TRUSTED,
                 UserRole.value == True,  # noqa E712
@@ -308,13 +320,13 @@ class User(db.Model):
 
     @hybrid_property
     def flagged(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.FLAGGED).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.FLAGGED)
 
     @flagged.expression
     def flagged(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.FLAGGED,
                 UserRole.value == True,  # noqa E712
@@ -327,13 +339,13 @@ class User(db.Model):
 
     @hybrid_property
     def moderator(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.MODERATOR).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.MODERATOR)
 
     @moderator.expression
     def moderator(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.MODERATOR,
                 UserRole.value == True,  # noqa E712
@@ -346,13 +358,13 @@ class User(db.Model):
 
     @hybrid_property
     def customizer(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.CUSTOMIZER).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.CUSTOMIZER)
 
     @customizer.expression
     def customizer(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.CUSTOMIZER,
                 UserRole.value == True,  # noqa E712
@@ -365,13 +377,13 @@ class User(db.Model):
 
     @hybrid_property
     def vpn(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.VPN).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.VPN)
 
     @vpn.expression
     def vpn(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.VPN,
                 UserRole.value == True,  # noqa E712
@@ -384,13 +396,13 @@ class User(db.Model):
 
     @hybrid_property
     def service(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.SERVICE).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.SERVICE)
 
     @service.expression
     def service(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SERVICE,
                 UserRole.value == True,  # noqa E712
@@ -403,13 +415,13 @@ class User(db.Model):
 
     @hybrid_property
     def education(self) -> bool:
-        user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.EDUCATION).first()
-        return user_role is not None and user_role.value
+        return self._has_role(UserRoleTypes.EDUCATION)
 
     @education.expression
     def education(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.EDUCATION,
                 UserRole.value == True,  # noqa E712
@@ -428,7 +440,8 @@ class User(db.Model):
     @special.expression
     def special(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SPECIAL,
                 UserRole.value == True,  # noqa E712
@@ -447,7 +460,8 @@ class User(db.Model):
     @deleted.expression
     def deleted(cls):
         subquery = (
-            db.session.query(UserRole.user_id)
+            db.session
+            .query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.DELETED,
                 UserRole.value == True,  # noqa E712
@@ -612,7 +626,7 @@ class User(db.Model):
     def get_unique_alias(self):
         return f"{self.username}#{self.id}"
 
-    def update_user_record(self, record_type, record, increment_value):
+    def update_user_record(self, record_type, record, increment_value, commit=True):
         record_details = db.session.query(UserRecords).filter_by(user_id=self.id, record_type=record_type, record=record).first()
         if not record_details:
             record_details = UserRecords(
@@ -625,40 +639,48 @@ class User(db.Model):
         else:
             # The value is always added to the existing value
             record_details.value = round(record_details.value + increment_value, 2)
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
-    def record_usage(self, raw_things, kudos, usage_type):
+    def record_usage(self, raw_things, kudos, usage_type, commit=True):
         if not self.is_anon():
             self.last_active = datetime.utcnow()
-        self.modify_kudos(-kudos, "accumulated")
-        self.update_user_record(record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1)
+        self.modify_kudos(-kudos, "accumulated", commit=False)
+        self.update_user_record(record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1, commit=False)
         self.update_user_record(
             record_type=UserRecordTypes.USAGE,
             record=usage_type,
             increment_value=raw_things * self.usage_multiplier / hv.thing_divisors[usage_type],
+            commit=False,
         )
+        if commit:
+            db.session.commit()
 
-    def record_contributions(self, raw_things, kudos, contrib_type):
+    def record_contributions(self, raw_things, kudos, contrib_type, commit=True):
         self.last_active = datetime.utcnow()
         self.update_user_record(
             record_type=UserRecordTypes.FULFILLMENT,
             record=contrib_type,
             increment_value=1,
+            commit=False,
         )
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted and not self.is_anon():
             kudos_eval = round(kudos / 2, 2)
             kudos -= kudos_eval
             self.evaluating_kudos += kudos_eval
-            self.modify_kudos(kudos, "accumulated")
+            self.modify_kudos(kudos, "accumulated", commit=False)
             self.check_for_trust()
         else:
-            self.modify_kudos(kudos, "accumulated")
+            self.modify_kudos(kudos, "accumulated", commit=False)
         self.update_user_record(
             record_type=UserRecordTypes.CONTRIBUTION,
             record=contrib_type,
             increment_value=raw_things / hv.thing_divisors[contrib_type],
+            commit=False,
         )
+        if commit:
+            db.session.commit()
 
     def record_uptime(self, kudos, bypass_eval=False):
         self.last_active = datetime.utcnow()
@@ -751,7 +773,7 @@ class User(db.Model):
         base_amount += stripe_subs.get_monthly_kudos(self.id)
         return base_amount
 
-    def modify_kudos(self, kudos, action="accumulated"):
+    def modify_kudos(self, kudos, action="accumulated", commit=True):
         logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
         self.kudos = round(self.kudos + kudos, 2)
         self.ensure_kudos_positive()
@@ -761,7 +783,8 @@ class User(db.Model):
             db.session.add(kudos_details)
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
     def ensure_kudos_positive(self):
         if self.kudos < self.get_min_kudos():

@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import time
 import uuid
 from datetime import datetime, timedelta
 
+import logfire
 from sqlalchemy import JSON, or_
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict
@@ -19,6 +21,12 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
+from horde.metrics import (
+    wp_activate_base_commit_duration,
+    wp_activate_base_record_usage_duration,
+    wp_activate_duration,
+    wp_activation_age,
+)
 from horde.utils import get_db_uuid, get_expiry_date, get_extra_slow_expiry_date
 
 procgen_classes = {
@@ -110,6 +118,7 @@ class WaitingPrompt(db.Model):
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
     disable_batching = db.Column(db.Boolean, default=False, nullable=False)
     webhook = db.Column(db.String(1024))
+    traceparent = db.Column(db.String(55), nullable=True)
 
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False)
     sharedkey_id = db.Column(
@@ -139,12 +148,13 @@ class WaitingPrompt(db.Model):
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
 
     def __init__(self, worker_ids, models, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        db.session.add(self)
-        db.session.commit()
-        self.set_workers(worker_ids)
-        self.set_models(models)
-        self.extract_params()
+        with logfire.span("horde.wp.init"):
+            super().__init__(*args, **kwargs)
+            db.session.add(self)
+            db.session.commit()
+            self.set_workers(worker_ids)
+            self.set_models(models)
+            self.extract_params()
 
     def set_workers(self, worker_ids=None):
         if not worker_ids:
@@ -166,19 +176,36 @@ class WaitingPrompt(db.Model):
             db.session.add(model_entry)
 
     def activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
+        with logfire.span("horde.wp.activate", wp_id=str(self.id)):
+            t0 = time.monotonic()
+            try:
+                self._activate(downgrade_wp_priority, extra_source_images, kudos_adjustment)
+            finally:
+                wp_type = getattr(self, "wp_type", "unknown")
+                wp_activate_duration.record(time.monotonic() - t0, {"horde.wp_type": wp_type})
+                # Elapsed seconds between WP row insert and activation.
+                # This surfaces "time spent validating/initiating" before the
+                # WP becomes visible to workers — a key SLO signal.
+                if getattr(self, "created", None):
+                    age = (datetime.utcnow() - self.created).total_seconds()
+                    if age >= 0:
+                        wp_activation_age.record(age, {"horde.wp_type": wp_type})
+
+    def _activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         """
         self.active = True
-        if self.user.flagged and self.user.kudos > 10:
-            self.extra_priority = round(self.user.kudos / 1000)
-        elif self.user.flagged:
-            self.extra_priority = -100
-        elif downgrade_wp_priority:
-            logger.debug("Started WP with downgraded priority to Anon")
-            self.extra_priority = -50
-        else:
-            self.extra_priority = self.user.kudos
+        with logfire.span("horde.wp.activate.priority_calc"):
+            if self.user.flagged and self.user.kudos > 10:
+                self.extra_priority = round(self.user.kudos / 1000)
+            elif self.user.flagged:
+                self.extra_priority = -100
+            elif downgrade_wp_priority:
+                logger.debug("Started WP with downgraded priority to Anon")
+                self.extra_priority = -50
+            else:
+                self.extra_priority = self.user.kudos
         # This is an extra cost for the operation as a whole, to represent the infrastructure costs
         # and rewarding requests which bundle multiple jobs into the same payload
         # Instead of splitting them into multiples.
@@ -188,9 +215,19 @@ class WaitingPrompt(db.Model):
             # Extra source images add more infrastructure costs, which are represented with a kudos tax
             horde_tax += 5 * len(extra_source_images)
         horde_tax += kudos_adjustment
-        self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
+        with logfire.span("horde.wp.activate.record_usage", horde_tax=horde_tax):
+            _t_ru = time.monotonic()
+            try:
+                self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
+            finally:
+                wp_activate_base_record_usage_duration.record(time.monotonic() - _t_ru, {})
         # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
-        db.session.commit()
+        with logfire.span("horde.wp.activate.commit"):
+            _t_c = time.monotonic()
+            try:
+                db.session.commit()
+            finally:
+                wp_activate_base_commit_duration.record(time.monotonic() - _t_c, {})
 
     def get_model_names(self):
         return [m.model for m in self.models]
@@ -221,6 +258,15 @@ class WaitingPrompt(db.Model):
         return self.n > 0
 
     def start_generation(self, worker, amount=1):
+        with logfire.span(
+            "horde.wp.start_generation",
+            wp_id=str(self.id),
+            worker_id=str(worker.id),
+            amount=amount,
+        ) as gen_span:
+            return self._start_generation(worker, amount, gen_span)
+
+    def _start_generation(self, worker, amount=1, gen_span=None):
         # # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
         # myself_refresh = db.session.query(
         #     type(self)
@@ -260,6 +306,8 @@ class WaitingPrompt(db.Model):
             gens_list.append(new_gen)
             if self.faulted:
                 break
+        if gen_span is not None:
+            gen_span.set_attribute("horde.procgens_created", len(gens_list))
         pop_payload = self.get_pop_payload(gens_list, payload)
         return pop_payload
 
@@ -287,6 +335,8 @@ class WaitingPrompt(db.Model):
             "ids": [g.id for g in procgen_list],
             "ttl": procgen_list[0].job_ttl,
         }
+        if self.traceparent:
+            prompt_payload["traceparent"] = self.traceparent
         if self.extra_source_images and check_bridge_capability("extra_source_images", procgen_list[0].worker.bridge_agent):
             prompt_payload["extra_source_images"] = self.extra_source_images["esi"]
 
@@ -295,7 +345,8 @@ class WaitingPrompt(db.Model):
     def count_finished_jobs(self):
         procgen_class = procgen_classes[self.wp_type]
         return (
-            db.session.query(procgen_class.wp_id)
+            db.session
+            .query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
                 procgen_class.fake.is_(False),
@@ -310,7 +361,8 @@ class WaitingPrompt(db.Model):
     def count_processing_jobs(self):
         procgen_class = procgen_classes[self.wp_type]
         return (
-            db.session.query(procgen_class.wp_id)
+            db.session
+            .query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
                 procgen_class.fake.is_(False),
@@ -427,7 +479,7 @@ class WaitingPrompt(db.Model):
         """
         return kudos
 
-    def record_usage(self, raw_things, kudos, usage_type, avoid_burn=False):
+    def record_usage(self, raw_things, kudos, usage_type, avoid_burn=False, commit=True):
         """Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
@@ -435,10 +487,10 @@ class WaitingPrompt(db.Model):
         if not avoid_burn:
             kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
-            self.sharedkey.consume_kudos(kudos)
-        self.user.record_usage(raw_things, kudos, usage_type)
+            self.sharedkey.consume_kudos(kudos, commit=False)
+        self.user.record_usage(raw_things, kudos, usage_type, commit=False)
         self.consumed_kudos = round(self.consumed_kudos + kudos, 2)
-        self.refresh()
+        self.refresh(commit=commit)
 
     def extrapolate_dry_run_kudos(self):
         kudos = self.calculate_kudos()
@@ -475,14 +527,15 @@ class WaitingPrompt(db.Model):
         except Exception as err:
             logger.warning(f"Error when aborting WP. Skipping: {err}")
 
-    def refresh(self, worker=None):
+    def refresh(self, worker=None, commit=True):
         if worker is not None and worker.extra_slow_worker is True:
             self.expiry = get_extra_slow_expiry_date()
         else:
             new_expiry = get_expiry_date()
             if self.expiry < new_expiry:
                 self.expiry = new_expiry
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
     def is_stale(self):
         if datetime.utcnow() > self.expiry:

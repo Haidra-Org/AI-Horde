@@ -4,9 +4,11 @@
 
 import copy
 import random
+import time
 from collections import defaultdict
 from datetime import datetime
 
+import logfire
 import requests
 from flask import request
 from flask_restx import Resource, reqparse
@@ -41,6 +43,17 @@ from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.model_reference import model_reference
 from horde.patreon import patrons
+from horde.metrics import (
+    check_duration,
+    check_outcomes,
+    generate_init_wp_build_duration,
+    generate_init_wp_kudos_check_duration,
+    status_duration,
+)
+from horde.telemetry import (
+    get_traceparent,
+    pyroscope_tag,
+)
 from horde.utils import does_extra_text_reference_exist, hash_dictionary
 from horde.validation import ParamValidator
 from horde.vars import horde_title
@@ -230,6 +243,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             shared = True
         else:
             shared = False
+        _tb = time.monotonic()
         self.wp = ImageWaitingPrompt(
             worker_ids=self.workers,
             models=self.models,
@@ -253,9 +267,15 @@ class ImageAsyncGenerate(GenerateTemplate):
             proxied_account=self.args["proxied_account"],
             disable_batching=self.args["disable_batching"],
             webhook=self.args.webhook,
+            traceparent=get_traceparent(),
         )
-        _, total_threads = database.count_active_workers("image")
-        needs_kudos, resolution, disable_downgrade = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
+        generate_init_wp_build_duration.record(time.monotonic() - _tb, {})
+        _tk = time.monotonic()
+        try:
+            _, total_threads = database.count_active_workers("image")
+            needs_kudos, resolution, disable_downgrade = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
+        finally:
+            generate_init_wp_kudos_check_duration.record(time.monotonic() - _tk, {})
         required_kudos = 0
         if (self.sharedkey and self.sharedkey.kudos != -1) or needs_kudos:
             required_kudos = self.wp.extrapolate_dry_run_kudos()
@@ -443,22 +463,44 @@ class ImageAsyncStatus(Resource):
         As such, you are requested to not retrieve this endpoint often. Instead use the /check/ endpoint first
         This endpoint is limited to 10 request per minute
         """
-        self.args = self.get_parser.parse_args()
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(
-                id,
-                request_type="Image Waiting Prompt (Status)",
-                client_agent=self.args["Client-Agent"],
-                ipaddr=request.remote_addr,
-            )
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg("image"),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers(),
-        )
-        return (wp_status, 200)
+        t0 = time.monotonic()
+        outcome = "ok"
+        with pyroscope_tag(endpoint="status", gentype="image"), logfire.span("horde.generate.status", gentype="image", wp_id=id):
+            try:
+                self.args = self.get_parser.parse_args()
+                wp = database.get_wp_by_id(id)
+                if not wp:
+                    outcome = "not_found"
+                    raise e.RequestNotFound(
+                        id,
+                        request_type="Image Waiting Prompt (Status)",
+                        client_agent=self.args["Client-Agent"],
+                        ipaddr=request.remote_addr,
+                    )
+                with logfire.span("horde.db.get_request_avg", gentype="image"):
+                    request_avg = database.get_request_avg("image")
+                has_valid_workers = database.wp_has_valid_workers(wp)
+                with logfire.span("horde.db.get_wp_queue_stats", wp_id=id):
+                    wp_queue_stats = database.get_wp_queue_stats(wp)
+                with logfire.span("horde.db.count_active_workers"):
+                    active_worker_count = database.count_active_workers()
+                with logfire.span("horde.generate.status.assemble"):
+                    wp_status = wp.get_status(
+                        request_avg=request_avg,
+                        has_valid_workers=has_valid_workers,
+                        wp_queue_stats=wp_queue_stats,
+                        active_worker_count=active_worker_count,
+                    )
+                return (wp_status, 200)
+            except Exception:
+                if outcome == "ok":
+                    outcome = "error"
+                raise
+            finally:
+                status_duration.record(
+                    time.monotonic() - t0,
+                    {"horde.gentype": "image", "horde.outcome": outcome},
+                )
 
     delete_parser = reqparse.RequestParser()
     delete_parser.add_argument(
@@ -534,30 +576,54 @@ class ImageAsyncCheck(Resource):
         """
         # Sending lite mode to try and reduce the amount of bandwidth
         # This will not retrieve procgens, so ETA will not be completely accurate
-        self.args = self.get_parser.parse_args()
-        ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
-        if ip_timeout and self.args["Client-Agent"] == "unknown:0:unknown":
-            raise e.Forbidden(
-                message="Your IP address has been blocked due to using an unknown client "
-                "which is sending too many garbage requests. Please contact us on discord.",
-                log=f"Check request via IP {request.remote_addr} on unknown client blocked.",
-            )
-        wp = database.get_wp_by_id(id)
-        if not wp:
-            raise e.RequestNotFound(
-                id,
-                request_type="Image Waiting Prompt (Check)",
-                client_agent=self.args["Client-Agent"],
-                ipaddr=request.remote_addr,
-            )
-        lite_status = wp.get_lite_status(
-            request_avg=database.get_request_avg("image"),
-            has_valid_workers=database.wp_has_valid_workers(wp),
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers(),
-        )
-        logger.debug(lite_status)
-        return (lite_status, 200)
+        t0 = time.monotonic()
+        outcome = "found"
+        with pyroscope_tag(endpoint="check", gentype="image"), logfire.span("horde.generate.check", gentype="image", wp_id=id):
+            try:
+                self.args = self.get_parser.parse_args()
+                ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
+                if ip_timeout and self.args["Client-Agent"] == "unknown:0:unknown":
+                    outcome = "blocked"
+                    raise e.Forbidden(
+                        message="Your IP address has been blocked due to using an unknown client "
+                        "which is sending too many garbage requests. Please contact us on discord.",
+                        log=f"Check request via IP {request.remote_addr} on unknown client blocked.",
+                    )
+                wp = database.get_wp_by_id(id)
+                if not wp:
+                    outcome = "not_found"
+                    raise e.RequestNotFound(
+                        id,
+                        request_type="Image Waiting Prompt (Check)",
+                        client_agent=self.args["Client-Agent"],
+                        ipaddr=request.remote_addr,
+                    )
+                with logfire.span("horde.db.get_request_avg", gentype="image"):
+                    request_avg = database.get_request_avg("image")
+                has_valid_workers = database.wp_has_valid_workers(wp)
+                with logfire.span("horde.db.get_wp_queue_stats", wp_id=id):
+                    wp_queue_stats = database.get_wp_queue_stats(wp)
+                with logfire.span("horde.db.count_active_workers"):
+                    active_worker_count = database.count_active_workers()
+                with logfire.span("horde.generate.check.lite_status"):
+                    lite_status = wp.get_lite_status(
+                        request_avg=request_avg,
+                        has_valid_workers=has_valid_workers,
+                        wp_queue_stats=wp_queue_stats,
+                        active_worker_count=active_worker_count,
+                    )
+                logger.debug(f"{id}: {lite_status}")
+                return (lite_status, 200)
+            except Exception:
+                if outcome == "found":
+                    outcome = "error"
+                raise
+            finally:
+                check_duration.record(
+                    time.monotonic() - t0,
+                    {"horde.gentype": "image", "horde.outcome": outcome},
+                )
+                check_outcomes.add(1, {"horde.gentype": "image", "horde.outcome": outcome})
 
 
 class ImageJobPop(JobPopTemplate):
