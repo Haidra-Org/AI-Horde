@@ -90,9 +90,9 @@ class TextWaitingPrompt(WaitingPrompt):
         ret_dict = super().get_status(**kwargs)
         return ret_dict
 
-    def record_usage(self, raw_things, kudos, usage_type="text", avoid_burn=False):
+    def record_usage(self, raw_things, kudos, usage_type="text", avoid_burn=False, commit=True):
         """I need to extend this to point it to record_text_usage()"""
-        super().record_usage(raw_things, kudos, usage_type)
+        super().record_usage(raw_things, kudos, usage_type, avoid_burn=avoid_burn, commit=commit)
 
     def require_upfront_kudos(self, counted_totals, total_threads):
         """Returns A tuple

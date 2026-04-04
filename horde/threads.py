@@ -6,7 +6,11 @@ import threading
 import time
 from typing import TYPE_CHECKING, Callable, Optional
 
+import logfire
+
 from horde.logger import logger
+from horde.metrics import job_duration, job_failures
+from horde.telemetry import pyroscope_tag
 from horde.vars import horde_instance_id
 
 if TYPE_CHECKING:
@@ -76,7 +80,22 @@ class PrimaryTimedFunction:
 
     # Putting this in its own method, so I can extend it
     def call_function(self):
-        self.function(*self.args, **self.kwargs)
+        job_name = getattr(self.function, "__name__", "anonymous")
+        attributes = {"horde.job.name": job_name}
+        t0 = time.monotonic()
+        failed = False
+        try:
+            with pyroscope_tag(job=job_name), logfire.span("horde.job", **attributes):
+                self.function(*self.args, **self.kwargs)
+        except Exception:
+            failed = True
+            job_failures.add(1, {"horde.job.name": job_name})
+            raise
+        finally:
+            job_duration.record(
+                time.monotonic() - t0,
+                {"horde.job.name": job_name, "horde.job.failed": failed},
+            )
 
     def stop(self):
         self.cancel = True

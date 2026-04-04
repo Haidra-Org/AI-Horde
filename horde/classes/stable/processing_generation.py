@@ -5,6 +5,8 @@
 import json
 import os
 
+import logfire
+
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.genstats import record_image_statistic
 from horde.flask import db
@@ -80,6 +82,10 @@ class ImageProcessingGeneration(ProcessingGeneration):
         )
 
     def set_generation(self, generation, things_per_sec, **kwargs):
+        with logfire.span("horde.stable.set_generation", procgen_id=str(self.id), wp_id=str(self.wp_id)):
+            return self._set_generation_inner(generation, things_per_sec, **kwargs)
+
+    def _set_generation_inner(self, generation, things_per_sec, **kwargs):
         state = kwargs.get("state", "ok")
         censored = False
         gen_metadata = kwargs.get("gen_metadata") if kwargs.get("gen_metadata") is not None else []

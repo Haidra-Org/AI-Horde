@@ -46,7 +46,8 @@ class TextWorker(Worker):
     wtype = "text"
 
     def check_in(self, max_length, max_context_length, softprompts, **kwargs):
-        super().check_in(**kwargs)
+        if not super().check_in(**kwargs):
+            return
         self.max_length = max_length
         self.max_context_length = max_context_length
         self.set_softprompts(softprompts)  # Does a commit as well

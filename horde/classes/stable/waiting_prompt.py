@@ -6,8 +6,11 @@ import copy
 import math
 import os
 import random
+import time
 
 from sqlalchemy.sql import expression
+
+import logfire
 
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
@@ -29,6 +32,15 @@ from horde.r2 import (
     download_source_image,
     download_source_mask,
     generate_procgen_upload_url,
+)
+from horde.metrics import (
+    wp_activate_base_commit_duration,
+    wp_activate_base_record_usage_duration,
+    wp_activate_post_kudos_duration,
+    wp_activate_post_super_duration,
+    wp_calculate_kudos_duration,
+    wp_kudos_commit_duration,
+    wp_kudos_torch_duration,
 )
 from horde.utils import get_random_seed
 
@@ -234,38 +246,76 @@ class ImageWaitingPrompt(WaitingPrompt):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
         super().activate(downgrade_wp_priority, extra_source_images=extra_source_images, kudos_adjustment=kudos_adjustment)
-        if source_image or source_mask:
-            self.source_image = source_image
-            self.source_mask = source_mask
-            db.session.commit()
-        prompt_type = "txt2img"
-        if self.source_image:
-            prompt_type = self.source_processing
-        self.calculate_kudos()
-        proxied_account = ""
-        if self.proxied_account:
-            proxied_account = f":{self.proxied_account}"
-        log_msg = (
-            f"New {prompt_type} prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account} "
-            f"({self.ipaddr}) ({self.client_agent}): "
-            f"w:{self.width} * h:{self.height} * s:{self.get_accurate_steps()} * n:{self.n} "
-            + (f"using model(s) {', '.join(self.get_model_names())} " if self.get_model_names() else "(no model specified) ")
-        )
-        if self.params.get("post_processing"):
-            log_msg += f"| post processing {', '.join(self.params['post_processing'])} "
-        if self.params.get("control_type"):
-            log_msg += f"| control type {self.params['control_type']} "
-        if self.params.get("loras"):
-            log_msg += f"| loras {', '.join(lora['name'] for lora in self.params['loras'])} "
-        if self.params.get("tis"):
-            log_msg += f"| tis {', '.join(ti['name'] for ti in self.params['tis'])} "
-        log_msg += f"| workers {', '.join(str(w.worker_id) for w in self.workers) if self.workers else 'any'} "
-        if self.worker_blacklist:
-            log_msg += f"| blacklist {self.worker_blacklist} "
-        if self.slow_workers:
-            log_msg += f"| slow_workers {self.slow_workers} "
-        log_msg += f"== {self.total_usage} Total MPs for {self.kudos} kudos."
-        logger.info(log_msg)
+        _t_post = time.monotonic()
+        try:
+            if source_image or source_mask:
+                self.source_image = source_image
+                self.source_mask = source_mask
+                db.session.commit()
+            prompt_type = "txt2img"
+            if self.source_image:
+                prompt_type = self.source_processing
+            with logfire.span("horde.wp.calculate_kudos", wp_id=str(self.id)):
+                _t_kudos = time.monotonic()
+                try:
+                    self.calculate_kudos()
+                finally:
+                    wp_calculate_kudos_duration.record(time.monotonic() - _t_kudos, {})
+            _t_pk = time.monotonic()
+            try:
+                proxied_account = ""
+                if self.proxied_account:
+                    proxied_account = f":{self.proxied_account}"
+                # Materialise every ORM-driven value BEFORE string formatting.
+                # Each of ``self.user.get_unique_alias()``, ``self.get_model_names()``
+                # and iterating ``self.workers`` triggers a lazy-load, which checks
+                # out a connection from the pool. Under pool saturation this causes
+                # ~1s of p99 latency per attribute access in sequence; pre-fetching
+                # here collapses that to a single connection checkout.
+                #
+                # No explicit ``db.session.commit()`` is issued here: an empty
+                # commit still acquires a pool connection and incurs a COMMIT
+                # round-trip (~3.5s p99 regression under saturation for zero benefit).
+                user_alias = self.user.get_unique_alias()
+                model_names = self.get_model_names()
+                worker_ids = [str(w.worker_id) for w in self.workers] if self.workers else None
+                wp_id = self.id
+                ipaddr = self.ipaddr
+                client_agent = self.client_agent
+                width = self.width
+                height = self.height
+                accurate_steps = self.get_accurate_steps()
+                n_value = self.n
+                kudos_value = self.kudos
+                total_usage = self.total_usage
+                params_copy = dict(self.params) if self.params else {}
+                worker_blacklist = self.worker_blacklist
+                slow_workers = self.slow_workers
+                log_msg = (
+                    f"New {prompt_type} prompt with ID {wp_id} by {user_alias}{proxied_account} "
+                    f"({ipaddr}) ({client_agent}): "
+                    f"w:{width} * h:{height} * s:{accurate_steps} * n:{n_value} "
+                    + (f"using model(s) {', '.join(model_names)} " if model_names else "(no model specified) ")
+                )
+                if params_copy.get("post_processing"):
+                    log_msg += f"| post processing {', '.join(params_copy['post_processing'])} "
+                if params_copy.get("control_type"):
+                    log_msg += f"| control type {params_copy['control_type']} "
+                if params_copy.get("loras"):
+                    log_msg += f"| loras {', '.join(lora['name'] for lora in params_copy['loras'])} "
+                if params_copy.get("tis"):
+                    log_msg += f"| tis {', '.join(ti['name'] for ti in params_copy['tis'])} "
+                log_msg += f"| workers {', '.join(worker_ids) if worker_ids else 'any'} "
+                if worker_blacklist:
+                    log_msg += f"| blacklist {worker_blacklist} "
+                if slow_workers:
+                    log_msg += f"| slow_workers {slow_workers} "
+                log_msg += f"== {total_usage} Total MPs for {kudos_value} kudos."
+                logger.info(log_msg)
+            finally:
+                wp_activate_post_kudos_duration.record(time.monotonic() - _t_pk, {})
+        finally:
+            wp_activate_post_super_duration.record(time.monotonic() - _t_post, {})
 
     def seed_to_int(self, s=None):
         if isinstance(s, int):
@@ -341,7 +391,11 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_params["source_processing"] = self.source_processing if self.source_image else "txt2img"
             model_params["source_image"] = True if self.source_image else False
             model_params["source_mask"] = True if self.source_mask else False
-            self.kudos = kudos_model.calculate_kudos(model_params)
+            _t_torch = time.monotonic()
+            try:
+                self.kudos = kudos_model.calculate_kudos(model_params)
+            finally:
+                wp_kudos_torch_duration.record(time.monotonic() - _t_torch, {})
         except Exception as e:
             logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
             self.kudos = legacy_kudos_cost
@@ -357,7 +411,11 @@ class ImageWaitingPrompt(WaitingPrompt):
         # If they've requested TIs, we add 1 kudos extra
         if self.params.get("tis"):
             self.kudos += 1
-        db.session.commit()
+        _t_kc = time.monotonic()
+        try:
+            db.session.commit()
+        finally:
+            wp_kudos_commit_duration.record(time.monotonic() - _t_kc, {})
         return self.kudos
 
     def require_upfront_kudos(self, counted_totals, total_threads):

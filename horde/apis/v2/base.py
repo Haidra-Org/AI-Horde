@@ -7,6 +7,7 @@ import os
 import time
 from datetime import datetime, timedelta
 
+import logfire
 import regex as re
 from flask import render_template, request
 from flask_restx import Namespace, Resource, reqparse
@@ -42,6 +43,28 @@ from horde.metrics import waitress_metrics
 from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
+from horde.metrics import (
+    generate_activate_wp_duration,
+    generate_duration,
+    generate_initiate_wp_duration,
+    generate_validate_duration,
+    pop_candidates,
+    pop_check_in_duration,
+    pop_duration,
+    pop_eval_duration,
+    pop_pre_eval_duration,
+    pop_returned_jobs,
+    pop_skipped,
+    pop_start_gen_duration,
+    pop_validate_duration,
+    submit_duration,
+    submit_find_user_duration,
+    submit_get_progen_duration,
+    submit_kudos,
+    submit_outcomes,
+    submit_set_gen_duration,
+)
+from horde.telemetry import pyroscope_tag
 from horde.utils import datetime_parser, hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_title, horde_url
 
@@ -120,7 +143,21 @@ class GenerateTemplate(Resource):
     proxied_request = False
 
     def post(self):
-        # logger.warning(datetime.utcnow())
+        t0 = time.monotonic()
+        with (
+            pyroscope_tag(endpoint="generate", gentype=self.gentype),
+            logfire.span(
+                "horde.generate",
+                gentype=self.gentype,
+                dry_run=getattr(self.args, "dry_run", False),
+            ),
+        ):
+            try:
+                self._post_inner()
+            finally:
+                generate_duration.record(time.monotonic() - t0, {"horde.gentype": self.gentype})
+
+    def _post_inner(self):
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.params = {}
@@ -147,20 +184,37 @@ class GenerateTemplate(Resource):
             self.proxied_request = True
         # For now this is checked on validate()
         self.safe_ip = True
-        self.validate()
-        # logger.warning(datetime.utcnow())
+        with logfire.span("horde.generate.validate", gentype=self.gentype):
+            tv = time.monotonic()
+            try:
+                self.validate()
+            finally:
+                generate_validate_duration.record(time.monotonic() - tv, {"horde.gentype": self.gentype})
         self.downgrade_wp_priority = False
-        # logger.warning(datetime.utcnow())
-        self.initiate_waiting_prompt()
-        # logger.warning(datetime.utcnow())
+        with logfire.span("horde.generate.initiate_wp", gentype=self.gentype):
+            ti = time.monotonic()
+            try:
+                self.initiate_waiting_prompt()
+            finally:
+                generate_initiate_wp_duration.record(time.monotonic() - ti, {"horde.gentype": self.gentype})
+        logfire.info(
+            "horde.generate.initiated",
+            wp_id=str(self.wp.id),
+            models=self.models,
+            n=getattr(self.wp, "n", None),
+        )
         if self.args.dry_run:
             self.kudos = self.extrapolate_dry_run_kudos()
             self.wp.delete()
             return
-        self.activate_waiting_prompt()
+        with logfire.span("horde.generate.activate_wp", wp_id=str(self.wp.id)):
+            ta = time.monotonic()
+            try:
+                self.activate_waiting_prompt()
+            finally:
+                generate_activate_wp_duration.record(time.monotonic() - ta, {"horde.gentype": self.gentype})
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
-        # logger.warning(datetime.utcnow())
 
     # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):
@@ -363,6 +417,8 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
+        from horde.telemetry import get_traceparent
+
         self.wp = WaitingPrompt(
             worker_ids=self.workers,
             models=self.models,
@@ -377,6 +433,7 @@ class GenerateTemplate(Resource):
             ipaddr=self.user_ip,
             sharedkey_id=self.args.apikey if self.sharedkey else None,
             webhook=self.args.webhook,
+            traceparent=get_traceparent(),
         )
 
     # We split this into its own function, so that it may be overriden and extended
@@ -457,6 +514,15 @@ class JobPopTemplate(Resource):
     args: ParseResult
 
     def post(self):
+        t0 = time.monotonic()
+        with pyroscope_tag(endpoint="job_pop"), logfire.span("horde.job_pop"):
+            try:
+                return self._post_inner()
+            finally:
+                pop_duration.record(time.monotonic() - t0)
+
+    def _post_inner(self):
+        pre_eval_t0 = time.monotonic()
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.priority_usernames = []
@@ -471,8 +537,14 @@ class JobPopTemplate(Resource):
         if self.args.models:
             self.models = self.args.models
         self.worker_ip = request.remote_addr
-        self.validate()
-        self.check_in()
+        validate_t0 = time.monotonic()
+        with logfire.span("horde.pop.validate"):
+            self.validate()
+        pop_validate_duration.record(time.monotonic() - validate_t0)
+        check_in_t0 = time.monotonic()
+        with logfire.span("horde.pop.check_in", worker_name=getattr(self.worker, "name", None)):
+            self.check_in()
+        pop_check_in_duration.record(time.monotonic() - check_in_t0)
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
         # self.priority_users = [self.user]
@@ -494,41 +566,63 @@ class JobPopTemplate(Resource):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
         self.wp_page = 0
-        wp_list = self.get_sorted_wp(self.priority_user_ids)
+        with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
+            wp_list = self.get_sorted_wp(self.priority_user_ids)
         for wp in wp_list:
             self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
-        for wp in self.get_sorted_wp():
-            if wp.id not in [wp.id for wp in self.prioritized_wp]:
-                self.prioritized_wp.append(wp)
+        with logfire.span("horde.pop.get_sorted_wp", priority=False, page=0):
+            for wp in self.get_sorted_wp():
+                if wp.id not in [wp.id for wp in self.prioritized_wp]:
+                    self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
-        while len(self.prioritized_wp) > 0:
-            for wp in self.prioritized_wp:
-                check_gen = self.worker.can_generate(wp)
-                if not check_gen[0]:
-                    skipped_reason = check_gen[1]
-                    # We don't report on secret skipped reasons
-                    # as they're typically countermeasures to raids
-                    if skipped_reason != "secret":
-                        self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
-
-                    continue
-                # There is a chance that by the time we finished all the checks, another worker picked up the WP.
-                # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
-                # time.sleep(random.uniform(0, 1))
-                if not wp.needs_gen():  # this says if < 1
-                    continue
-                worker_ret = self.start_worker(wp)
-                worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
-                # logger.debug(worker_ret)
-                if worker_ret is None:
-                    continue
-                # logger.debug(worker_ret)
-                return worker_ret, 200
-            db.session.commit()  # Unlock all locked wp rows before picking up new ones
-            self.wp_page += 1
-            self.prioritized_wp = self.get_sorted_wp()
-            logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
+        candidates_evaluated = 0
+        pop_pre_eval_duration.record(time.monotonic() - pre_eval_t0)
+        eval_t0 = time.monotonic()
+        with logfire.span("horde.pop.evaluate_candidates") as eval_span:
+            while len(self.prioritized_wp) > 0:
+                for wp in self.prioritized_wp:
+                    candidates_evaluated += 1
+                    check_gen = self.worker.can_generate(wp)
+                    if not check_gen[0]:
+                        skipped_reason = check_gen[1]
+                        # We don't report on secret skipped reasons
+                        # as they're typically countermeasures to raids
+                        if skipped_reason != "secret":
+                            self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
+                            pop_skipped.add(1, {"horde.skip_reason": skipped_reason})
+                        continue
+                    # There is a chance that by the time we finished all the checks, another worker picked up the WP.
+                    # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
+                    # time.sleep(random.uniform(0, 1))
+                    if not wp.needs_gen():  # this says if < 1
+                        continue
+                    sg_t0 = time.monotonic()
+                    with logfire.span("horde.pop.start_generation", wp_id=str(wp.id)):
+                        worker_ret = self.start_worker(wp)
+                    pop_start_gen_duration.record(time.monotonic() - sg_t0)
+                    pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match"})
+                    worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
+                    # logger.debug(worker_ret)
+                    if worker_ret is None:
+                        continue
+                    # logger.debug(worker_ret)
+                    eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
+                    pop_candidates.record(candidates_evaluated)
+                    pop_returned_jobs.record(
+                        len(worker_ret.get("ids", []) or [worker_ret.get("id")]) if isinstance(worker_ret, dict) else 0,
+                        {"horde.outcome": "match"},
+                    )
+                    return worker_ret, 200
+                db.session.commit()  # Unlock all locked wp rows before picking up new ones
+                self.wp_page += 1
+                with logfire.span("horde.pop.get_sorted_wp", priority=False, page=self.wp_page):
+                    self.prioritized_wp = self.get_sorted_wp()
+                logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
+            eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
+            pop_candidates.record(candidates_evaluated)
+            pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "no_match"})
+            pop_returned_jobs.record(0, {"horde.outcome": "no_match"})
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
@@ -601,11 +695,15 @@ class JobPopTemplate(Resource):
                 raise e.WorkerInviteOnly(worker_count)
             # Untrusted users can only have 3 workers
             if not self.user.trusted and worker_count > 3:
-                raise e.Forbidden("To avoid abuse, untrusted users can only have up to 3 distinct workers.")
+                raise e.Forbidden(
+                    "To avoid abuse, untrusted users can only have up to 3 distinct workers.",
+                    rc="TooManyWorkers",
+                )
             # Trusted users can have up to 20 workers by default unless overriden
             if worker_count > 20 and worker_count > self.user.worker_invited:
                 raise e.Forbidden(
                     "To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust.",
+                    rc="TooManyWorkersTrusted",
                 )
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
@@ -640,7 +738,34 @@ class JobPopTemplate(Resource):
 
 class JobSubmitTemplate(Resource):
     def post(self):
-        self.validate()
+        t0 = time.monotonic()
+        outcome = "accepted"
+        with pyroscope_tag(endpoint="job_submit"), logfire.span("horde.job_submit"):
+            try:
+                self.validate()
+            except e.DuplicateGen:
+                outcome = "already_submitted"
+                raise
+            except e.AbortedGen:
+                outcome = "faulted"
+                raise
+            except Exception:
+                outcome = "error"
+                raise
+            finally:
+                submit_duration.record(time.monotonic() - t0, {"horde.outcome": outcome})
+            if getattr(self.args, "state", None) == "censored":
+                outcome = "censored"
+            elif getattr(self.args, "state", None) == "faulted":
+                outcome = "faulted"
+            submit_kudos.record(self.kudos, {"horde.outcome": outcome})
+            submit_outcomes.add(1, {"horde.outcome": outcome})
+            logfire.info(
+                "horde.job_submit.done",
+                procgen_id=str(self.procgen.id),
+                kudos_reward=self.kudos,
+                outcome=outcome,
+            )
         return ({"reward": self.kudos}, 200)
 
     def get_progen(self):
@@ -658,15 +783,23 @@ class JobSubmitTemplate(Resource):
         )
 
     def validate(self):
-        self.procgen = self.get_progen()
+        t = time.monotonic()
+        with logfire.span("horde.submit.get_progen"):
+            self.procgen = self.get_progen()
+        submit_get_progen_duration.record(time.monotonic() - t)
         if not self.procgen:
             raise e.InvalidJobID(self.args["id"])
+        t = time.monotonic()
         self.user = database.find_user_by_api_key(self.args["apikey"])
+        submit_find_user_duration.record(time.monotonic() - t)
         if not self.user:
             raise e.InvalidAPIKey("worker submit:" + self.args["name"])
         if self.user != self.procgen.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.procgen.worker.name)
-        self.set_generation()
+        t = time.monotonic()
+        with logfire.span("horde.submit.set_generation", procgen_id=str(self.procgen.id)):
+            self.set_generation()
+        submit_set_gen_duration.record(time.monotonic() - t)
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args["id"])
         if self.kudos == -1:
@@ -839,7 +972,6 @@ class Workers(Resource):
 
     @api.expect(get_parser)
     @logger.catch(reraise=True)
-    # @cache.cached(timeout=10, query_string=True)
     @api.marshal_with(
         models.response_model_worker_details,
         code=200,
@@ -938,7 +1070,6 @@ class WorkerSingleName(WorkerSingleBase):
     )
 
     @api.expect(get_parser)
-    # @cache.cached(timeout=10)
     @api.marshal_with(
         models.response_model_worker_details,
         code=200,
@@ -979,7 +1110,6 @@ class WorkerSingle(WorkerSingleBase):
     )
 
     @api.expect(get_parser)
-    # @cache.cached(timeout=10)
     @api.marshal_with(
         models.response_model_worker_details,
         code=200,
@@ -1225,7 +1355,7 @@ class Users(Resource):
 
     decorators = [limiter.limit("90/minute")]
 
-    # @cache.cached(timeout=10)
+    @cache.cached(timeout=10, query_string=True)
     @api.expect(get_parser)
     @api.marshal_with(models.response_model_user_details, code=200, description="Users List")
     def get(self):  # TODO - Should this be exposed?

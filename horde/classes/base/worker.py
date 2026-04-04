@@ -5,6 +5,7 @@
 import json
 from datetime import datetime, timedelta
 
+import logfire
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -280,6 +281,13 @@ class WorkerTemplate(db.Model):
 
     # This should be extended by each worker type
     def check_in(self, **kwargs):
+        # To avoid excessive commits and UPDATE churn under heavy pop load,
+        # we only update the worker on check_in every 30 seconds (after the first 30s of life).
+        # Returns True if the check_in actually performed work, False if it was debounced.
+        # Subclasses should also short-circuit when this returns False.
+        now = datetime.utcnow()
+        if (now - self.last_check_in).total_seconds() < 30 and (now - self.created).total_seconds() > 30:
+            return False
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
         self.threads = kwargs.get("threads", 1)
@@ -290,12 +298,8 @@ class WorkerTemplate(db.Model):
         self.prioritized_users = kwargs.get("prioritized_users", [])
         if not kwargs.get("safe_ip", True) and not self.user.trusted:
             self.report_suspicion(reason=Suspicions.UNSAFE_IP)
-        # To avoid excessive commits,
-        # we only record new uptime on the worker every 30 seconds
-        if (datetime.utcnow() - self.last_check_in).total_seconds() < 30 and (datetime.utcnow() - self.created).total_seconds() > 30:
-            return
         if not self.is_stale() and not self.paused and not self.maintenance:
-            self.uptime += (datetime.utcnow() - self.last_check_in).total_seconds()
+            self.uptime += (now - self.last_check_in).total_seconds()
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 if self.team:
@@ -311,7 +315,8 @@ class WorkerTemplate(db.Model):
             # If the worker comes back from being stale, we just reset their last_reward_uptime
             # So that they have to stay up at least 10 mins to get uptime kudos
             self.last_reward_uptime = self.uptime
-        self.last_check_in = datetime.utcnow()
+        self.last_check_in = now
+        return True
 
     def get_human_readable_uptime(self):
         if self.uptime < 60:
@@ -334,14 +339,18 @@ class WorkerTemplate(db.Model):
         """To override in case we want to adjust the worker reward based on their bridge version"""
         return 1
 
-    @logger.catch(reraise=True)
     def record_contribution(self, raw_things, kudos, things_per_sec):
+        with logfire.span("horde.worker.record_contribution", worker_id=str(self.id), kudos=kudos):
+            self._record_contribution(raw_things, kudos, things_per_sec)
+
+    @logger.catch(reraise=True)
+    def _record_contribution(self, raw_things, kudos, things_per_sec):
         """We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         """
         kudos = kudos * self.get_bridge_kudos_multiplier()
-        self.user.record_contributions(raw_things=raw_things, kudos=kudos, contrib_type=self.wtype)
-        self.modify_kudos(kudos, "generated")
+        self.user.record_contributions(raw_things=raw_things, kudos=kudos, contrib_type=self.wtype, commit=False)
+        self.modify_kudos(kudos, "generated", commit=False)
         converted_amount = self.convert_contribution(raw_things)
         self.fulfilments += 1
         if self.team and self.wtype == "image":
@@ -350,7 +359,8 @@ class WorkerTemplate(db.Model):
         if performances.count() >= 20:
             # Ensure we don't forget anything
             subquery = (
-                db.session.query(WorkerPerformance.id)
+                db.session
+                .query(WorkerPerformance.id)
                 .filter_by(worker_id=self.id)
                 .order_by(WorkerPerformance.created.asc())
                 .offset(20)
@@ -361,23 +371,25 @@ class WorkerTemplate(db.Model):
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
-        db.session.commit()
+        # Note: deferred commit; caller (procgen.set_generation) commits once at the end
         if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
             self.report_suspicion(
                 reason=Suspicions.UNREASONABLY_FAST,
                 formats=[round(things_per_sec / hv.thing_divisors[self.wtype], 2)],
             )
 
-    def modify_kudos(self, kudos, action="generated"):
+    def modify_kudos(self, kudos, action="generated", commit=True):
         self.kudos = round(self.kudos + kudos, 2)
         kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).filter_by(action=action).first()
         if not kudos_details:
             kudos_details = WorkerStats(worker_id=self.id, action=action, value=round(kudos, 2))
             db.session.add(kudos_details)
-            db.session.commit()
+            if commit:
+                db.session.commit()
         else:
             kudos_details.value = round(kudos_details.value + kudos, 2)
-            db.session.commit()
+            if commit:
+                db.session.commit()
         logger.trace([kudos_details, kudos_details.value])
 
     def log_aborted_job(self):
@@ -542,12 +554,14 @@ class Worker(WorkerTemplate):
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
-        super().check_in(**kwargs)
+        if not super().check_in(**kwargs):
+            return False
         self.set_models(kwargs.get("models"))
         self.nsfw = kwargs.get("nsfw", True)
         self.set_blacklist(kwargs.get("blacklist", []))
         self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
         # Commit should happen on calling extensions
+        return True
 
     def set_blacklist(self, blacklist):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
