@@ -1,0 +1,198 @@
+# SPDX-FileCopyrightText: 2026 Haidra-Org
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Docker image publish
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - 'horde/**'
+      - 'server.py'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-publish.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -----------------------------------------------------------
+  # Build the Docker image and push to GHCR on main / tags.
+  # PRs only build (no push) so the image can be validated.
+  # -----------------------------------------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+      image-version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate artifact attestation
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  # -----------------------------------------------------------
+  # Validate the image actually starts and passes a health check
+  # against real Postgres + Redis service containers.
+  # -----------------------------------------------------------
+  validate:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: read
+      packages: read
+    services:
+      ai-horde-postgres:
+        image: ghcr.io/haidra-org/ai-horde-postgres:latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # -- For pushes: pull the published image by digest ------
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull published image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_NAME_LC: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          IMAGE="$(echo "$IMAGE_NAME_LC" | tr '[:upper:]' '[:lower:]')@${{ needs.build-and-push.outputs.image-digest }}"
+          docker pull "$IMAGE"
+          docker tag "$IMAGE" ai-horde:validate
+          echo "Pulled $IMAGE"
+
+      # -- For PRs: rebuild from GHA cache -----
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        if: github.event_name == 'pull_request'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Rebuild from cache for validation
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ai-horde:validate
+          cache-from: type=gha
+
+      # -- Common: run the container and health-check ----------
+      - name: Start AI-Horde container
+        run: |
+          docker run -d --name ai-horde-validate \
+            --network host \
+            -e POSTGRES_URL="localhost:5432/postgres" \
+            -e PGUSER=postgres \
+            -e PGPASSWORD=postgres \
+            -e REDIS_IP=localhost \
+            -e 'REDIS_SERVERS=["localhost"]' \
+            -e USE_SQLITE=0 \
+            -e 'ADMINS=["test_user#1"]' \
+            -e KUDOS_TRUST_THRESHOLD=100 \
+            ai-horde:validate
+
+      - name: Wait for healthy heartbeat
+        run: |
+          timeout=120
+          while ! curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
+            timeout=$((timeout - 2))
+            if [ "$timeout" -le 0 ]; then
+              echo "::error::Image failed to pass health check within ${timeout}s"
+              docker logs ai-horde-validate
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Image validation passed — heartbeat responded OK"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs ai-horde-validate 2>&1 || true
