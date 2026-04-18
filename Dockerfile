@@ -29,15 +29,16 @@ RUN --mount=type=cache,target=/root/.cache \
 ##
 FROM python AS python-run-stage
 
-# git is required in the run stage because one dependency is not available in PyPI
-RUN apt-get update && apt-get install -y git
-
 RUN --mount=type=cache,target=/root/.cache pip install --upgrade pip
 
-# Install dependencies
+# Install dependencies from pre-built wheels.
+# The git+ URL for patreon-python is replaced with the package name so pip
+# uses the wheel that was already built in the build stage (its setup.py has
+# a bug that unconditionally requires pytest-runner, which isn't available offline).
 COPY --from=python-build-stage /usr/src/app/wheels /wheels/
 COPY ./requirements.txt .
-RUN pip install --no-cache-dir --no-index --find-links=/wheels/ \
+RUN sed -i 's|git+https://github.com/Patreon/patreon-python.git|patreon|' requirements.txt \
+  && pip install --no-cache-dir --no-index --find-links=/wheels/ \
   -r requirements.txt \
 	&& rm -rf /wheels/
 
