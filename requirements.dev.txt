@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-pytest==8.0.2
-black==24.4.2
-ruff==0.4.2
+pytest==9.0.2
+ruff==0.15.7
 tox~=4.14.1
 horde_sdk>=0.7.29
 
