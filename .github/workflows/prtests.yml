@@ -158,7 +158,7 @@ jobs:
           python -m pip download --no-deps --no-binary :all: horde_sdk
           tar -xvf horde_sdk-*.tar.gz
           cd horde_sdk**/
-          python -m pip install .
+          python -m pip install horde-model-reference==2.1.5 .
           python -m pip install --group dev
           python -m pytest tests/ --ignore-glob=*api_calls.py --ignore-glob=*test_model_meta.py -s
 
