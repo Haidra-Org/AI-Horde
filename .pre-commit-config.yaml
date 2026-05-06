@@ -12,14 +12,11 @@ repos:
     -   id: check-yaml
     -   id: end-of-file-fixer
     -   id: trailing-whitespace
--   repo: https://github.com/psf/black
-    rev: 24.4.2
-    hooks:
-    -   id: black
--   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.3
-    hooks:
-    -    id: ruff
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.15.12
+  hooks:
+    - id: ruff-check
+    - id: ruff-format
 -   repo: https://github.com/fsfe/reuse-tool
     rev: v4.0.3
     hooks:
