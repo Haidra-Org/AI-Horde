@@ -68,8 +68,7 @@ def shutdown(seconds):
 def get_top_contributor():
     top_contributor = None
     top_contributor = (
-        db.session
-        .query(User)
+        db.session.query(User)
         .join(UserRecords)
         .filter(
             UserRecords.record_type == "CONTRIBUTION",
@@ -95,8 +94,7 @@ def get_active_workers(worker_type=None):
         active_workers += db.session.query(TextWorker).filter(TextWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300)).all()
     if worker_type is None or worker_type == "interrogation":
         active_workers += (
-            db.session
-            .query(InterrogationWorker)
+            db.session.query(InterrogationWorker)
             .filter(InterrogationWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
             .all()
         )
@@ -114,8 +112,7 @@ def count_active_workers(worker_class="image"):
         WorkerClass = TextWorker
     active_workers = db.session.query(WorkerClass).filter(WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300)).count()
     active_workers_threads = (
-        db.session
-        .query(func.sum(WorkerClass.threads).label("threads"))
+        db.session.query(func.sum(WorkerClass.threads).label("threads"))
         .filter(WorkerClass.last_check_in > datetime.utcnow() - timedelta(seconds=300))
         .first()
     )
@@ -332,8 +329,7 @@ def get_available_models(filter_model_name: str = None):
         if filter_model_name and available_worker_models and len(available_worker_models) > 0:
             continue
         available_worker_models = (
-            db.session
-            .query(
+            db.session.query(
                 WorkerModel.model,
                 func.sum(worker_class.threads).label("total_threads"),
                 # worker_class.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
@@ -368,8 +364,7 @@ def get_available_models(filter_model_name: str = None):
 
         known_models = [filter_model_name] if filter_model_name else list(model_reference.stable_diffusion_names)
         ophan_models = (
-            db.session
-            .query(
+            db.session.query(
                 WPModels.model,
             )
             .join(
@@ -568,8 +563,7 @@ def _count_waiting_requests(user, models=None, request_type="image"):
         models = []
     if len(models):
         known_model_query = (
-            db.session
-            .query(func.sum(wp_class.n))
+            db.session.query(func.sum(wp_class.n))
             .select_from(
                 WPModels,
             )
@@ -589,8 +583,7 @@ def _count_waiting_requests(user, models=None, request_type="image"):
         return known_model_query
     else:
         unknown_model_query = (
-            db.session
-            .query(func.sum(wp_class.n))
+            db.session.query(func.sum(wp_class.n))
             .filter(
                 wp_class.user_id == user.id,
                 wp_class.faulted == False,  # noqa E712
@@ -605,8 +598,7 @@ def _count_waiting_requests(user, models=None, request_type="image"):
 
 def count_waiting_interrogations(user):
     found_i_forms = (
-        db.session
-        .query(InterrogationForms.state, Interrogation.user_id)
+        db.session.query(InterrogationForms.state, Interrogation.user_id)
         .join(Interrogation)
         .filter(
             Interrogation.user_id == user.id,
@@ -649,8 +641,7 @@ def count_totals():
         queued_text: 0,
     }
     all_image_wp_counts = (
-        db.session
-        .query(
+        db.session.query(
             ImageWaitingPrompt.id,
             (func.sum(ImageWaitingPrompt.n) + func.count(ImageProcessingGeneration.wp_id)).label("total_count"),
             func.sum(ImageWaitingPrompt.things).label("total_things"),
@@ -671,8 +662,7 @@ def count_totals():
         .subquery("all_image_wp_counts")
     )
     total_image_sum = (
-        db.session
-        .query(
+        db.session.query(
             func.sum(all_image_wp_counts.c.total_count).label("total_count_sum"),
             func.sum(all_image_wp_counts.c.total_things).label("total_things_sum"),
         )
@@ -684,8 +674,7 @@ def count_totals():
         round(int(total_image_sum.total_things_sum) / hv.thing_divisors["image"], 2) if total_image_sum.total_things_sum is not None else 0
     )
     all_text_wp_counts = (
-        db.session
-        .query(
+        db.session.query(
             TextWaitingPrompt.id,
             (func.sum(TextWaitingPrompt.n) + func.count(TextProcessingGeneration.wp_id)).label("total_count"),
             func.sum(TextWaitingPrompt.things).label("total_things"),
@@ -706,8 +695,7 @@ def count_totals():
         .subquery("all_text_wp_counts")
     )
     total_text_sum = (
-        db.session
-        .query(
+        db.session.query(
             func.sum(all_text_wp_counts.c.total_count).label("total_count_sum"),
             func.sum(all_text_wp_counts.c.total_things).label("total_things_sum"),
         )
@@ -719,8 +707,7 @@ def count_totals():
         int(total_text_sum.total_things_sum) / hv.thing_divisors["text"] if total_text_sum.total_things_sum is not None else 0
     )
     ret_dict[queued_forms] = (
-        db.session
-        .query(
+        db.session.query(
             InterrogationForms.state,
         )
         .filter(
@@ -755,8 +742,7 @@ def get_organized_wps_by_model(wp_class):
     org = {}
     # TODO: Offload the sorting to the DB through join() + SELECT statements
     all_wps = (
-        db.session
-        .query(wp_class)
+        db.session.query(wp_class)
         .filter(
             wp_class.active == True,  # noqa E712
             wp_class.faulted == False,  # noqa E712
@@ -795,8 +781,7 @@ def count_things_for_specific_model(wp_class, procgen_class, model_name):
     things = {model_name: 0}
     jobs = {model_name: 0}
     all_wps_query = (
-        db.session
-        .query(
+        db.session.query(
             wp_class.id.label("wp_id"),
             wp_class.n,
             wp_class.things,
@@ -848,8 +833,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
     PER_PAGE = 10  # how many requests we're picking up to filter further
     final_wp_list = (
-        db.session
-        .query(ImageWaitingPrompt)
+        db.session.query(ImageWaitingPrompt)
         .options(noload(ImageWaitingPrompt.processing_gens))
         .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
         .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
@@ -995,8 +979,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
 
     # logger.debug(final_wp_list)
     final_wp_list = (
-        final_wp_list
-        .order_by(ImageWaitingPrompt.extra_priority.desc(), ImageWaitingPrompt.created.asc())
+        final_wp_list.order_by(ImageWaitingPrompt.extra_priority.desc(), ImageWaitingPrompt.created.asc())
         .offset(PER_PAGE * page)
         .limit(PER_PAGE)
     )
@@ -1138,8 +1121,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
 
     # Execute single query
     query = (
-        db.session
-        .query(*count_exprs.values())
+        db.session.query(*count_exprs.values())
         .select_from(ImageWaitingPrompt)
         .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
         .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
@@ -1300,8 +1282,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_i
     if forms_list is None:
         forms_list = []
     final_interrogation_query = (
-        db.session
-        .query(InterrogationForms)
+        db.session.query(InterrogationForms)
         .join(Interrogation)
         .filter(
             InterrogationForms.state == State.WAITING,
@@ -1441,8 +1422,7 @@ def get_form_by_id(form_id):
 
 def get_all_wps():
     return (
-        db.session
-        .query(ImageWaitingPrompt)
+        db.session.query(ImageWaitingPrompt)
         .filter(
             ImageWaitingPrompt.active == True,  # noqa E712
             ImageWaitingPrompt.faulted == False,  # noqa E712
@@ -1454,8 +1434,7 @@ def get_all_wps():
 
 def get_all_active_wps():
     return (
-        db.session
-        .query(ImageWaitingPrompt)
+        db.session.query(ImageWaitingPrompt)
         .filter(
             ImageWaitingPrompt.active == True,  # noqa E712
             ImageWaitingPrompt.faulted == False,  # noqa E712
@@ -1520,8 +1499,7 @@ def wp_has_valid_workers(wp):
         models_list = wp.get_model_names()
         worker_ids = wp.get_worker_ids()
         final_worker_list = (
-            db.session
-            .query(worker_class)
+            db.session.query(worker_class)
             .options(
                 noload(worker_class.performance),
                 noload(worker_class.suspicions),
@@ -1661,8 +1639,7 @@ def retrieve_prioritized_wp_queue(wp_type):
 def query_prioritized_wps(wp_type="image"):
     waiting_prompt_type = WP_CLASS_MAP[wp_type]
     return (
-        db.session
-        .query(
+        db.session.query(
             waiting_prompt_type.id,
             waiting_prompt_type.things,
             waiting_prompt_type.n,
@@ -1824,8 +1801,7 @@ def retrieve_available_collections(
 
 def get_all_active_worker_messages(worker_id):
     return (
-        db.session
-        .query(WorkerMessage)
+        db.session.query(WorkerMessage)
         .filter(
             or_(
                 WorkerMessage.worker_id == worker_id,
@@ -1854,8 +1830,7 @@ def get_all_users_passkeys():
     """Retrieves all users passkeys."""
     return {
         user.id: user.proxy_passkey
-        for user in db.session
-        .query(User.proxy_passkey, User.id, User.flagged)
+        for user in db.session.query(User.proxy_passkey, User.id, User.flagged)
         .filter(
             User.proxy_passkey.is_not(None),
         )

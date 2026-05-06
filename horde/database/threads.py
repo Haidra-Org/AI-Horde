@@ -231,8 +231,7 @@ def check_waiting_prompts():
             db.session.commit()
             # Faults stale ProcGens
             all_proc_gen = (
-                db.session
-                .query(
+                db.session.query(
                     procgen_class,
                 )
                 .join(
@@ -256,8 +255,7 @@ def check_waiting_prompts():
                 db.session.commit()
             # Faults WP with 3 or more faulted Procgens
             wp_ids = (
-                db.session
-                .query(
+                db.session.query(
                     procgen_class.wp_id,
                 )
                 .filter(procgen_class.faulted == True)  # noqa E712
@@ -288,8 +286,7 @@ def check_interrogations():
         db.session.commit()
         # Restarts stale forms
         all_stale_forms = (
-            db.session
-            .query(
+            db.session.query(
                 InterrogationForms,
             )
             .filter(

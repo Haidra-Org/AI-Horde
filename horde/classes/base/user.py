@@ -306,8 +306,7 @@ class User(db.Model):
     @trusted.expression
     def trusted(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.TRUSTED,
                 UserRole.value == True,  # noqa E712
@@ -325,8 +324,7 @@ class User(db.Model):
     @flagged.expression
     def flagged(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.FLAGGED,
                 UserRole.value == True,  # noqa E712
@@ -344,8 +342,7 @@ class User(db.Model):
     @moderator.expression
     def moderator(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.MODERATOR,
                 UserRole.value == True,  # noqa E712
@@ -363,8 +360,7 @@ class User(db.Model):
     @customizer.expression
     def customizer(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.CUSTOMIZER,
                 UserRole.value == True,  # noqa E712
@@ -382,8 +378,7 @@ class User(db.Model):
     @vpn.expression
     def vpn(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.VPN,
                 UserRole.value == True,  # noqa E712
@@ -401,8 +396,7 @@ class User(db.Model):
     @service.expression
     def service(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SERVICE,
                 UserRole.value == True,  # noqa E712
@@ -420,8 +414,7 @@ class User(db.Model):
     @education.expression
     def education(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.EDUCATION,
                 UserRole.value == True,  # noqa E712
@@ -440,8 +433,7 @@ class User(db.Model):
     @special.expression
     def special(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SPECIAL,
                 UserRole.value == True,  # noqa E712
@@ -460,8 +452,7 @@ class User(db.Model):
     @deleted.expression
     def deleted(cls):
         subquery = (
-            db.session
-            .query(UserRole.user_id)
+            db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.DELETED,
                 UserRole.value == True,  # noqa E712

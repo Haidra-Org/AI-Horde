@@ -359,8 +359,7 @@ class WorkerTemplate(db.Model):
         if performances.count() >= 20:
             # Ensure we don't forget anything
             subquery = (
-                db.session
-                .query(WorkerPerformance.id)
+                db.session.query(WorkerPerformance.id)
                 .filter_by(worker_id=self.id)
                 .order_by(WorkerPerformance.created.asc())
                 .offset(20)
