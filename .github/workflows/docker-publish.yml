@@ -8,16 +8,6 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
-    paths:
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'requirements.txt'
-      - 'horde/**'
-      - 'server.py'
-      - 'pyproject.toml'
-      - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
 
 env:
