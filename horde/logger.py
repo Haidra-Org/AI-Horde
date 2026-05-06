@@ -7,8 +7,6 @@ from functools import partialmethod
 
 from loguru import logger
 
-from horde.argparser import args
-
 STDOUT_LEVELS = ["GENERATION", "PROMPT"]
 INIT_LEVELS = ["INIT", "INIT_OK", "INIT_WARN", "INIT_ERR"]
 MESSAGE_LEVELS = ["MESSAGE"]
@@ -109,33 +107,34 @@ logger.__class__.init_err = partialmethod(logger.__class__.log, "INIT_ERR")
 logger.__class__.message = partialmethod(logger.__class__.log, "MESSAGE")
 logger.__class__.audit = partialmethod(logger.__class__.log, "AUDIT")
 
+# Default config with colorize=False — reconfigure_from_args() applies CLI settings
 config = {
     "handlers": [
         {
             "sink": sys.stderr,
             "format": logfmt,
-            "colorize": args.color,
+            "colorize": False,
             "filter": is_stderr_log,
         },
         {
             "sink": sys.stdout,
             "format": genfmt,
             "level": "PROMPT",
-            "colorize": args.color,
+            "colorize": False,
             "filter": is_stdout_log,
         },
         {
             "sink": sys.stdout,
             "format": initfmt,
             "level": "INIT",
-            "colorize": args.color,
+            "colorize": False,
             "filter": is_init_log,
         },
         {
             "sink": sys.stdout,
             "format": msgfmt,
             "level": "MESSAGE",
-            "colorize": args.color,
+            "colorize": False,
             "filter": is_msg_log,
         },
     ],
@@ -148,5 +147,11 @@ logger.enable("")
 logger.enable(None)
 
 
-set_logger_verbosity(args.verbosity)
-quiesce_logger(args.quiet)
+def reconfigure_from_args(args):
+    """Apply CLI args to logger. Called from server.py after argparse runs."""
+    set_logger_verbosity(args.verbosity)
+    quiesce_logger(args.quiet)
+    if args.color:
+        for handler in config["handlers"]:
+            handler["colorize"] = True
+        logger.configure(**config)

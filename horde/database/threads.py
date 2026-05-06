@@ -6,10 +6,19 @@ import json
 import os
 from datetime import date, datetime, timedelta
 
-import patreon
-import stripe
+try:
+    import patreon
+except ImportError:
+    patreon = None
+
+try:
+    import stripe
+except ImportError:
+    stripe = None
+
 from sqlalchemy import func, or_
 
+from horde import vars as hv
 from horde.argparser import args
 from horde.classes.base.user import User
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
@@ -31,13 +40,12 @@ from horde.database.functions import (
     retrieve_regex_replacements,
 )
 from horde.enums import State
-from horde.flask import HORDE, SQLITE_MODE, db
+from horde.flask import SQLITE_MODE, db, get_app
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.r2 import delete_source_image
 from horde.stripe_subs import stripe_subs
-from horde import vars as hv
 from horde.vars import horde_instance_id
 
 
@@ -50,7 +58,9 @@ def get_quorum():
     quorum = hr.horde_r.get("horde_quorum")
     if not quorum:
         hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
-        logger.critical(f"Quorum changed to port {args.port} with ID {horde_instance_id}")
+        logger.critical(
+            f"Quorum changed to port {args.port} with ID {horde_instance_id}",
+        )
         # We return None which will make other threads sleep
         # one iteration to ensure no other node raced us to the quorum
         return None
@@ -59,25 +69,29 @@ def get_quorum():
         logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
         hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
-        logger.debug(f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}")
+        logger.debug(
+            f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}",
+        )
     return quorum
 
 
 @logger.catch(reraise=True)
 def assign_monthly_kudos():
-    with HORDE.app_context():
+    with get_app().app_context():
         patron_ids = patrons.get_ids()
         stripe_ids = stripe_subs.get_ids()
-        # for pid in patron_ids:
-        #     logger.debug([pid, patrons.get_monthly_kudos(pid)])
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
         or_conditions.append(User.moderator == True)  # noqa E712
-        or_conditions.append(User.id.in_(patron_ids))
-        or_conditions.append(User.id.in_(stripe_ids))
+        if patron_ids:
+            or_conditions.append(User.id.in_(patron_ids))
+        if stripe_ids:
+            or_conditions.append(User.id.in_(stripe_ids))
         users = db.session.query(User).filter(or_(*or_conditions))
         all_users = users.all()
-        logger.info(f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}")
+        logger.info(
+            f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}",
+        )
         for user in all_users:
             user.receive_monthly_kudos()
 
@@ -85,7 +99,7 @@ def assign_monthly_kudos():
 @logger.catch(reraise=True)
 def store_prioritized_wp_queue():
     """Stores the retrieved WP queue as json for 1 second horde-wide"""
-    with HORDE.app_context():
+    with get_app().app_context():
         for wp_type in ["image", "text"]:
             wp_queue = query_prioritized_wps(wp_type)
             serialized_wp_list = []
@@ -110,9 +124,7 @@ def store_prioritized_wp_queue():
                 # We set the expiry in redis to 10 seconds, in case the primary thread dies
                 # However the primary thread is set to set the cache every 1 second
                 hr.horde_r_setex(f"{wp_type}_wp_cache", timedelta(seconds=5), cached_queue)
-                hr.horde_r_setex(
-                    f"{wp_type}_wp_queue_positions", timedelta(seconds=5), json.dumps(queue_positions)
-                )
+                hr.horde_r_setex(f"{wp_type}_wp_queue_positions", timedelta(seconds=5), json.dumps(queue_positions))
             except (TypeError, OverflowError) as err:
                 logger.error(f"Failed serializing with error: {err}")
 
@@ -127,7 +139,7 @@ def store_worker_list():
             return obj.isoformat()
         raise TypeError(f"Type {type(obj)} not serializable")
 
-    with HORDE.app_context():
+    with get_app().app_context():
         serialized_workers = []
         serialized_workers_privileged = []
         # This is too slow. Needs heavy caching currently
@@ -151,7 +163,7 @@ def store_worker_list():
 # @logger.catch(reraise=True)
 # def store_user_list():
 #     '''Stores the retrieved worker details as json for 30 seconds horde-wide'''
-#     with HORDE.app_context():
+#     with get_app().app_context():
 #         serialized_workers = []
 #         # I could do this with a comprehension, but this is clearer to understand
 #         for worker in get_active_workers():
@@ -165,7 +177,7 @@ def store_worker_list():
 
 @logger.catch(reraise=True)
 def check_waiting_prompts():
-    with HORDE.app_context():
+    with get_app().app_context():
         # Store store the cutoff_time at the start, to avoid things expiring while cleaning
         # and therefore missing images to cleanup
         cutoff_time = datetime.utcnow()
@@ -261,7 +273,7 @@ def check_waiting_prompts():
 
 @logger.catch(reraise=True)
 def check_interrogations():
-    with HORDE.app_context():
+    with get_app().app_context():
         # Cleans expired interrogations
         cutoff_time = datetime.utcnow()
         expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < cutoff_time)
@@ -292,7 +304,7 @@ def check_interrogations():
 @logger.catch(reraise=True)
 def store_available_models():
     """Stores the retrieved model details as json for 5 seconds horde-wide"""
-    with HORDE.app_context():
+    with get_app().app_context():
         json_models = json.dumps(get_available_models())
         try:
             hr.horde_r_setex("models_cache", timedelta(seconds=600), json_models)
@@ -305,7 +317,7 @@ def store_totals():
     """Stores the calculated totals as json.
     This is never expired to avoid ending up with massive operations in case the thread dies
     """
-    with HORDE.app_context():
+    with get_app().app_context():
         json_totals = json.dumps(count_totals())
         try:
             hr.horde_r_set("totals_cache", json_totals)
@@ -316,12 +328,15 @@ def store_totals():
 @logger.catch(reraise=True)
 def prune_stats():
     """Prunes performances which are too old"""
-    with HORDE.app_context():
+    with get_app().app_context():
         prune_expired_stats()
 
 
 @logger.catch(reraise=True)
 def store_patreon_members():
+    if patreon is None:
+        logger.debug("patreon library not installed, skipping store_patreon_members")
+        return
     if not os.getenv("PATREON_CREATOR_ACCESS_TOKEN"):
         return
     api_client = patreon.API(os.getenv("PATREON_CREATOR_ACCESS_TOKEN"))
@@ -349,7 +364,9 @@ def store_patreon_members():
             },
         )
         if isinstance(members_response, dict) and "data" not in members_response:
-            logger.error(f"Unexpected response received from patreon: {members_response}")
+            logger.error(
+                f"Unexpected response received from patreon: {members_response}",
+            )
             return
         members += members_response.data()
         if members_response.json_data.get("links") is None:
@@ -381,12 +398,17 @@ def store_patreon_members():
             member_dict["sponsor_link"] = note["sponsor_link"]
         active_members[user_id] = member_dict
     cached_patreons = json.dumps(active_members)
-    logger.info(f"patreon_cache ({len(active_members)}): {sorted(active_members.keys())}")
+    logger.info(
+        f"patreon_cache ({len(active_members)}): {sorted(active_members.keys())}",
+    )
     hr.horde_r_set("patreon_cache", cached_patreons)
 
 
 @logger.catch(reraise=True)
 def store_stripe_members():
+    if stripe is None:
+        logger.debug("stripe library not installed, skipping store_stripe_members")
+        return
     if not os.environ.get("STRIPE_API_KEY"):
         return
     stripe.api_key = os.environ.get("STRIPE_API_KEY")
@@ -416,7 +438,7 @@ def store_stripe_members():
             },
         )
     active_members = {}
-    with HORDE.app_context():
+    with get_app().app_context():
         for member in members:
             if member["status"] != "active":
                 continue
@@ -426,7 +448,9 @@ def store_stripe_members():
                     continue
                 existing_user = find_user_by_contact(member["email"])
                 if existing_user is None:
-                    logger.warning(f"Could not find horde user to match stripe member: {member}")
+                    logger.warning(
+                        f"Could not find horde user to match stripe member: {member}",
+                    )
                     continue
                 member["horde_id"] = existing_user.get_unique_alias()
             user_id = member["horde_id"]
@@ -435,14 +459,16 @@ def store_stripe_members():
             user_id = int(user_id)
             active_members[user_id] = member
     cached_stripe = json.dumps(active_members)
-    logger.info(f"stripe_cache ({len(active_members)}): {sorted(active_members.keys())}")
+    logger.info(
+        f"stripe_cache ({len(active_members)}): {sorted(active_members.keys())}",
+    )
     hr.horde_r_set("stripe_cache", cached_stripe)
 
 
 @logger.catch(reraise=True)
 def increment_extra_priority():
     """Increases the priority of every WP currently in the queue by 50 kudos"""
-    with HORDE.app_context():
+    with get_app().app_context():
         # cutoff_time = datetime.utcnow()
         for wp_class in [ImageWaitingPrompt, TextWaitingPrompt]:
             wp_ids = db.session.query(wp_class.id).filter(
@@ -464,7 +490,7 @@ def increment_extra_priority():
 @logger.catch(reraise=True)
 def store_compiled_filter_regex():
     """Compiles each filter as a final regex and stores it in redit"""
-    with HORDE.app_context():
+    with get_app().app_context():
         for filter_id in [10, 11, 20]:
             rfilter = compile_regex_filter(filter_id)
             # Empty string means compilation error
@@ -477,7 +503,7 @@ def store_compiled_filter_regex():
 @logger.catch(reraise=True)
 def store_compiled_filter_regex_replacements():
     """Compiles all regex and their replacements and stores them in redis"""
-    with HORDE.app_context():
+    with get_app().app_context():
         replacements = retrieve_regex_replacements(10)
         # We don't expire filters once set, to avoid ever losing the cache and letting prompts through
         hr.horde_r_set("cached_regex_replacements", json.dumps(replacements))
@@ -492,7 +518,7 @@ def store_known_image_models():
     )
     from horde.model_reference import model_reference
 
-    with HORDE.app_context():
+    with get_app().app_context():
         if model_reference.reference is not None:
             logger.debug("Storing known image models from the model reference")
             add_known_image_models_from_json(model_reference.reference)
@@ -503,5 +529,5 @@ def store_known_image_models():
 
 
 def refresh_passkeys():
-    with HORDE.app_context():
+    with get_app().app_context():
         return get_all_users_passkeys()

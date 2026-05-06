@@ -21,14 +21,19 @@ from horde.redis_ctrl import (
 ip_r = None
 ip_s_r = None
 ip_t_r = None
-logger.init("IP Caches", status="Connecting")
-if is_redis_up():
-    ip_r = get_ipaddr_db()
-    ip_s_r = get_ipaddr_suspicion_db()
-    ip_t_r = get_ipaddr_timeout_db()
-    logger.init_ok("IP Caches", status="Connected")
-else:
-    logger.init_err("IP Caches", status="Failed")
+
+
+def init_countermeasures():
+    global ip_r, ip_s_r, ip_t_r
+    logger.init("IP Caches", status="Connecting")
+    if is_redis_up():
+        ip_r = get_ipaddr_db()
+        ip_s_r = get_ipaddr_suspicion_db()
+        ip_t_r = get_ipaddr_timeout_db()
+        logger.init_ok("IP Caches", status="Connected")
+    else:
+        logger.init_err("IP Caches", status="Failed")
+
 
 test_timeout = 0
 

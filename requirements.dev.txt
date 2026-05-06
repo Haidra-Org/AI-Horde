@@ -5,7 +5,6 @@
 pytest==9.0.2
 ruff==0.15.12
 tox~=4.14.1
-horde_sdk>=0.7.29
 
 pytest-asyncio
 reuse

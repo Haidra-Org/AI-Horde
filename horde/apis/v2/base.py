@@ -33,7 +33,7 @@ from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.detection import prompt_checker
 from horde.discord import send_problem_user_notification
-from horde.flask import HORDE, cache, db
+from horde.flask import cache, db, get_app
 from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
@@ -187,7 +187,7 @@ class GenerateTemplate(Resource):
             raise e.MaintenanceMode("Generate")
         if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
-        with HORDE.app_context():  # TODO DOUBLE CHECK THIS
+        with get_app().app_context():
             # If this is set, it means we've already found an active shared key through an applied style.
             if self.sharedkey:
                 self.user = self.sharedkey.user

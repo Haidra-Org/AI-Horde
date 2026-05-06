@@ -13,23 +13,23 @@ from datetime import datetime
 import bleach
 import dateutil.relativedelta
 import regex as re
-from better_profanity import profanity
 from profanity_check import predict
+from safetext import SafeText
 
 from horde import exceptions as e
-from horde.flask import SQLITE_MODE
 
-profanity.load_censor_words()
+SQLITE_MODE = os.getenv("USE_SQLITE", "0") == "1"
+
+safe_text = SafeText(language="en")
 
 random.seed(random.SystemRandom().randint(0, 2**32 - 1))
 
 
 def is_profane(text):
-    if profanity.contains_profanity(text):
-        return True
     if predict([text]) == [1]:
         return True
-    return False
+
+    return bool(safe_text.check_profanity(text))
 
 
 def count_digits(number):
