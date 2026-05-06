@@ -125,8 +125,7 @@ class Parsers:
             default=True,
             required=False,
             help=(
-                "Marks that this request expects or allows NSFW content. "
-                "Only workers with the nsfw flag active will pick this request up."
+                "Marks that this request expects or allows NSFW content. Only workers with the nsfw flag active will pick this request up."
             ),
             location="json",
         )
@@ -594,8 +593,7 @@ class Models:
                 ),
                 "nsfw": fields.Integer(
                     description=(
-                        "How many waiting requests were skipped because "
-                        "they demanded a nsfw generation which this worker does not provide."
+                        "How many waiting requests were skipped because they demanded a nsfw generation which this worker does not provide."
                     ),
                     min=0,
                 ),
@@ -967,8 +965,7 @@ class Models:
             {
                 "maintenance": fields.Boolean(
                     description=(
-                        "The new state of the 'maintenance' var for this worker. "
-                        "When True, this worker will not pick up any new requests."
+                        "The new state of the 'maintenance' var for this worker. When True, this worker will not pick up any new requests."
                     ),
                 ),
                 "paused": fields.Boolean(
@@ -1228,8 +1225,7 @@ class Models:
                 "id": fields.Integer(description="The user unique ID. It is always an integer."),
                 "kudos": fields.Float(
                     description=(
-                        "The amount of Kudos this user has. "
-                        "The amount of Kudos determines the priority when requesting image generations."
+                        "The amount of Kudos this user has. The amount of Kudos determines the priority when requesting image generations."
                     ),
                 ),
                 "evaluating_kudos": fields.Float(
@@ -1513,8 +1509,7 @@ class Models:
                     description=f"The amount of image interrogations waiting and processing currently in this {horde_noun}.",
                 ),
                 "interrogator_count": fields.Integer(
-                    description="How many workers are actively processing image interrogations "
-                    "in this {horde_noun} in the past 5 minutes.",
+                    description="How many workers are actively processing image interrogations in this {horde_noun} in the past 5 minutes.",
                 ),
                 "interrogator_thread_count": fields.Integer(
                     description="How many worker threads are actively processing image interrogation "

@@ -91,7 +91,7 @@ class ProcessingGeneration(db.Model):
         if self.is_faulted():
             return -1
         # Sanitize NUL char away from string literal we store in the DB
-        self.generation = generation.replace("\x00", "\uFFFD")
+        self.generation = generation.replace("\x00", "\ufffd")
         # Support for two typical properties
         self.seed = kwargs.get("seed", None)
         self.gen_metadata = kwargs.get("gen_metadata", None)
@@ -220,12 +220,12 @@ class ProcessingGeneration(db.Model):
                 if not req.ok:
                     logger.debug(
                         f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
-                        f"Will retry {3-riter-1} more times...",
+                        f"Will retry {3 - riter - 1} more times...",
                     )
                     continue
                 break
             except Exception as err:
-                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3-riter-1} more times...")
+                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3 - riter - 1} more times...")
 
     def set_job_ttl(self):
         """Returns how many seconds each job request should stay waiting before considering it stale and cancelling it

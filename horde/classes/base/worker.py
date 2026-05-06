@@ -317,11 +317,11 @@ class WorkerTemplate(db.Model):
         if self.uptime < 60:
             return f"{self.uptime} seconds"
         elif self.uptime < 60 * 60:
-            return f"{round(self.uptime/60,2)} minutes"
+            return f"{round(self.uptime / 60, 2)} minutes"
         elif self.uptime < 60 * 60 * 24:
-            return f"{round(self.uptime/60/60,2)} hours"
+            return f"{round(self.uptime / 60 / 60, 2)} hours"
         else:
-            return f"{round(self.uptime/60/60/24,2)} days"
+            return f"{round(self.uptime / 60 / 60 / 24, 2)} days"
 
     # We split it to its own function to make it extendable
     def convert_contribution(self, raw_things):

@@ -191,13 +191,13 @@ def get_oauth_id():
     #         pass
     oauth_id = None
     if google_data:
-        oauth_id = f'g_{google_data["id"]}'
+        oauth_id = f"g_{google_data['id']}"
     elif discord_data:
-        oauth_id = f'd_{discord_data["id"]}'
+        oauth_id = f"d_{discord_data['id']}"
     elif github_data:
-        oauth_id = f'gh_{github_data["id"]}'
+        oauth_id = f"gh_{github_data['id']}"
     elif patreon_data:
-        oauth_id = f'p_{patreon_data["id"]}'
+        oauth_id = f"p_{patreon_data['id']}"
     return oauth_id
 
 

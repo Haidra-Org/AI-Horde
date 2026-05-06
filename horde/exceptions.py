@@ -204,8 +204,7 @@ class CorruptPrompt(wze.BadRequest):
             self.specific = message
         else:
             self.specific = (
-                "This prompt appears to violate our terms of service and will be reported. "
-                "Please contact us if you think this is an error."
+                "This prompt appears to violate our terms of service and will be reported. Please contact us if you think this is an error."
             )
         self.log = f"User '{username}' with IP '{ip}' sent an a corrupt prompt: '{prompt}'. Aborting!"
         if proxy_service_ip:
@@ -272,7 +271,7 @@ class NameAlreadyExists(wze.BadRequest):
 class PolymorphicNameConflict(wze.BadRequest):
     def __init__(self, name, object_type="worker", rc="PolymorphicNameConflict"):
         self.specific = (
-            f"The specified name '{name}' is already taken by a different type " f"of {object_type}. Please choose a different name!"
+            f"The specified name '{name}' is already taken by a different type of {object_type}. Please choose a different name!"
         )
         self.log = None
         self.rc = rc
@@ -281,7 +280,7 @@ class PolymorphicNameConflict(wze.BadRequest):
 class ImageValidationFailed(wze.BadRequest):
     def __init__(
         self,
-        message=("Please ensure the source image payload is either " "a URL containing an image or a valid base64 encoded image."),
+        message=("Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."),
         rc="ImageValidationFailed",
     ):
         self.specific = f"Image validation failed. {message}"
@@ -423,8 +422,7 @@ class WorkerInviteOnly(wze.Forbidden):
 class UnsafeIP(wze.Forbidden):
     def __init__(self, ipaddr, rc="UnsafeIP"):
         self.specific = (
-            "Due to abuse prevention, we cannot accept more workers from VPNs. "
-            "Please contact us on Discord if you feel this is a mistake."
+            "Due to abuse prevention, we cannot accept more workers from VPNs. Please contact us on Discord if you feel this is a mistake."
         )
         self.log = f"Worker attempted to pop from unsafe IP: {ipaddr}"
         self.rc = rc

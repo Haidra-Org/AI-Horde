@@ -275,16 +275,16 @@ if __name__ == "__main__":
 
     # Test the basis job
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD)
-    logger.message(f"The basis job worth {job_kudos} kudos, " f"expected {KudosModel.KUDOS_BASIS} kudos")
+    logger.message(f"The basis job worth {job_kudos} kudos, expected {KudosModel.KUDOS_BASIS} kudos")
 
     # Test fixed kudos basis adjustment
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5)
-    logger.message(f"Adjusting a job by +5 worth {job_kudos}, " f"expected {KudosModel.KUDOS_BASIS+5} kudos")
+    logger.message(f"Adjusting a job by +5 worth {job_kudos}, expected {KudosModel.KUDOS_BASIS + 5} kudos")
 
     # Test fixed kudos basis adjustment and percentage scaling
     job_kudos = kudos_model.calculate_kudos(KudosModel.BASIS_PAYLOAD, 5, 1.25)
     logger.message(
-        f"Adjusting a job by +5 and +25% worth {job_kudos}, " f"expected {(KudosModel.KUDOS_BASIS+5)*1.25} kudos",
+        f"Adjusting a job by +5 and +25% worth {job_kudos}, expected {(KudosModel.KUDOS_BASIS + 5) * 1.25} kudos",
     )
 else:
     kudos_model = KudosModel()
