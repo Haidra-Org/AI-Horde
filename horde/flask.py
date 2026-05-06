@@ -63,9 +63,9 @@ def create_app(config=None):
     # the OTel hook never executes and the WSGI middleware logs spurious
     # "Flask environ's OpenTelemetry span missing" warnings on every
     # rate-limited response.
-    from horde.telemetry import init_telemetry_early
+    # from horde.telemetry import init_telemetry_early
 
-    init_telemetry_early(app)
+    # init_telemetry_early(app)
 
     if config:
         app.config.update(config)
