@@ -1001,120 +1001,155 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     count_exprs = {}
 
     # models: WP specifies models that worker doesn't serve
-    count_exprs["models"] = func.sum(case(
-        (and_(WPModels.model.not_in(models_list), WPModels.id != None), 1),  # noqa E712
-        else_=0,
-    ))
+    count_exprs["models"] = func.sum(
+        case(
+            (and_(WPModels.model.not_in(models_list), WPModels.id != None), 1),  # noqa E712
+            else_=0,
+        ),
+    )
 
     # worker_id: WP targets specific workers (allowlist/blocklist)
-    count_exprs["worker_id"] = func.sum(case(
-        (or_(
-            WPAllowedWorkers.id != None,  # noqa E712
-            and_(
-                ImageWaitingPrompt.worker_blacklist.is_(False),
-                WPAllowedWorkers.worker_id != worker.id,
+    count_exprs["worker_id"] = func.sum(
+        case(
+            (
+                or_(
+                    WPAllowedWorkers.id != None,  # noqa E712
+                    and_(
+                        ImageWaitingPrompt.worker_blacklist.is_(False),
+                        WPAllowedWorkers.worker_id != worker.id,
+                    ),
+                    and_(
+                        ImageWaitingPrompt.worker_blacklist.is_(True),
+                        WPAllowedWorkers.worker_id == worker.id,
+                    ),
+                ),
+                1,
             ),
-            and_(
-                ImageWaitingPrompt.worker_blacklist.is_(True),
-                WPAllowedWorkers.worker_id == worker.id,
-            ),
-        ), 1),
-        else_=0,
-    ))
+            else_=0,
+        ),
+    )
 
     # max_pixels
-    count_exprs["max_pixels"] = func.sum(case(
-        (ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels, 1),
-        else_=0,
-    ))
+    count_exprs["max_pixels"] = func.sum(
+        case(
+            (ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels, 1),
+            else_=0,
+        ),
+    )
 
     # img2img (only counted if worker can't do it)
     if worker.allow_img2img is False or not can_img2img:
-        count_exprs["_img2img_raw"] = func.sum(case(
-            (ImageWaitingPrompt.source_image != None, 1),  # noqa E712
-            else_=0,
-        ))
+        count_exprs["_img2img_raw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.source_image != None, 1),  # noqa E712
+                else_=0,
+            ),
+        )
 
     # painting (only counted if worker can't do it)
     if worker.allow_painting is False or not can_inpainting:
-        count_exprs["_painting_raw"] = func.sum(case(
-            (ImageWaitingPrompt.source_processing.in_(["inpainting", "outpainting"]), 1),
-            else_=0,
-        ))
+        count_exprs["_painting_raw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.source_processing.in_(["inpainting", "outpainting"]), 1),
+                else_=0,
+            ),
+        )
 
     # unsafe_ip
     if worker.allow_unsafe_ipaddr is False:
-        count_exprs["unsafe_ip"] = func.sum(case(
-            (ImageWaitingPrompt.safe_ip == False, 1),  # noqa E712
-            else_=0,
-        ))
+        count_exprs["unsafe_ip"] = func.sum(
+            case(
+                (ImageWaitingPrompt.safe_ip == False, 1),  # noqa E712
+                else_=0,
+            ),
+        )
 
     # nsfw
     if worker.nsfw is False:
-        count_exprs["nsfw"] = func.sum(case(
-            (ImageWaitingPrompt.nsfw == True, 1),  # noqa E712
-            else_=0,
-        ))
+        count_exprs["nsfw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.nsfw == True, 1),  # noqa E712
+                else_=0,
+            ),
+        )
 
     # lora
     if worker.allow_lora is False or not can_lora:
-        count_exprs["_lora_raw"] = func.sum(case(
-            (ImageWaitingPrompt.params.has_key("loras"), 1),
-            else_=0,
-        ))
+        count_exprs["_lora_raw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.params.has_key("loras"), 1),
+                else_=0,
+            ),
+        )
 
     # TI
     if not can_ti:
-        count_exprs["_ti_raw"] = func.sum(case(
-            (ImageWaitingPrompt.params.has_key("tis"), 1),
-            else_=0,
-        ))
+        count_exprs["_ti_raw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.params.has_key("tis"), 1),
+                else_=0,
+            ),
+        )
 
     # post-processing
     if worker.allow_post_processing is False or not can_pp:
-        count_exprs["_pp_raw"] = func.sum(case(
-            (ImageWaitingPrompt.params.has_key("post-processing"), 1),
-            else_=0,
-        ))
+        count_exprs["_pp_raw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.params.has_key("post-processing"), 1),
+                else_=0,
+            ),
+        )
 
     # controlnet
     if worker.allow_controlnet is False or not can_controlnet:
-        count_exprs["_controlnet_raw"] = func.sum(case(
-            (ImageWaitingPrompt.params.has_key("control_type"), 1),
-            else_=0,
-        ))
+        count_exprs["_controlnet_raw"] = func.sum(
+            case(
+                (ImageWaitingPrompt.params.has_key("control_type"), 1),
+                else_=0,
+            ),
+        )
 
     # performance (slow workers)
     if worker.speed <= 500000:
-        count_exprs["_perf_slow"] = func.sum(case(
-            (ImageWaitingPrompt.slow_workers == False, 1),  # noqa E712
-            else_=0,
-        ))
+        count_exprs["_perf_slow"] = func.sum(
+            case(
+                (ImageWaitingPrompt.slow_workers == False, 1),  # noqa E712
+                else_=0,
+            ),
+        )
 
     # performance (extra slow workers)
     if worker.extra_slow_worker is True:
-        count_exprs["_perf_extra_slow"] = func.sum(case(
-            (ImageWaitingPrompt.extra_slow_workers == False, 1),  # noqa E712
-            else_=0,
-        ))
+        count_exprs["_perf_extra_slow"] = func.sum(
+            case(
+                (ImageWaitingPrompt.extra_slow_workers == False, 1),  # noqa E712
+                else_=0,
+            ),
+        )
 
     # untrusted
     if worker.user.trusted is False:
-        count_exprs["untrusted"] = func.sum(case(
-            (ImageWaitingPrompt.trusted_workers == True, 1),  # noqa E712
-            else_=0,
-        ))
+        count_exprs["untrusted"] = func.sum(
+            case(
+                (ImageWaitingPrompt.trusted_workers == True, 1),  # noqa E712
+                else_=0,
+            ),
+        )
 
     # bridge_version (sampler + capability checks)
     bv_conditions = []
-    bv_conditions.append(and_(
-        ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_samplers),
-        ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(False),
-    ))
-    bv_conditions.append(and_(
-        ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_karras_samplers),
-        ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(True),
-    ))
+    bv_conditions.append(
+        and_(
+            ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_samplers),
+            ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(False),
+        ),
+    )
+    bv_conditions.append(
+        and_(
+            ImageWaitingPrompt.params["sampler_name"].astext.not_in(available_karras_samplers),
+            ImageWaitingPrompt.params["karras"].astext.cast(Boolean).is_(True),
+        ),
+    )
     if not can_hires:
         bv_conditions.append(ImageWaitingPrompt.params["hires_fix"].astext.cast(Boolean).is_(True))
     if not can_return_ctrl:
@@ -1124,10 +1159,12 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     if not can_layer_diffuse:
         bv_conditions.append(ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(True))
 
-    count_exprs["_bv_sampler"] = func.sum(case(
-        (or_(*bv_conditions), 1),
-        else_=0,
-    ))
+    count_exprs["_bv_sampler"] = func.sum(
+        case(
+            (or_(*bv_conditions), 1),
+            else_=0,
+        ),
+    )
 
     # Execute single query
     query = (

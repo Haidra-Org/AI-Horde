@@ -36,7 +36,7 @@ from horde.classes.stable.worker import ImageWorker
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.enums import WarningMessage
-from horde.flask import HORDE, cache, db
+from horde.flask import cache, db, get_app
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.model_reference import model_reference
@@ -391,8 +391,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         # We have to do this sort of replacement to prevent randomized comfyUI strings from getting confused
         # With the {p}/{np} prompt replacement areas
         self.prompt = (
-            self.existing_style.prompt
-            .replace("{", "{{")
+            self.existing_style.prompt.replace("{", "{{")
             .replace("}", "}}")
             .replace("{{p}}", "{p}")
             .replace("{{np}}", "{np}")
