@@ -46,8 +46,7 @@ class InterrogationForms(db.Model):
 
     def pop(self, worker):
         myself_refresh = (
-            db.session
-            .query(InterrogationForms)
+            db.session.query(InterrogationForms)
             .filter(
                 InterrogationForms.id == self.id,
                 InterrogationForms.state == State.WAITING,

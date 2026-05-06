@@ -99,8 +99,7 @@ class InterrogationWorker(WorkerTemplate):
 
     def get_form_names(self):
         form_names = (
-            db.session
-            .query(func.distinct(WorkerInterrogationForm.form).label("name"))
+            db.session.query(func.distinct(WorkerInterrogationForm.form).label("name"))
             .filter(WorkerInterrogationForm.worker_id == self.id)
             .all()
         )

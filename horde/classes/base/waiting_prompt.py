@@ -345,8 +345,7 @@ class WaitingPrompt(db.Model):
     def count_finished_jobs(self):
         procgen_class = procgen_classes[self.wp_type]
         return (
-            db.session
-            .query(procgen_class.wp_id)
+            db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
                 procgen_class.fake.is_(False),
@@ -361,8 +360,7 @@ class WaitingPrompt(db.Model):
     def count_processing_jobs(self):
         procgen_class = procgen_classes[self.wp_type]
         return (
-            db.session
-            .query(procgen_class.wp_id)
+            db.session.query(procgen_class.wp_id)
             .filter(
                 procgen_class.wp_id == self.id,
                 procgen_class.fake.is_(False),

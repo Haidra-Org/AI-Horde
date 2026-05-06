@@ -109,8 +109,7 @@ class ProcessingGeneration(db.Model):
         kudos = self.get_gen_kudos()
 
         updated_rows = (
-            db.session
-            .query(type(self))
+            db.session.query(type(self))
             .filter(
                 type(self).id == self.id,
                 type(self).generation.is_(None),
