@@ -119,7 +119,7 @@ class InterrogationWorker(WorkerTemplate):
     def get_performance(self):
         performances = [p.performance for p in self.performance]
         if len(performances):
-            ret_str = f"{round(sum(performances) / len(performances),1)} seconds per form"
+            ret_str = f"{round(sum(performances) / len(performances), 1)} seconds per form"
         else:
             ret_str = "No requests fulfilled yet"
         return ret_str

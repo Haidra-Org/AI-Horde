@@ -12,7 +12,6 @@ from horde.model_reference import model_reference
 
 
 class ParamValidator:
-
     prompt: str
     models: list
     params: dict

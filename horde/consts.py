@@ -36,7 +36,7 @@ HEAVY_POST_PROCESSORS = {
     "RealESRGAN_x4plus",
     "RealESRGAN_x4plus_anime_6B",
     "NMKD_Siax",
-    "4x_AnimeSharp" "CodeFormers",
+    "4x_AnimeSharpCodeFormers",
 }
 
 # These models are very large in VRAM, so we increase the calculated MPS

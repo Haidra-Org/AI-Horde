@@ -194,12 +194,12 @@ class InterrogationForms(db.Model):
                 if not req.ok:
                     logger.debug(
                         f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. "
-                        f"Will retry {3-riter-1} more times...",
+                        f"Will retry {3 - riter - 1} more times...",
                     )
                     continue
                 break
             except Exception as err:
-                logger.debug(f"Exception when sending alchemy webhook: {err}. Will retry {3-riter-1} more times...")
+                logger.debug(f"Exception when sending alchemy webhook: {err}. Will retry {3 - riter - 1} more times...")
 
 
 class Interrogation(db.Model):

@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [project]
-name = "AI Horde"
+name = "AI-Horde"
 version = "4.50.0"
 description = "A Crowdsourced Generative AI cluster for everyone."
 authors = [

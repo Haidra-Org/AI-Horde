@@ -252,8 +252,7 @@ class ImageModels(v2.Models):
                     required=True,
                     example="Magnagothica",
                     description=(
-                        "The exact name or CivitAI Model Page ID of the LoRa. "
-                        "If is_version is true, this should be the CivitAI version ID."
+                        "The exact name or CivitAI Model Page ID of the LoRa. If is_version is true, this should be the CivitAI version ID."
                     ),
                     unique=True,
                     min_length=1,
@@ -287,8 +286,7 @@ class ImageModels(v2.Models):
                     required=False,
                     default=False,
                     description=(
-                        "If true, will consider the LoRa ID as a CivitAI version ID and search accordingly. "
-                        "Ensure the name is an integer."
+                        "If true, will consider the LoRa ID as a CivitAI version ID and search accordingly. Ensure the name is an integer."
                     ),
                 ),
             },
@@ -632,7 +630,7 @@ class ImageModels(v2.Models):
                 "extra_slow_workers": fields.Boolean(
                     default=False,
                     description=(
-                        "When True, allows very slower workers to pick up this request. " "Use this when you don't mind waiting a lot."
+                        "When True, allows very slower workers to pick up this request. Use this when you don't mind waiting a lot."
                     ),
                 ),
                 "censor_nsfw": fields.Boolean(
@@ -738,7 +736,7 @@ class ImageModels(v2.Models):
                 ),
                 "speed": fields.Float(
                     description=(
-                        "The total expected speed of this team when all workers are working in parallel, " "in megapixelsteps per second."
+                        "The total expected speed of this team when all workers are working in parallel, in megapixelsteps per second."
                     ),
                 ),
             },
@@ -850,7 +848,7 @@ class ImageModels(v2.Models):
                 "threads": fields.Integer(
                     default=1,
                     description=(
-                        "How many threads this worker is running. " "This is used to accurately the current power available in the horde."
+                        "How many threads this worker is running. This is used to accurately the current power available in the horde."
                     ),
                     min=1,
                     max=100,
