@@ -3,8 +3,9 @@ SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
+# AI-Horde Contributing Guide
 
-# How to run AI Horde locally.
+## How to run AI Horde locally
 
 * Git clone this repository
 * copy `.env_template` into `.env` and edit it according to its comments. The horde should start if you leave it unedited
@@ -14,7 +15,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 To run the AI Horde with Docker or Docker Compose, see the [README_docker.md](README_docker.md).
 
-# How to contribute to the AI Horde code
+## How to contribute to the AI Horde code
 
 We are happy you have ideas to improve this service and we welcome all contributors.
 
@@ -33,31 +34,31 @@ This will ensure that the project will prevent you from commiting changes which 
 
 The tools we're using are the following
 
-## black
+### ruff
 
-To format all files as necessary, simply run:
+We use ruff for linting and formatting.
 
-```bash
-black .
-```
-
-## ruff
-
-To adjust all files as necessary, simply run:
+To identify and fix (if possible) all files as necessary, simply run:
 
 
 ```bash
 ruff . --fix
 ```
 
+To format all files:
+
+```bash
+ruff format .
+```
+
 Ruff might request extra manual fixes
 
-## reuse
+### reuse
 
 [Reuse](https://reuse.software/) ensures that all license and contribution info is maintained. You usually don't need to do anything about this unless you add a new file, or you make significant changes in an existing one.
 
 
-### New file
+#### New files
 
 If you add a new file, you need to ensure that it has the copyright and license information with a command like this:
 
@@ -73,7 +74,7 @@ The license to choose is based on the file.
 * For non-GenAI art and other such creative contributions, use `CC-BY-SA-4.0`
 * For trivial files such as .gitignore and Generative AI art, use `CC0-1.0`
 
-### Existing file
+#### Existing files
 
 If you did some significant contributions to the code (i.e. not things like syntax, spelling. linting etc), then just add your own copyrights to an existing file. For example:
 
@@ -85,6 +86,14 @@ Simply replace the copyright with your own username and optionally email.
 
 Note that the pre-commit will not complain if you forget to add your copyright notice to an existing file.
 
-# Code of Conduct
+### .git-blame-ignore-revs
+
+We use `.git-blame-ignore-revs` to ignore certain commits when using `git blame`. This is useful for commits that do a lot of formatting changes, or other non-functional changes. You can configure your git to ignore these commits by running the following command:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+## Code of Conduct
 
 We expect all contributors to follow the [Anarchist code of conduct](https://wiki.dbzer0.com/the-anarchist-code-of-conduct/). Do not drive away other contributors due to intended or unintended on bigotry.
