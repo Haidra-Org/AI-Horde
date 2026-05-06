@@ -34,19 +34,18 @@ def get_app():
 # SQLAlchemy's `handle_error` event does not fire on QueuePool checkout
 # timeouts (the exception is raised directly inside Pool._do_get without
 # event dispatch). Subclassing is the only reliable hook.
-from sqlalchemy.exc import TimeoutError as _SAQueuePoolTimeoutError  # noqa: E402
+# from sqlalchemy.exc import TimeoutError as _SAQueuePoolTimeoutError  # noqa: E402
 from sqlalchemy.pool import QueuePool as _BaseQueuePool  # noqa: E402
 
+# class _InstrumentedQueuePool(_BaseQueuePool):
+#     def _do_get(self):
+#         try:
+#             return super()._do_get()
+#         except _SAQueuePoolTimeoutError:
+#             from horde import metrics
 
-class _InstrumentedQueuePool(_BaseQueuePool):
-    def _do_get(self):
-        try:
-            return super()._do_get()
-        except _SAQueuePoolTimeoutError:
-            from horde import metrics
-
-            metrics.db_pool_timeout.add(1)
-            raise
+#             metrics.db_pool_timeout.add(1)
+#             raise
 
 
 def create_app(config=None):
@@ -86,7 +85,7 @@ def create_app(config=None):
             # redis, webhook, log formatting). Shrinking the pool surfaces
             # that inefficiency via QueuePool timeouts instead of PG refusals.
             app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-                "poolclass": _InstrumentedQueuePool,
+                "poolclass": _BaseQueuePool,
                 "pool_size": int(os.getenv("SQLALCHEMY_POOL_SIZE", "15")),
                 "max_overflow": int(os.getenv("SQLALCHEMY_MAX_OVERFLOW", "5")),
                 "pool_timeout": int(os.getenv("SQLALCHEMY_POOL_TIMEOUT", "30")),
