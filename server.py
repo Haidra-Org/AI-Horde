@@ -15,11 +15,12 @@ if profile is not None:
 else:
     load_dotenv()
 
+from horde.telemetry import init_telemetry_late
+
 from horde.argparser import args
 from horde.flask import create_app
 from horde.logger import logger, reconfigure_from_args
 from horde.metrics import waitress_metrics
-from horde.telemetry import init_telemetry_late
 
 reconfigure_from_args(args)
 app = create_app()
