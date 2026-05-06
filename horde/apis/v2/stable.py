@@ -391,7 +391,8 @@ class ImageAsyncGenerate(GenerateTemplate):
         # We have to do this sort of replacement to prevent randomized comfyUI strings from getting confused
         # With the {p}/{np} prompt replacement areas
         self.prompt = (
-            self.existing_style.prompt.replace("{", "{{")
+            self.existing_style.prompt
+            .replace("{", "{{")
             .replace("}", "}}")
             .replace("{{p}}", "{p}")
             .replace("{{np}}", "{np}")
@@ -934,7 +935,7 @@ class Interrogate(Resource):
             raise e.MaintenanceMode("Interrogate")
         if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
-        with HORDE.app_context():
+        with get_app().app_context():
             if self.args.apikey:
                 self.user = database.find_user_by_api_key(self.args["apikey"])
             if not self.user:

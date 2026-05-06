@@ -25,71 +25,62 @@ from horde.classes.stable.known_image_models import KnownImageModel  # noqa 401
 # noqa 401
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt  # noqa 401
 from horde.classes.stable.worker import ImageWorker  # noqa 401
-from horde.flask import HORDE, db
+from horde.flask import db
 from horde.logger import logger
 from horde.utils import hash_api_key
 
-with HORDE.app_context():
-    # from sqlalchemy import select
-    # logger.debug(select(ImageWorker.speed))
-    # q = ImageWorker.query.filter(ImageWorker.speed > 2000000)
-    # logger.debug(q)
-    # logger.debug(q.count())
-    # import sys
-    # sys.exit()
-    db.create_all()
 
-    sql_statement_dir = Path(__file__).parent.parent.parent / "sql_statements"
+def init_db(app):
+    """Initialize database schema, run SQL procedures, and create default records."""
+    with app.app_context():
+        db.create_all()
 
-    # The order of these directories is important. `cron` creates a stored procedure that is
-    # used by queries in all other `cron_jobs/` directories.
-    all_dirs_to_run = [
-        "cron/",  # Must be first
-        "stored_procedures/",
-        "stored_procedures/cron_jobs/",
-    ]
+        sql_statement_dir = Path(__file__).parent.parent.parent / "sql_statements"
 
-    all_dirs_to_run = [sql_statement_dir / dir for dir in all_dirs_to_run]
+        # The order of these directories is important. `cron` creates a stored procedure that is
+        # used by queries in all other `cron_jobs/` directories.
+        all_dirs_to_run = [
+            "cron/",  # Must be first
+            "stored_procedures/",
+            "stored_procedures/cron_jobs/",
+        ]
 
-    with logger.catch(reraise=True):
-        for dir in all_dirs_to_run:
-            logger.info(f"Running files in {dir}")
-            for file in dir.iterdir():
-                if file.suffix == ".sql":
-                    logger.info(f"Running {file}")
-                    with file.open() as f:
-                        db.session.execute(text(f.read()))
+        all_dirs_to_run = [sql_statement_dir / dir for dir in all_dirs_to_run]
 
-        db.session.commit()
+        with logger.catch(reraise=True):
+            for dir in all_dirs_to_run:
+                logger.info(f"Running files in {dir}")
+                for file in dir.iterdir():
+                    if file.suffix == ".sql":
+                        logger.info(f"Running {file}")
+                        with file.open() as f:
+                            db.session.execute(text(f.read()))
 
-    if args.convert_flag == "roles":
-        # from horde.conversions import convert_user_roles
+            db.session.commit()
 
-        # convert_user_roles()
-        raise NotImplementedError("Role conversion not implemented")
+        if args.convert_flag == "roles":
+            raise NotImplementedError("Role conversion not implemented")
 
-    if args.convert_flag == "SQL":
-        # from horde.conversions import convert_json_db
+        if args.convert_flag == "SQL":
+            raise NotImplementedError("SQL conversion not implemented")
 
-        # convert_json_db()
-        raise NotImplementedError("SQL conversion not implemented")
+        anon = db.session.query(User).filter_by(oauth_id="anon").first()
+        if not anon:
+            anon = User(
+                id=0,
+                username="Anonymous",
+                oauth_id="anon",
+                api_key=hash_api_key("0000000000"),
+                public_workers=True,
+                concurrency=500,
+            )
+            anon.create()
+        settings = HordeSettings.query.first()
+        if not settings:
+            settings = HordeSettings()
+            db.session.add(settings)
+            db.session.commit()
 
-    anon = db.session.query(User).filter_by(oauth_id="anon").first()
-    if not anon:
-        anon = User(
-            id=0,
-            username="Anonymous",
-            oauth_id="anon",
-            api_key=hash_api_key("0000000000"),
-            public_workers=True,
-            concurrency=500,
-        )
-        anon.create()
-    settings = HordeSettings.query.first()
-    if not settings:
-        settings = HordeSettings()
-        db.session.add(settings)
-        db.session.commit()
 
 __all__ = [
     "ImageProcessingGeneration",
