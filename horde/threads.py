@@ -6,7 +6,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Callable, Optional
 
-
 from horde.logger import logger
 from horde.vars import horde_instance_id
 
