@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import oauthlib
 import requests
-from flask import redirect, render_template, request, send_from_directory, url_for
+from flask import Blueprint, redirect, render_template, request, send_from_directory, url_for
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from flask_dance.contrib.google import google
@@ -22,7 +22,7 @@ from horde.classes.base.user import User
 from horde.consts import HORDE_API_VERSION, HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
-from horde.flask import HORDE, cache, db
+from horde.flask import cache, db
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.utils import ConvertAmount, generate_api_key, hash_api_key, is_profane, sanitize_string
@@ -36,11 +36,13 @@ from horde.vars import (
     img_url,
 )
 
+routes_bp = Blueprint("routes", __name__)
+
 dance_return_to = "/"
 
 
 @logger.catch(reraise=True)
-@HORDE.route("/")
+@routes_bp.route("/")
 # @cache.cached(timeout=300)
 def index():
     with open(os.getenv("HORDE_MARKDOWN_INDEX", "index_stable.md")) as index_file:
@@ -140,7 +142,7 @@ def index():
     return head + markdown(findex + policies)
 
 
-@HORDE.route("/sponsors")
+@routes_bp.route("/sponsors")
 @logger.catch(reraise=True)
 @cache.cached(timeout=300)
 def patrons_route():
@@ -202,7 +204,7 @@ def get_oauth_id():
 
 
 @logger.catch(reraise=True)
-@HORDE.route("/register", methods=["GET", "POST"])
+@routes_bp.route("/register", methods=["GET", "POST"])
 def register():
     api_key = None
     user = None
@@ -287,7 +289,7 @@ def register():
 
 
 @logger.catch(reraise=True)
-@HORDE.route("/transfer", methods=["GET", "POST"])
+@routes_bp.route("/transfer", methods=["GET", "POST"])
 def transfer():
     src_user = None
     dest_username = None
@@ -332,35 +334,35 @@ def transfer():
     )
 
 
-@HORDE.route("/google/<return_to>")
+@routes_bp.route("/google/<return_to>")
 def google_login(return_to):
     global dance_return_to
     dance_return_to = "/" + return_to
     return redirect(url_for("google.login"))
 
 
-@HORDE.route("/discord/<return_to>")
+@routes_bp.route("/discord/<return_to>")
 def discord_login(return_to):
     global dance_return_to
     dance_return_to = "/" + return_to
     return redirect(url_for("discord.login"))
 
 
-@HORDE.route("/github/<return_to>")
+@routes_bp.route("/github/<return_to>")
 def github_login(return_to):
     global dance_return_to
     dance_return_to = "/" + return_to
     return redirect(url_for("github.login"))
 
 
-# @HORDE.route('/patreon/<return_to>')
+# @routes_bp.route('/patreon/<return_to>')
 # def patreon_login(return_to):
 #     global dance_return_to
 #     dance_return_to = '/' + return_to
 #     return redirect('/patreon/patreon')
 
 
-@HORDE.route("/finish_dance")
+@routes_bp.route("/finish_dance")
 def finish_dance():
     global dance_return_to
     redirect_url = dance_return_to
@@ -368,7 +370,7 @@ def finish_dance():
     return redirect(redirect_url)
 
 
-@HORDE.route("/privacy")
+@routes_bp.route("/privacy")
 def privacy():
     return render_template(
         "document.html",
@@ -379,7 +381,7 @@ def privacy():
     )
 
 
-@HORDE.route("/terms")
+@routes_bp.route("/terms")
 def terms():
     return render_template(
         "document.html",
@@ -390,12 +392,12 @@ def terms():
     )
 
 
-@HORDE.route("/assets/<filename>")
+@routes_bp.route("/assets/<filename>")
 def assets(filename):
     return send_from_directory("../assets", filename)
 
 
-@HORDE.route("/.well-known/serviceinfo")
+@routes_bp.route("/.well-known/serviceinfo")
 def serviceinfo():
     return {
         "version": "0.2",
