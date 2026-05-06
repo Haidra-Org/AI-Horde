@@ -819,7 +819,7 @@ class Aesthetics(Resource):
         except requests.exceptions.ReadTimeout:
             raise e.InvalidAestheticAttempt("The rating server took to long to respond", rc="AestheticsServerTimeout")
         except Exception as err:
-            if type(err) == e.InvalidAestheticAttempt:
+            if type(err) is e.InvalidAestheticAttempt:
                 raise err
             logger.error(f"Error when submitting Aesthetic: {err}")
             raise e.InvalidAestheticAttempt(
