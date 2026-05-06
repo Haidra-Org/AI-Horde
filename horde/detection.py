@@ -12,7 +12,7 @@ from unidecode import unidecode
 
 from horde.argparser import args
 from horde.database.functions import compile_regex_filter, retrieve_regex_replacements
-from horde.flask import HORDE, SQLITE_MODE  # Local Testing
+from horde.flask import SQLITE_MODE, get_app
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
@@ -79,7 +79,7 @@ class PromptChecker:
         if self.next_refresh > datetime.utcnow():
             return
         if SQLITE_MODE:
-            with HORDE.app_context():
+            with get_app().app_context():
                 stored_replacements = retrieve_regex_replacements(filter_type=10)
         else:
             cached_replacements = hr.horde_r_get("cached_regex_replacements")
@@ -94,7 +94,7 @@ class PromptChecker:
         for _id in [10, 11, 20]:
             filter_id = f"filter_{_id}"
             if SQLITE_MODE:
-                with HORDE.app_context():
+                with get_app().app_context():
                     stored_filter = compile_regex_filter(_id)
             else:
                 stored_filter = hr.horde_r_get(filter_id)

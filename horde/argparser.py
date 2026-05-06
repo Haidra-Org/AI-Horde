@@ -57,7 +57,7 @@ arg_parser.add_argument(
     "--horde",
     action="store",
     default="stable",
-    required=True,
+    required=False,
     type=str,
     help="Which Horde to Start. This customizes endpoints and methods",
 )
@@ -110,7 +110,10 @@ arg_parser.add_argument(
 )
 arg_parser.add_argument("--test", action="store_true", help="Test")
 arg_parser.add_argument("--color", default=False, action="store_true", help="Enabled colorized logs")
-args = arg_parser.parse_args()
+try:
+    args, _unknown = arg_parser.parse_known_args()
+except SystemExit:
+    args = arg_parser.parse_args([])
 
 maintenance = Switch()
 invite_only = Switch()

@@ -19,13 +19,14 @@ from horde.redis_ctrl import (
 
 
 class HordeRedis:
-    locks = {}
-    horde_r = None
-    all_horde_redis = []
-    horde_local_r = None
-    check_redis_thread = None
-
     def __init__(self):
+        self.locks = {}
+        self.horde_r = None
+        self.all_horde_redis = []
+        self.horde_local_r = None
+        self.check_redis_thread = None
+
+    def connect(self):
         logger.init("Horde Redis", status="Connecting")
         if is_redis_up():
             self.horde_r = get_horde_db()

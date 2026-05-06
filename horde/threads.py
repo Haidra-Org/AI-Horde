@@ -4,13 +4,35 @@
 
 import threading
 import time
+from typing import TYPE_CHECKING, Callable, Optional
+
 
 from horde.logger import logger
 from horde.vars import horde_instance_id
 
+if TYPE_CHECKING:
+    from horde.database.classes import Quorum
+
 
 class PrimaryTimedFunction:
-    def __init__(self, interval, function, args=None, kwargs=None, quorum=None):
+    interval: float
+    function: Callable
+    processing: bool
+    processing_skips: int
+    cancel: bool
+    args: list
+    kwargs: dict
+    quorum_thread: Optional["Quorum"]
+    thread: threading.Thread
+
+    def __init__(
+        self,
+        interval: float,
+        function: Callable,
+        args: Optional[list] = None,
+        kwargs: Optional[dict] = None,
+        quorum: Optional["Quorum"] = None,
+    ) -> None:
         self.interval = interval
         self.function = function
         self.processing = False

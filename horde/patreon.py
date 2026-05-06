@@ -94,7 +94,7 @@ class PatreonCache(PrimaryTimedFunction):
 patrons = PatreonCache(3600, None)
 # We call it now to ensure the cache if full when the monthly kudos assignment
 # is done because the thread take a second longer to fire than the import
-if hr.horde_r:
+if hr.horde_r and os.environ.get("PATREON_CREATOR_ACCESS_TOKEN"):
     patrons.call_function()
     # logger.debug(json.dumps(patrons.patrons, indent=4))
     # logger.debug(json.dumps(patrons.get_ids(), indent=4))

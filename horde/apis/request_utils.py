@@ -5,7 +5,7 @@
 from flask import request
 from loguru import logger
 
-from horde.database import cached_passkeys
+from horde.database import get_cached_passkeys
 
 
 def get_remoteaddr():
@@ -13,6 +13,7 @@ def get_remoteaddr():
     remoteaddr = request.remote_addr
     passkey = request.headers.get("Proxy-Authorization", None)
     if passkey:
+        cached_passkeys = get_cached_passkeys()
         if cached_passkeys.is_passkey_known(passkey):
             remoteaddr = request.headers.get("Proxied-For", remoteaddr)
         else:
@@ -24,4 +25,5 @@ def get_current_passkey_owner():
     """Returns the user ID of the owner of the passkey"""
     passkey = request.headers.get("Proxy-Authorization", None)
     if passkey:
+        cached_passkeys = get_cached_passkeys()
         return cached_passkeys.get_passkey_owner(passkey)

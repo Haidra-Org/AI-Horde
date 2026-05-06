@@ -145,7 +145,7 @@ jobs:
           curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<code class="ah-api-key">\K[^<]*(?=</code>)' > tests/apikey.txt
           export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
 
-          pytest tests/ -s
+          pytest tests/integration/ -s
 
   runner-horde-sdk-job:
     runs-on: ubuntu-latest

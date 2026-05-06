@@ -83,7 +83,7 @@ class StripeCache(PrimaryTimedFunction):
 stripe_subs = StripeCache(1800, None)
 # We call it now to ensure the cache if full when the monthly kudos assignment
 # is done because the thread take a second longer to fire than the import
-if hr.horde_r:
+if hr.horde_r and os.environ.get("STRIPE_API_KEY"):
     stripe_subs.call_function()
     # logger.debug(json.dumps(stripe_subs.patrons, indent=4))
     # logger.debug(json.dumps(stripe_subs.get_ids(), indent=4))
