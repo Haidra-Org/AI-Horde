@@ -60,25 +60,29 @@ class ProcessingGeneration(db.Model):
         db.session.add(self)
         db.session.commit()
         if kwargs.get("model") is None:
-            worker_models = self.worker.get_model_names()
-            if len(worker_models):
-                self.model = worker_models[0]
-            else:
-                self.model = ""
+            worker_models = list(self.worker.get_model_names())
             # If we reached this point, it means there is at least 1 matching model between worker and client
             # so we pick the first one.
-            wp_models = self.wp.get_model_names()
-            matching_models = worker_models
+            wp_models = list(self.wp.get_model_names())
+            matching_models = worker_models.copy()
             if len(wp_models) != 0:
-                matching_models = [model for model in self.wp.get_model_names() if model in worker_models]
+                matching_models = [model for model in wp_models if model in worker_models]
             if len(matching_models) == 0:
                 logger.warning(
                     f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. "
                     f"Request Models: {wp_models}. Will use random worker model.",
                 )
-                matching_models = worker_models
-            random.shuffle(matching_models)
-            self.model = matching_models[0]
+                # If worker model metadata is missing, prefer the explicit request model over crashing.
+                matching_models = wp_models if len(wp_models) != 0 else worker_models
+            if len(matching_models) == 0:
+                logger.warning(
+                    f"No models available for generation {self.id}. "
+                    f"Worker Models: {worker_models}. Request Models: {wp_models}. Using empty model string.",
+                )
+                self.model = ""
+            else:
+                random.shuffle(matching_models)
+                self.model = matching_models[0]
         else:
             self.model = kwargs["model"]
         self.set_job_ttl()
