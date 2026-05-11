@@ -230,6 +230,14 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([payload,prompt_payload])
         return prompt_payload
 
+    def start_generation(self, worker, amount=1):
+        # A single worker payload can represent multiple images via n_iter, but
+        # it only carries one seed. Random seeds and seed_variation need one
+        # payload per procgen to avoid duplicate images within the same batch.
+        if self.seed is None or self.seed_variation:
+            amount = 1
+        return super().start_generation(worker, amount)
+
     def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None, kudos_adjustment=0):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
