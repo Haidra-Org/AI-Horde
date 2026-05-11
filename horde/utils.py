@@ -5,7 +5,6 @@
 import hashlib
 import json
 import os
-import random
 import secrets
 import uuid
 from datetime import datetime
@@ -20,8 +19,6 @@ from horde import exceptions as e
 from horde.flask import SQLITE_MODE
 
 profanity.load_censor_words()
-
-random.seed(random.SystemRandom().randint(0, 2**32 - 1))
 
 
 def is_profane(text):
@@ -120,8 +117,11 @@ def get_interrogation_form_expiry_date():
 
 
 def get_random_seed(start_point=0):
-    """Generated a random seed, using a random number unique per node"""
-    return random.randint(start_point, 2**32 - 1)
+    """Generate a random seed from OS randomness."""
+    max_seed = 2**32 - 1
+    if start_point > max_seed:
+        raise ValueError("start_point cannot be greater than the maximum seed")
+    return start_point + secrets.randbelow(max_seed - start_point + 1)
 
 
 def count_parentheses(s):
