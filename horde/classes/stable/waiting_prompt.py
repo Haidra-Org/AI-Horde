@@ -115,6 +115,8 @@ class ImageWaitingPrompt(WaitingPrompt):
             # It then crashes in self.gen_payload["seed"] += self.seed_variation trying to None + Int
             if self.seed is None:
                 self.seed = self.seed_to_int(self.seed)
+        if self.needs_seed_safe_batching():
+            self.disable_batching = True
         # logger.debug(self.params)
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         self.things = self.width * self.height * self.get_accurate_steps()
@@ -169,6 +171,9 @@ class ImageWaitingPrompt(WaitingPrompt):
                 "comfy_pipeline": f"{pipline_name}.json",
             }
         return ret_payload
+
+    def needs_seed_safe_batching(self):
+        return self.n > 1 and (self.seed is None or self.seed_variation is not None)
 
     def get_share_metadata(self):
         """This is uploaded along with the image to the shared R2, when this WP shared"""
