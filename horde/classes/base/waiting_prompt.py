@@ -221,46 +221,50 @@ class WaitingPrompt(db.Model):
         return self.n > 0
 
     def start_generation(self, worker, amount=1):
-        # # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
-        # myself_refresh = db.session.query(
-        #     type(self)
-        # ).filter(
-        #     type(self).id == self.id,
-        #     type(self).n > 0
-        # ).with_for_update().populate_existing().first()
-        # if not myself_refresh:
-        #     return None
-        # myself_refresh.n -= 1
-        safe_amount = worker.get_safe_amount(amount, self)
-        if safe_amount > self.n:
-            safe_amount = self.n
-        if self.disable_batching:
+        # Lock the prompt while reserving work so concurrent pop requests cannot
+        # read the same remaining count and hand out duplicate generation payloads.
+        myself_refresh = (
+            db.session.query(type(self))
+            .filter(
+                type(self).id == self.id,
+                type(self).n > 0,
+            )
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if not myself_refresh:
+            return None
+        safe_amount = worker.get_safe_amount(amount, myself_refresh)
+        if safe_amount > myself_refresh.n:
+            safe_amount = myself_refresh.n
+        if myself_refresh.disable_batching:
             safe_amount = 1
         # We use a local var to avoid touching the DB through self.n
         # due to all the commits clearing row lock,
         # can we can't ensure a race-condition won't have changed self.n between iterations
-        current_n = self.n
-        self.n -= safe_amount
-        payload = self.get_job_payload(current_n)
+        current_n = myself_refresh.n
+        myself_refresh.n -= safe_amount
+        payload = myself_refresh.get_job_payload(current_n)
         # This does a commit as well
-        self.refresh(worker)
-        procgen_class = procgen_classes[self.wp_type]
+        myself_refresh.refresh(worker)
+        procgen_class = procgen_classes[myself_refresh.wp_type]
         gens_list = []
         model = None
         while safe_amount >= 1:
             safe_amount -= 1
             current_n -= 1
-            new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, model=model)
+            new_gen = procgen_class(wp_id=myself_refresh.id, worker_id=worker.id, model=model)
             # For batched requests, we need all procgens to use the same model
             model = new_gen.model
             logger.info(
-                f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
+                f"Procgen with ID {new_gen.id} popped from WP {myself_refresh.id} by worker {worker.id} "
                 f"('{worker.name}' / {worker.ipaddr}) - {current_n} gens left",
             )
             gens_list.append(new_gen)
-            if self.faulted:
+            if myself_refresh.faulted:
                 break
-        pop_payload = self.get_pop_payload(gens_list, payload)
+        pop_payload = myself_refresh.get_pop_payload(gens_list, payload)
         return pop_payload
 
     def fake_generation(self, worker):
