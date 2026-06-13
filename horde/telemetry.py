@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import logfire
 
-from horde.logger import logger as _loguru_logger
+from loguru import logger as _loguru_logger
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
