@@ -13,13 +13,13 @@ import requests
 from horde.argparser import args
 from horde.consts import WHITELISTED_SERVICE_IPS, WHITELISTED_VPN_IPS
 from horde.logger import logger
+from horde.metrics import ip_check_duration
 from horde.redis_ctrl import (
     get_ipaddr_db,
     get_ipaddr_suspicion_db,
     get_ipaddr_timeout_db,
     is_redis_up,
 )
-from horde.metrics import ip_check_duration
 
 ip_r = None
 ip_s_r = None

@@ -5,7 +5,6 @@
 import os
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
 
 import dateutil.relativedelta
 from sqlalchemy import Enum, UniqueConstraint
@@ -195,10 +194,10 @@ class UserSharedKey(db.Model):
     def is_job_within_limits(
         self,
         *,
-        image_pixels: Optional[int] = None,
-        image_steps: Optional[int] = None,
-        text_tokens: Optional[int] = None,
-    ) -> tuple[bool, Optional[str]]:
+        image_pixels: int | None = None,
+        image_steps: int | None = None,
+        text_tokens: int | None = None,
+    ) -> tuple[bool, str | None]:
         """Checks if the job is within the limits of the shared key
 
         Args:

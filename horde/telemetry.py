@@ -33,17 +33,72 @@ OTLP export is fully driven by standard env vars
 ``send_to_logfire=False`` (see logfire ``_internal/config.py`` ~line 1199).
 """
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import logfire
 
-from horde.logger import logger
+from horde.logger import logger as _loguru_logger
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from flask import Flask
+    from opentelemetry.sdk.trace import SpanProcessor
+
+
+class _HordeLogger(Protocol):
+    """Subset of the loguru logger augmented with Horde's custom INIT levels.
+
+    ``horde.logger`` binds ``init_ok`` / ``init_warn`` / ``init_err`` onto the
+    loguru ``Logger`` class at import time via ``partialmethod``; those dynamic
+    attributes are invisible to static analysis, so this Protocol re-declares
+    the subset used in this module.
+    """
+
+    def init_ok(self, message: str, *, status: str) -> None: ...
+    def init_warn(self, message: str, *, status: str) -> None: ...
+    def init_err(self, message: str, *, status: str) -> None: ...
+    def add(self, sink: Any, **kwargs: Any) -> int: ...
+
+
+logger: _HordeLogger = cast("_HordeLogger", _loguru_logger)
 
 _initialized_early = False
 _initialized_late = False
 
 
-def init_telemetry_early(app):
+def telemetry_enabled() -> bool:
+    """Return ``True`` when telemetry should be activated for this process.
+
+    Telemetry is opt-in. It activates only when an OTLP endpoint is configured
+    (the deployments Ansible role sets ``OTEL_EXPORTER_OTLP_ENDPOINT`` whenever
+    observability is enabled) or when ``AI_HORDE_TELEMETRY_ENABLED`` is set
+    explicitly (handy for local console/no-export debugging). The standard
+    ``OTEL_SDK_DISABLED=true`` remains an absolute off switch that overrides
+    both.
+
+    The dependency surface and image are always telemetry-capable; this gate
+    only governs runtime activation so a bare ``python server.py`` stays inert
+    by default.
+    """
+    if os.environ.get("OTEL_SDK_DISABLED", "").lower() == "true":
+        return False
+    if os.environ.get("AI_HORDE_TELEMETRY_ENABLED", "").lower() in ("1", "true", "yes"):
+        return True
+    return any(
+        os.environ.get(var)
+        for var in (
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        )
+    )
+
+
+def init_telemetry_early(app: Flask) -> None:
     """Configure Logfire and instrument Flask + outbound HTTP + loguru.
 
     Must be invoked before any other ``before_request`` registration so OTel's
@@ -103,8 +158,7 @@ def init_telemetry_early(app):
     logger.init_ok("Telemetry", status="Early ready")
 
 
-
-def init_telemetry_late(app):
+def init_telemetry_late(app: Flask) -> None:
     """Instrument SQLAlchemy and Redis once the app is fully constructed."""
     global _initialized_late
     if _initialized_late:
@@ -130,14 +184,13 @@ def init_telemetry_late(app):
     logger.init_ok("Telemetry", status="Late ready")
 
 
-def init_telemetry(app):
+def init_telemetry(app: Flask) -> None:
     """Backwards-compatible single-call init (early + late)."""
     init_telemetry_early(app)
     init_telemetry_late(app)
 
 
-
-def _build_sampling_options():
+def _build_sampling_options() -> logfire.SamplingOptions:
     """Return ``logfire.SamplingOptions`` honouring ``OTEL_TRACES_SAMPLER_ARG``.
 
     Defaults to ``1.0`` (record everything) so local-deploy / dev get full
@@ -153,8 +206,7 @@ def _build_sampling_options():
     return logfire.SamplingOptions(head=ratio)
 
 
-
-def _init_pyroscope():
+def _init_pyroscope() -> list[SpanProcessor]:
     if os.environ.get("PYROSCOPE_ENABLED", "").lower() != "true":
         return []
 
@@ -171,7 +223,10 @@ def _init_pyroscope():
         )
         logger.init_ok("Telemetry", status="Pyroscope")
     except ImportError:
-        logger.init_warn("Telemetry", status="Pyroscope N/A")
+        logger.init_warn(
+            "Telemetry",
+            status="Pyroscope N/A (install telemetry-profiling group or use the telemetry image)",
+        )
         return []
     except Exception as err:
         logger.init_err("Telemetry", status=f"Pyroscope: {err}")
@@ -183,11 +238,14 @@ def _init_pyroscope():
         logger.init_ok("Telemetry", status="Pyroscope span profiles")
         return [PyroscopeSpanProcessor()]
     except ImportError:
-        logger.init_warn("Telemetry", status="pyroscope-otel N/A (pip install pyroscope-otel)")
+        logger.init_warn(
+            "Telemetry",
+            status="pyroscope-otel N/A (install telemetry-profiling group or use the telemetry image)",
+        )
         return []
 
 
-def get_traceparent():
+def get_traceparent() -> str | None:
     """Capture the current W3C traceparent string from the active span context."""
     from opentelemetry import trace
     from opentelemetry.trace import format_span_id, format_trace_id
@@ -199,16 +257,16 @@ def get_traceparent():
     return None
 
 
-def pyroscope_tag(**tags):
+def pyroscope_tag(**tags: str) -> AbstractContextManager[None]:
     """Context manager applying low-cardinality Pyroscope tags (no-op if unavailable).
 
     Callers must only pass bounded tag keys/values (endpoint family, job
-    type, etc.) — never raw user/worker IDs.
+    type, etc.), never raw user/worker IDs.
     """
     try:
-        import pyroscope  # type: ignore
+        import pyroscope
     except ImportError:
         from contextlib import nullcontext
 
         return nullcontext()
-    return pyroscope.tag_wrapper(tags)
+    return cast("AbstractContextManager[None]", pyroscope.tag_wrapper(tags))

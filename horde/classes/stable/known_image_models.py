@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from datetime import datetime
-from typing import Union
 
 from horde.flask import db
 from horde.logger import logger
@@ -42,7 +41,7 @@ def get_known_image_models() -> list[KnownImageModel]:
 
 
 @logger.catch(reraise=True)
-def is_model_known(model_name: Union[KnownImageModel, str]) -> bool:
+def is_model_known(model_name: KnownImageModel | str) -> bool:
     """Check if a model is known in the database.
 
     Args:
@@ -97,7 +96,7 @@ def add_known_image_model(
         defer_commit (bool): Whether to defer committing the addition to the database.
     """
 
-    model: Union[KnownImageModel, None] = db.session.query(KnownImageModel).filter(KnownImageModel.name == name).first()
+    model: KnownImageModel | None = db.session.query(KnownImageModel).filter(KnownImageModel.name == name).first()
 
     if model:
         model.baseline = baseline

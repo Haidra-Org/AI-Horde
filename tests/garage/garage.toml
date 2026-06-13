@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Tazlin <tazlin.on.github@gmail.com>
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Local single-node Garage configuration for AI-Horde test workflows.
+# Managed in-repo so tests/bootstrap_garage.sh can bootstrap the layout,
+# credentials, and buckets expected by the integration suite.
+#
+# This file intentionally contains no secrets. Garage reads its sensitive
+# values from the environment instead (GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN,
+# GARAGE_METRICS_TOKEN), which are generated at runtime by
+# tests/garage/ensure_test_credentials.sh into a git-ignored
+# tests/garage/.test-credentials.env file.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# rpc_secret is provided via the GARAGE_RPC_SECRET environment variable.
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# admin_token and metrics_token are provided via the GARAGE_ADMIN_TOKEN and
+# GARAGE_METRICS_TOKEN environment variables.

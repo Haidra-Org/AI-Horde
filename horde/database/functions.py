@@ -37,8 +37,8 @@ from horde.enums import State
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
-from horde.model_reference import model_reference
 from horde.metrics import pop_query_duration
+from horde.model_reference import model_reference
 from horde.utils import hash_api_key, validate_regex
 
 ALLOW_ANONYMOUS = True
@@ -54,7 +54,11 @@ WP_CLASS_MAP = {
 
 
 def get_anon():
-    return find_user_by_api_key("anon")
+    # The anonymous account is identified by oauth_id "anon" (id 0). Looking it
+    # up by api_key("anon") never matched - anon is seeded with the api_key
+    # hash of "0000000000" - so this silently returned None, disabling guards
+    # such as the kudos-transfer-to-anon block. Query the canonical identifier.
+    return db.session.query(User).filter_by(oauth_id="anon").first()
 
 
 # TODO: Switch this to take this node out of operation instead?
@@ -162,6 +166,25 @@ def get_total_usage():
     return totals
 
 
+# PostgreSQL ``integer`` (int4) upper bound. A user id larger than this reaches
+# the driver and raises NumericValueOutOfRange (a 500 that also aborts the
+# transaction), so out-of-range ids from path params are treated as "not found".
+_PG_INT4_MAX = 2147483647
+
+
+def _coerce_user_id(value):
+    """Return ``value`` as an int4-representable user id, or None if it cannot be
+    (unparseable, negative, or out of range). Guards id-based user lookups
+    against hostile path params before they reach an integer column."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= coerced <= _PG_INT4_MAX):
+        return None
+    return coerced
+
+
 def find_user_by_oauth_id(oauth_id):
     if oauth_id == "anon" and not ALLOW_ANONYMOUS:
         return None
@@ -170,21 +193,22 @@ def find_user_by_oauth_id(oauth_id):
 
 def find_user_by_username(username):
     ulist = username.split("#")
-    try:
-        if int(ulist[-1]) == 0 and not ALLOW_ANONYMOUS:
-            return None
-    except Exception:
+    user_id = _coerce_user_id(ulist[-1])
+    if user_id is None:
+        return None
+    if user_id == 0 and not ALLOW_ANONYMOUS:
         return None
     # This approach handles someone cheekily putting # in their username
-    user = db.session.query(User).filter_by(id=int(ulist[-1])).filter(User.oauth_id != "<wiped>").first()
-    return user
+    return db.session.query(User).filter_by(id=user_id).filter(User.oauth_id != "<wiped>").first()
 
 
 def find_user_by_id(user_id):
-    if int(user_id) == 0 and not ALLOW_ANONYMOUS:
+    user_id = _coerce_user_id(user_id)
+    if user_id is None:
         return None
-    user = db.session.query(User).filter_by(id=user_id).filter(User.oauth_id != "<wiped>").first()
-    return user
+    if user_id == 0 and not ALLOW_ANONYMOUS:
+        return None
+    return db.session.query(User).filter_by(id=user_id).filter(User.oauth_id != "<wiped>").first()
 
 
 def find_user_by_contact(contact):
@@ -1194,7 +1218,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     if raw.get("max_pixels", 0) > 0:
         ret_dict["max_pixels"] = raw["max_pixels"]
 
-    # img2img — attribute to setting or bridge depending on which is the cause
+    # img2img: attribute to setting or bridge depending on which is the cause
     img2img_count = raw.get("_img2img_raw", 0) or 0
     if img2img_count > 0:
         if worker.allow_img2img is False:

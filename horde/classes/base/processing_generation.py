@@ -99,7 +99,7 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def set_generation(self, generation, things_per_sec, **kwargs):
-        from horde.metrics import submit_record_duration, submit_webhook_call_duration, submit_commit_duration
+        from horde.metrics import submit_commit_duration, submit_record_duration, submit_webhook_call_duration
 
         # Use an atomic compare-and-set update so exactly one concurrent submit
         # can transition this procgen from pending -> completed.

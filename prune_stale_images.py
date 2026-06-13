@@ -5,7 +5,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import boto3
 from dotenv import load_dotenv
@@ -23,7 +23,7 @@ sr3 = boto3.resource(
 )
 while True:
     try:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=120)
+        cutoff_time = datetime.now(UTC) - timedelta(minutes=120)
         logger.info("Image Pruner: Starting Next Cleanup Iteration...")
         for bucket in [
             sr3.Bucket("stable-horde"),
@@ -32,7 +32,7 @@ while True:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = []
                 for obj in bucket.objects.all():
-                    last_modified = obj.last_modified.replace(tzinfo=timezone.utc)
+                    last_modified = obj.last_modified.replace(tzinfo=UTC)
                     if last_modified < cutoff_time:
                         futures.append(executor.submit(obj.delete))
                         if len(futures) >= 1000:

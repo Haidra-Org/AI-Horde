@@ -119,7 +119,7 @@ class TestCountParentheses:
         assert count_parentheses("(a)(b)(c)") == 3
 
     def test_nested(self):
-        # Uses a boolean flag, not a stack — only counts outermost pairs
+        # Uses a boolean flag, not a stack. Only counts outermost pairs
         assert count_parentheses("((a))") == 1
 
     def test_unmatched_open(self):

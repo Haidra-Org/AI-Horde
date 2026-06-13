@@ -244,7 +244,14 @@ class WorkerTemplate(db.Model):
             return "Profanity"
         if len(new_name) > 100:
             return "Too Long"
-        self.name = sanitize_string(new_name)
+        new_name = sanitize_string(new_name)
+        # Worker.name carries a unique constraint (ix_workers_name). Detect the
+        # collision here and report it, rather than letting the commit raise an
+        # IntegrityError (a 500 that also leaves the session needing a rollback).
+        name_taken = db.session.query(WorkerTemplate.id).filter(WorkerTemplate.name == new_name, WorkerTemplate.id != self.id).first()
+        if name_taken:
+            return "Already Exists"
+        self.name = new_name
         db.session.commit()
         return "OK"
 

@@ -39,10 +39,6 @@ from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
 from horde.logger import logger
-from horde.metrics import waitress_metrics
-from horde.patreon import patrons
-from horde.r2 import upload_prompt
-from horde.suspicions import Suspicions
 from horde.metrics import (
     generate_activate_wp_duration,
     generate_duration,
@@ -63,7 +59,11 @@ from horde.metrics import (
     submit_kudos,
     submit_outcomes,
     submit_set_gen_duration,
+    waitress_metrics,
 )
+from horde.patreon import patrons
+from horde.r2 import upload_prompt
+from horde.suspicions import Suspicions
 from horde.telemetry import pyroscope_tag
 from horde.utils import datetime_parser, hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_title, horde_url
@@ -123,6 +123,25 @@ handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_reques
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
+
+
+def handle_value_error(error):
+    """Reactively translate the bare ``ValueError`` psycopg2 raises for a NUL
+    (0x00) byte in a flushed string into a clean 400, rolling back the poisoned
+    session first. Any other ``ValueError`` keeps flask-restx's default 500 (a
+    JSON ``{"message": "Internal Server Error"}``) so unrelated failures are
+    unchanged. See ``horde.exceptions.is_nul_byte_value_error`` for why this is
+    detected here rather than scanned up front."""
+    if e.is_nul_byte_value_error(error):
+        db.session.rollback()
+        location = e.find_nul_byte_location(request.get_json(silent=True))
+        logger.warning(f"NulByteInPayload: rejected payload carrying a NUL byte (at {location})")
+        return e.nul_byte_error_response()
+    logger.exception("Unhandled ValueError during API request")
+    return {"message": "Internal Server Error"}, 500
+
+
+handle_nul_byte_payload = api.errorhandler(ValueError)(handle_value_error)
 
 
 def check_for_mod(api_key, operation, whitelisted_users=None):

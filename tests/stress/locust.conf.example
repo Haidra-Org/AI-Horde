@@ -8,13 +8,22 @@
 #
 # locust.conf is gitignored and supports Locust's built-in options only.
 # Custom AI Horde options (API keys, models, etc.) must be set via CLI args
-# or environment variables — see the "Custom options" section below for the
-# env var names, or run:
-#     locust -f locustfile.py --help
+# or environment variables; see the "Custom options" section below for the
+# env var names. Locust's --help output may only show built-in framework flags
+# because help is handled before every locustfile-specific parser hook runs.
 #
 # Running:
 #     cd tests/stress && locust                          # auto-finds locust.conf here
 #     locust -f tests/stress/locustfile.py --config tests/stress/locust.conf   # from repo root
+#
+# Workload subsets use Locust's built-in tag filtering:
+#     locust -f locustfile.py --tags hot
+#     locust -f locustfile.py --tags meta
+#     locust -f locustfile.py --exclude-tags misuse
+#
+# Staged ramp/sustain/cooldown profiles are opt-in so the default locustfile
+# keeps the classic users/spawn-rate behavior:
+#     locust -f locustfile_shaped.py --stress-shape-profile smoke
 
 # ---------------------------------------------------------------------------
 # Locust built-in options (set in this file, CLI, or LOCUST_* env vars)
@@ -28,7 +37,7 @@ spawn-rate = 5
 # headless = true
 
 # ---------------------------------------------------------------------------
-# Custom AI Horde options — set via CLI args or env vars (NOT this file)
+# Custom AI Horde options. Set via CLI args or env vars (NOT this file)
 # ---------------------------------------------------------------------------
 #
 # API Keys (required for meaningful tests):
@@ -43,14 +52,22 @@ spawn-rate = 5
 #   --anonymous-api-key / HORDE_ANONYMOUS_API_KEY
 #       API key for anonymous requests (default: 0000000000).
 #
-# Auto-bootstrap (local-only — fails silently if reCAPTCHA is enabled):
+# Auto-bootstrap (local-only - fails silently if reCAPTCHA is enabled):
 #   --bootstrap-requestors / HORDE_BOOTSTRAP_REQUESTORS    (default: 4)
-#   --bootstrap-workers / HORDE_BOOTSTRAP_WORKERS          (default: 8)
+#   --bootstrap-workers / HORDE_BOOTSTRAP_WORKERS          (default: 30)
 #       NOTE: Untrusted users are capped at 3 distinct workers each. If you run
 #             many WorkerSimulator/TextWorker/InterrogationWorker users, make
 #             sure --bootstrap-workers >= ceil(total_worker_sims / 3).
 #   --bootstrap-fail-hard / HORDE_BOOTSTRAP_FAIL_HARD      (default: false)
 #       Abort the run if auto-registration fails instead of falling back to anon.
+#
+# Target preflight:
+#   --skip-preflight / HORDE_SKIP_PREFLIGHT                (default: false)
+#   --preflight-fail-hard / HORDE_PREFLIGHT_FAIL_HARD      (default: false)
+#   --preflight-timeout / HORDE_PREFLIGHT_TIMEOUT          (default: 10.0 seconds)
+#       Locust drives a running AI Horde deployment; it does not provision the
+#       app's Postgres/Redis/R2 dependencies itself. The preflight check makes
+#       that external stack contract explicit by probing /api/v2/status/heartbeat.
 #
 # Models:
 #   --horde-models / HORDE_MODELS
@@ -75,8 +92,15 @@ spawn-rate = 5
 #   --worker-max-pixels / HORDE_WORKER_MAX_PIXELS         (default: 4194304)
 #   --worker-bridge-agent / HORDE_WORKER_BRIDGE_AGENT     (default: AI Horde Worker reGen:9.0.1-stress:...)
 #   --sim-gen-time-min / HORDE_SIM_GEN_TIME_MIN           (default: 4.0 seconds)
-#   --sim-gen-time-max / HORDE_SIM_GEN_TIME_MAX           (default: 30.0 seconds)
+#   --sim-gen-time-max / HORDE_SIM_GEN_TIME_MAX           (default: 120.0 seconds)
 #
 # User behavior:
 #   --anon-chance-poller / HORDE_ANON_CHANCE_POLLER       (default: 0.75)
 #   --anon-chance-requester / HORDE_ANON_CHANCE_REQUESTER (default: 0.65)
+#
+# Staged load shape (only when using locustfile_shaped.py):
+#   --stress-shape-profile / HORDE_STRESS_SHAPE_PROFILE   (smoke|baseline|spike; default: baseline)
+#   --stress-shape-scale / HORDE_STRESS_SHAPE_SCALE       (default: 1.0)
+#
+# Task tags:
+#   image, text, interrogation, meta, misuse, hot, cold, status, worker, requestor

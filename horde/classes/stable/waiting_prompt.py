@@ -8,9 +8,8 @@ import os
 import random
 import time
 
-from sqlalchemy.sql import expression
-
 import logfire
+from sqlalchemy.sql import expression
 
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
@@ -27,20 +26,18 @@ from horde.consts import (
 from horde.flask import db
 from horde.image import convert_pil_to_b64
 from horde.logger import logger
-from horde.model_reference import model_reference
-from horde.r2 import (
-    download_source_image,
-    download_source_mask,
-    generate_procgen_upload_url,
-)
 from horde.metrics import (
-    wp_activate_base_commit_duration,
-    wp_activate_base_record_usage_duration,
     wp_activate_post_kudos_duration,
     wp_activate_post_super_duration,
     wp_calculate_kudos_duration,
     wp_kudos_commit_duration,
     wp_kudos_torch_duration,
+)
+from horde.model_reference import model_reference
+from horde.r2 import (
+    download_source_image,
+    download_source_mask,
+    generate_procgen_upload_url,
 )
 from horde.utils import get_random_seed
 

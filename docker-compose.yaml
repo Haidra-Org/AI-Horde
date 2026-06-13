@@ -8,6 +8,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        AI_HORDE_DEPENDENCY_GROUPS: ${AI_HORDE_DEPENDENCY_GROUPS:-}
     image: aihorde:latest
     container_name: aihorde
     ports:

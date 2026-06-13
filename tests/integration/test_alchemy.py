@@ -1,56 +1,52 @@
 # SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+# SPDX-FileCopyrightText: 2026 Tazlin <tazlin@haidra.net>
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import requests
-
-
-def test_simple_alchemy(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
-    headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625"}  # ci/cd user
+def test_simple_alchemy(client, request_headers: dict[str, str]) -> None:
     async_dict = {
         "forms": [
             {"name": "caption"},
         ],
         "source_image": "https://github.com/Haidra-Org/AI-Horde/blob/main/icon.png?raw=true",
     }
-    protocol = "http"
-    if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
-        protocol = "https"
-    async_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/interrogate/async", json=async_dict, headers=headers)
-    assert async_req.ok, async_req.text
-    async_results = async_req.json()
+    async_req = client.post("/api/v2/interrogate/async", json=async_dict, headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    async_results = async_req.get_json()
     req_id = async_results["id"]
-    # print(async_results)
+
     pop_dict = {
         "name": "CICD Fake Alchemist",
         "forms": ["caption", "strip_background", "interrogation"],
-        "bridge_agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625",
+        "bridge_agent": request_headers["Client-Agent"],
         "max_tiles": 96,
     }
     try:
-        pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/interrogate/pop", json=pop_dict, headers=headers)
+        pop_req = client.post("/api/v2/interrogate/pop", json=pop_dict, headers=request_headers)
     except Exception:
-        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/interrogate/status/{req_id}", headers=headers)
+        client.delete(f"/api/v2/interrogate/status/{req_id}", headers=request_headers)
         raise
-    assert pop_req.ok, pop_req.text
-    pop_results = pop_req.json()
-    # print(json.dumps(pop_results, indent=4))
+
+    assert pop_req.status_code < 400, pop_req.get_data(as_text=True)
+    pop_results = pop_req.get_json()
 
     job_id = pop_results["forms"][0]["id"]
     assert job_id is not None, pop_results
+
     submit_dict = {
         "id": job_id,
         "result": {"caption": "Test"},
         "state": "ok",
     }
-    submit_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/interrogate/submit", json=submit_dict, headers=headers)
-    assert submit_req.ok, submit_req.text
-    submit_results = submit_req.json()
+    submit_req = client.post("/api/v2/interrogate/submit", json=submit_dict, headers=request_headers)
+    assert submit_req.status_code < 400, submit_req.get_data(as_text=True)
+    submit_results = submit_req.get_json()
     assert submit_results["reward"] > 0
-    retrieve_req = requests.get(f"{protocol}://{HORDE_URL}/api/v2/interrogate/status/{req_id}", headers=headers)
-    assert retrieve_req.ok, retrieve_req.text
-    retrieve_results = retrieve_req.json()
-    # print(json.dumps(retrieve_results,indent=4))
+
+    retrieve_req = client.get(f"/api/v2/interrogate/status/{req_id}", headers=request_headers)
+    assert retrieve_req.status_code < 400, retrieve_req.get_data(as_text=True)
+    retrieve_results = retrieve_req.get_json()
+
     assert len(retrieve_results["forms"]) == 1
     gen = retrieve_results["forms"][0]
     assert "result" in gen
@@ -61,7 +57,3 @@ def test_simple_alchemy(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
     assert gen["result"]["caption"] == "Test"
     assert gen["state"] == "done"
     assert retrieve_results["state"] == "done"
-
-
-if __name__ == "__main__":
-    test_simple_alchemy("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")
