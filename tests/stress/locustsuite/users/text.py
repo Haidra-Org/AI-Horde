@@ -124,8 +124,13 @@ class TextRequester(HttpUser):
                 resp.success()
             elif resp.status_code == 429:
                 resp.success()
-                _record_expected(self.environment, "GET", "/api/v2/generate/text/status/[id]",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment,
+                    "GET",
+                    "/api/v2/generate/text/status/[id]",
+                    resp.elapsed.total_seconds() * 1000,
+                    len(resp.content or b""),
+                )
             else:
                 resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
 
@@ -167,12 +172,11 @@ class TextWorkerSimulator(HttpUser):
         ) as resp:
             body = _safe_json(resp)
             if not resp.ok:
-                if resp.status_code in (400, 403) and (
-                    _is_expected_rc(body, _EXPECTED_RC_RECOVER) or _is_too_many_workers(body)
-                ):
+                if resp.status_code in (400, 403) and (_is_expected_rc(body, _EXPECTED_RC_RECOVER) or _is_too_many_workers(body)):
                     resp.success()
-                    _record_expected(self.environment, "POST", "/api/v2/generate/text/pop",
-                                     resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                    _record_expected(
+                        self.environment, "POST", "/api/v2/generate/text/pop", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                    )
                     rc = (body or {}).get("rc") if isinstance(body, dict) else None
                     if _is_too_many_workers(body) or rc in ("TooManySameIPs", "WrongCredentials", "WorkerFlaggedMaintenance"):
                         self.api_key = _pick_worker_key()
@@ -180,8 +184,9 @@ class TextWorkerSimulator(HttpUser):
                     raise RescheduleTask()
                 if resp.status_code == 429:
                     resp.success()
-                    _record_expected(self.environment, "POST", "/api/v2/generate/text/pop",
-                                     resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                    _record_expected(
+                        self.environment, "POST", "/api/v2/generate/text/pop", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                    )
                     raise RescheduleTask()
                 resp.failure(f"Text pop failed: {resp.status_code}: {resp.text[:200]}")
                 return
@@ -212,12 +217,14 @@ class TextWorkerSimulator(HttpUser):
                 return
             if resp.status_code == 404 or _is_expected_rc(body, {"InvalidJobID", "InvalidProcGen"}):
                 resp.success()
-                _record_expected(self.environment, "POST", "/api/v2/generate/text/submit",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "POST", "/api/v2/generate/text/submit", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 return
             if resp.status_code == 429:
                 resp.success()
-                _record_expected(self.environment, "POST", "/api/v2/generate/text/submit",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "POST", "/api/v2/generate/text/submit", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 return
             resp.failure(f"Text submit failed: {resp.status_code}: {resp.text[:200]}")

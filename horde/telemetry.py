@@ -39,7 +39,6 @@ import os
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import logfire
-
 from loguru import logger as _loguru_logger
 
 if TYPE_CHECKING:

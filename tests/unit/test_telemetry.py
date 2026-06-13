@@ -47,9 +47,7 @@ def test_logfire_installed_real_meter_provider(telemetry_app):
     from opentelemetry.metrics import NoOpMeterProvider
 
     provider = otel_metrics.get_meter_provider()
-    assert not isinstance(provider, NoOpMeterProvider), (
-        f"Logfire failed to install a real MeterProvider; got {type(provider).__name__}"
-    )
+    assert not isinstance(provider, NoOpMeterProvider), f"Logfire failed to install a real MeterProvider; got {type(provider).__name__}"
 
 
 def test_metric_instruments_record_after_init(telemetry_app):

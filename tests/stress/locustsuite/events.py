@@ -16,6 +16,7 @@ from .helpers import _parse_csv
 
 logger = logging.getLogger(__name__)
 
+
 @events.init_command_line_parser.add_listener
 def add_ai_horde_arguments(parser):
     group = parser.add_argument_group("AI Horde Stress Test")
@@ -201,20 +202,20 @@ def add_ai_horde_arguments(parser):
     # the fixed counts and ignore the global cap, so set `-u` accordingly.
     fixed_count_group = parser.add_argument_group("AI Horde Stress Test - per-class fixed counts")
     for _flag, _envvar, _help in (
-        ("--image-requestors",       "HORDE_IMAGE_REQUESTORS",       "Concurrent RequestGenerator users (image POST /generate/async)"),
-        ("--image-workers",          "HORDE_IMAGE_WORKERS",          "Concurrent WorkerSimulator users (image POST /generate/pop+submit)"),
-        ("--text-requestors",        "HORDE_TEXT_REQUESTORS",        "Concurrent TextRequester users"),
-        ("--text-workers",           "HORDE_TEXT_WORKERS",           "Concurrent TextWorkerSimulator users"),
+        ("--image-requestors", "HORDE_IMAGE_REQUESTORS", "Concurrent RequestGenerator users (image POST /generate/async)"),
+        ("--image-workers", "HORDE_IMAGE_WORKERS", "Concurrent WorkerSimulator users (image POST /generate/pop+submit)"),
+        ("--text-requestors", "HORDE_TEXT_REQUESTORS", "Concurrent TextRequester users"),
+        ("--text-workers", "HORDE_TEXT_WORKERS", "Concurrent TextWorkerSimulator users"),
         ("--interrogate-requestors", "HORDE_INTERROGATE_REQUESTORS", "Concurrent InterrogationRequester users"),
-        ("--interrogate-workers",    "HORDE_INTERROGATE_WORKERS",    "Concurrent InterrogationWorkerSimulator users"),
-        ("--status-pollers",         "HORDE_STATUS_POLLERS",         "Concurrent StatusPoller users (image /check + /status)"),
+        ("--interrogate-workers", "HORDE_INTERROGATE_WORKERS", "Concurrent InterrogationWorkerSimulator users"),
+        ("--status-pollers", "HORDE_STATUS_POLLERS", "Concurrent StatusPoller users (image /check + /status)"),
         (
             "--hot-path-requestors",
             "HORDE_HOT_PATH_REQUESTORS",
             "Concurrent HotPathRequester users (identical-payload image POST /async)",
         ),
-        ("--meta-browsers",          "HORDE_META_BROWSERS",          "Concurrent MetaBrowser users (read-only meta endpoints)"),
-        ("--misuse-users",           "HORDE_MISUSE_USERS",           "Concurrent MisuseUser users (4xx validation paths)"),
+        ("--meta-browsers", "HORDE_META_BROWSERS", "Concurrent MetaBrowser users (read-only meta endpoints)"),
+        ("--misuse-users", "HORDE_MISUSE_USERS", "Concurrent MisuseUser users (4xx validation paths)"),
     ):
         fixed_count_group.add_argument(_flag, type=int, env_var=_envvar, default=0, help=_help + " (0 = use weight-based distribution)")
 
@@ -223,14 +224,34 @@ def add_ai_horde_arguments(parser):
     # 10/min/path) on completion. Defaults match a typical SDK loop (~1-3 Hz checks
     # while ≤ 4 outstanding requests in flight per client).
     poll_group = parser.add_argument_group("AI Horde Stress Test - requestor poll loop")
-    poll_group.add_argument("--requestor-max-pending", type=int, env_var="HORDE_REQUESTOR_MAX_PENDING", default=4,
-                            help="Max in-flight /async requests per RequestGenerator before they pause submitting and only poll")
-    poll_group.add_argument("--requestor-wait-min", type=float, env_var="HORDE_REQUESTOR_WAIT_MIN", default=0.2,
-                            help="Min wait between RequestGenerator/StatusPoller task ticks (seconds)")
-    poll_group.add_argument("--requestor-wait-max", type=float, env_var="HORDE_REQUESTOR_WAIT_MAX", default=1.0,
-                            help="Max wait between RequestGenerator/StatusPoller task ticks (seconds)")
-    poll_group.add_argument("--status-fetch-on-done", action="store_true", env_var="HORDE_STATUS_FETCH_ON_DONE", default=True,
-                            help="When a /check returns done=true, also fetch /status (mirrors real client behavior)")
+    poll_group.add_argument(
+        "--requestor-max-pending",
+        type=int,
+        env_var="HORDE_REQUESTOR_MAX_PENDING",
+        default=4,
+        help="Max in-flight /async requests per RequestGenerator before they pause submitting and only poll",
+    )
+    poll_group.add_argument(
+        "--requestor-wait-min",
+        type=float,
+        env_var="HORDE_REQUESTOR_WAIT_MIN",
+        default=0.2,
+        help="Min wait between RequestGenerator/StatusPoller task ticks (seconds)",
+    )
+    poll_group.add_argument(
+        "--requestor-wait-max",
+        type=float,
+        env_var="HORDE_REQUESTOR_WAIT_MAX",
+        default=1.0,
+        help="Max wait between RequestGenerator/StatusPoller task ticks (seconds)",
+    )
+    poll_group.add_argument(
+        "--status-fetch-on-done",
+        action="store_true",
+        env_var="HORDE_STATUS_FETCH_ON_DONE",
+        default=True,
+        help="When a /check returns done=true, also fetch /status (mirrors real client behavior)",
+    )
 
     # Target/external dependency preflight. Locust remains a black-box workload
     # runner: the Horde app and its Postgres/Redis/R2 dependencies are stood up
@@ -415,16 +436,16 @@ def on_test_start(environment, **kw):
     )
 
     _fixed_count_overrides = (
-        (StatusPoller,                  "status_pollers"),
-        (RequestGenerator,              "image_requestors"),
-        (WorkerSimulator,               "image_workers"),
-        (TextRequester,                 "text_requestors"),
-        (TextWorkerSimulator,           "text_workers"),
-        (InterrogationRequester,        "interrogate_requestors"),
-        (InterrogationWorkerSimulator,  "interrogate_workers"),
-        (HotPathRequester,              "hot_path_requestors"),
-        (MetaBrowser,                   "meta_browsers"),
-        (MisuseUser,                    "misuse_users"),
+        (StatusPoller, "status_pollers"),
+        (RequestGenerator, "image_requestors"),
+        (WorkerSimulator, "image_workers"),
+        (TextRequester, "text_requestors"),
+        (TextWorkerSimulator, "text_workers"),
+        (InterrogationRequester, "interrogate_requestors"),
+        (InterrogationWorkerSimulator, "interrogate_workers"),
+        (HotPathRequester, "hot_path_requestors"),
+        (MetaBrowser, "meta_browsers"),
+        (MisuseUser, "misuse_users"),
     )
     fixed_total = 0
     for cls, attr in _fixed_count_overrides:
@@ -435,7 +456,6 @@ def on_test_start(environment, **kw):
             logger.info("Pinning %s.fixed_count = %d", cls.__name__, n)
     if fixed_total:
         logger.info(
-            "Per-class fixed counts total %d users; remaining -u budget will be "
-            "distributed by weight across the unpinned User classes.",
+            "Per-class fixed counts total %d users; remaining -u budget will be distributed by weight across the unpinned User classes.",
             fixed_total,
         )

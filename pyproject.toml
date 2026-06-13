@@ -103,7 +103,7 @@ explicit = true
 
 [tool.ruff]
 line-length = 140
-select = [
+lint.select = [
   #"A",
   "I",
   "E",
@@ -120,9 +120,8 @@ select = [
   # "D",
   #"ANN"
   ]
-ignore = [
-  "ANN101",
-  "ANN102",
+lint.ignore = [
+  "COM812", # The following rule may cause conflicts when used with the formatter: `COM812`. To avoid unexpected behavior, we recommend disabling this rule
   # Ignore D rules for non-google docstring standard
   "D203",
   "D204",
@@ -135,6 +134,10 @@ ignore = [
   "D408",
   "D409",
   "D413",]
+
+[tool.ruff.lint.per-file-ignores]
+"horde/sandbox.py" = ["F401"]
+"server.py" = ["E402"]
 
 
 [tool.black]
@@ -188,6 +191,3 @@ module = [
 ]
 strict = true
 
-[tool.ruff.per-file-ignores]
-"horde/sandbox.py" = ["F401"]
-"server.py" = ["E402"]

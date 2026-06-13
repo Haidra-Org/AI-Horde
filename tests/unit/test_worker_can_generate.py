@@ -29,6 +29,7 @@ pytestmark = pytest.mark.unit
 
 _user_id_counter = 0
 
+
 def _allowing_user(*, trusted: bool = True):
     # SimpleNamespace.__eq__ compares attribute-wise; identity by id avoids
     # accidentally treating two distinct user objects as equal.
@@ -73,6 +74,7 @@ def _allowing_wp(**overrides):
     wp.tricked_worker.return_value = overrides.get("_tricked", False)
     wp.get_worker_ids.return_value = overrides.get("_worker_ids", [])
     return wp
+
 
 class TestHappyPath:
     def test_default_allowing_state_returns_true(self):

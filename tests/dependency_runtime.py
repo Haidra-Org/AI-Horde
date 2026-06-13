@@ -352,11 +352,7 @@ def object_store_endpoint_reachable(endpoint_url: str) -> bool:
 
 
 def unreachable_object_store_env() -> list[str]:
-    return [
-        env_var
-        for env_var in OBJECT_STORE_ENDPOINT_ENV
-        if not object_store_endpoint_reachable(os.environ[env_var])
-    ]
+    return [env_var for env_var in OBJECT_STORE_ENDPOINT_ENV if not object_store_endpoint_reachable(os.environ[env_var])]
 
 
 def container_exec(container, command: list[str]) -> str:

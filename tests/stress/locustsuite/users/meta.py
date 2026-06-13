@@ -13,6 +13,7 @@ from ..helpers import _headers, _pick_requestor_key
 
 logger = logging.getLogger(__name__)
 
+
 class MetaBrowser(HttpUser):
     """Read-only endpoints consumed by dashboards, the web UI, and clients.
 
@@ -31,13 +32,11 @@ class MetaBrowser(HttpUser):
         self.worker_ids: list[str] = []
         self.user_ids: list[str] = []
         try:
-            resp = self.client.get("/api/v2/workers?type=image", headers=_headers(self.api_key),
-                                    name="/api/v2/workers [bootstrap]")
+            resp = self.client.get("/api/v2/workers?type=image", headers=_headers(self.api_key), name="/api/v2/workers [bootstrap]")
             if resp.ok:
                 data = resp.json() or []
                 self.worker_ids = [w.get("id") for w in data[:20] if w.get("id")]
-            resp = self.client.get("/api/v2/users", headers=_headers(self.api_key),
-                                    name="/api/v2/users [bootstrap]")
+            resp = self.client.get("/api/v2/users", headers=_headers(self.api_key), name="/api/v2/users [bootstrap]")
             if resp.ok:
                 data = resp.json() or []
                 self.user_ids = [str(u.get("id")) for u in data[:20] if u.get("id") is not None]
@@ -93,8 +92,7 @@ class MetaBrowser(HttpUser):
         if not self.worker_ids:
             return
         wid = random.choice(self.worker_ids)
-        with self.client.get(f"/api/v2/workers/{wid}", name="/api/v2/workers/[id]",
-                             catch_response=True) as resp:
+        with self.client.get(f"/api/v2/workers/{wid}", name="/api/v2/workers/[id]", catch_response=True) as resp:
             if resp.ok or resp.status_code in (404, 410):
                 resp.success()
             else:
@@ -106,8 +104,7 @@ class MetaBrowser(HttpUser):
         if not self.user_ids:
             return
         uid = random.choice(self.user_ids)
-        with self.client.get(f"/api/v2/users/{uid}", name="/api/v2/users/[id]",
-                             catch_response=True) as resp:
+        with self.client.get(f"/api/v2/users/{uid}", name="/api/v2/users/[id]", catch_response=True) as resp:
             if resp.ok or resp.status_code in (404, 410):
                 resp.success()
             else:
@@ -117,8 +114,9 @@ class MetaBrowser(HttpUser):
     @task(2)
     def find_user_self(self):
         """Hot path: identity lookup with a valid key."""
-        with self.client.get("/api/v2/find_user", headers=_headers(self.api_key),
-                             name="/api/v2/find_user [hot]", catch_response=True) as resp:
+        with self.client.get(
+            "/api/v2/find_user", headers=_headers(self.api_key), name="/api/v2/find_user [hot]", catch_response=True
+        ) as resp:
             if resp.ok or resp.status_code in (401,):
                 resp.success()
             else:

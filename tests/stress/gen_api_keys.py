@@ -20,6 +20,7 @@ The generated keys are printed to stdout (one per line) and optionally written
 to a file via --out.  The output format is directly usable as the value for
 HORDE_REQUESTOR_API_KEYS or HORDE_WORKER_API_KEYS (comma-separated).
 """
+
 from __future__ import annotations
 
 import argparse
