@@ -112,10 +112,7 @@ class TestRoleAccessQueryCount:
                 _ = user_with_roles.flagged
 
         user_roles_selects = [s for s in queries.of_kind("SELECT") if "user_roles" in s.lower()]
-        assert user_roles_selects == [], (
-            f"Cached role reads should not re-query user_roles; got "
-            f"{len(user_roles_selects)} queries"
-        )
+        assert user_roles_selects == [], f"Cached role reads should not re-query user_roles; got {len(user_roles_selects)} queries"
 
 
 class TestHasRoleHelper:

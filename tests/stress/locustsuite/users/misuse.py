@@ -22,8 +22,13 @@ class MisuseUser(HttpUser):
     def _expect_4xx(self, resp, name: str):
         if 400 <= resp.status_code < 500:
             resp.success()
-            _record_expected(self.environment, resp.request_meta.get("method", "POST"), name,
-                             resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+            _record_expected(
+                self.environment,
+                resp.request_meta.get("method", "POST"),
+                name,
+                resp.elapsed.total_seconds() * 1000,
+                len(resp.content or b""),
+            )
             return
         if resp.ok:
             # The request *succeeded* - unexpected for a misuse probe, but not a bug.

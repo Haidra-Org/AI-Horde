@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+
 def test_simple_alchemy(client, request_headers: dict[str, str]) -> None:
     async_dict = {
         "forms": [

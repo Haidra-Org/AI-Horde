@@ -92,9 +92,7 @@ class TestDesignIntent:
         bigger = dict(basis_payload, width=1024, height=1024)
         bigger_kudos = kudos_model.calculate_kudos(bigger)
         # Strictly greater, pixel count quadrupled.
-        assert bigger_kudos > baseline, (
-            f"1024×1024 ({bigger_kudos}) should cost more than 512×512 ({baseline})"
-        )
+        assert bigger_kudos > baseline, f"1024×1024 ({bigger_kudos}) should cost more than 512×512 ({baseline})"
 
 
 class TestPostInferenceArithmetic:

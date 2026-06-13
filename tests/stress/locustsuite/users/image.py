@@ -111,8 +111,9 @@ class StatusPoller(HttpUser):
                 resp.success()
             elif resp.status_code == 429:
                 resp.success()
-                _record_expected(self.environment, "GET", "/api/v2/generate/check/[id]",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "GET", "/api/v2/generate/check/[id]", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 time.sleep(random.uniform(1.0, 3.0))
             else:
                 resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
@@ -142,8 +143,9 @@ class StatusPoller(HttpUser):
             elif resp.status_code == 429:
                 # /status/ has its own per-IP limiter ("10 per 1 minute"); back off hard.
                 resp.success()
-                _record_expected(self.environment, "GET", "/api/v2/generate/status/[id]",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "GET", "/api/v2/generate/status/[id]", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 time.sleep(random.uniform(6.0, 12.0))
             else:
                 resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
@@ -234,8 +236,9 @@ class RequestGenerator(HttpUser):
                 resp.success()
             elif resp.status_code == 429:
                 resp.success()
-                _record_expected(self.environment, "GET", "/api/v2/generate/status/[id]",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "GET", "/api/v2/generate/status/[id]", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
             else:
                 resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
 
@@ -279,8 +282,9 @@ class RequestGenerator(HttpUser):
                 # /check is 10/sec/path. If we hit this we're polling a single
                 # id far too aggressively. Back off briefly.
                 resp.success()
-                _record_expected(self.environment, "GET", "/api/v2/generate/check/[id]",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "GET", "/api/v2/generate/check/[id]", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 time.sleep(random.uniform(0.5, 1.5))
             else:
                 resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
@@ -462,12 +466,11 @@ class WorkerSimulator(HttpUser):
                 # 403 WorkerMaintenance  → the simulated worker has been disabled by the
                 #     server for dropping jobs; rotate name so the next pop creates a
                 #     fresh worker rather than hammering the disabled one.
-                if resp.status_code in (400, 403) and (
-                    _is_expected_rc(body, _EXPECTED_RC_RECOVER) or _is_too_many_workers(body)
-                ):
+                if resp.status_code in (400, 403) and (_is_expected_rc(body, _EXPECTED_RC_RECOVER) or _is_too_many_workers(body)):
                     resp.success()
-                    _record_expected(self.environment, "POST", "/api/v2/generate/pop",
-                                     resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                    _record_expected(
+                        self.environment, "POST", "/api/v2/generate/pop", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                    )
                     rc = (body or {}).get("rc") if isinstance(body, dict) else None
                     # Too-many-workers / flagged-account: this user account is saturated,
                     # switch to a *different* worker key so we can still exercise /pop under load.
@@ -477,8 +480,9 @@ class WorkerSimulator(HttpUser):
                     raise RescheduleTask()
                 if resp.status_code == 429:
                     resp.success()
-                    _record_expected(self.environment, "POST", "/api/v2/generate/pop",
-                                     resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                    _record_expected(
+                        self.environment, "POST", "/api/v2/generate/pop", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                    )
                     time.sleep(random.uniform(2.0, 6.0))
                     raise RescheduleTask()
                 resp.failure(f"Pop failed: {resp.status_code}: {resp.text[:200]}")
@@ -513,13 +517,15 @@ class WorkerSimulator(HttpUser):
             # Both are realistic outcomes after long simulated gen times.
             if resp.status_code == 404 or _is_expected_rc(body, {"InvalidJobID", "InvalidProcGen"}):
                 resp.success()
-                _record_expected(self.environment, "POST", "/api/v2/generate/submit",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "POST", "/api/v2/generate/submit", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 return
             if resp.status_code == 429:
                 resp.success()
-                _record_expected(self.environment, "POST", "/api/v2/generate/submit",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "POST", "/api/v2/generate/submit", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 time.sleep(random.uniform(2.0, 6.0))
                 return
             resp.failure(f"Submit failed: {resp.status_code}: {resp.text[:200]}")
@@ -528,6 +534,7 @@ class WorkerSimulator(HttpUser):
 # ---------------------------------------------------------------------------
 # Hot/cold image payload helpers
 # ---------------------------------------------------------------------------
+
 
 def _hot_image_payload(opts):
     return {
@@ -567,6 +574,7 @@ def _cold_image_payload(opts):
 # ---------------------------------------------------------------------------
 # Hot-path variants for the existing RequestGenerator
 # ---------------------------------------------------------------------------
+
 
 class HotPathRequester(HttpUser):
     """Dedicated hot-path requester: identical payload every call.

@@ -74,8 +74,7 @@ class InterrogationRequester(HttpUser):
                 return
             if resp.status_code == 429:
                 resp.success()
-                _record_expected(self.environment, "POST", name,
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(self.environment, "POST", name, resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
                 return
             resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
 
@@ -139,12 +138,11 @@ class InterrogationWorkerSimulator(HttpUser):
         ) as resp:
             body = _safe_json(resp)
             if not resp.ok:
-                if resp.status_code in (400, 403) and (
-                    _is_expected_rc(body, _EXPECTED_RC_RECOVER) or _is_too_many_workers(body)
-                ):
+                if resp.status_code in (400, 403) and (_is_expected_rc(body, _EXPECTED_RC_RECOVER) or _is_too_many_workers(body)):
                     resp.success()
-                    _record_expected(self.environment, "POST", "/api/v2/interrogate/pop",
-                                     resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                    _record_expected(
+                        self.environment, "POST", "/api/v2/interrogate/pop", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                    )
                     rc = (body or {}).get("rc") if isinstance(body, dict) else None
                     if _is_too_many_workers(body) or rc in ("TooManySameIPs", "WrongCredentials", "WorkerFlaggedMaintenance"):
                         self.api_key = _pick_worker_key()
@@ -184,8 +182,9 @@ class InterrogationWorkerSimulator(HttpUser):
                 return
             if resp.status_code == 404 or _is_expected_rc(body, {"InvalidJobID", "InvalidProcGen"}):
                 resp.success()
-                _record_expected(self.environment, "POST", "/api/v2/interrogate/submit",
-                                 resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "POST", "/api/v2/interrogate/submit", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 return
             if resp.status_code == 429:
                 resp.success()
