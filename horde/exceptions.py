@@ -167,6 +167,7 @@ KNOWN_RC = [
     "DeletedUser",
     "CannotWipeActiveUser",
     "NonServiceForbidden",
+    "NulByteInPayload",
 ]
 
 
@@ -594,4 +595,53 @@ def handle_bad_requests(error):
             "rc": error.rc,
         },
         error.code,
+    )
+
+
+# PostgreSQL text/varchar columns cannot store NUL (0x00) bytes. When a
+# user-supplied string carrying a NUL reaches a flush, psycopg2 rejects it
+# *client-side* with a bare ``ValueError`` (NOT a DBAPIError) before any SQL is
+# sent, so SQLAlchemy neither wraps it nor fires its ``handle_error`` event,
+# and the session is left in a ``PendingRollbackError`` state. NUL has no
+# legitimate place in our JSON payloads, so rather than proactively scanning
+# every request body, we detect this specific failure reactively and translate
+# it into a clean client error. Matching on the message keeps the detection
+# robust across psycopg2 / SQLAlchemy versions and wrap/no-wrap behaviour.
+_NUL_BYTE_VALUE_ERROR_SIGNATURE = "NUL (0x00)"
+
+
+def is_nul_byte_value_error(error: BaseException) -> bool:
+    """Report whether ``error`` is the psycopg2 NUL-byte flush rejection."""
+    return isinstance(error, ValueError) and _NUL_BYTE_VALUE_ERROR_SIGNATURE in str(error)
+
+
+def find_nul_byte_location(obj, _path: str = "") -> str | None:
+    """Return a dotted path to the first NUL-containing string in a parsed JSON
+    value, or ``None``. Used only on the error path to enrich logging, never on
+    the request hot path."""
+    if isinstance(obj, str):
+        return (_path or "<root>") if "\x00" in obj else None
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(k, str) and "\x00" in k:
+                return f"{_path}.<key {k!r}>" if _path else f"<key {k!r}>"
+            found = find_nul_byte_location(v, f"{_path}.{k}" if _path else str(k))
+            if found:
+                return found
+    elif isinstance(obj, (list, tuple)):
+        for i, item in enumerate(obj):
+            found = find_nul_byte_location(item, f"{_path}[{i}]")
+            if found:
+                return found
+    return None
+
+
+def nul_byte_error_response():
+    """The 400 returned when a payload's NUL byte is rejected."""
+    return (
+        {
+            "message": "Request payload may not contain NUL (0x00) bytes.",
+            "rc": "NulByteInPayload",
+        },
+        400,
     )

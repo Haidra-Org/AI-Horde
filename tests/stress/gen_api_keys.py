@@ -8,8 +8,8 @@ script is still useful if you want the raw keys on disk for other tooling
 (``tests/integration``, ad-hoc curl), but it is no longer required to run the
 locust stress suite.
 
-Hits the /register web form endpoint directly. Captcha is skipped automatically
-when the server has no RECAPTCHA_SECRET_KEY set (the default for local dev).
+Uses the test bootstrap endpoint (``/api/v2/dev/test-user``), which requires
+``HORDE_TEST_APIKEYS=1`` on the server and local loopback access.
 
 Usage:
     python tests/stress/gen_api_keys.py                          # 10 keys, default host
@@ -30,24 +30,31 @@ import requests
 
 
 def _register_user(session: requests.Session, base_url: str, username: str) -> str | None:
-    """POST the registration form and return the raw API key, or None on failure."""
-    resp = session.post(
-        f"{base_url}/register",
-        data={"username": username},
-        allow_redirects=False,
-    )
-    if resp.status_code == 200:
-        # The template renders:  <code class="ah-api-key">KEY</code>
-        text = resp.text
-        marker = 'class="ah-api-key">'
-        idx = text.find(marker)
-        if idx == -1:
+    """Create or rotate one test user and return the raw API key, or None on failure."""
+    payload = {
+        "username": username,
+        "oauth_id": f"{username}_oid",
+        "moderator": False,
+        "trusted": False,
+        "kudos": 0,
+    }
+    try:
+        resp = session.post(
+            f"{base_url.rstrip('/')}/api/v2/dev/test-user",
+            json=payload,
+            timeout=15,
+        )
+    except requests.RequestException:
+        return None
+
+    if resp.status_code in {200, 201}:
+        try:
+            data = resp.json()
+        except ValueError:
             return None
-        start = idx + len(marker)
-        end = text.find("<", start)
-        if end == -1:
-            return None
-        return text[start:end].strip() or None
+        api_key = data.get("api_key")
+        if isinstance(api_key, str) and api_key:
+            return api_key
     return None
 
 
@@ -72,9 +79,9 @@ def main(argv: list[str] | None = None) -> int:
 
     session = requests.Session()
 
-    # Quick connectivity check — try registering a canary user to verify captcha isn't enforced
+    # Quick connectivity check before attempting bootstrap calls.
     try:
-        session.get(f"{args.host}/register", timeout=5)
+        session.get(f"{args.host.rstrip('/')}/api/v2/status/heartbeat", timeout=5)
     except requests.ConnectionError:
         print(f"ERROR: Could not connect to {args.host}", file=sys.stderr)
         return 1
@@ -83,9 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     canary_key = _register_user(session, args.host, canary_name)
     if canary_key is None:
         print(
-            "ERROR: Could not register a test user. The server likely has "
-            "reCAPTCHA enabled (RECAPTCHA_SECRET_KEY is set). This script "
-            "only works against a local instance without it.",
+            "ERROR: Could not bootstrap a test user. Ensure the server has "
+            "HORDE_TEST_APIKEYS=1 and this script is running from the local host.",
             file=sys.stderr,
         )
         return 1

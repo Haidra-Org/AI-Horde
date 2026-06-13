@@ -11,7 +11,7 @@ import redis
 from horde.logger import logger
 
 redis_hostname = os.getenv("REDIS_IP", "localhost")
-redis_port = 6379
+redis_port = int(os.getenv("REDIS_PORT", "6379"))
 redis_address = f"redis://{redis_hostname}:{redis_port}"
 
 horde_db = 0
@@ -37,7 +37,7 @@ def is_redis_up(hostname=redis_hostname, port=redis_port) -> bool:
 
 def is_local_redis_up() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("127.0.0.1", 6379)) == 0
+        return s.connect_ex(("127.0.0.1", redis_port)) == 0
 
 
 def ger_limiter_url():
@@ -53,7 +53,7 @@ def get_horde_db():
 
 
 def get_local_horde_db():
-    return redis.Redis(host="127.0.0.1", port=6379, db=6, decode_responses=True)
+    return redis.Redis(host="127.0.0.1", port=redis_port, db=6, decode_responses=True)
 
 
 def get_ipaddr_db():

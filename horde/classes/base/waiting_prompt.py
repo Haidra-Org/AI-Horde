@@ -185,7 +185,7 @@ class WaitingPrompt(db.Model):
                 wp_activate_duration.record(time.monotonic() - t0, {"horde.wp_type": wp_type})
                 # Elapsed seconds between WP row insert and activation.
                 # This surfaces "time spent validating/initiating" before the
-                # WP becomes visible to workers — a key SLO signal.
+                # WP becomes visible to workers, a key SLO signal.
                 if getattr(self, "created", None):
                     age = (datetime.utcnow() - self.created).total_seconds()
                     if age >= 0:

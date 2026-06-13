@@ -12,6 +12,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from horde.logger import logger
 from horde.redis_ctrl import ger_cache_url, is_redis_up
+from horde.telemetry import init_telemetry_early, telemetry_enabled
 
 # expire_on_commit=False keeps ORM attributes valid across commits within a
 # single request. SQLAlchemy's default (True) expires all loaded instances on
@@ -27,25 +28,26 @@ _app_instance = None
 def get_app():
     """Return the app instance for background threads that need app_context()."""
     if _app_instance is None:
-        raise RuntimeError("App not created yet — call create_app() first")
+        raise RuntimeError("App not created yet: call create_app() first")
     return _app_instance
 
 
 # SQLAlchemy's `handle_error` event does not fire on QueuePool checkout
 # timeouts (the exception is raised directly inside Pool._do_get without
 # event dispatch). Subclassing is the only reliable hook.
-# from sqlalchemy.exc import TimeoutError as _SAQueuePoolTimeoutError  # noqa: E402
+from sqlalchemy.exc import TimeoutError as _SAQueuePoolTimeoutError  # noqa: E402
 from sqlalchemy.pool import QueuePool as _BaseQueuePool  # noqa: E402
 
-# class _InstrumentedQueuePool(_BaseQueuePool):
-#     def _do_get(self):
-#         try:
-#             return super()._do_get()
-#         except _SAQueuePoolTimeoutError:
-#             from horde import metrics
 
-#             metrics.db_pool_timeout.add(1)
-#             raise
+class _InstrumentedQueuePool(_BaseQueuePool):
+    def _do_get(self):
+        try:
+            return super()._do_get()
+        except _SAQueuePoolTimeoutError:
+            from horde import metrics
+
+            metrics.db_pool_timeout.add(1)
+            raise
 
 
 def create_app(config=None):
@@ -62,9 +64,12 @@ def create_app(config=None):
     # the OTel hook never executes and the WSGI middleware logs spurious
     # "Flask environ's OpenTelemetry span missing" warnings on every
     # rate-limited response.
-    # from horde.telemetry import init_telemetry_early
-
-    # init_telemetry_early(app)
+    #
+    # Telemetry is opt-in (see horde.telemetry.telemetry_enabled): the image is
+    # always telemetry-capable, but activation only happens when an OTLP
+    # endpoint / explicit enable flag is configured.
+    if telemetry_enabled():
+        init_telemetry_early(app)
 
     if config:
         app.config.update(config)
@@ -85,7 +90,7 @@ def create_app(config=None):
             # redis, webhook, log formatting). Shrinking the pool surfaces
             # that inefficiency via QueuePool timeouts instead of PG refusals.
             app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-                "poolclass": _BaseQueuePool,
+                "poolclass": _InstrumentedQueuePool,
                 "pool_size": int(os.getenv("SQLALCHEMY_POOL_SIZE", "15")),
                 "max_overflow": int(os.getenv("SQLALCHEMY_MAX_OVERFLOW", "5")),
                 "pool_timeout": int(os.getenv("SQLALCHEMY_POOL_TIMEOUT", "30")),
@@ -145,6 +150,25 @@ def create_app(config=None):
 
     from horde.argparser import args
     from horde.consts import HORDE_VERSION
+
+    @app.errorhandler(ValueError)
+    def _handle_value_error(error):
+        # PostgreSQL text/varchar columns cannot store NUL (0x00) bytes: a NUL in
+        # any user-supplied string reaches the DB flush, where psycopg2 raises a
+        # bare ValueError client-side and leaves the session in a
+        # PendingRollbackError state. flask-restx routes catch this via their own
+        # api.errorhandler(ValueError); this app-level handler covers the plain
+        # blueprint routes (register/transfer/...). We detect the NUL case
+        # reactively - no per-request payload scan - roll the session back, and
+        # return a clean 400. Every other ValueError is re-raised untouched so
+        # default 500 handling is preserved.
+        from horde import exceptions as exc
+
+        if exc.is_nul_byte_value_error(error):
+            db.session.rollback()
+            logger.warning("NulByteInPayload: rejected payload carrying a NUL byte")
+            return exc.nul_byte_error_response()
+        raise error
 
     @app.after_request
     def after_request(response):

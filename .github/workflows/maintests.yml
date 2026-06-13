@@ -5,127 +5,84 @@
 name: AI-Horde main tests
 
 on:
-    push:
-      branches:
-        - main
-      paths:
-        - '**.py'
-        - '**.json'
-        - 'tox.ini'
-        - '.github/workflows/maintests.yml'
-        - '.github/workflows/prtests.yml'
-        - '.github/workflows/release.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.py'
+      - '**.json'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'tox.ini'
+      - '.github/actions/**'
+      - '.github/workflows/maintests.yml'
+      - '.github/workflows/prtests.yml'
+      - '.github/workflows/trusted-fork-integration.yml'
+      - '.github/workflows/release.yml'
+      - '.pre-commit-config.yaml'
+      - 'requirements*.txt'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+env:
+  AI_HORDE_TEST_DEPS_MODE: auto
+  AI_HORDE_REQUIRE_TEST_DEPS: '1'
+  USE_SQLITE: '0'
+  ADMINS: '["test_user#1"]'
+  KUDOS_TRUST_THRESHOLD: '100'
 
 jobs:
   runner-job:
+    name: In-process pytest suite
     runs-on: ubuntu-latest
-    env: &horde-env
-      POSTGRES_URL: "localhost:5432/postgres"
-      PGUSER: "postgres"
-      PGPASSWORD: "postgres"
-      REDIS_IP: "localhost"
-      REDIS_SERVERS: '["localhost"]'
-      USE_SQLITE: 0
-      ADMINS: '["test_user#1"]'
-      R2_TRANSIENT_ACCOUNT: ${{ secrets.R2_TRANSIENT_ACCOUNT }}
-      R2_PERMANENT_ACCOUNT: ${{ secrets.R2_PERMANENT_ACCOUNT }}
-      SHARED_AWS_ACCESS_ID: ${{ secrets.SHARED_AWS_ACCESS_ID }}
-      SHARED_AWS_ACCESS_KEY: ${{ secrets.SHARED_AWS_ACCESS_KEY }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      KUDOS_TRUST_THRESHOLD: 100
-      AI_HORDE_DEV_URL: "http://localhost:7001/api/"
-
-    services: &horde-services
-      redis:
-        image: redis
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-
-      ai-horde-postgres:
-        image: ghcr.io/haidra-org/ai-horde-postgres:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup-test-python
         with:
-          python-version: '3.10'
-      - run: python -m pip install --upgrade pip wheel setuptools
-      - name: Install and run tests
-        run: |
-          python -m pip install -r requirements.txt -r requirements.dev.txt
-          python server.py -vvvvi --horde stable &
-          timeout=120
-          while ! curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
-            timeout=$((timeout - 2))
-            if [ "$timeout" -le 0 ]; then
-              echo "Server failed to start within timeout"
-              exit 1
-            fi
-            sleep 2
-          done
-
-          curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<code class="ah-api-key">\K[^<]*(?=</code>)' > tests/apikey.txt
-          export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
-
-          pytest tests/integration/ -s
+          python-version: '3.13'
+      - name: Run unit and integration tests through shared pytest runtime
+        run: uv run pytest tests/unit tests/integration -q -rs
 
   runner-horde-sdk-job:
+    name: Server-backed horde_sdk smoke
     runs-on: ubuntu-latest
-    env: *horde-env
-    services: *horde-services
-
+    env:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      AI_HORDE_DEV_URL: http://localhost:7001/api/
+      HORDE_TEST_APIKEYS: '1'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.12'
+      - uses: ./.github/actions/start-test-stack
 
-      - name: Start AI-Horde server in isolated venv
+      - name: Start AI-Horde server
         run: |
-          python -m venv .venv-server
-          source .venv-server/bin/activate
-          python -m pip install --upgrade pip wheel setuptools
-          python -m pip install -r requirements.txt -r requirements.dev.txt
-          python server.py -vvvvi --horde stable &
-          deactivate
+          uv run python server.py -vvvvi --horde stable > server.log 2>&1 &
+          echo "$!" > server.pid
 
           timeout=120
-          while ! curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
+          until curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
             timeout=$((timeout - 2))
-            if [ "$timeout" -le 0 ]; then
+            if [[ "$timeout" -le 0 ]]; then
               echo "Server failed to start within timeout"
+              cat server.log
               exit 1
             fi
             sleep 2
           done
 
-          curl -X POST --data-raw 'username=test_user' http://localhost:7001/register | grep -Po '<code class="ah-api-key">\K[^<]*(?=</code>)' > tests/apikey.txt
+          uv run python tests/integration/bootstrap_test_user.py --horde-url http://localhost:7001 --github-env "$GITHUB_ENV"
 
-      - name: Run horde_sdk tests in isolated venv
+      - name: Run horde_sdk tests
         run: |
           python -m venv .venv-sdk
           source .venv-sdk/bin/activate
           python -m pip install --upgrade pip wheel setuptools
-
-          export AI_HORDE_DEV_APIKEY=$(cat tests/apikey.txt)
 
           python -m pip download --no-deps --no-binary :all: horde_sdk
           tar -xvf horde_sdk-*.tar.gz
@@ -134,33 +91,175 @@ jobs:
           python -m pip install --group dev
           python -m pytest tests/ --ignore-glob=*api_calls.py --ignore-glob=*test_model_meta.py -s
 
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: horde-sdk-server-log
+          path: server.log
+          if-no-files-found: ignore
+
+      - name: Stop server and local test stack
+        if: always()
+        run: |
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" || true
+          fi
+          docker compose -f tests/docker-compose.yml down
+
+  stress-smoke-job:
+    name: Locust stress smoke (no 5xx/crashes)
+    runs-on: ubuntu-latest
+    env:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      HORDE_TEST_APIKEYS: '1'
+      # Drive the telemetry instrumentation under load. No OTLP endpoint is set,
+      # so logfire installs no exporters: spans/metrics are created and dropped
+      # in-memory. This surfaces instrumentation crashes without any export I/O.
+      AI_HORDE_TELEMETRY_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - uses: ./.github/actions/start-test-stack
+
+      - name: Start AI-Horde server
+        run: |
+          uv run python server.py -vvvvi --horde stable > server.log 2>&1 &
+          echo "$!" > server.pid
+
+          timeout=120
+          until curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
+            timeout=$((timeout - 2))
+            if [[ "$timeout" -le 0 ]]; then
+              echo "Server failed to start within timeout"
+              cat server.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run Locust smoke
+        run: |
+          uv run locust -f tests/stress/locustfile.py \
+            --host http://localhost:7001 \
+            --headless \
+            --users 24 \
+            --spawn-rate 6 \
+            --run-time 90s \
+            --bootstrap-requestors 4 \
+            --bootstrap-workers 8 \
+            --preflight-fail-hard \
+            --bootstrap-fail-hard \
+            --csv smoke \
+            --exit-code-on-error 0 \
+            --only-summary
+
+      - name: Gate on crash-class failures
+        run: uv run python tests/stress/check_smoke_results.py --stats smoke_stats.csv --failures smoke_failures.csv
+
+      - name: Scan server log for tracebacks
+        if: always()
+        run: |
+          if grep -n "Traceback (most recent call last)" server.log; then
+            echo "::warning::Server log contains a Python traceback during the stress smoke; see the uploaded server.log artifact."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-smoke-artifacts
+          path: |
+            server.log
+            smoke_stats.csv
+            smoke_failures.csv
+            smoke_stats_history.csv
+          if-no-files-found: ignore
+
+      - name: Stop server and local test stack
+        if: always()
+        run: |
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" || true
+          fi
+          docker compose -f tests/docker-compose.yml down
+
   unit-test-job:
+    name: Unit tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run unit tests with coverage
+        run: uv run pytest tests/unit/ -v --cov=horde --cov-report=xml --cov-report=term
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  mypy-allowlist-job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
         with:
-          python-version: '3.10'
-      - run: python -m pip install --upgrade pip wheel setuptools
-      - name: Install and run unit tests
+          python-version: '3.13'
+      - name: Run mypy on strict allowlist
+        # Strict allowlist defined under [[tool.mypy.overrides]] in pyproject.
+        # Failing here means a typed module regressed; fix the regression rather
+        # than dropping the file from the allowlist.
+        run: uv run mypy horde/telemetry.py horde/metrics.py
+
+  deprecation-warnings-job:
+    runs-on: ubuntu-latest
+    # Soft job: never fails the build. Builds the dep-bump backlog over time.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - name: Run unit tests with DeprecationWarning collection
         run: |
-          python -m pip install -r requirements.txt -r requirements.dev.txt
-          pytest tests/unit/ -v
+          uv run pytest tests/unit/ -W default::DeprecationWarning -W default::PendingDeprecationWarning \
+            -v 2>&1 | tee deprecation-report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deprecation-warnings
+          path: deprecation-report.txt
+          if-no-files-found: ignore
+
+  pip-audit-job:
+    runs-on: ubuntu-latest
+    # Soft job: surfaces CVEs without breaking PRs while we work the backlog.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - name: Run pip-audit on the resolved dependency set
+        run: uv run pip-audit --strict --progress-spinner off || true
 
   lint-check-job:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup-test-python
         with:
-          python-version: '3.10'
-      - run: python -m pip install --upgrade pip wheel setuptools
-      - name: Install and run lint/format checkers
-        run: |
-          python -m pip install -r requirements.dev.txt
-          ruff format .
-          ruff check .
-
+          python-version: '3.13'
+      - name: Run lint checker
+        run: uv run ruff check .
 
   reuse-lint-job:
     runs-on: ubuntu-latest

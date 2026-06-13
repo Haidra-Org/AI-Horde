@@ -39,6 +39,33 @@ from horde.vars import (
 routes_bp = Blueprint("routes", __name__)
 
 dance_return_to = "/"
+TEST_BOOTSTRAP_TRUE_VALUES = {"1", "true", "yes", "on"}
+LOOPBACK_IPS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+
+def _is_test_apikey_bootstrap_enabled() -> bool:
+    return os.getenv("HORDE_TEST_APIKEYS", "0").strip().lower() in TEST_BOOTSTRAP_TRUE_VALUES
+
+
+def _genuine_remote_addr() -> str | None:
+    """Return the real socket peer address, defeating X-Forwarded-For spoofing.
+
+    The app wraps its WSGI stack in ``ProxyFix(x_for=1)``, which overwrites
+    ``request.remote_addr`` (and ``environ["REMOTE_ADDR"]``) with the
+    client-controllable ``X-Forwarded-For`` value. A caller could therefore
+    forge ``X-Forwarded-For: 127.0.0.1`` and pass a naive loopback check.
+    ProxyFix preserves the genuine pre-rewrite socket peer under
+    ``werkzeug.proxy_fix.orig``; prefer it, falling back to ``REMOTE_ADDR`` when
+    the app is not proxied.
+    """
+    orig = request.environ.get("werkzeug.proxy_fix.orig")
+    if isinstance(orig, dict) and orig.get("REMOTE_ADDR"):
+        return orig["REMOTE_ADDR"]
+    return request.environ.get("REMOTE_ADDR")
+
+
+def _is_loopback_request() -> bool:
+    return _genuine_remote_addr() in LOOPBACK_IPS
 
 
 @logger.catch(reraise=True)
@@ -285,6 +312,94 @@ def register():
         username=username,
         pseudonymous=pseudonymous,
         oauth_id=oauth_id,
+    )
+
+
+@logger.catch(reraise=True)
+@routes_bp.route("/api/v2/dev/test-user", methods=["POST"])
+def create_test_user_for_local_testing():
+    """Create or refresh a local test user and return a plaintext API key.
+
+    This endpoint is intended for CI/local integration testing only and is
+    guarded by two independent layers (belt-and-suspenders), because it mints a
+    privileged, kudos-laden API key:
+
+    1. The ``HORDE_TEST_APIKEYS`` env gate must be explicitly enabled. This is
+       the primary control and is never set in production deployments. Without
+       it the endpoint reports ``404`` and is indistinguishable from absent.
+    2. The request must originate from the loopback interface, checked against
+       the genuine socket peer (see ``_genuine_remote_addr``) so it cannot be
+       bypassed by forging ``X-Forwarded-For`` through the proxy.
+    """
+    if not _is_test_apikey_bootstrap_enabled():
+        return {"message": "Not Found"}, 404
+    if not _is_loopback_request():
+        return {"message": "Forbidden"}, 403
+
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return {"message": "JSON object payload expected"}, 400
+
+    username = payload.get("username", "test_user")
+    oauth_id = payload.get("oauth_id", "ci_test_user")
+    moderator = payload.get("moderator", True)
+    trusted = payload.get("trusted", True)
+    kudos = payload.get("kudos", 10000)
+
+    if not isinstance(username, str):
+        return {"message": "username must be a string"}, 400
+    if not isinstance(oauth_id, str):
+        return {"message": "oauth_id must be a string"}, 400
+    if not isinstance(moderator, bool):
+        return {"message": "moderator must be a boolean"}, 400
+    if not isinstance(trusted, bool):
+        return {"message": "trusted must be a boolean"}, 400
+    if isinstance(kudos, bool) or (kudos is not None and not isinstance(kudos, int)):
+        return {"message": "kudos must be an integer or null"}, 400
+    if isinstance(kudos, int) and kudos < 0:
+        return {"message": "kudos must be non-negative"}, 400
+
+    username = sanitize_string(username)
+    oauth_id = sanitize_string(oauth_id)
+    if not username:
+        return {"message": "username cannot be empty"}, 400
+    if not oauth_id:
+        return {"message": "oauth_id cannot be empty"}, 400
+    if is_profane(username):
+        return {"message": "Bad Username"}, 400
+
+    user = database.find_user_by_oauth_id(oauth_id)
+    api_key = generate_api_key()
+    hashed_api_key = hash_api_key(api_key)
+    created = False
+    if user:
+        user.username = username
+        user.api_key = hashed_api_key
+        db.session.commit()
+    else:
+        user = User(username=username, oauth_id=oauth_id, api_key=hashed_api_key)
+        user.create()
+        created = True
+
+    user.set_moderator(moderator)
+    if not moderator:
+        user.set_trusted(trusted)
+    if isinstance(kudos, int) and user.kudos != kudos:
+        user.modify_kudos(kudos - user.kudos, "admin")
+    user.refresh_cache()
+
+    return (
+        {
+            "api_key": api_key,
+            "user_id": str(user.id),
+            "username": user.username,
+            "alias": user.get_unique_alias(),
+            "kudos": user.kudos,
+            "trusted": user.trusted,
+            "moderator": user.moderator,
+            "created": created,
+        },
+        201 if created else 200,
     )
 
 

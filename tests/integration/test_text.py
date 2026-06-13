@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
+# SPDX-FileCopyrightText: 2026 Tazlin <tazlin@haidra.net>
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
-
-import requests
 
 TEST_MODELS = ["elinas/chronos-70b-v2"]
 
 
-def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
-    headers = {"apikey": api_key, "Client-Agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625"}  # ci/cd user
+def test_simple_text_gen(client, request_headers: dict[str, str]) -> None:
     async_dict = {
         "prompt": "a horde of cute stable robots in a sprawling server room repairing a massive mainframe",
         "trusted_workers": True,
@@ -18,57 +16,51 @@ def test_simple_text_gen(api_key: str, HORDE_URL: str, CIVERSION: str) -> None:
         "temperature": 1,
         "models": TEST_MODELS,
     }
-    protocol = "http"
-    if HORDE_URL in ["dev.stablehorde.net", "stablehorde.net"]:
-        protocol = "https"
-    async_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/text/async", json=async_dict, headers=headers)
-    assert async_req.ok, async_req.text
-    async_results = async_req.json()
+    async_req = client.post("/api/v2/generate/text/async", json=async_dict, headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    async_results = async_req.get_json()
     req_id = async_results["id"]
-    # print(async_results)
+
     pop_dict = {
         "name": "CICD Fake Scribe",
         "models": ["elinas/chronos-70b-v2"],
-        "bridge_agent": f"aihorde_ci_client:{CIVERSION}:(discord)db0#1625",
+        "bridge_agent": request_headers["Client-Agent"],
         "amount": 10,
         "max_context_length": 4096,
         "max_length": 512,
     }
-    pop_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/text/pop", json=pop_dict, headers=headers)
-    assert pop_req.ok, pop_req.text
-    pop_results = pop_req.json()
-    # print(json.dumps(pop_results, indent=4))
+    pop_req = client.post("/api/v2/generate/text/pop", json=pop_dict, headers=request_headers)
+    assert pop_req.status_code < 400, pop_req.get_data(as_text=True)
+    pop_results = pop_req.get_json()
+
     job_id = pop_results["id"]
     try:
         assert job_id is not None, pop_results
     except AssertionError as err:
-        requests.delete(f"{protocol}://{HORDE_URL}/api/v2/generate/text/status/{req_id}", headers=headers)
+        client.delete(f"/api/v2/generate/text/status/{req_id}", headers=request_headers)
         print("Request cancelled")
         raise err
+
     submit_dict = {
         "id": job_id,
         "generation": "test ",
         "state": "ok",
         "seed": 0,
     }
-    submit_req = requests.post(f"{protocol}://{HORDE_URL}/api/v2/generate/text/submit", json=submit_dict, headers=headers)
-    assert submit_req.ok, submit_req.text
-    submit_results = submit_req.json()
+    submit_req = client.post("/api/v2/generate/text/submit", json=submit_dict, headers=request_headers)
+    assert submit_req.status_code < 400, submit_req.get_data(as_text=True)
+    submit_results = submit_req.get_json()
     assert submit_results["reward"] > 0
-    retrieve_req = requests.get(f"{protocol}://{HORDE_URL}/api/v2/generate/text/status/{req_id}", headers=headers)
-    assert retrieve_req.ok, retrieve_req.text
-    retrieve_results = retrieve_req.json()
-    # print(json.dumps(retrieve_results,indent=4))
+
+    retrieve_req = client.get(f"/api/v2/generate/text/status/{req_id}", headers=request_headers)
+    assert retrieve_req.status_code < 400, retrieve_req.get_data(as_text=True)
+    retrieve_results = retrieve_req.get_json()
+
     assert len(retrieve_results["generations"]) == 1
     gen = retrieve_results["generations"][0]
     assert len(gen["gen_metadata"]) == 0
-    # assert gen["text"] == "Test"
     assert gen["worker_name"] == "CICD Fake Scribe"
     assert gen["model"] in TEST_MODELS
     assert gen["state"] == "ok"
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
-
-
-if __name__ == "__main__":
-    test_simple_text_gen("2bc5XkMeLAWiN9O5s7bhfg", "dev.stablehorde.net", "0.1.1")

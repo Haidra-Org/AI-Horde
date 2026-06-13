@@ -55,6 +55,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Generated throwaway credentials for the local Garage test object store
+tests/garage/.test-credentials.env
+
 # Translations
 *.mo
 *.pot
@@ -152,3 +155,6 @@ horde_sdk**
 .venv*
 .env_docker
 .env_telemetry
+
+locust.conf
+.claude/*

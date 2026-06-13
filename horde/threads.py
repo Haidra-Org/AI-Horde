@@ -4,7 +4,8 @@
 
 import threading
 import time
-from typing import TYPE_CHECKING, Callable, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 
 import logfire
 
@@ -32,8 +33,8 @@ class PrimaryTimedFunction:
         self,
         interval: float,
         function: Callable,
-        args: Optional[list] = None,
-        kwargs: Optional[dict] = None,
+        args: list | None = None,
+        kwargs: dict | None = None,
         quorum: Optional["Quorum"] = None,
     ) -> None:
         self.interval = interval

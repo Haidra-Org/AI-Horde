@@ -41,8 +41,6 @@ from horde.enums import WarningMessage
 from horde.flask import cache, db, get_app
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
-from horde.model_reference import model_reference
-from horde.patreon import patrons
 from horde.metrics import (
     check_duration,
     check_outcomes,
@@ -50,6 +48,8 @@ from horde.metrics import (
     generate_init_wp_kudos_check_duration,
     status_duration,
 )
+from horde.model_reference import model_reference
+from horde.patreon import patrons
 from horde.telemetry import (
     get_traceparent,
     pyroscope_tag,

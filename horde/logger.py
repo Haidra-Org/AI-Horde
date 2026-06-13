@@ -107,7 +107,7 @@ logger.__class__.init_err = partialmethod(logger.__class__.log, "INIT_ERR")
 logger.__class__.message = partialmethod(logger.__class__.log, "MESSAGE")
 logger.__class__.audit = partialmethod(logger.__class__.log, "AUDIT")
 
-# Default config with colorize=False — reconfigure_from_args() applies CLI settings
+# Default config with colorize=False (reconfigure_from_args() applies CLI settings)
 config = {
     "handlers": [
         {

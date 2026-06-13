@@ -5,27 +5,58 @@
 
 [project]
 name = "AI-Horde"
-version = "4.50.0"
+version = "5.0.0"
 description = "A Crowdsourced Generative AI cluster for everyone."
 authors = [
     {name = "db0", email = "mail@dbzer0.com"},
+    {name = "Tazlin", email = "tazlin@haidra.net"},
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "requests",
-    "loguru",
-    "Flask",
+    "Werkzeug~=2.2.2",
+    "Flask~=2.2.2",
     "flask-restx",
-    "waitress",
-    "flask-dance",
-    "bleach",
-    "redis",
-    "pillow",
-    "SQLAlchemy",
-    "boto3",
-    "semver",
+    "flask-limiter~=3.0",
+    "Flask-Caching",
+    "waitress~=2.1.2",
+    "requests>=2.27",
+    "markdown~=3.4.1",
+    "flask-dance[sqla]",
+    "blinker",
+    "python-dotenv",
+    "loguru",
+    "bleach~=5.0.1",
+    "alt-profanity-check",
+    "safetext",
+    "python-dateutil~=2.8.2",
+    "redis~=4.3.5",
+    "pillow>=10.0.1",
+    "flask-sqlalchemy~=3.1.1",
+    "oauthlib~=3.2.2",
+    "sqlalchemy~=2.0.35",
+    "psycopg2-binary",
+    "boto3>=1.33.7",
+    "regex",
+    "unidecode",
+    "patreon @ git+https://github.com/Patreon/patreon-python.git",
     "torch",
+    "emoji",
+    "semver>=3.0.2",
+    # numpy is transitive (not imported by horde/*). The former `~=1.26.4` cap
+    # existed solely because better_profanity broke on numpy 2.x; that dep is
+    # gone (replaced by safetext + alt-profanity-check) so the cap was dropped.
+    # The resolved version is pinned deterministically by uv.lock (currently 2.x).
+    "numpy",
+    "markdownify",
+    "stripe",
+    "environs",
+    "setuptools<82",
+    # logfire is hard-pinned deliberately: the OTel/Logfire bridge API is not yet
+    # stable across minors and our telemetry wiring (horde/telemetry.py) is tested
+    # against this exact version. Bump only with a telemetry smoke re-run.
+    "logfire[flask,sqlalchemy,redis,requests]==4.32.1",
+    "chardet<6",
 ]
 license = {file = "LICENSE"}
 classifiers = [
@@ -37,6 +68,38 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://aihorde.net"
 "Bug Tracker" = "https://github.com/Haidra-Org/AI-Horde"
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+    "ruff==0.15.12",
+    "tox~=4.14.1",
+    "pytest-asyncio",
+    "pytest-cov",
+    "fakeredis",
+    "freezegun",
+    "testcontainers[postgres,redis]",
+    "mypy",
+    "pip-audit",
+    "reuse",
+    "pre-commit",
+    "locust>=2.43.4",
+]
+# Optional runtime group used by the Dockerfile's AI_HORDE_DEPENDENCY_GROUPS
+# build arg. Keep profiler wheels out of the default image; publish/use the
+# telemetry image variant when PYROSCOPE_ENABLED=true.
+telemetry-profiling = [
+    "pyroscope-io",
+    "pyroscope-otel",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 140
@@ -81,9 +144,49 @@ include = '\.pyi?$'
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 markers = [
-    "unit: Unit tests (no external services required)",
-    "integration: Integration tests (require running server + Postgres + Redis)",
+    "unit: Unit tests (in-process; Postgres + fakeredis via fixtures)",
+    "integration: Integration tests (in-process Flask client; real services via fixtures)",
+    "object_storage: Integration tests that require S3-compatible object storage",
 ]
+
+
+[tool.coverage.run]
+branch = true
+source = ["horde"]
+omit = [
+    "horde/templates/*",
+    "horde/data/*",
+    "horde/sandbox.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 1
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.mypy]
+# Permissive baseline so existing untyped modules don't block adoption.
+# Files explicitly listed under [[tool.mypy.overrides]] with strict = true
+# form the "typed allowlist".
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# --- Strict allowlist ---
+# Rule of thumb: a module joins this list when its public surface is fully
+# typed AND mypy passes strict on it.
+[[tool.mypy.overrides]]
+module = [
+    "horde.telemetry",
+    "horde.metrics",
+]
+strict = true
 
 [tool.ruff.per-file-ignores]
 "horde/sandbox.py" = ["F401"]

@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Start AI-Horde local test stack
+description: Start the local Postgres/Redis/Garage stack and export its environment for later workflow steps.
+
+runs:
+  using: composite
+  steps:
+    - name: Start compose services
+      shell: bash
+      env:
+        AI_HORDE_TEST_POSTGRES_PORT: '15432'
+        AI_HORDE_TEST_REDIS_PORT: '16379'
+        AI_HORDE_TEST_GARAGE_S3_PORT: '13900'
+        AI_HORDE_TEST_GARAGE_ADMIN_PORT: '13903'
+        AI_HORDE_TEST_GARAGE_RPC_PORT: '13901'
+      run: |
+        bash tests/garage/ensure_test_credentials.sh >/dev/null
+        docker compose -f tests/docker-compose.yml up -d
+
+    - name: Bootstrap Garage and export environment
+      shell: bash
+      env:
+        AI_HORDE_TEST_POSTGRES_PORT: '15432'
+        AI_HORDE_TEST_REDIS_PORT: '16379'
+        AI_HORDE_TEST_GARAGE_S3_PORT: '13900'
+        AI_HORDE_TEST_GARAGE_ADMIN_PORT: '13903'
+        AI_HORDE_TEST_GARAGE_RPC_PORT: '13901'
+      run: |
+        eval "$(bash tests/bootstrap_garage.sh --shell)"
+
+        {
+          printf 'AWS_ACCESS_KEY_ID=%s\n' "$AWS_ACCESS_KEY_ID"
+          printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$AWS_SECRET_ACCESS_KEY"
+          printf 'SHARED_AWS_ACCESS_ID=%s\n' "$SHARED_AWS_ACCESS_ID"
+          printf 'SHARED_AWS_ACCESS_KEY=%s\n' "$SHARED_AWS_ACCESS_KEY"
+          printf 'R2_TRANSIENT_ACCOUNT=%s\n' "$R2_TRANSIENT_ACCOUNT"
+          printf 'R2_PERMANENT_ACCOUNT=%s\n' "$R2_PERMANENT_ACCOUNT"
+          printf 'R2_TRANSIENT_BUCKET=%s\n' "$R2_TRANSIENT_BUCKET"
+          printf 'R2_PERMANENT_BUCKET=%s\n' "$R2_PERMANENT_BUCKET"
+          printf 'R2_SOURCE_IMAGE_BUCKET=%s\n' "$R2_SOURCE_IMAGE_BUCKET"
+          printf 'POSTGRES_URL=%s\n' "$POSTGRES_URL"
+          printf 'PGUSER=%s\n' "${PGUSER:-postgres}"
+          printf 'PGPASSWORD=%s\n' "${PGPASSWORD:-postgres}"
+          printf 'REDIS_IP=%s\n' "$REDIS_IP"
+          printf 'REDIS_PORT=%s\n' "$REDIS_PORT"
+          printf 'REDIS_SERVERS=["%s"]\n' "$REDIS_IP"
+        } >> "$GITHUB_ENV"
