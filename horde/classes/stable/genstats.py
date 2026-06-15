@@ -8,6 +8,7 @@ from sqlalchemy import Enum
 
 from horde.enums import ImageGenState
 from horde.flask import db
+from horde.logger import logger
 
 
 class ImageGenerationStatisticPP(db.Model):
@@ -198,6 +199,11 @@ def get_compiled_imagegen_stats_totals() -> dict[str, dict[str, int]]:
         for period in periods:
             stats[period]["images"] = getattr(latest_entry, f"{period}_images")
             stats[period]["ps"] = getattr(latest_entry, f"{period}_pixels")
+    else:
+        logger.warning(
+            "No compiled image generation totals found; returning zeros. "
+            "Is the 'compile_imagegen_stats_totals' pg_cron job running?",
+        )
 
     return stats
 
@@ -220,43 +226,28 @@ class CompiledImageGenStatsModels(db.Model):
 def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, dict[str, int]]]:
     """Gets the precompiled image generation statistics for the day, month, and total periods for each model."""
 
-    latest_date = db.session.query(db.func.max(CompiledImageGenStatsModels.created)).scalar()
-
-    models: tuple[CompiledImageGenStatsModels] = ()
-
-    # If model_state is "all" we get all models, if it's "known" we get only known models, if it's "custom" we get only custom models
-    if model_state == "all":
-        models = db.session.query(CompiledImageGenStatsModels.model_name).distinct().all()
-    elif model_state == "known":
-        models = (
-            db.session.query(CompiledImageGenStatsModels.model_name)
-            .filter(CompiledImageGenStatsModels.model_state == "known")
-            .distinct()
-            .all()
-        )
-    elif model_state == "custom":
-        models = (
-            db.session.query(CompiledImageGenStatsModels.model_name)
-            .filter(CompiledImageGenStatsModels.model_state == "custom")
-            .distinct()
-            .all()
-        )
-    else:
+    if model_state not in ("all", "known", "custom"):
         raise ValueError("Invalid model_state. Expected 'all', 'known', or 'custom'.")
 
+    latest_date = db.session.query(db.func.max(CompiledImageGenStatsModels.created)).scalar()
+
     periods = ["day", "month", "total"]
-    stats = {period: {model.model_name: 0 for model in models} for period in periods}
 
-    for model in models:
-        latest_entry = (
-            db.session.query(CompiledImageGenStatsModels)
-            .filter_by(model_name=model.model_name)
-            .filter(CompiledImageGenStatsModels.created == latest_date)
-            .first()
+    if latest_date is None:
+        logger.warning(
+            "No compiled image generation model stats found; returning empty stats. "
+            "Has the 'compile_imagegen_stats_models' pg_cron job run yet?",
         )
+        return {period: {} for period in periods}
 
-        if latest_entry:
-            for period in periods:
-                stats[period][model.model_name] = getattr(latest_entry, f"{period}_images")
+    # All rows of a single compile run share the same `created` timestamp, so the latest snapshot is
+    # `created == latest_date`. `model_state` is decided per-row at compile time, so filtering the
+    # compiled rows by it is equivalent to the previous per-state DISTINCT queries. A single query
+    # over the (indexed) `created` column replaces the previous N+1 per-model lookups.
+    query = db.session.query(CompiledImageGenStatsModels).filter(CompiledImageGenStatsModels.created == latest_date)
+    if model_state != "all":
+        query = query.filter(CompiledImageGenStatsModels.model_state == model_state)
 
-    return stats
+    rows = query.all()
+
+    return {period: {row.model_name: getattr(row, f"{period}_images") for row in rows} for period in periods}

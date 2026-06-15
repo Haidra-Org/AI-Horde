@@ -8,6 +8,7 @@ from sqlalchemy import Enum
 
 from horde.enums import ImageGenState
 from horde.flask import db
+from horde.logger import logger
 
 
 def record_text_statistic(procgen):
@@ -79,6 +80,11 @@ def get_compiled_textgen_stats_totals() -> dict[str, dict[str, int]]:
         for period in periods:
             stats_dict[period]["requests"] = getattr(query, f"{period}_requests")
             stats_dict[period]["tokens"] = getattr(query, f"{period}_tokens")
+    else:
+        logger.warning(
+            "No compiled text generation totals found; returning zeros. "
+            "Is the 'compile_textgen_stats_totals' pg_cron job running?",
+        )
 
     return stats_dict
 
@@ -102,11 +108,18 @@ def get_compiled_textgen_stats_models() -> dict[str, dict[str, int]]:
 
     latest_date = db.session.query(db.func.max(CompiledTextGenStatsModels.created)).scalar()
 
+    periods = ["day", "month", "total"]
+
+    if latest_date is None:
+        logger.warning(
+            "No compiled text generation model stats found; returning empty stats. "
+            "Has the 'compile_textgen_stats_models' pg_cron job run yet?",
+        )
+        return {period: {} for period in periods}
+
     models: tuple[CompiledTextGenStatsModels] = (
         db.session.query(CompiledTextGenStatsModels).filter(CompiledTextGenStatsModels.created == latest_date).all()
     )
-
-    periods = ["day", "month", "total"]
     stats = {period: {model.model: 0 for model in models} for period in periods}
 
     for model in models:

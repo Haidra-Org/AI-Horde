@@ -21,8 +21,10 @@ from sqlalchemy import func, or_
 from horde import vars as hv
 from horde.argparser import args
 from horde.classes.base.user import User
+from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.stable.genstats import CompiledImageGenStatsModels, CompiledImageGenStatsTotals
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 
@@ -330,6 +332,39 @@ def prune_stats():
     """Prunes performances which are too old"""
     with get_app().app_context():
         prune_expired_stats()
+
+
+# The compiled_* stats tables accumulate a new snapshot on each compile run (totals every minute,
+# models daily) and are otherwise never pruned. Reads only ever use the latest snapshot, so we only
+# need to retain a short rolling window.
+COMPILED_STATS_RETENTION = timedelta(days=7)
+
+
+@logger.catch(reraise=True)
+def prune_compiled_stats():
+    """Prunes old rows from the precompiled stats tables, always keeping the latest snapshot.
+
+    The raw image_gen_stats/text_gen_stats tables are intentionally left untouched as they back the
+    all-time `total` figures.
+    """
+    with get_app().app_context():
+        now = datetime.utcnow()
+        for model in (
+            CompiledImageGenStatsTotals,
+            CompiledImageGenStatsModels,
+            CompiledTextGensStatsTotals,
+            CompiledTextGenStatsModels,
+        ):
+            latest = db.session.query(db.func.max(model.created)).scalar()
+            if latest is None:
+                continue
+            # Never delete the latest snapshot, even if it is older than the retention window (e.g. a
+            # stalled compile job), so the read endpoints always have data to serve.
+            cutoff = min(now - COMPILED_STATS_RETENTION, latest)
+            deleted = db.session.query(model).filter(model.created < cutoff).delete(synchronize_session=False)
+            if deleted:
+                logger.info(f"Pruned {deleted} rows older than {cutoff} from {model.__tablename__}")
+        db.session.commit()
 
 
 @logger.catch(reraise=True)
