@@ -1393,7 +1393,7 @@ class ImageHordeStatsModels(Resource):
     )
 
     @logger.catch(reraise=True)
-    # @cache.cached(timeout=50, query_string=True)
+    @cache.cached(timeout=50, query_string=True)
     @api.expect(get_parser)
     @api.response(400, "Validation Error", models.response_model_error)
     @api.marshal_with(
