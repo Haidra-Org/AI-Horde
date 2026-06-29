@@ -11,6 +11,14 @@ from horde.logger import logger
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
+        10: {
+            "4xNomos8kSC",
+            "4xLSDIRplus",
+            "4xNomosWebPhoto_RealPLKSR",
+            "4xNomos2_realplksr_dysample",
+            "4xNomos2_hq_dat2",
+            "2xModernSpanimationV1",
+        },
         9: {"flux"},
         8: {"layer_diffuse"},
         7: {"qr_code", "extra_texts", "workflow"},
