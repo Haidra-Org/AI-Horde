@@ -20,6 +20,13 @@ KNOWN_POST_PROCESSORS = {
     "4x_AnimeSharp": 1.05,
     "CodeFormers": 1,
     "strip_background": 1,
+    # Modern permissively-licensed upscalers served as beta via the model-reference pending queue.
+    "4xNomos8kSC": 1.05,
+    "4xLSDIRplus": 1.05,
+    "4xNomosWebPhoto_RealPLKSR": 1.05,
+    "4xNomos2_realplksr_dysample": 1.05,
+    "4xNomos2_hq_dat2": 1.05,
+    "2xModernSpanimationV1": 1.05,
 }
 
 KNOWN_UPSCALERS = [
@@ -28,6 +35,12 @@ KNOWN_UPSCALERS = [
     "RealESRGAN_x4plus_anime_6B",
     "NMKD_Siax",
     "4x_AnimeSharp",
+    "4xNomos8kSC",
+    "4xLSDIRplus",
+    "4xNomosWebPhoto_RealPLKSR",
+    "4xNomos2_realplksr_dysample",
+    "4xNomos2_hq_dat2",
+    "2xModernSpanimationV1",
 ]
 
 # These are postprocessors which require some juice,
@@ -38,6 +51,10 @@ HEAVY_POST_PROCESSORS = {
     "NMKD_Siax",
     "4x_AnimeSharp",
     "CodeFormers",
+    # The ESRGAN/DAT additions are large; the RealPLKSR/SPAN additions are efficient and omitted.
+    "4xNomos8kSC",
+    "4xLSDIRplus",
+    "4xNomos2_hq_dat2",
 }
 
 # These models are very large in VRAM, so we increase the calculated MPS
