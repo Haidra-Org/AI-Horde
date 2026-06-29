@@ -24,6 +24,16 @@ class TextProcessingGeneration(ProcessingGeneration):
     wp = db.relationship("TextWaitingPrompt", back_populates="processing_gens")
     worker = db.relationship("TextWorker", back_populates="processing_gens")
 
+    def _censorship_state(self) -> str:
+        """Determine the state string for this procgen based on its censorship flags."""
+        if not self.censored:
+            return "ok"
+        gen_metadata = self.gen_metadata if self.gen_metadata is not None else []
+        for meta in gen_metadata:
+            if isinstance(meta, dict) and meta.get("type") == "censorship" and meta.get("value") == "csam":
+                return "csam"
+        return "censored"
+
     def get_details(self):
         """Returns a dictionary with details about this processing generation"""
         ret_dict = {
@@ -33,6 +43,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             "worker_name": self.worker.name,
             "model": self.model,
             "id": self.id,
+            "state": self._censorship_state(),
             "gen_metadata": self.gen_metadata if self.gen_metadata is not None else [],
         }
         return ret_dict
@@ -80,9 +91,25 @@ class TextProcessingGeneration(ProcessingGeneration):
         if state == "faulted":
             self.wp.n += 1
             self.abort()
-        elif state == "censored":
+        elif state in ("censored", "csam"):
             self.censored = True
             db.session.commit()
+
+        # Detect csam from gen_metadata (mirrors the image-side approach).
+        # Also inject a csam metadata entry when state == "csam" so the
+        # authoritative source (gen_metadata) is always consistent.
+        gen_metadata = list(kwargs.get("gen_metadata", self.gen_metadata or []))
+        has_csam_meta = any(
+            isinstance(m, dict) and m.get("type") == "censorship" and m.get("value") == "csam"
+            for m in gen_metadata
+        )
+        if not has_csam_meta and state == "csam":
+            gen_metadata.append({"type": "censorship", "value": "csam"})
+            kwargs = {**kwargs, "gen_metadata": gen_metadata}
+        elif has_csam_meta:
+            self.censored = True
+            db.session.commit()
+
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         record_text_statistic(self)
         return kudos
