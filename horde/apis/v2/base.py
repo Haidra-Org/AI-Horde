@@ -794,12 +794,16 @@ class JobSubmitTemplate(Resource):
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
         things_per_sec = stats.record_fulfilment(self.procgen, self.procgen.get_things_count(self.args["generation"]))
-        self.kudos = self.procgen.set_generation(
-            generation=self.args["generation"],
-            things_per_sec=things_per_sec,
-            seed=self.args.seed,
-            state=self.args.state,
-        )
+        gen_metadata = getattr(self.args, "gen_metadata", None)
+        kwargs: dict[str, object] = {
+            "generation": self.args["generation"],
+            "things_per_sec": things_per_sec,
+            "seed": self.args.seed,
+            "state": self.args.state,
+        }
+        if gen_metadata is not None:
+            kwargs["gen_metadata"] = gen_metadata
+        self.kudos = self.procgen.set_generation(**kwargs)
 
     def validate(self):
         t = time.monotonic()

@@ -534,7 +534,7 @@ class Models:
                     title="Generation State",
                     required=True,
                     default="ok",
-                    enum=["ok", "censored"],
+                    enum=["ok", "censored", "csam"],
                     description="OBSOLETE (Use the gen_metadata field). The state of this generation.",
                 ),
             },
