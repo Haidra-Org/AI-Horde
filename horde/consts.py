@@ -20,13 +20,16 @@ KNOWN_POST_PROCESSORS = {
     "4x_AnimeSharp": 1.05,
     "CodeFormers": 1,
     "strip_background": 1,
-    # Modern permissively-licensed upscalers served as beta via the model-reference pending queue.
+    # Modern permissively-licensed upscalers served
     "4xNomos8kSC": 1.05,
     "4xLSDIRplus": 1.05,
     "4xNomosWebPhoto_RealPLKSR": 1.05,
     "4xNomos2_realplksr_dysample": 1.05,
     "4xNomos2_hq_dat2": 1.05,
     "2xModernSpanimationV1": 1.05,
+    # Modern permissively-licensed face restorers
+    "GFPGANv1.3": 1,
+    "RestoreFormer": 1,
 }
 
 KNOWN_UPSCALERS = [
@@ -55,6 +58,9 @@ HEAVY_POST_PROCESSORS = {
     "4xNomos8kSC",
     "4xLSDIRplus",
     "4xNomos2_hq_dat2",
+    # RestoreFormer is a ~290MB transformer face restorer (heavier, like CodeFormers); GFPGANv1.3 mirrors
+    # GFPGAN and stays out of the heavy set.
+    "RestoreFormer",
 }
 
 # These models are very large in VRAM, so we increase the calculated MPS
