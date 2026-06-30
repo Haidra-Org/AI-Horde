@@ -196,6 +196,7 @@ class ImageModels(v2.Models):
                         "extra_source_images",
                         "batch_index",
                         "information",
+                        "aesthetic_score",
                     ],
                     description="The relevance of the metadata field",
                 ),
@@ -751,7 +752,8 @@ class ImageModels(v2.Models):
             {
                 "name": fields.String(
                     required=True,
-                    enum=["caption", "interrogation", "nsfw", "vectorize"] + list(KNOWN_POST_PROCESSORS.keys()),
+                    enum=["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
+                    + list(KNOWN_POST_PROCESSORS.keys()),
                     description="The type of interrogation this is.",
                     unique=True,
                 ),
@@ -830,7 +832,8 @@ class ImageModels(v2.Models):
                 "forms": fields.List(
                     fields.String(
                         description="The type of interrogation this worker can fulfil.",
-                        enum=["caption", "interrogation", "nsfw", "vectorize"] + list(KNOWN_POST_PROCESSORS.keys()),
+                        enum=["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
+                        + list(KNOWN_POST_PROCESSORS.keys()),
                         unique=True,
                     ),
                 ),
@@ -869,7 +872,8 @@ class ImageModels(v2.Models):
                 ),
                 "form": fields.String(
                     description="The name of this interrogation form",
-                    enum=["caption", "interrogation", "nsfw", "vectorize"] + list(KNOWN_POST_PROCESSORS.keys()),
+                    enum=["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
+                    + list(KNOWN_POST_PROCESSORS.keys()),
                 ),
                 "payload": fields.Nested(self.input_model_interrogation_form_payload, skip_none=True),
                 "source_image": fields.String(description="The URL From which the source image can be downloaded."),
