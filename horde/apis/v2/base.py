@@ -837,6 +837,39 @@ class Workers(Resource):
         location="args",
     )
 
+    get_parser.add_argument(
+        "paused",
+        required=False,
+        default=None,
+        type=bool,
+        help="Filter by paused state (true/false).",
+        location="args",
+    )
+    get_parser.add_argument(
+        "maintenance",
+        required=False,
+        default=None,
+        type=bool,
+        help="Filter by maintenance mode (true/false).",
+        location="args",
+    )
+    get_parser.add_argument(
+        "top",
+        required=False,
+        default=None,
+        type=int,
+        help="Return only the top X workers by kudos rewards.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "min_suspicion",
+        required=False,
+        default=None,
+        type=int,
+        help="Minimum suspicion level to filter by.",
+        location="args",
+    )
+
     @api.expect(get_parser)
     @logger.catch(reraise=True)
     # @cache.cached(timeout=10, query_string=True)
@@ -883,9 +916,17 @@ class Workers(Resource):
 
     def parse_worker_by_query(self, workers_list):
         if self.args.name:
-            return [w for w in workers_list if w["name"].lower() == self.args.name.lower()]
+            workers_list = [w for w in workers_list if w["name"].lower() == self.args.name.lower()]
         if self.args.type:
-            return [w for w in workers_list if w["type"] == self.args.type]
+            workers_list = [w for w in workers_list if w["type"] == self.args.type]
+        if self.args.paused is not None:
+            workers_list = [w for w in workers_list if w.get("paused") == self.args.paused]
+        if self.args.maintenance is not None:
+            workers_list = [w for w in workers_list if w.get("maintenance_mode") == self.args.maintenance]
+        if self.args.min_suspicion is not None:
+            workers_list = [w for w in workers_list if w.get("suspicious", 0) >= self.args.min_suspicion]
+        if self.args.top is not None and self.args.top > 0:
+            workers_list = sorted(workers_list, key=lambda w: w.get("kudos_rewards", 0), reverse=True)[:self.args.top]
         return workers_list
 
 
@@ -1223,6 +1264,31 @@ class Users(Resource):
         location="args",
     )
 
+    get_parser.add_argument(
+        "suspicion",
+        required=False,
+        default=None,
+        type=int,
+        help="Minimum suspicion level to filter by.",
+        location="args",
+    )
+    get_parser.add_argument(
+        "public_workers",
+        required=False,
+        default=None,
+        type=bool,
+        help="Filter by public_workers flag (true/false).",
+        location="args",
+    )
+    get_parser.add_argument(
+        "trusted",
+        required=False,
+        default=None,
+        type=bool,
+        help="Filter by trusted flag (true/false).",
+        location="args",
+    )
+
     decorators = [limiter.limit("90/minute")]
 
     # @cache.cached(timeout=10)
@@ -1259,7 +1325,14 @@ class Users(Resource):
         if page < 1:
             page = 1
         for user in database.get_all_users(sort=sort, offset=(page - 1) * 25):
-            users_ret.append(user.get_details())
+            ud = user.get_details()
+            if self.args.suspicion is not None and user.get_suspicion() < self.args.suspicion:
+                continue
+            if self.args.public_workers is not None and user.public_workers != self.args.public_workers:
+                continue
+            if self.args.trusted is not None and user.trusted != self.args.trusted:
+                continue
+            users_ret.append(ud)
         return users_ret
 
 
