@@ -47,6 +47,13 @@ def create_app():
 db = SQLAlchemy()
 HORDE = create_app()
 
+@HORDE.after_request
+def set_json_charset(response):
+    if response.content_type == "application/json":
+        response.content_type = "application/json; charset=utf-8"
+    return response
+
+
 if is_redis_up():
     try:
         cache_config = {
