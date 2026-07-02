@@ -540,7 +540,7 @@ class AbortedGen(wze.BadRequest):
     def __init__(self, worker, gen_id, rc="AbortedGen"):
         self.specific = (
             f"Processing Generation with ID {gen_id} took too long to process and has been aborted! "
-            "Please check your worker speed and do not onboard worker which generate slower than 1 it/s!"
+            "Please check your worker speed - generations must complete within 150 seconds (minimum ~1 it/s, higher for large requests)!"
         )
         self.log = f"Worker '{worker}' attempted to provide aborted generation for {gen_id}."
         self.rc = rc
