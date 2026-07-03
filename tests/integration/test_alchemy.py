@@ -51,7 +51,6 @@ def test_simple_alchemy(client, request_headers: dict[str, str]) -> None:
     assert len(retrieve_results["forms"]) == 1
     gen = retrieve_results["forms"][0]
     assert "result" in gen
-    assert "result" in gen
     assert isinstance(gen["result"], dict)
     assert "caption" in gen["result"]
     assert gen["form"] == "caption"
@@ -133,6 +132,7 @@ def test_alchemist_palette_and_describe(client, request_headers: dict[str, str])
         "forms": ["palette", "describe"],
         "bridge_agent": request_headers["Client-Agent"],
         "max_tiles": 96,
+        "amount": 2,
     }
 
     try:
@@ -144,37 +144,38 @@ def test_alchemist_palette_and_describe(client, request_headers: dict[str, str])
     assert pop_req.status_code < 400, pop_req.get_data(as_text=True)
     pop_results = pop_req.get_json()
 
-    job_id = pop_results["forms"][0]["id"]
-    assert job_id is not None, pop_results
+    assert len(pop_results["forms"]) == 2, pop_results
 
-    submit_dict = {
-        "id": job_id,
-        "result": {"palette": "Test palette", "describe": "Test Describe"},
-        "state": "ok",
-    }
-    submit_req = client.post("/api/v2/interrogate/submit", json=submit_dict, headers=request_headers)
+    expected_results = {"palette": "Test palette", "describe": "Test Describe"}
 
-    assert submit_req.status_code < 400, submit_req.get_data(as_text=True)
-    submit_results = submit_req.get_json()
-    assert submit_results["reward"] > 0
+    # Submit each form individually with its own job ID
+    for form in pop_results["forms"]:
+        job_id = form["id"]
+        form_name = form["form"]
+        assert job_id is not None, pop_results
+        submit_dict = {
+            "id": job_id,
+            "result": {form_name: expected_results[form_name]},
+            "state": "ok",
+        }
+        submit_req = client.post("/api/v2/interrogate/submit", json=submit_dict, headers=request_headers)
+        assert submit_req.status_code < 400, submit_req.get_data(as_text=True)
+        submit_results = submit_req.get_json()
+        assert submit_results["reward"] > 0
 
     retrieve_req = client.get(f"/api/v2/interrogate/status/{req_id}", headers=request_headers)
     assert retrieve_req.status_code < 400, retrieve_req.get_data(as_text=True)
     retrieve_results = retrieve_req.get_json()
 
     assert len(retrieve_results["forms"]) == 2
-    palette_gen = retrieve_results["forms"][0]
-    describe_gen = retrieve_results["forms"][1]
-    assert "result" in palette_gen
-    assert isinstance(palette_gen["result"], dict)
-    assert "palette" in palette_gen["result"]
-    assert palette_gen["form"] == "palette"
-    assert palette_gen["result"]["palette"] == "Test palette"
-    assert palette_gen["state"] == "done"
+    assert retrieve_results["state"] == "done"
 
-    assert "result" in describe_gen
-    assert isinstance(describe_gen["result"], dict)
-    assert "describe" in describe_gen["result"]
-    assert describe_gen["form"] == "describe"
-    assert describe_gen["result"]["describe"] == "Test Describe"
-    assert describe_gen["state"] == "done"
+    # Build a dict keyed by form name for order-independent assertions
+    forms_by_name = {f["form"]: f for f in retrieve_results["forms"]}
+    for form_name, expected_result in expected_results.items():
+        form = forms_by_name[form_name]
+        assert "result" in form
+        assert isinstance(form["result"], dict)
+        assert form_name in form["result"]
+        assert form["result"][form_name] == expected_result
+        assert form["state"] == "done"
