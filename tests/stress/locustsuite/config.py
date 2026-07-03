@@ -35,4 +35,4 @@ _EXPECTED_RC_RECOVER = {
 
 _HOT_PROMPT = "a serene cyberpunk landscape at sunset, ultra detailed"
 _HOT_TEXT_PROMPT = "Once upon a time in a faraway land,"
-_INTERROGATION_FORMS = ["caption", "interrogation", "nsfw", "vectorize", "palete", "describe", "aesthetic"]
+_INTERROGATION_FORMS = ["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
