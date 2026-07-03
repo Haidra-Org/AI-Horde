@@ -115,10 +115,10 @@ def test_alchemy_vectorize(client, request_headers: dict[str, str]) -> None:
     assert retrieve_results["state"] == "done"
 
 
-def test_alchemist_pallette_and_describe(client, request_headers: dict[str, str]) -> None:
+def test_alchemist_palette_and_describe(client, request_headers: dict[str, str]) -> None:
     async_dict = {
         "forms": [
-            {"name": "pallette"},
+            {"name": "palette"},
             {"name": "describe"},
         ],
         "source_image": "https://github.com/Haidra-Org/AI-Horde/blob/main/icon.png?raw=true",
@@ -130,7 +130,7 @@ def test_alchemist_pallette_and_describe(client, request_headers: dict[str, str]
 
     pop_dict = {
         "name": "CICD Fake Alchemist",
-        "forms": ["pallette", "describe"],
+        "forms": ["palette", "describe"],
         "bridge_agent": request_headers["Client-Agent"],
         "max_tiles": 96,
     }
@@ -149,7 +149,7 @@ def test_alchemist_pallette_and_describe(client, request_headers: dict[str, str]
 
     submit_dict = {
         "id": job_id,
-        "result": {"pallette": "Test Pallette", "describe": "Test Describe"},
+        "result": {"palette": "Test palette", "describe": "Test Describe"},
         "state": "ok",
     }
     submit_req = client.post("/api/v2/interrogate/submit", json=submit_dict, headers=request_headers)
@@ -163,14 +163,14 @@ def test_alchemist_pallette_and_describe(client, request_headers: dict[str, str]
     retrieve_results = retrieve_req.get_json()
 
     assert len(retrieve_results["forms"]) == 2
-    pallette_gen = retrieve_results["forms"][0]
+    palette_gen = retrieve_results["forms"][0]
     describe_gen = retrieve_results["forms"][1]
-    assert "result" in pallette_gen
-    assert isinstance(pallette_gen["result"], dict)
-    assert "pallette" in pallette_gen["result"]
-    assert pallette_gen["form"] == "pallette"
-    assert pallette_gen["result"]["pallette"] == "Test Pallette"
-    assert pallette_gen["state"] == "done"
+    assert "result" in palette_gen
+    assert isinstance(palette_gen["result"], dict)
+    assert "palette" in palette_gen["result"]
+    assert palette_gen["form"] == "palette"
+    assert palette_gen["result"]["palette"] == "Test palette"
+    assert palette_gen["state"] == "done"
 
     assert "result" in describe_gen
     assert isinstance(describe_gen["result"], dict)
