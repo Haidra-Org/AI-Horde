@@ -893,20 +893,20 @@ class Workers(Resource):
             if admin and admin.moderator:
                 details_privilege = 2
         if not hr.horde_r:
-            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
+            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege), details_privilege=details_privilege)
         if details_privilege == 2:
             cached_workers = hr.horde_r_get("worker_cache_privileged")
         else:
             cached_workers = hr.horde_r_get("worker_cache")
         if cached_workers is None:
             logger.warning(f"No {details_privilege} worker cache found! Check caching thread!")
-            workers = self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
+            workers = self.parse_worker_by_query(self.get_worker_info_list(details_privilege), details_privilege=details_privilege)
             if details_privilege > 0:
                 hr.horde_local_setex_to_json("worker_cache_privileged", 300, workers)
             else:
                 hr.horde_local_setex_to_json("worker_cache", 300, workers)
             return workers
-        return self.parse_worker_by_query(json.loads(cached_workers, object_hook=datetime_parser))
+        return self.parse_worker_by_query(json.loads(cached_workers, object_hook=datetime_parser), details_privilege=details_privilege)
 
     def get_worker_info_list(self, details_privilege):
         workers_ret = []
@@ -914,17 +914,18 @@ class Workers(Resource):
             workers_ret.append(worker.get_details(details_privilege))
         return workers_ret
 
-    def parse_worker_by_query(self, workers_list):
+    def parse_worker_by_query(self, workers_list, details_privilege=0):
         if self.args.name:
             workers_list = [w for w in workers_list if w["name"].lower() == self.args.name.lower()]
         if self.args.type:
             workers_list = [w for w in workers_list if w["type"] == self.args.type]
-        if self.args.paused is not None:
-            workers_list = [w for w in workers_list if w.get("paused") == self.args.paused]
-        if self.args.maintenance is not None:
-            workers_list = [w for w in workers_list if w.get("maintenance_mode") == self.args.maintenance]
-        if self.args.min_suspicion is not None:
-            workers_list = [w for w in workers_list if w.get("suspicious", 0) >= self.args.min_suspicion]
+        if details_privilege == 2:
+            if self.args.paused is not None:
+                workers_list = [w for w in workers_list if w.get("paused") == self.args.paused]
+            if self.args.maintenance is not None:
+                workers_list = [w for w in workers_list if w.get("maintenance_mode") == self.args.maintenance]
+            if self.args.min_suspicion is not None:
+                workers_list = [w for w in workers_list if w.get("suspicious", 0) >= self.args.min_suspicion]
         if self.args.top is not None and self.args.top > 0:
             workers_list = sorted(workers_list, key=lambda w: w.get("kudos_rewards", 0), reverse=True)[:self.args.top]
         return workers_list
@@ -1288,6 +1289,13 @@ class Users(Resource):
         help="Filter by trusted flag (true/false).",
         location="args",
     )
+    get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=False,
+        help="A Moderator API key (required for suspicion filter).",
+        location="headers",
+    )
 
     decorators = [limiter.limit("90/minute")]
 
@@ -1297,6 +1305,11 @@ class Users(Resource):
     def get(self):  # TODO - Should this be exposed?
         """A List with the details and statistic of all registered users"""
         self.args = self.get_parser.parse_args()
+        self.is_moderator = False
+        if self.args.apikey:
+            admin = database.find_user_by_api_key(self.args["apikey"])
+            if admin and admin.moderator:
+                self.is_moderator = True
         return (self.retrieve_users_details(), 200)
 
     @logger.catch(reraise=True)
@@ -1326,7 +1339,7 @@ class Users(Resource):
             page = 1
         for user in database.get_all_users(sort=sort, offset=(page - 1) * 25):
             ud = user.get_details()
-            if self.args.suspicion is not None and user.get_suspicion() < self.args.suspicion:
+            if self.args.suspicion is not None and self.is_moderator and user.get_suspicion() < self.args.suspicion:
                 continue
             if self.args.public_workers is not None and user.public_workers != self.args.public_workers:
                 continue
