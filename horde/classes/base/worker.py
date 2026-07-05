@@ -364,16 +364,15 @@ class WorkerTemplate(db.Model):
             self.team.record_contribution(converted_amount, kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
-            # Ensure we don't forget anything
-            subquery = (
+            # Keep only the 20 most recent performance records
+            keep_ids = (
                 db.session.query(WorkerPerformance.id)
                 .filter_by(worker_id=self.id)
-                .order_by(WorkerPerformance.created.asc())
-                .offset(20)
-                .scalar_subquery()
+                .order_by(WorkerPerformance.created.desc())
+                .limit(20)
             )
             db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(
-                WorkerPerformance.id.notin_(subquery),
+                WorkerPerformance.id.not_in(keep_ids),
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
