@@ -370,7 +370,7 @@ class WorkerTemplate(db.Model):
                 .filter_by(worker_id=self.id)
                 .order_by(WorkerPerformance.created.asc())
                 .offset(20)
-                .subquery()
+                .scalar_subquery()
             )
             db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(
                 WorkerPerformance.id.notin_(subquery),
