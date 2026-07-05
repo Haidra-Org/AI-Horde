@@ -11,7 +11,13 @@ arg_parser.add_argument(
     "-i",
     "--insecure",
     action="store_true",
-    help="If set, will use http instead of https (useful for testing)",
+    help=(
+        "Serve over HTTP instead of HTTPS. Sets OAUTHLIB_INSECURE_TRANSPORT=1 "
+        "so oauthlib tolerates http:// redirect URIs. "
+        "WARNING: OAuth providers (Google, Discord, GitHub) will reject "
+        "http:// callbacks unless they are explicitly configured to accept them "
+        "(redirect_uri_mismatch). This breaks production registrations."
+    ),
 )
 arg_parser.add_argument(
     "-v",

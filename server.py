@@ -82,9 +82,17 @@ if __name__ == "__main__":
     logger.init("WSGI Server", status="Starting")
     url_scheme = "https"
     if args.insecure:
-        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # Disable this on prod
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         url_scheme = "http"
         logger.init_warn("WSGI Mode", status="Insecure")
+        logger.warning(
+            "INSECURE MODE (-i/--insecure): Serving over HTTP. "
+            "OAuth redirect URIs will use http:// instead of https://. "
+            "This causes redirect_uri_mismatch errors with OAuth providers "
+            "(Google, Discord, GitHub) unless each provider's developer "
+            "console explicitly allows http:// callbacks. "
+            "This flag MUST NOT be used in production."
+        )
 
     waitress.serve(
         app,
