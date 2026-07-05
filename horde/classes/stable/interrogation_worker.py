@@ -87,10 +87,18 @@ class InterrogationWorker(WorkerTemplate):
         self.user.record_contributions(raw_things=0, kudos=kudos, contrib_type=self.wtype)
         self.modify_kudos(kudos, "interrogated")
         self.fulfilments += 1
-        # TODO: Switch to use desc() and offset to ensure we don't have performances left over
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
-            db.session.delete(performances.first())
+            # Keep only the 20 most recent performance records
+            keep_ids = (
+                db.session.query(WorkerPerformance.id)
+                .filter_by(worker_id=self.id)
+                .order_by(WorkerPerformance.created.desc())
+                .limit(20)
+            )
+            db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(
+                WorkerPerformance.id.not_in(keep_ids),
+            ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=seconds_taken)
         db.session.add(new_performance)
         db.session.commit()
