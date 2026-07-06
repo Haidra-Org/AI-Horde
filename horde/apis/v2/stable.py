@@ -491,6 +491,11 @@ class ImageAsyncStatus(Resource):
                         wp_queue_stats=wp_queue_stats,
                         active_worker_count=active_worker_count,
                     )
+                # wp_status is a fully materialized plain dict; release the
+                # pooled connection before flask_restx marshalling/JSON
+                # serialization and the response write, so it is not held
+                # across non-DB work.
+                db.session.remove()
                 return (wp_status, 200)
             except Exception:
                 if outcome == "ok":

@@ -254,6 +254,10 @@ class TextAsyncStatus(Resource):
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers("text"),
         )
+        # wp_status is a fully materialized plain dict; release the pooled
+        # connection before flask_restx marshalling/JSON serialization and the
+        # response write, so it is not held across non-DB work.
+        db.session.remove()
         return (wp_status, 200)
 
     delete_parser = reqparse.RequestParser()
