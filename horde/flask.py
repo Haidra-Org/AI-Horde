@@ -193,9 +193,10 @@ def create_app(config=None):
     if not app.config.get("TESTING"):
         from horde.database import start_background_threads
 
+        _app_instance = app
         start_background_threads()
-
-    _app_instance = app
+    else:
+        _app_instance = app
     return app
 
 
