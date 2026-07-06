@@ -503,19 +503,41 @@ def store_stripe_members():
 @logger.catch(reraise=True)
 def increment_extra_priority():
     """Increases the priority of every WP currently in the queue by 50 kudos"""
+    # This runs every 10s. The original implementation issued one UPDATE *and
+    # one commit per waiting prompt*, so the cost scaled linearly with queue
+    # depth and turned a backlog into a per-tick storm of tiny transactions
+    # that held pool connections and drove CPU/pool pressure.
+    #
+    # We now walk the queue in id-ordered chunks and lock each chunk with
+    # SELECT ... FOR UPDATE SKIP LOCKED before updating it:
+    #   * Chunking collapses the per-WP round-trips into one UPDATE per chunk.
+    #   * Locking in a stable id order + SKIP LOCKED means we never *wait* on a
+    #     row another transaction holds, so we can't deadlock with the WP delete
+    #     thread (the reason the original used per-row commits). Rows currently
+    #     locked by the deleter are simply skipped this pass and picked up on
+    #     the next 10s tick.
+    #   * Keyset pagination (id > last_id) guarantees forward progress even when
+    #     rows are skipped, so the loop always terminates.
+    chunk_size = 250
     with get_app().app_context():
-        # cutoff_time = datetime.utcnow()
         for wp_class in [ImageWaitingPrompt, TextWaitingPrompt]:
-            wp_ids = db.session.query(wp_class.id).filter(
-                wp_class.n > 0,
-                wp_class.faulted == False,  # noqa E712
-                wp_class.active == True,  # noqa E712
-                # Commented to avoid running into a deadlock with the WP delete thread
-                # wp_class.expiry > cutoff_time,
-            )
-            # logger.debug(f"Found {wp_ids.count()} of class {wp_class} to increase priority")
-            for wp in wp_ids.all():
-                db.session.query(wp_class).filter_by(id=wp.id).update(
+            last_id = None
+            while True:
+                id_query = db.session.query(wp_class.id).filter(
+                    wp_class.n > 0,
+                    wp_class.faulted == False,  # noqa E712
+                    wp_class.active == True,  # noqa E712
+                )
+                if last_id is not None:
+                    id_query = id_query.filter(wp_class.id > last_id)
+                locked_ids = [
+                    row.id
+                    for row in id_query.order_by(wp_class.id.asc()).limit(chunk_size).with_for_update(skip_locked=True)
+                ]
+                if not locked_ids:
+                    break
+                last_id = locked_ids[-1]
+                db.session.query(wp_class).filter(wp_class.id.in_(locked_ids)).update(
                     {wp_class.extra_priority: wp_class.extra_priority + 50},
                     synchronize_session=False,
                 )
