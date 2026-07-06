@@ -39,6 +39,10 @@ def init_countermeasures():
 
 
 test_timeout = 0
+# Upper bound for the fallback timeout accumulator used only when the suspicion
+# Redis is unavailable; caps the resulting IP timeout at MAX_TEST_TIMEOUT * 3
+# seconds so a Redis outage cannot escalate into effectively permanent bans.
+MAX_TEST_TIMEOUT = 300
 
 
 class CounterMeasures:
@@ -113,7 +117,10 @@ class CounterMeasures:
         """Increases the suspicion of an IP in redis temporarily"""
         if not ip_s_r:
             global test_timeout
-            test_timeout = test_timeout + test_timeout + 1
+            # Bounded growth: without a cap this doubles every call and never
+            # resets while the suspicion Redis is down, quickly producing
+            # absurd (multi-day) timeouts that never recover.
+            test_timeout = min(test_timeout + test_timeout + 1, MAX_TEST_TIMEOUT)
             timeout = test_timeout * 3
             logger.debug(f"Redis not available, so setting test_timeout to {test_timeout}")
             CounterMeasures.set_timeout(ipaddr, timeout)
@@ -138,7 +145,7 @@ class CounterMeasures:
         """Increases the suspicion of proxy service's IP in redis temporarily"""
         if not ip_s_r:
             global test_timeout
-            test_timeout = test_timeout + test_timeout + 1
+            test_timeout = min(test_timeout + test_timeout + 1, MAX_TEST_TIMEOUT)
             timeout = test_timeout * 3
             logger.debug(f"Redis not available, so setting test_timeout to {test_timeout}")
             CounterMeasures.set_timeout(ipaddr, timeout)
