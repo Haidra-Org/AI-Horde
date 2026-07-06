@@ -171,8 +171,8 @@ class ProcessingGeneration(db.Model):
         from horde.metrics import submit_worker_contrib_duration, submit_wp_record_usage_duration
 
         # This transaction credits the worker's owner (record_contribution) and
-        # debits the request's owner (record_usage), which is up to two distinct 
-        # `users` rows updated before a single commit. Two concurrent submissions 
+        # debits the request's owner (record_usage), which is up to two distinct
+        # `users` rows updated before a single commit. Two concurrent submissions
         # that touch the same pair of users in the opposite order would deadlock when
         # those UPDATEs flush ("deadlock detected ... updating tuple in relation
         # users"). Acquire both row locks up-front in a deterministic
