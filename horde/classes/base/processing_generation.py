@@ -167,7 +167,22 @@ class ProcessingGeneration(db.Model):
         return kudos * self.worker.get_bridge_kudos_multiplier()
 
     def record(self, things_per_sec, kudos):
+        from horde.classes.base.user import User
         from horde.metrics import submit_worker_contrib_duration, submit_wp_record_usage_duration
+
+        # This transaction credits the worker's owner (record_contribution) and
+        # debits the request's owner (record_usage), which is up to two distinct 
+        # `users` rows updated before a single commit. Two concurrent submissions 
+        # that touch the same pair of users in the opposite order would deadlock when
+        # those UPDATEs flush ("deadlock detected ... updating tuple in relation
+        # users"). Acquire both row locks up-front in a deterministic
+        # id-ascending order so every submission locks them in the same order
+        # and no lock cycle can form. Nothing is dirty yet, so the locking SELECT
+        # does not itself flush anything.
+        lock_user_ids = {self.worker.user_id, self.wp.user_id}
+        lock_user_ids.discard(None)
+        if len(lock_user_ids) > 1:
+            db.session.query(User.id).filter(User.id.in_(lock_user_ids)).order_by(User.id.asc()).with_for_update().all()
 
         cancel_txt = ""
         if self.cancelled:
