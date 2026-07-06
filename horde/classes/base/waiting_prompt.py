@@ -238,10 +238,19 @@ class WaitingPrompt(db.Model):
                 # phase instead of colliding on the same rows again immediately.
                 time.sleep(random.uniform(0.005, 0.03) * (attempt + 1))
 
+
     def _activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         """
+        # Gate on the requester's user row before mutating anything, so every
+        # kudos-mutating transaction for this (often Anonymous, hence hot) user
+        # serializes here and cannot form an FK lock cycle with the submit path.
+        if self.user_id is not None:
+            from horde.classes.base.user import User
+
+            db.session.query(User.id).filter(User.id == self.user_id).with_for_update(key_share=True).first()
+
         self.active = True
         with logfire.span("horde.wp.activate.priority_calc"):
             if self.user.flagged and self.user.kudos > 10:
