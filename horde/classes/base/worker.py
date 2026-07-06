@@ -362,7 +362,26 @@ class WorkerTemplate(db.Model):
         self.fulfilments += 1
         if self.team and self.wtype == "image":
             self.team.record_contribution(converted_amount, kudos)
-        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
+        # Note: deferred commit; caller (procgen.set_generation) commits once at the end.
+        # The worker_performances prune+insert is intentionally NOT done here; it is
+        # persisted separately via record_performance() after the main commit so it
+        # does not lengthen the hot `users` row lock hold. See record_performance().
+        if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
+            self.report_suspicion(
+                reason=Suspicions.UNREASONABLY_FAST,
+                formats=[round(things_per_sec / hv.thing_divisors[self.wtype], 2)],
+            )
+
+    def record_performance(self, things_per_sec, commit=True):
+        """Persist a worker performance sample, pruning to the 20 most recent.
+
+        Split out of _record_contribution so it runs in its own transaction after
+        the submission's main commit, keeping the worker_performances count/prune/
+        insert out of the window where the hot `users` rows are locked. Performance
+        samples are telemetry, so persisting them separately (and losing at most one
+        sample on a crash between commits) is safe.
+        """
+        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id)
         if performances.count() >= 20:
             # Keep only the 20 most recent performance records
             keep_ids = (
@@ -376,12 +395,8 @@ class WorkerTemplate(db.Model):
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
-        # Note: deferred commit; caller (procgen.set_generation) commits once at the end
-        if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
-            self.report_suspicion(
-                reason=Suspicions.UNREASONABLY_FAST,
-                formats=[round(things_per_sec / hv.thing_divisors[self.wtype], 2)],
-            )
+        if commit:
+            db.session.commit()
 
     def modify_kudos(self, kudos, action="generated", commit=True):
         self.kudos = round(self.kudos + kudos, 2)

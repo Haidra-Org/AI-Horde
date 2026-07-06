@@ -147,6 +147,11 @@ class ProcessingGeneration(db.Model):
         _t = time.monotonic()
         db.session.commit()
         submit_commit_duration.record(time.monotonic() - _t)
+        # Persist the worker performance sample AFTER the main commit so its
+        # writes (a count + prune DELETE + INSERT on worker_performances) do not
+        # extend the time the hot `users` row locks are held above. Performance
+        # samples are telemetry, so a separate follow-up transaction is safe.
+        self.worker.record_performance(things_per_sec)
         # Send webhook after commit so external I/O does not hold DB locks.
         _t = time.monotonic()
         self.send_webhook(kudos)
@@ -164,6 +169,8 @@ class ProcessingGeneration(db.Model):
         self.cancelled = True
         self.record(things_per_sec, kudos)
         db.session.commit()
+        # See set_generation: keep the performance write out of the locked window.
+        self.worker.record_performance(things_per_sec)
         return kudos * self.worker.get_bridge_kudos_multiplier()
 
     def record(self, things_per_sec, kudos):
@@ -179,10 +186,25 @@ class ProcessingGeneration(db.Model):
         # id-ascending order so every submission locks them in the same order
         # and no lock cycle can form. Nothing is dirty yet, so the locking SELECT
         # does not itself flush anything.
+        #
+        # Use FOR NO KEY UPDATE (key_share=True), not the stronger FOR UPDATE: we
+        # only ever mutate non-key columns of these rows (kudos/counters), so this
+        # is sufficient for the deadlock ordering above AND it matches the lock the
+        # request path already takes in WaitingPrompt._activate(). Crucially, FOR NO
+        # KEY UPDATE does NOT conflict with the FOR KEY SHARE lock that the
+        # waiting_prompts INSERT's foreign key takes on the requester's row, so a
+        # submit no longer blocks concurrent /generate/async inserts for the same
+        # (often Anonymous, hence hot) user.
         lock_user_ids = {self.worker.user_id, self.wp.user_id}
         lock_user_ids.discard(None)
         if len(lock_user_ids) > 1:
-            db.session.query(User.id).filter(User.id.in_(lock_user_ids)).order_by(User.id.asc()).with_for_update().all()
+            (
+                db.session.query(User.id)
+                .filter(User.id.in_(lock_user_ids))
+                .order_by(User.id.asc())
+                .with_for_update(key_share=True)
+                .all()
+            )
 
         cancel_txt = ""
         if self.cancelled:
