@@ -740,6 +740,15 @@ class JobPopTemplate(Resource):
             raise e.TimeoutIP(self.worker_ip, ip_timeout, connect_type="Worker")
         self.safe_ip = True
         if not self.user.trusted and not self.user.vpn and not patrons.is_patron(self.user.id):
+            # is_ip_safe() can make a blocking HTTP call to the external IP checker
+            # (up to a 2s timeout) on a cache miss. The preceding lookups
+            # (find_user_by_api_key / find_worker_by_name) have opened a read-only
+            # transaction, so without this commit the pooled DB connection would be
+            # held for the whole HTTP round-trip. On the very hot pop endpoint that
+            # is a primary cause of pool exhaustion when the checker slows down.
+            # These were reads only and expire_on_commit=False keeps self.user /
+            # self.worker usable, so releasing the connection here is safe.
+            db.session.commit()
             self.safe_ip = CounterMeasures.is_ip_safe(self.worker_ip)
             if self.safe_ip is None:
                 raise e.TooManyNewIPs(self.worker_ip)
