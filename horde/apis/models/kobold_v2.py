@@ -431,24 +431,17 @@ class TextModels(v2.Models):
             },
         )
 
-        self.response_model_model_stats = api.model(
-            "SinglePeriodTxtModelStats",
-            {
-                "*": fields.Wildcard(
-                    fields.Integer(
-                        required=True,
-                        description="The amount of requests fulfilled for this model.",
-                    ),
-                ),
-            },
-        )
-
+        # NOTE: these per-period maps are keyed by model name (an unbounded set for
+        # text models). Marshalling them with fields.Wildcard triggers
+        # flask_restx's O(N) Wildcard._flatten per request, which pegged a CPU core
+        # (~13s/request in prod). The source is already a plain dict[str, int], so
+        # fields.Raw emits identical JSON without the flatten cost.
         self.response_model_stats_models = api.model(
             "TxtModelStats",
             {
-                "day": fields.Nested(self.response_model_model_stats),
-                "month": fields.Nested(self.response_model_model_stats),
-                "total": fields.Nested(self.response_model_model_stats),
+                "day": fields.Raw(description="The amount of requests fulfilled for each model in the past day."),
+                "month": fields.Raw(description="The amount of requests fulfilled for each model in the past month."),
+                "total": fields.Raw(description="The total amount of requests fulfilled for each model."),
             },
         )
         self.input_model_job_submit = api.inherit(
