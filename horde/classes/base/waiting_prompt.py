@@ -188,7 +188,7 @@ class WaitingPrompt(db.Model):
 
     def activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         with logfire.span("horde.wp.activate", wp_id=str(self.id)):
-            t0 = time.monotonic()            
+            t0 = time.monotonic()
             wp_type = getattr(self, "wp_type", "unknown")
             created = getattr(self, "created", None)
             try:
