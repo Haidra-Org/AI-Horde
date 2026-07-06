@@ -609,6 +609,9 @@ def handle_bad_requests(error):
 # robust across psycopg2 / SQLAlchemy versions and wrap/no-wrap behaviour.
 _NUL_BYTE_VALUE_ERROR_SIGNATURE = "NUL (0x00)"
 
+# PostgreSQL SQLSTATE for a detected deadlock (``psycopg2.errors.DeadlockDetected``).
+_DEADLOCK_PGCODE = "40P01"
+
 
 def is_nul_byte_value_error(error: BaseException) -> bool:
     """Report whether ``error`` is the psycopg2 NUL-byte flush rejection."""
@@ -634,6 +637,22 @@ def find_nul_byte_location(obj, _path: str = "") -> str | None:
             if found:
                 return found
     return None
+
+
+def is_deadlock_error(error: BaseException) -> bool:
+    """Report whether ``error`` is a PostgreSQL deadlock (SQLSTATE 40P01).
+
+    PostgreSQL aborts exactly one transaction in a lock cycle with this error.
+    Deadlocks are transient by construction: the surviving transactions proceed,
+    and the aborted victim can retry and succeed. We detect it structurally via
+    the DBAPI ``pgcode`` so the check survives message-wording changes across
+    psycopg2 / SQLAlchemy versions, and fall back to a substring match for the
+    wrapped/no-wrap edge cases.
+    """
+    orig = getattr(error, "orig", None)
+    if getattr(orig, "pgcode", None) == _DEADLOCK_PGCODE:
+        return True
+    return "deadlock detected" in str(error).lower()
 
 
 def nul_byte_error_response():

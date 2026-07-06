@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import random
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta
 import logfire
 from sqlalchemy import JSON, or_
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.sql import expression
 
@@ -18,6 +20,7 @@ from horde.bridge_reference import check_bridge_capability
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.exceptions import is_deadlock_error
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -37,6 +40,14 @@ procgen_classes = {
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+
+# Activating a WP updates several shared rows in one transaction -- most notably
+# the requester's `users`/`user_stats` rows, which for the Anonymous user are
+# hammered by every concurrent request. Under load this can form a lock cycle
+# with the worker-submit path and PostgreSQL aborts this transaction as the
+# deadlock victim (SQLSTATE 40P01). Deadlocks are transient, so we retry the
+# activation a bounded number of times rather than failing the request.
+WP_ACTIVATE_DEADLOCK_RETRIES = 4
 
 
 class WPAllowedWorkers(db.Model):
@@ -177,19 +188,55 @@ class WaitingPrompt(db.Model):
 
     def activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         with logfire.span("horde.wp.activate", wp_id=str(self.id)):
-            t0 = time.monotonic()
+            t0 = time.monotonic()            
+            wp_type = getattr(self, "wp_type", "unknown")
+            created = getattr(self, "created", None)
             try:
-                self._activate(downgrade_wp_priority, extra_source_images, kudos_adjustment)
+                self._activate_with_deadlock_retry(downgrade_wp_priority, extra_source_images, kudos_adjustment)
             finally:
-                wp_type = getattr(self, "wp_type", "unknown")
                 wp_activate_duration.record(time.monotonic() - t0, {"horde.wp_type": wp_type})
                 # Elapsed seconds between WP row insert and activation.
                 # This surfaces "time spent validating/initiating" before the
                 # WP becomes visible to workers, a key SLO signal.
-                if getattr(self, "created", None):
-                    age = (datetime.utcnow() - self.created).total_seconds()
+                if created:
+                    age = (datetime.utcnow() - created).total_seconds()
                     if age >= 0:
                         wp_activation_age.record(age, {"horde.wp_type": wp_type})
+
+    def _activate_with_deadlock_retry(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
+        """Run ``_activate``, retrying if PostgreSQL aborts it as a deadlock victim.
+
+        A deadlock leaves the session in a failed state, so we ``rollback`` before
+        retrying. The rollback expires our in-memory ORM objects, meaning the next
+        attempt re-reads the requester's kudos/usage from the committed DB state
+        and recomputes from a clean baseline -- there is no double counting.
+        """
+        for attempt in range(WP_ACTIVATE_DEADLOCK_RETRIES):
+            try:
+                self._activate(downgrade_wp_priority, extra_source_images, kudos_adjustment)
+                return
+            except OperationalError as err:
+                if not is_deadlock_error(err):
+                    raise
+                # Always roll back the aborted transaction so the session is left
+                # clean, both for the next retry and, on the final attempt, for
+                # the caller. Without this the session stays in a
+                # PendingRollbackError state and any subsequent attribute access
+                # (e.g. telemetry) raises and masks this deadlock error.
+                db.session.rollback()
+                if attempt == WP_ACTIVATE_DEADLOCK_RETRIES - 1:
+                    logger.error(
+                        f"Deadlock activating WP {self.id}; retries exhausted "
+                        f"({WP_ACTIVATE_DEADLOCK_RETRIES} attempts)",
+                    )
+                    raise
+                logger.warning(
+                    f"Deadlock activating WP {self.id}; retrying "
+                    f"(attempt {attempt + 1}/{WP_ACTIVATE_DEADLOCK_RETRIES})",
+                )
+                # Small jittered backoff so racing transactions re-attempt out of
+                # phase instead of colliding on the same rows again immediately.
+                time.sleep(random.uniform(0.005, 0.03) * (attempt + 1))
 
     def _activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
