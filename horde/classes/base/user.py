@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from horde import vars as hv
+from horde.consts import ANON_KUDOS_ACCUMULATOR_KEY
 from horde.countermeasures import CounterMeasures
 from horde.discord import send_problem_user_notification
 from horde.enums import UserRecordTypes, UserRoleTypes
@@ -635,7 +636,15 @@ class User(db.Model):
     def record_usage(self, raw_things, kudos, usage_type, commit=True):
         if not self.is_anon():
             self.last_active = datetime.utcnow()
-        self.modify_kudos(-kudos, "accumulated", commit=False)
+        if self.is_anon():
+            # The Anonymous user is a single, extremely hot `users` row. Debiting
+            # its kudos inline would serialize every anonymous request on that
+            # row's lock (see WaitingPrompt._activate / ProcessingGeneration.record).
+            # Instead accumulate the delta on the shared cluster redis; the
+            # quorum-owned flush_anon_kudos() applies it to the row periodically.
+            hr.horde_r_incrbyfloat(ANON_KUDOS_ACCUMULATOR_KEY, -kudos)
+        else:
+            self.modify_kudos(-kudos, "accumulated", commit=False)
         self.update_user_record(record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1, commit=False)
         self.update_user_record(
             record_type=UserRecordTypes.USAGE,
@@ -661,6 +670,10 @@ class User(db.Model):
             self.evaluating_kudos += kudos_eval
             self.modify_kudos(kudos, "accumulated", commit=False)
             self.check_for_trust()
+        elif self.is_anon():
+            # See record_usage: keep the hot Anonymous row out of the inline kudos
+            # update by accumulating on shared redis for the quorum to flush.
+            hr.horde_r_incrbyfloat(ANON_KUDOS_ACCUMULATOR_KEY, kudos)
         else:
             self.modify_kudos(kudos, "accumulated", commit=False)
         self.update_user_record(

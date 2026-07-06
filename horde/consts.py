@@ -201,3 +201,10 @@ WHITELISTED_VPN_IPS = [
     "216.73.80.0/20",
     "216.239.32.0/19",
 ]
+
+# Redis key under which anonymous-user kudos deltas are accumulated by the
+# request/submit hot paths instead of taking the heavily contended `users` row
+# lock, then flushed onto the Anonymous user's row periodically by the
+# quorum-owned flush_anon_kudos() thread. Must live on the shared cluster redis
+# (horde_r / all_horde_redis), never the per-instance local redis.
+ANON_KUDOS_ACCUMULATOR_KEY = "anon_kudos_accumulator"

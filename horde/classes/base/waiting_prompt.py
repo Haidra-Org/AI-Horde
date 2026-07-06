@@ -244,9 +244,12 @@ class WaitingPrompt(db.Model):
         Before we add it to the queue
         """
         # Gate on the requester's user row before mutating anything, so every
-        # kudos-mutating transaction for this (often Anonymous, hence hot) user
-        # serializes here and cannot form an FK lock cycle with the submit path.
-        if self.user_id is not None:
+        # kudos-mutating transaction for this user serializes here and cannot form
+        # an FK lock cycle with the submit path. The Anonymous user is exempt: it
+        # no longer updates its `users` row inline (its kudos are accumulated on
+        # redis and flushed by the quorum), so locking that single hot row here
+        # would only reintroduce the serialization we are trying to avoid.
+        if self.user_id is not None and not self.user.is_anon():
             from horde.classes.base.user import User
 
             db.session.query(User.id).filter(User.id == self.user_id).with_for_update(key_share=True).first()

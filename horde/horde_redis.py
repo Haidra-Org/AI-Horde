@@ -57,6 +57,43 @@ class HordeRedis:
         if self.horde_local_r:
             self.horde_local_r.setex(key, timedelta(10), value)
 
+    def horde_r_incrbyfloat(self, key, amount):
+        """Atomically add `amount` (may be negative) to a shared float counter on
+        every cluster redis server. Used for high-frequency accumulators (e.g.
+        anonymous-user kudos) that replace a contended DB row update. Writes to
+        the shared cluster only, never the per-instance local cache; read and
+        reset the counter with horde_r_getset_float().
+        """
+        for hr in self.all_horde_redis:
+            try:
+                hr.incrbyfloat(key, amount)
+            except Exception as err:
+                logger.warning(f"Exception when incrementing in redis servers {hr}: {err}")
+
+    def horde_r_getset_float(self, key):
+        """Atomically read and reset (to 0) a shared float counter across every
+        cluster redis server, returning the largest-magnitude value observed.
+        The servers agree when all are healthy; taking the max magnitude and
+        resetting each tolerates a briefly lagging mirror. Returns 0.0 when the
+        counter is absent everywhere.
+        """
+        best = 0.0
+        for hr in self.all_horde_redis:
+            try:
+                raw = hr.getset(key, 0)
+            except Exception as err:
+                logger.warning(f"Exception when reading/resetting redis servers {hr}: {err}")
+                continue
+            if raw is None:
+                continue
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if abs(val) > abs(best):
+                best = val
+        return best
+
     def horde_r_setex(self, key, expiry, value):
         for hr in self.all_horde_redis:
             try:

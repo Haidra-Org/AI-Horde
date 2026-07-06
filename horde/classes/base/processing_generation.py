@@ -195,8 +195,15 @@ class ProcessingGeneration(db.Model):
         # waiting_prompts INSERT's foreign key takes on the requester's row, so a
         # submit no longer blocks concurrent /generate/async inserts for the same
         # (often Anonymous, hence hot) user.
-        lock_user_ids = {self.worker.user_id, self.wp.user_id}
-        lock_user_ids.discard(None)
+        #
+        # The Anonymous user is excluded from the lock set entirely: it no longer
+        # updates its `users` row inline (kudos accumulate on redis, flushed by the
+        # quorum), so there is nothing to serialize or deadlock on for that row.
+        lock_user_ids = {
+            u.id
+            for u in (self.worker.user, self.wp.user)
+            if u is not None and u.id is not None and not u.is_anon()
+        }
         if len(lock_user_ids) > 1:
             (
                 db.session.query(User.id)

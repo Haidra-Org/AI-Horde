@@ -30,12 +30,14 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.consts import ANON_KUDOS_ACCUMULATOR_KEY
 from horde.database.functions import (
     compile_regex_filter,
     count_totals,
     find_user_by_contact,
     get_active_workers,
     get_all_users_passkeys,
+    get_anon,
     get_available_models,
     prune_expired_stats,
     query_prioritized_wps,
@@ -75,6 +77,28 @@ def get_quorum():
             f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}",
         )
     return quorum
+
+
+@logger.catch(reraise=True)
+def flush_anon_kudos():
+    """Apply the Anonymous user's accumulated kudos delta to its `users` row.
+
+    The request/submit hot paths accumulate anonymous kudos changes on the shared
+    cluster redis (ANON_KUDOS_ACCUMULATOR_KEY) instead of updating the single, hot
+    Anonymous row inline, which would serialize every anonymous request on that
+    row's lock. This quorum-owned job periodically drains that accumulator and
+    writes it to the row in one batched update, so only the primary node ever
+    touches the row. At most one interval's delta is lost if this node dies
+    mid-flush, which is acceptable for an approximate aggregate.
+    """
+    delta = hr.horde_r_getset_float(ANON_KUDOS_ACCUMULATOR_KEY)
+    if not delta:
+        return
+    anon = get_anon()
+    if anon is None:
+        logger.warning("flush_anon_kudos: Anonymous user not found; discarding accumulated kudos delta")
+        return
+    anon.modify_kudos(round(delta, 2), "accumulated")
 
 
 @logger.catch(reraise=True)

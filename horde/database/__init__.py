@@ -42,6 +42,7 @@ def start_background_threads():
     PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
     PrimaryTimedFunction(1800, threads.store_stripe_members, quorum=quorum)
     PrimaryTimedFunction(3600, threads.assign_monthly_kudos, quorum=quorum)
+    PrimaryTimedFunction(30, threads.flush_anon_kudos, quorum=quorum)
     PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
     PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
     PrimaryTimedFunction(3600, threads.prune_compiled_stats, quorum=quorum)
