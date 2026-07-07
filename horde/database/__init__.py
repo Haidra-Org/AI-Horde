@@ -39,8 +39,8 @@ def start_background_threads():
     if not args.check_prompts:
         PrimaryTimedFunction(60, threads.check_waiting_prompts, quorum=quorum)
     PrimaryTimedFunction(60, threads.check_interrogations, quorum=quorum)
-    PrimaryTimedFunction(60, threads.store_patreon_members, quorum=quorum)
-    PrimaryTimedFunction(60, threads.store_stripe_members, quorum=quorum)
+    PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
+    PrimaryTimedFunction(1800, threads.store_stripe_members, quorum=quorum)
     PrimaryTimedFunction(3600, threads.assign_monthly_kudos, quorum=quorum)
     PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
     PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
