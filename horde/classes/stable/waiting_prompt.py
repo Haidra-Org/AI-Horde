@@ -31,7 +31,7 @@ from horde.metrics import (
     wp_activate_post_super_duration,
     wp_calculate_kudos_duration,
     wp_kudos_commit_duration,
-    wp_kudos_torch_duration,
+    wp_kudos_model_duration,
 )
 from horde.model_reference import model_reference
 from horde.r2 import (
@@ -388,11 +388,11 @@ class ImageWaitingPrompt(WaitingPrompt):
             model_params["source_processing"] = self.source_processing if self.source_image else "txt2img"
             model_params["source_image"] = True if self.source_image else False
             model_params["source_mask"] = True if self.source_mask else False
-            _t_torch = time.monotonic()
+            _t_model = time.monotonic()
             try:
                 self.kudos = kudos_model.calculate_kudos(model_params)
             finally:
-                wp_kudos_torch_duration.record(time.monotonic() - _t_torch, {})
+                wp_kudos_model_duration.record(time.monotonic() - _t_model, {})
         except Exception as e:
             logger.error(f"Error calculating kudos for {self.id}, defaulting to legacy calculation (exception): {e}")
             self.kudos = legacy_kudos_cost

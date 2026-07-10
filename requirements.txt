@@ -28,8 +28,6 @@ boto3>=1.33.7
 regex
 unidecode
 git+https://github.com/Patreon/patreon-python.git
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
 emoji
 semver >= 3.0.2
 numpy

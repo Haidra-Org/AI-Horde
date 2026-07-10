@@ -4,11 +4,11 @@
 
 """Pricing-model invariants for ``horde.classes.stable.kudos.KudosModel``.
 
-The kudos pricer is a small frozen torch model loaded from
+The kudos pricer is a small frozen MLP loaded from NumPy weights converted from
 ``kudos-v21-206.ckpt``. Two failure modes we want CI to catch loudly:
 
-1. **Silent checkpoint drift**: someone swaps the .ckpt file, or the
-   feature ordering in ``payload_to_tensor`` changes. Either silently shifts
+1. **Silent model drift**: someone swaps the .npz file, or the
+   feature ordering in ``payload_to_vector`` changes. Either silently shifts
    kudos pricing for every job.
 2. **Post-inference arithmetic regression**: ``basis_adjustment`` and
    ``basis_scale`` are pure arithmetic on the model output. Easy to break
@@ -17,15 +17,13 @@ The kudos pricer is a small frozen torch model loaded from
 Strategy: design-intent invariants (BASIS_PAYLOAD ≈ KUDOS_BASIS, monotonicity)
 + exact arithmetic on the post-inference math. Specific golden floats are
 recorded inline below; if the model is intentionally retrained, regenerate
-them via ``python -m horde.classes.stable.kudos <ckpt>``.
+them via ``python -m horde.classes.stable.kudos <npz>``.
 """
 
 from __future__ import annotations
 
 import pytest
 
-# Skip this whole module if torch isn't available (e.g. lightweight dev env).
-torch = pytest.importorskip("torch")
 pytestmark = pytest.mark.unit
 
 
@@ -63,6 +61,43 @@ class TestModelLoad:
 class TestDesignIntent:
     """The model should approximately honour its design contract."""
 
+    def test_golden_payload_outputs_match_converted_checkpoint(self, kudos_model, basis_payload):
+        payloads = {
+            "basis": basis_payload,
+            "large": dict(basis_payload, width=1024, height=1024),
+            "control": dict(
+                basis_payload,
+                width=768,
+                height=512,
+                steps=30,
+                cfg_scale=8.5,
+                source_image=True,
+                source_processing="img2img",
+                control_type="canny",
+                control_strength=0.72,
+                denoising_strength=0.42,
+                sampler_name="k_dpmpp_2m",
+            ),
+            "post": dict(
+                basis_payload,
+                steps=35,
+                post_processing=["GFPGAN", "RealESRGAN_x4plus"],
+                sampler_name="uni_pc",
+            ),
+        }
+
+        expected = {
+            "basis": (6.45, 11.0),
+            "large": (17.02, 29.03),
+            "control": (8.87, 15.13),
+            "post": (14.93, 25.46),
+        }
+
+        for name, payload in payloads.items():
+            expected_time, expected_kudos = expected[name]
+            assert kudos_model.payload_to_time(payload) == expected_time
+            assert kudos_model.calculate_kudos(payload) == expected_kudos
+
     def test_basis_payload_is_close_to_kudos_basis(self, kudos_model, basis_payload):
         """A 50-step 512×512 generation should cost ~10 kudos.
 
@@ -74,7 +109,7 @@ class TestDesignIntent:
         assert kudos == pytest.approx(10.0, abs=1.0), (
             f"Basis payload should price near KUDOS_BASIS=10.0; got {kudos}. "
             f"Probable cause: checkpoint swap or feature-ordering change in "
-            f"payload_to_tensor."
+            f"payload_to_vector."
         )
 
     def test_doubling_steps_roughly_scales_kudos(self, kudos_model, basis_payload):
@@ -148,7 +183,7 @@ class TestUnknownInputsHandled:
 
     def test_remix_source_processing_treated_as_img2img(self, kudos_model, basis_payload):
         # See the "Little hack until new model is out" comment in
-        # payload_to_tensor: source_processing="remix" is mapped to "img2img".
+        # payload_to_vector: source_processing="remix" is mapped to "img2img".
         remix = dict(basis_payload, source_processing="remix", source_image=True)
         img2img = dict(basis_payload, source_processing="img2img", source_image=True)
         # Same arithmetic path → same kudos.

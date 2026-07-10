@@ -30,9 +30,7 @@ RUN --mount=type=cache,target=/root/.cache \
     dependency_group_args="${dependency_group_args} --group ${dependency_group}"; \
   done; \
   uv export --frozen --no-dev --no-emit-project --no-header --no-hashes ${dependency_group_args} --output-file requirements.docker.txt; \
-  pip wheel --wheel-dir /usr/src/app/wheels \
-  --extra-index-url https://download.pytorch.org/whl/cpu \
-  -r requirements.docker.txt
+  pip wheel --wheel-dir /usr/src/app/wheels -r requirements.docker.txt
 
 
 ##

@@ -40,13 +40,9 @@ dependencies = [
     "regex",
     "unidecode",
     "patreon @ git+https://github.com/Patreon/patreon-python.git",
-    "torch",
     "emoji",
     "semver>=3.0.2",
-    # numpy is transitive (not imported by horde/*). The former `~=1.26.4` cap
-    # existed solely because better_profanity broke on numpy 2.x; that dep is
-    # gone (replaced by safetext + alt-profanity-check) so the cap was dropped.
-    # The resolved version is pinned deterministically by uv.lock (currently 2.x).
+    # Used by the tiny kudos pricing model and resolved deterministically by uv.lock.
     "numpy",
     "markdownify",
     "stripe<15",
@@ -92,14 +88,6 @@ telemetry-profiling = [
     "pyroscope-io",
     "pyroscope-otel",
 ]
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [tool.ruff]
 line-length = 140
@@ -190,4 +178,3 @@ module = [
     "horde.metrics",
 ]
 strict = true
-

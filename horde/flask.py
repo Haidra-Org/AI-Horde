@@ -86,7 +86,7 @@ def create_app(config=None):
             # open up to unlimited connections, easily exceeding Postgres'
             # max_connections under sustained load. Pool occupancy during
             # stress was ~100% while *active* queries were <5% of the pool,
-            # i.e. connections were held across non-DB work (kudos torch,
+            # i.e. connections were held across non-DB work (kudos model,
             # redis, webhook, log formatting). Shrinking the pool surfaces
             # that inefficiency via QueuePool timeouts instead of PG refusals.
             app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
