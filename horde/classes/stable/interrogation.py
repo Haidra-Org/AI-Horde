@@ -13,7 +13,7 @@ from sqlalchemy import JSON, Enum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.classes.base.kudos import kudos_event
-from horde.consts import KNOWN_POST_PROCESSORS
+from horde.consts import IMAGE_RESULT_ALCHEMY_FORMS, annotation_detector_kudos_bucket
 from horde.database.kudos_reservations import release_reservation, reserve_kudos
 from horde.enums import State
 from horde.flask import SQLITE_MODE, db
@@ -92,9 +92,9 @@ class InterrogationForms(db.Model):
             "payload": self.payload,
             "source_image": self.interrogation.source_image,
         }
-        if self.name in KNOWN_POST_PROCESSORS:
+        if self.name in IMAGE_RESULT_ALCHEMY_FORMS:
             ret_dict["r2_upload"] = generate_procgen_upload_url(str(self.id), False)
-        logger.debug([self.name in KNOWN_POST_PROCESSORS, self.name, KNOWN_POST_PROCESSORS])
+        logger.debug([self.name in IMAGE_RESULT_ALCHEMY_FORMS, self.name, IMAGE_RESULT_ALCHEMY_FORMS])
         logger.debug(ret_dict)
         return ret_dict
 
@@ -110,7 +110,7 @@ class InterrogationForms(db.Model):
             if self.result[form_name] == "R2":
                 self.result[form_name] = generate_procgen_download_url(str(self.id), False)
         if not self.interrogation.r2stored:
-            if self.name in KNOWN_POST_PROCESSORS:
+            if self.name in IMAGE_RESULT_ALCHEMY_FORMS:
                 # Post-processed images live in R2 only for 120 minutes
                 hr.horde_r_setex(
                     f"{self.name}_{self.interrogation.source_image}",
@@ -310,7 +310,15 @@ class Interrogation(db.Model):
             # Interrogations are more intensive so they reward better
             if form["name"] == "interrogation":
                 kudos = 3
-            elif form["name"] in KNOWN_POST_PROCESSORS:
+            elif form["name"] == "annotation":
+                # The annotation form scales with the source-image size and its detector cost class:
+                # a control map from a heavy transformers-hub detector earns more per tile than one
+                # from a weightless OpenCV detector.
+                control_type = (form.get("payload") or {}).get("control_type")
+                kudos = self.image_tiles * annotation_detector_kudos_bucket(control_type)
+            elif form["name"] in IMAGE_RESULT_ALCHEMY_FORMS:
+                # Post-processors (upscalers, face restorers, strip_background) scale with the
+                # source-image size, mirroring the upscaler/facefixer pricing.
                 logger.debug(self.image_tiles)
                 kudos = self.image_tiles * 3
             form_entry = InterrogationForms(

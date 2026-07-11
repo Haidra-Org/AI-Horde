@@ -9,8 +9,13 @@ import semver
 from horde.consts import KNOWN_POST_PROCESSORS
 from horde.logger import logger
 
+# Bridge version of "AI Horde Worker reGen" from which the image-utilities backend can annotate the
+# extended controlnet control types (everything outside LEGACY_IMAGE_CONTROL_TYPES).
+EXTENDED_CONTROLNET_REGEN_VERSION = 17
+
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
+        EXTENDED_CONTROLNET_REGEN_VERSION: {"extended_controlnet"},
         13: {
             "4xNomos8kSC",
             "4xLSDIRplus",

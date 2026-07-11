@@ -11,7 +11,7 @@ from horde.bridge_reference import (
     is_official_bridge_version,
 )
 from horde.classes.base.worker import Worker
-from horde.consts import KNOWN_POST_PROCESSORS
+from horde.consts import KNOWN_POST_PROCESSORS, LEGACY_IMAGE_CONTROL_TYPES
 from horde.flask import db
 from horde.logger import logger
 from horde.model_reference import model_reference
@@ -28,6 +28,7 @@ class ImageWorker(Worker):
     allow_painting = db.Column(db.Boolean, default=True, nullable=False, index=True)
     allow_post_processing = db.Column(db.Boolean, default=True, nullable=False, index=True)
     allow_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    allow_extended_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
     allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
     allow_lora = db.Column(db.Boolean, default=False, nullable=False, index=True)
     limit_max_steps = db.Column(db.Boolean, default=False, nullable=False, index=True)
@@ -44,6 +45,7 @@ class ImageWorker(Worker):
         self.allow_painting = kwargs.get("allow_painting", True)
         self.allow_post_processing = kwargs.get("allow_post_processing", True)
         self.allow_controlnet = kwargs.get("allow_controlnet", False)
+        self.allow_extended_controlnet = kwargs.get("allow_extended_controlnet", False)
         self.allow_sdxl_controlnet = kwargs.get("allow_sdxl_controlnet", False)
         self.allow_lora = kwargs.get("allow_lora", False)
         self.limit_max_steps = kwargs.get("limit_max_steps", False)
@@ -128,6 +130,11 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not check_bridge_capability("image_is_control", self.bridge_agent):
                 return [False, "bridge_version"]
+            if waiting_prompt.params["control_type"] not in LEGACY_IMAGE_CONTROL_TYPES:
+                if not check_bridge_capability("extended_controlnet", self.bridge_agent):
+                    return [False, "bridge_version"]
+                if not self.allow_extended_controlnet:
+                    return [False, "controlnet"]
             if not self.allow_controlnet:
                 return [False, "controlnet"]
         if waiting_prompt.params.get("workflow") == "qr_code":
@@ -218,6 +225,7 @@ class ImageWorker(Worker):
         ret_dict["painting"] = self.allow_painting if check_bridge_capability("inpainting", self.bridge_agent) else False
         ret_dict["post-processing"] = self.allow_post_processing
         ret_dict["controlnet"] = self.allow_controlnet
+        ret_dict["extended_controlnet"] = self.allow_extended_controlnet
         ret_dict["sdxl_controlnet"] = self.allow_sdxl_controlnet
         ret_dict["lora"] = self.allow_lora
         return ret_dict

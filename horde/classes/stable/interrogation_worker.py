@@ -33,12 +33,25 @@ class WorkerInterrogationForm(db.Model):
     form = db.Column(db.String(30))
 
 
+class WorkerAnnotationType(db.Model):
+    __tablename__ = "interrogation_worker_annotation_types"
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("workers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    worker = db.relationship("InterrogationWorker", back_populates="annotation_types")
+    annotation_type = db.Column(db.String(64))
+
+
 class InterrogationWorker(WorkerTemplate):
     __mapper_args__ = {
         "polymorphic_identity": "interrogation_worker",
     }
 
     forms = db.relationship("WorkerInterrogationForm", back_populates="worker")
+    annotation_types = db.relationship("WorkerAnnotationType", back_populates="worker")
     processing_forms = db.relationship("InterrogationForms", back_populates="worker")
     wtype = "interrogation"
 
@@ -49,6 +62,9 @@ class InterrogationWorker(WorkerTemplate):
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
         self.set_forms(kwargs.get("forms"))
+        # Advertised annotation types are display/moderation only; pop-time matching stays on the
+        # live pop payload. A legacy alchemist sends no annotation_types, which clears cleanly.
+        self.set_annotation_types(kwargs.get("annotation_types"))
         form_names = self.get_form_names()
         if len(form_names) == 0:
             self.set_forms(["caption"])
@@ -139,6 +155,30 @@ class InterrogationWorker(WorkerTemplate):
             db.session.add(form)
         db.session.commit()
 
+    def get_annotation_type_names(self):
+        annotation_type_names = (
+            db.session.query(func.distinct(WorkerAnnotationType.annotation_type).label("name"))
+            .filter(WorkerAnnotationType.worker_id == self.id)
+            .all()
+        )
+        return [a.name for a in annotation_type_names]
+
+    def set_annotation_types(self, annotation_types):
+        # A legacy alchemist advertises no annotation types; treat absent as an empty set.
+        if not annotation_types:
+            annotation_types = []
+        # We don't allow workers to claim they can serve more than 100 annotation types (to prevent abuse)
+        annotation_types = list(annotation_types)[:100]
+        existing_annotation_types = db.session.query(WorkerAnnotationType).filter_by(worker_id=self.id)
+        existing_annotation_type_names = set([a.annotation_type for a in existing_annotation_types.all()])
+        if existing_annotation_type_names == set(annotation_types):
+            return
+        existing_annotation_types.delete()
+        for annotation_type in annotation_types:
+            entry = WorkerAnnotationType(worker_id=self.id, annotation_type=annotation_type)
+            db.session.add(entry)
+        db.session.commit()
+
     def get_performance(self):
         performances = [p.performance for p in self.performance]
         if len(performances):
@@ -150,4 +190,5 @@ class InterrogationWorker(WorkerTemplate):
     def get_details(self, details_privilege=0):
         ret_dict = super().get_details(details_privilege)
         ret_dict["forms"] = self.get_form_names()
+        ret_dict["annotation_types"] = self.get_annotation_type_names()
         return ret_dict

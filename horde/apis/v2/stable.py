@@ -35,6 +35,7 @@ from horde.classes.stable.interrogation import Interrogation
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
+from horde.consts import KNOWN_CONTROL_TYPES
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.database.kudos_reservations import reserve_kudos
@@ -710,6 +711,7 @@ class ImageJobPop(JobPopTemplate):
             allow_unsafe_ipaddr=self.args.allow_unsafe_ipaddr,
             allow_post_processing=self.args.allow_post_processing,
             allow_controlnet=self.args.allow_controlnet,
+            allow_extended_controlnet=self.args.allow_extended_controlnet,
             allow_sdxl_controlnet=self.args.allow_sdxl_controlnet,
             allow_lora=self.args.allow_lora,
             extra_slow_worker=self.args.extra_slow_worker,
@@ -1028,6 +1030,15 @@ class Interrogate(Resource):
     def validate(self):
         if settings.mode_maintenance():
             raise e.MaintenanceMode("Interrogate")
+        for form in self.forms:
+            if form.get("name") != "annotation":
+                continue
+            control_type = (form.get("payload") or {}).get("control_type")
+            if control_type not in KNOWN_CONTROL_TYPES:
+                raise e.BadRequest(
+                    f"The 'annotation' form requires a payload.control_type from {KNOWN_CONTROL_TYPES}.",
+                    rc="InvalidControlType",
+                )
         if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
         with get_app().app_context():
@@ -1189,6 +1200,14 @@ class InterrogatePop(JobPopTemplate):
         help="The maximum amount of 512x512 tiles this worker can post-process",
         location="json",
     )
+    post_parser.add_argument(
+        "annotation_types",
+        type=list,
+        required=False,
+        default=None,
+        help="The annotation control types this worker can fulfil",
+        location="json",
+    )
 
     decorators = [limiter.limit("60/second")]
 
@@ -1223,6 +1242,7 @@ class InterrogatePop(JobPopTemplate):
         self.forms = []
         if self.args.forms:
             self.forms = self.args.forms
+        self.annotation_types = set(self.args.annotation_types or [])
         self.worker_ip = request.remote_addr
         self.validate()
         self.check_in()
@@ -1247,6 +1267,8 @@ class InterrogatePop(JobPopTemplate):
             priority_user_ids=self.priority_user_ids,
         )
         for form in priority_list:
+            if not self._supports_annotation_type(form):
+                continue
             # We append to the list so that we have the prioritized forms first
             self.prioritized_forms.append(form)
 
@@ -1257,6 +1279,8 @@ class InterrogatePop(JobPopTemplate):
                 forms_list=self.forms,
                 excluded_forms=self.prioritized_forms,
             ):
+                if not self._supports_annotation_type(form):
+                    continue
                 self.prioritized_forms.append(form)
         # logger.warning(datetime.utcnow())
         worker_ret = {"forms": []}
@@ -1299,10 +1323,20 @@ class InterrogatePop(JobPopTemplate):
         # logger.warning(datetime.utcnow())
         return ({"skipped": self.skipped}, 200)
 
+    def _supports_annotation_type(self, form):
+        """Return whether this worker advertises the annotation type requested by ``form``."""
+        if form.name != "annotation":
+            return True
+        if not self.annotation_types:
+            return False
+        payload = form.payload or {}
+        return payload.get("control_type") in self.annotation_types
+
     def check_in(self):
         self.worker.check_in(
             max_tiles=self.args.max_tiles,
             forms=self.forms,
+            annotation_types=self.annotation_types,
             safe_ip=self.safe_ip,
             ipaddr=self.worker_ip,
             threads=self.args.threads,

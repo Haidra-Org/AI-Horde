@@ -866,6 +866,9 @@ class Models:
                 ),
                 "models": fields.List(fields.String(description="Which models this worker if offering.")),
                 "forms": fields.List(fields.String(description="Which forms this worker if offering.")),
+                "annotation_types": fields.List(
+                    fields.String(description="Which annotation control types this worker is offering."),
+                ),
                 "team": fields.Nested(
                     self.response_model_team_details_lite,
                     "The Team to which this worker is dedicated.",
@@ -909,6 +912,10 @@ class Models:
                 "controlnet": fields.Boolean(
                     default=None,
                     description="If True, this worker supports and allows controlnet requests.",
+                ),
+                "extended_controlnet": fields.Boolean(
+                    default=None,
+                    description="If True, this worker supports and allows extended controlnet control types.",
                 ),
                 "sdxl_controlnet": fields.Boolean(
                     default=None,

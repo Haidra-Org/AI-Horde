@@ -8,6 +8,49 @@ import sys
 import numpy as np
 from loguru import logger
 
+# The kudos model is a frozen artifact whose control_type one-hot slots are the classic types only.
+# New unified control types are collapsed onto their closest classic cost-class before the one-hot
+# lookup, so the input vector keeps its trained length. This mirrors hordelib's checkpoint-reuse map:
+# cheap algorithmic preprocessors land on `canny`, the lineart family lands on `hed`, and `mlsd`
+# uses the legacy `hough` slot. Types absent from this map (and already classic) pass through
+# unchanged; anything still unknown to KNOWN_CONTROL_TYPES falls back to the neutral "None" slot.
+CANONICAL_KUDOS_CONTROL_TYPES = {
+    "binary": "scribble",
+    "scribble_xdog": "scribble",
+    "scribble_pidinet": "scribble",
+    "pidinet": "hed",
+    "teed": "hed",
+    "standard_lineart": "hed",
+    "lineart": "hed",
+    "lineart_anime": "hed",
+    "lineart_anime_denoise": "hed",
+    "pyracanny": "canny",
+    "color": "canny",
+    "shuffle": "canny",
+    "recolor_luminance": "canny",
+    "recolor_intensity": "canny",
+    "tile": "canny",
+    "tile_ttplanet_guided": "canny",
+    "tile_ttplanet_simple": "canny",
+    "midas_depth": "depth",
+    "zoe_depth": "depth",
+    "depth_anything": "depth",
+    "depth_anything_v2": "depth",
+    "normal_bae": "normal",
+    "oneformer_ade20k": "seg",
+    "oneformer_coco": "seg",
+    "mlsd": "hough",
+    "openpose": "openpose",
+    "canny": "canny",
+    "hed": "hed",
+    "depth": "depth",
+    "normal": "normal",
+    "seg": "seg",
+    "scribble": "scribble",
+    "fakescribbles": "fakescribbles",
+    "hough": "hough",
+}
+
 
 class KudosModel:
     """Calculate kudos for a given horde job payload. Tiny, lightweight cpu model.
@@ -218,7 +261,11 @@ class KudosModel:
         data_samplers.append(
             payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
         )
-        data_control_types.append(payload.get("control_type", "None"))
+        control_type = payload.get("control_type", "None")
+        mapped_control_type = CANONICAL_KUDOS_CONTROL_TYPES.get(control_type, control_type)
+        if mapped_control_type not in KudosModel.KNOWN_CONTROL_TYPES:
+            mapped_control_type = "None"
+        data_control_types.append(mapped_control_type)
         sp = payload.get("source_processing", "txt2img")
         # Little hack until new model is out
         if sp == "remix":

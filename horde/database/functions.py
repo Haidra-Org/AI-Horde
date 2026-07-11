@@ -33,6 +33,7 @@ from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
+from horde.consts import LEGACY_IMAGE_CONTROL_TYPES
 from horde.database.classes import FakeWPRow
 from horde.database.kudos_legacy_projection import consume_user_reservation
 from horde.database.kudos_reservations import reserve_kudos
@@ -1009,6 +1010,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 and_(
                     worker.allow_controlnet == True,  # noqa E712
                     check_bridge_capability("controlnet", worker.bridge_agent),
+                    or_(
+                        ImageWaitingPrompt.params["control_type"].astext.in_(LEGACY_IMAGE_CONTROL_TYPES),
+                        and_(
+                            check_bridge_capability("extended_controlnet", worker.bridge_agent),
+                            worker.allow_extended_controlnet == True,  # noqa E712
+                        ),
+                    ),
                 ),
             ),
             or_(
@@ -1117,6 +1125,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     can_ti = check_bridge_capability("textual_inversion", bridge_agent)
     can_pp = check_bridge_capability("post-processing", bridge_agent)
     can_controlnet = check_bridge_capability("controlnet", bridge_agent)
+    can_extended_controlnet = check_bridge_capability("extended_controlnet", bridge_agent)
     can_hires = check_bridge_capability("hires_fix", bridge_agent)
     can_return_ctrl = check_bridge_capability("return_control_map", bridge_agent)
     can_tiling = check_bridge_capability("tiling", bridge_agent)
@@ -1211,6 +1220,22 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     # controlnet
     if worker.allow_controlnet is False or not can_controlnet:
         count_exprs["_controlnet_raw"] = count_distinct_wp(ImageWaitingPrompt.params.has_key("control_type"))
+    elif not can_extended_controlnet:
+        # A controlnet-capable but pre-extended worker cannot render control types outside the classic set.
+        count_exprs["_controlnet_extended_bridge_raw"] = count_distinct_wp(
+            and_(
+                ImageWaitingPrompt.params.has_key("control_type"),
+                ImageWaitingPrompt.params["control_type"].astext.notin_(LEGACY_IMAGE_CONTROL_TYPES),
+            ),
+        )
+    elif worker.allow_extended_controlnet is False:
+        # An extended-capable worker that opted out of extended types skips them by worker choice.
+        count_exprs["_controlnet_extended_choice_raw"] = count_distinct_wp(
+            and_(
+                ImageWaitingPrompt.params.has_key("control_type"),
+                ImageWaitingPrompt.params["control_type"].astext.notin_(LEGACY_IMAGE_CONTROL_TYPES),
+            ),
+        )
 
     # performance (slow workers)
     if worker.speed <= 500000:
@@ -1337,6 +1362,12 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
             ret_dict["controlnet"] = controlnet_count
         else:
             bridge_version_count += controlnet_count
+    extended_controlnet_bridge_count = raw.get("_controlnet_extended_bridge_raw", 0) or 0
+    if extended_controlnet_bridge_count > 0:
+        bridge_version_count += extended_controlnet_bridge_count
+    extended_controlnet_choice_count = raw.get("_controlnet_extended_choice_raw", 0) or 0
+    if extended_controlnet_choice_count > 0:
+        ret_dict["controlnet"] = ret_dict.get("controlnet", 0) + extended_controlnet_choice_count
 
     # performance
     perf_count = (raw.get("_perf_slow", 0) or 0) + (raw.get("_perf_extra_slow", 0) or 0)
