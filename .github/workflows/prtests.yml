@@ -29,6 +29,7 @@ on:
       - 'bridgeData_template.yaml'
       - 'requirements*.txt'
       - 'tests/**'
+      - '**.npz'
 
 permissions:
   contents: read
