@@ -3,10 +3,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 from horde.consts import (
+    ANNOTATION_DETECTOR_KUDOS_BUCKETS,
+    ANNOTATION_KUDOS_BUCKET_HUB,
+    ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    ANNOTATION_KUDOS_DEFAULT_BUCKET,
+    IMAGE_CONTROL_TYPES,
+    KNOWN_CONTROL_TYPES,
     KNOWN_POST_PROCESSORS,
     KNOWN_SAMPLERS,
     KNOWN_UPSCALERS,
+    LEGACY_IMAGE_CONTROL_TYPES,
     SECOND_ORDER_SAMPLERS,
+    annotation_detector_kudos_bucket,
 )
 
 
@@ -32,3 +41,91 @@ class TestKnownUpscalers:
     def test_upscalers_are_post_processors(self):
         for upscaler in KNOWN_UPSCALERS:
             assert upscaler in KNOWN_POST_PROCESSORS, f"Upscaler '{upscaler}' not in KNOWN_POST_PROCESSORS"
+
+
+class TestImageControlTypes:
+    def test_image_control_types_derive_from_unified_list(self):
+        # The image-generation enum is the unified control set plus the legacy `hough` alias.
+        assert IMAGE_CONTROL_TYPES == [*KNOWN_CONTROL_TYPES, "hough"]
+
+    def test_legacy_alias_hough_is_accepted(self):
+        # Existing clients still send `hough` for the detector the unified list spells `mlsd`.
+        assert "hough" in IMAGE_CONTROL_TYPES
+        assert "mlsd" in IMAGE_CONTROL_TYPES
+
+    def test_new_types_are_accepted_by_image_enum(self):
+        for new_type in ("lineart", "teed", "depth_anything_v2"):
+            assert new_type in IMAGE_CONTROL_TYPES
+
+    def test_legacy_set_is_the_classic_nine(self):
+        assert LEGACY_IMAGE_CONTROL_TYPES == [
+            "canny",
+            "hed",
+            "depth",
+            "normal",
+            "openpose",
+            "seg",
+            "scribble",
+            "fakescribbles",
+            "hough",
+        ]
+
+    def test_legacy_types_are_all_dispatchable(self):
+        # Every legacy type except the `hough` alias is present in the unified list verbatim.
+        for legacy_type in LEGACY_IMAGE_CONTROL_TYPES:
+            assert legacy_type in IMAGE_CONTROL_TYPES
+
+    def test_mlsd_is_an_extended_type(self):
+        # `mlsd` uses a spelling old workers do not understand, so it gates as a new type.
+        assert "mlsd" not in LEGACY_IMAGE_CONTROL_TYPES
+
+
+class TestAnnotationKudosBuckets:
+    _VALID_BUCKETS = {
+        ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+        ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+        ANNOTATION_KUDOS_BUCKET_HUB,
+    }
+
+    def test_every_known_control_type_has_an_explicit_bucket(self):
+        # Lockstep guard: a new control type added to KNOWN_CONTROL_TYPES must be assigned a
+        # detector cost class explicitly. Silent defaulting is only for unlisted/novel types.
+        missing = [ct for ct in KNOWN_CONTROL_TYPES if ct not in ANNOTATION_DETECTOR_KUDOS_BUCKETS]
+        assert not missing, f"KNOWN_CONTROL_TYPES with no explicit kudos bucket: {missing}"
+
+    def test_bucket_map_has_no_unknown_control_types(self):
+        # The mapping should not price detectors the server does not actually advertise.
+        extra = [ct for ct in ANNOTATION_DETECTOR_KUDOS_BUCKETS if ct not in KNOWN_CONTROL_TYPES]
+        assert not extra, f"Bucket map references non-KNOWN_CONTROL_TYPES: {extra}"
+
+    def test_all_buckets_are_one_of_the_three_classes(self):
+        for control_type, bucket in ANNOTATION_DETECTOR_KUDOS_BUCKETS.items():
+            assert bucket in self._VALID_BUCKETS, f"{control_type} has out-of-class bucket {bucket}"
+
+    def test_three_classes_are_strictly_ordered(self):
+        assert ANNOTATION_KUDOS_BUCKET_WEIGHTLESS < ANNOTATION_KUDOS_BUCKET_WEIGHTED < ANNOTATION_KUDOS_BUCKET_HUB
+
+    def test_unknown_type_falls_back_to_middle_bucket(self):
+        assert annotation_detector_kudos_bucket("not_a_real_detector_xyz") == ANNOTATION_KUDOS_DEFAULT_BUCKET
+        assert ANNOTATION_KUDOS_DEFAULT_BUCKET == ANNOTATION_KUDOS_BUCKET_WEIGHTED
+
+    def test_missing_type_falls_back_to_middle_bucket(self):
+        # A None control_type (no payload) must not raise and lands on the default.
+        assert annotation_detector_kudos_bucket(None) == ANNOTATION_KUDOS_DEFAULT_BUCKET
+
+    def test_helper_agrees_with_mapping_for_known_types(self):
+        for control_type, bucket in ANNOTATION_DETECTOR_KUDOS_BUCKETS.items():
+            assert annotation_detector_kudos_bucket(control_type) == bucket
+
+    def test_hub_detector_prices_above_weightless_for_same_tiles(self):
+        # Pricing uses the bucket: an oneformer (HUB) job pays more than a canny (WEIGHTLESS) job
+        # for the same number of image tiles.
+        image_tiles = 4
+        canny_kudos = image_tiles * annotation_detector_kudos_bucket("canny")
+        oneformer_kudos = image_tiles * annotation_detector_kudos_bucket("oneformer_ade20k")
+        assert oneformer_kudos > canny_kudos
+
+    def test_representative_class_members(self):
+        assert annotation_detector_kudos_bucket("canny") == ANNOTATION_KUDOS_BUCKET_WEIGHTLESS
+        assert annotation_detector_kudos_bucket("openpose") == ANNOTATION_KUDOS_BUCKET_WEIGHTED
+        assert annotation_detector_kudos_bucket("depth_anything_v2") == ANNOTATION_KUDOS_BUCKET_HUB

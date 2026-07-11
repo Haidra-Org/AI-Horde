@@ -211,3 +211,68 @@ class TestUnknownInputsHandled:
         img2img = dict(basis_payload, source_processing="img2img", source_image=True)
         # Same arithmetic path → same kudos.
         assert kudos_model.calculate_kudos(remix) == kudos_model.calculate_kudos(img2img)
+
+
+class TestControlTypeCanonicalMapping:
+    """The kudos checkpoint only has one-hot slots for the classic control types.
+
+    Unified control types are collapsed onto their closest classic slot before
+    the lookup so the trained input vector keeps its length. These tests lock the
+    vector-length invariant and the specific slot each new type lands on.
+
+    Comparisons use ``(a == b).all()`` rather than a framework-specific equality
+    so they hold whether the feature vector is a torch tensor or a numpy array,
+    and ``payload_to_tensor`` is the compatibility alias both backends keep.
+    """
+
+    def test_new_type_preserves_vector_length(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        classic = KudosModel.payload_to_tensor(dict(basis_payload, control_type="canny"))
+        new_type = KudosModel.payload_to_tensor(dict(basis_payload, control_type="lineart"))
+        # A changed width here means a new slot leaked into the one-hot, which the
+        # frozen checkpoint cannot consume.
+        assert new_type.shape == classic.shape
+
+    def test_lineart_family_lands_on_hed_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        for lineart_type in ("lineart", "teed", "pidinet", "standard_lineart"):
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, control_type=lineart_type))
+            hed = KudosModel.payload_to_tensor(dict(basis_payload, control_type="hed"))
+            assert bool((mapped == hed).all()), lineart_type
+
+    def test_cheap_preprocessors_land_on_canny_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        for canny_type in ("pyracanny", "tile", "recolor_luminance", "shuffle"):
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, control_type=canny_type))
+            canny = KudosModel.payload_to_tensor(dict(basis_payload, control_type="canny"))
+            assert bool((mapped == canny).all()), canny_type
+
+    def test_depth_family_lands_on_depth_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        for depth_type in ("midas_depth", "zoe_depth", "depth_anything_v2"):
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, control_type=depth_type))
+            depth = KudosModel.payload_to_tensor(dict(basis_payload, control_type="depth"))
+            assert bool((mapped == depth).all()), depth_type
+
+    def test_mlsd_maps_to_legacy_hough_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        mlsd = KudosModel.payload_to_tensor(dict(basis_payload, control_type="mlsd"))
+        hough = KudosModel.payload_to_tensor(dict(basis_payload, control_type="hough"))
+        assert bool((mlsd == hough).all())
+
+    def test_unknown_type_falls_back_to_none_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        # An unmapped, unknown type must not raise on the one-hot index lookup.
+        unknown = KudosModel.payload_to_tensor(dict(basis_payload, control_type="not_a_real_detector_xyz"))
+        neutral = KudosModel.payload_to_tensor(dict(basis_payload, control_type="None"))
+        assert bool((unknown == neutral).all())
+
+    def test_new_type_prices_without_crashing(self, kudos_model, basis_payload):
+        priced = kudos_model.calculate_kudos(dict(basis_payload, control_type="teed"))
+        assert priced > 0

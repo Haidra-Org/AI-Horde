@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-HORDE_VERSION = "5.1.5"
+HORDE_VERSION = "5.1.6"
 HORDE_API_VERSION = "2.5"
 
 WHITELISTED_SERVICE_IPS = {
@@ -31,6 +31,127 @@ KNOWN_POST_PROCESSORS = {
     "GFPGANv1.3": 1,
     "RestoreFormer": 1,
 }
+
+# Control-map types the parameterized `annotation` alchemy form can produce. This is the closed set
+# the image-utilities backend can serve. It spells the line detector `mlsd` (its real name) where
+# legacy image-generation control_type still spells the same detector `hough`.
+KNOWN_CONTROL_TYPES = [
+    "canny",
+    "hed",
+    "depth",
+    "mlsd",
+    "openpose",
+    "normal",
+    "scribble",
+    "fakescribbles",
+    "seg",
+    "binary",
+    "standard_lineart",
+    "lineart",
+    "lineart_anime",
+    "lineart_anime_denoise",
+    "pidinet",
+    "scribble_xdog",
+    "scribble_pidinet",
+    "teed",
+    "pyracanny",
+    "midas_depth",
+    "zoe_depth",
+    "depth_anything",
+    "depth_anything_v2",
+    "normal_bae",
+    "oneformer_ade20k",
+    "oneformer_coco",
+    "color",
+    "shuffle",
+    "recolor_luminance",
+    "recolor_intensity",
+    "tile",
+    "tile_ttplanet_guided",
+    "tile_ttplanet_simple",
+]
+
+# The classic image-generation control types renderable by legacy workers (pre image-utilities).
+# Old bridges spell the line detector `hough`; KNOWN_CONTROL_TYPES spells the same detector `mlsd`.
+# A control_type outside this set is only dispatchable to bridge agents new enough to annotate it.
+LEGACY_IMAGE_CONTROL_TYPES = [
+    "canny",
+    "hed",
+    "depth",
+    "normal",
+    "openpose",
+    "seg",
+    "scribble",
+    "fakescribbles",
+    "hough",
+]
+
+# The full set the image-generation `control_type` field accepts: the unified KNOWN_CONTROL_TYPES
+# plus the legacy `hough` alias for `mlsd`, kept so existing clients keep validating.
+IMAGE_CONTROL_TYPES = [*KNOWN_CONTROL_TYPES, "hough"]
+
+# Alchemy/interrogation forms whose result is an image delivered via R2 (upload URL minted on pop,
+# short-lived result cache) rather than an inline JSON payload. Post-processors are image-output by
+# nature; the controlnet `annotation` form also emits an image (the control map).
+IMAGE_RESULT_ALCHEMY_FORMS = set(KNOWN_POST_PROCESSORS) | {"annotation"}
+
+# Detector cost classes for the parameterized `annotation` alchemy form, sourced from the
+# image-utilities annotator registry runtimes. Each control type maps to a per-tile kudos
+# multiplier reflecting the horde resources its detector consumes:
+#   - WEIGHTLESS: pure OpenCV/numpy detectors that load no model weights.
+#   - WEIGHTED: small/medium annotator checkpoints (measured ~2-8s CPU).
+#   - HUB: large ViT/transformers-hub detectors (measured ~13-65s CPU).
+# An unlisted control type falls back to the middle WEIGHTED class.
+ANNOTATION_KUDOS_BUCKET_WEIGHTLESS = 3
+ANNOTATION_KUDOS_BUCKET_WEIGHTED = 5
+ANNOTATION_KUDOS_BUCKET_HUB = 8
+ANNOTATION_KUDOS_DEFAULT_BUCKET = ANNOTATION_KUDOS_BUCKET_WEIGHTED
+
+ANNOTATION_DETECTOR_KUDOS_BUCKETS = {
+    "canny": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "binary": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "scribble": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "scribble_xdog": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "pyracanny": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "color": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "shuffle": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "recolor_luminance": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "recolor_intensity": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "tile": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "tile_ttplanet_guided": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "tile_ttplanet_simple": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "standard_lineart": ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
+    "hed": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "fakescribbles": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "mlsd": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "openpose": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "depth": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "seg": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "lineart": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "lineart_anime": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "lineart_anime_denoise": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "pidinet": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "scribble_pidinet": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "teed": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "normal_bae": ANNOTATION_KUDOS_BUCKET_WEIGHTED,
+    "midas_depth": ANNOTATION_KUDOS_BUCKET_HUB,
+    "zoe_depth": ANNOTATION_KUDOS_BUCKET_HUB,
+    "depth_anything": ANNOTATION_KUDOS_BUCKET_HUB,
+    "depth_anything_v2": ANNOTATION_KUDOS_BUCKET_HUB,
+    "normal": ANNOTATION_KUDOS_BUCKET_HUB,
+    "oneformer_ade20k": ANNOTATION_KUDOS_BUCKET_HUB,
+    "oneformer_coco": ANNOTATION_KUDOS_BUCKET_HUB,
+}
+
+
+def annotation_detector_kudos_bucket(control_type):
+    """Return the per-tile kudos multiplier for an annotation control type.
+
+    Unknown or missing control types fall back to the middle WEIGHTED bucket so
+    a novel detector is never priced below its likely cost class.
+    """
+    return ANNOTATION_DETECTOR_KUDOS_BUCKETS.get(control_type, ANNOTATION_KUDOS_DEFAULT_BUCKET)
+
 
 KNOWN_UPSCALERS = [
     "RealESRGAN_x4plus",

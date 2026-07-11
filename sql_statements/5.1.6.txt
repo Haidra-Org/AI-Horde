@@ -1,0 +1,29 @@
+-- Run with psql in its default autocommit mode. Do NOT pass --single-transaction: this
+-- file contains CREATE INDEX CONCURRENTLY, which cannot run inside a transaction block.
+-- Pass -v ON_ERROR_STOP=1 so a failure halts rather than continuing. Every statement is
+-- idempotent, so a halted run can be repeated once the cause is addressed; a failed
+-- concurrent index build leaves an INVALID index that must be dropped before the rerun.
+--
+-- Safe to apply ahead of the deploy. An instance that predates this migration neither
+-- selects allow_extended_controlnet nor reads the annotation-type table, and the column
+-- default covers worker INSERTs that omit it.
+
+SET lock_timeout = '3s';
+
+-- The worker's opt-in to control types outside the classic set. Defaulting false is what
+-- makes the offer fail-closed: an existing worker keeps serving legacy control types only
+-- until its operator turns the flag on. The pop candidate query and the skipped-request
+-- counts both filter on it, matching the other capability columns on workers.
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS allow_extended_controlnet BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workers_allow_extended_controlnet
+  ON public.workers USING btree (allow_extended_controlnet);
+
+-- The annotation control types an alchemist advertises at check-in, mirroring how
+-- interrogation_worker_forms records its offered forms. This backs worker details and
+-- moderation; pop-time matching reads the live pop payload instead, so a stale or empty
+-- row set never gates dispatch.
+CREATE TABLE IF NOT EXISTS interrogation_worker_annotation_types (
+    id SERIAL PRIMARY KEY,
+    worker_id UUID NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+    annotation_type VARCHAR(64)
+);

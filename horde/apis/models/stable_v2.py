@@ -7,7 +7,7 @@ import copy
 from flask_restx import fields
 
 from horde.apis.models import v2
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS, KNOWN_WORKFLOWS
+from horde.consts import IMAGE_CONTROL_TYPES, KNOWN_CONTROL_TYPES, KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS, KNOWN_WORKFLOWS
 from horde.vars import horde_title
 
 
@@ -136,6 +136,14 @@ class ImageParsers(v2.Parsers):
             required=False,
             default=False,
             help="If True, this worker will pick up requests requesting ControlNet.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "allow_extended_controlnet",
+            type=bool,
+            required=False,
+            default=False,
+            help="If True, this worker will pick up requests requesting extended ControlNet control types.",
             location="json",
         )
         self.job_pop_parser.add_argument(
@@ -416,17 +424,7 @@ class ImageModels(v2.Models):
                 ),
                 "control_type": fields.String(
                     required=False,
-                    enum=[
-                        "canny",
-                        "hed",
-                        "depth",
-                        "normal",
-                        "openpose",
-                        "seg",
-                        "scribble",
-                        "fakescribbles",
-                        "hough",
-                    ],
+                    enum=IMAGE_CONTROL_TYPES,
                 ),
                 "image_is_control": fields.Boolean(
                     default=False,
@@ -565,6 +563,10 @@ class ImageModels(v2.Models):
                 "allow_controlnet": fields.Boolean(
                     default=True,
                     description="If True, this worker will pick up requests requesting ControlNet.",
+                ),
+                "allow_extended_controlnet": fields.Boolean(
+                    default=False,
+                    description="If True, this worker will pick up requests requesting extended ControlNet control types.",
                 ),
                 "allow_sdxl_controlnet": fields.Boolean(
                     default=True,
@@ -745,14 +747,30 @@ class ImageModels(v2.Models):
         # Intentionally left blank to allow to add payloads later
         self.input_model_interrogation_form_payload = api.model(
             "ModelInterrogationFormPayloadStable",
-            {"*": fields.Wildcard(fields.String)},
+            {
+                "control_type": fields.String(
+                    required=False,
+                    enum=KNOWN_CONTROL_TYPES,
+                    description="For the 'annotation' form, the controlnet control map to produce.",
+                ),
+                "*": fields.Wildcard(fields.String),
+            },
         )
         self.input_model_interrogation_form = api.model(
             "ModelInterrogationFormStable",
             {
                 "name": fields.String(
                     required=True,
-                    enum=["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
+                    enum=[
+                        "caption",
+                        "interrogation",
+                        "nsfw",
+                        "vectorize",
+                        "palette",
+                        "describe",
+                        "aesthetic",
+                        "annotation",
+                    ]
                     + list(KNOWN_POST_PROCESSORS.keys()),
                     description="The type of interrogation this is.",
                     unique=True,
@@ -832,10 +850,27 @@ class ImageModels(v2.Models):
                 "forms": fields.List(
                     fields.String(
                         description="The type of interrogation this worker can fulfil.",
-                        enum=["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
+                        enum=[
+                            "caption",
+                            "interrogation",
+                            "nsfw",
+                            "vectorize",
+                            "palette",
+                            "describe",
+                            "aesthetic",
+                            "annotation",
+                        ]
                         + list(KNOWN_POST_PROCESSORS.keys()),
                         unique=True,
                     ),
+                ),
+                "annotation_types": fields.List(
+                    fields.String(
+                        description="The annotation control types this worker can fulfil.",
+                        enum=KNOWN_CONTROL_TYPES,
+                    ),
+                    required=False,
+                    unique=True,
                 ),
                 "amount": fields.Integer(
                     default=1,
@@ -872,7 +907,16 @@ class ImageModels(v2.Models):
                 ),
                 "form": fields.String(
                     description="The name of this interrogation form",
-                    enum=["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
+                    enum=[
+                        "caption",
+                        "interrogation",
+                        "nsfw",
+                        "vectorize",
+                        "palette",
+                        "describe",
+                        "aesthetic",
+                        "annotation",
+                    ]
                     + list(KNOWN_POST_PROCESSORS.keys()),
                 ),
                 "payload": fields.Nested(self.input_model_interrogation_form_payload, skip_none=True),
