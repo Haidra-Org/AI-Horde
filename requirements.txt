@@ -33,7 +33,7 @@ semver >= 3.0.2
 numpy
 horde_sdk>=0.29.1,<0.30.0
 markdownify
-stripe<15
+stripe>=15,<16
 environs
 setuptools<82
 logfire[flask,sqlalchemy,redis]==4.32.1

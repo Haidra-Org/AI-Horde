@@ -51,7 +51,7 @@ dependencies = [
     # the workers, and the clients that share this package.
     "horde_sdk>=0.29.1,<0.30.0",
     "markdownify",
-    "stripe<15",
+    "stripe>=15,<16",
     "environs",
     "setuptools<82",
     # logfire is hard-pinned deliberately: the OTel/Logfire bridge API is not yet
