@@ -105,7 +105,7 @@ requires-dist = [
     { name = "semver", specifier = ">=3.0.2" },
     { name = "setuptools", specifier = "<82" },
     { name = "sqlalchemy", specifier = "~=2.0.35" },
-    { name = "stripe", specifier = "<15" },
+    { name = "stripe", specifier = ">=15,<16" },
     { name = "unidecode" },
     { name = "waitress", specifier = "~=2.1.2" },
     { name = "werkzeug", specifier = "~=2.2.2" },
@@ -3039,15 +3039,15 @@ wheels = [
 
 [[package]]
 name = "stripe"
-version = "14.4.1"
+version = "15.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/63/01/59d92650146c6340e333c22b8a238561b022e8641ba255298dfe46b4137d/stripe-14.4.1.tar.gz", hash = "sha256:e3eecfb336819326cd2ab9a93f98eb01b49c4d4d93c9d167a52a68ab99c19a88", size = 1473321, upload-time = "2026-03-06T22:59:45.822Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/af/17e87a0ee330f2ba3be32fa88d7621bda3a9bcd12646a07df0acb73313b7/stripe-15.5.0.tar.gz", hash = "sha256:6b71048b270a06c1399c9ff6179e6907c7825ec394f579a973340d5c2b8575ae", size = 1542610, upload-time = "2026-08-10T22:11:13.011Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/0f/547eab75052384a72771b396a484556e5636629c031e5eafa8dc27af89ed/stripe-14.4.1-py3-none-any.whl", hash = "sha256:d6722b985dc3b4d6da01ff4fa95a975d3694a89bba96895bf17aa858073ff2b8", size = 2116642, upload-time = "2026-03-06T22:59:43.72Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/20/4c8377c570697ebe105ad5e073538e498d58e4985ca6e2944bdc917a5034/stripe-15.5.0-py3-none-any.whl", hash = "sha256:3994b075530e90e60d725f7553188e1ab30519f1c9d2dc98ea5fe420d0b29c50", size = 2199502, upload-time = "2026-08-10T22:11:11.08Z" },
 ]
 
 [[package]]
