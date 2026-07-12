@@ -34,7 +34,7 @@ emoji
 semver >= 3.0.2
 numpy
 markdownify
-stripe<15
+stripe>=15,<16
 environs
 setuptools<82
 logfire[flask,sqlalchemy,redis]==4.32.1
