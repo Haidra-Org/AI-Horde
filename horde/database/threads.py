@@ -450,26 +450,22 @@ def store_stripe_members():
     subscriptions = stripe.Subscription.list()
     members = []
     for subscription in subscriptions:
-        product_id = subscription["items"]["data"][0]["price"]["product"]
+        subscription_data = subscription.to_dict()
+        product_id = subscription_data["items"]["data"][0]["price"]["product"]
         product = stripe.Product.retrieve(product_id)
-        subscription["product_name"] = product["name"]
-        subscription["metadata"] = subscription.get("metadata", {})
-        customer = stripe.Customer.retrieve(subscription["customer"])
-        subscription["customer_email"] = customer.get("email", "Unknown")
-        subscription["name"] = customer.get("name", "Unknown")
+        product_data = product.to_dict()
+        metadata = subscription_data.get("metadata", {})
+        customer = stripe.Customer.retrieve(subscription_data["customer"])
+        customer_data = customer.to_dict()
         members.append(
             {
-                "product_name": subscription["product_name"],
-                "email": subscription["customer_email"],
-                "name": subscription["name"],
-                "horde_id": (
-                    subscription["metadata"].get("horde_id")
-                    if subscription["metadata"].get("horde_id")
-                    else subscription["metadata"].get("horde")
-                ),
-                "alias": subscription["metadata"].get("alias"),
-                "sponsor_link": subscription["metadata"].get("sponsor_link"),
-                "status": subscription["status"],
+                "product_name": product_data["name"],
+                "email": customer_data.get("email", "Unknown"),
+                "name": customer_data.get("name", "Unknown"),
+                "horde_id": (metadata.get("horde_id") if metadata.get("horde_id") else metadata.get("horde")),
+                "alias": metadata.get("alias"),
+                "sponsor_link": metadata.get("sponsor_link"),
+                "status": subscription_data["status"],
             },
         )
     active_members = {}

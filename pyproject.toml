@@ -49,7 +49,7 @@ dependencies = [
     # The resolved version is pinned deterministically by uv.lock (currently 2.x).
     "numpy",
     "markdownify",
-    "stripe<15",
+    "stripe>=15,<16",
     "environs",
     "setuptools<82",
     # logfire is hard-pinned deliberately: the OTel/Logfire bridge API is not yet
