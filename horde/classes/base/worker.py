@@ -4,11 +4,11 @@
 
 import json
 from datetime import datetime, timedelta
+from typing import Any
 
 import logfire
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.hybrid import hybrid_property
 
 from horde import vars as hv
 from horde.classes.base import settings
@@ -20,6 +20,13 @@ from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import get_db_uuid, get_message_expiry_date, is_profane, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+
+# The throughput a worker is credited with before it has recorded any performance
+# sample, expressed in "things" (megapixelsteps for image, tokens for text) per second.
+# It is scaled into the raw units the speed column stores by the worker type's divisor.
+# Kept as a named baseline so a fresh worker's speed reproduces the historical
+# substitution the old speed expression applied whenever the sample average was NULL.
+SPEED_BASELINE_THINGS_PER_SEC = 1
 
 
 class WorkerStats(db.Model):
@@ -161,22 +168,50 @@ class WorkerTemplate(db.Model):
     # TODO: Normalize this to the standard
     wtype = "image"
 
-    @hybrid_property
-    def speed(self) -> int:
-        performance_avg = db.session.query(func.avg(WorkerPerformance.performance)).filter_by(worker_id=self.id).scalar()
-        if performance_avg:
-            return performance_avg
-        # We return a baseline speed if the workers hasn't fulfilled anything
-        # in order to avoid a division by zero
-        return 1 * hv.thing_divisors[self.wtype]
+    # ``speed`` is the worker's rolling-average throughput (raw things per second),
+    # materialized on the row rather than derived on read. It was previously a
+    # hybrid_property whose SQL form embedded a correlated
+    # ``avg(worker_performances.performance)`` subquery, re-evaluated for every candidate
+    # worker in every pop candidate filter: the single largest cumulative-time query on
+    # the database. It is now maintained at the one write site (``record_performance``)
+    # and seeded on construction (``__init__``), so every reader becomes a plain column
+    # access.
+    #
+    # A worker with no samples stores the per-type baseline (see ``_baseline_speed``),
+    # reproducing the historical CASE expression that substituted that baseline whenever
+    # the average was NULL. This preserves the exact pop-filter outcomes for fresh
+    # workers: image workers clear the ``>= 500000`` threshold, while text and
+    # interrogation workers stay below theirs until real samples arrive. The stored value
+    # follows COALESCE(avg, baseline) semantics, falling back only on a NULL average; it
+    # deliberately does not also treat a zero average as "no samples", unlike the former
+    # Python getter's truthiness check (the two forms already disagreed there, and the
+    # SQL form is canonical).
+    speed = db.Column(db.Float, nullable=False, index=True)
 
-    @speed.expression
-    def speed(cls):
-        performance_avg = db.select(func.avg(WorkerPerformance.performance)).where(WorkerPerformance.worker_id == cls.id).label("speed")
-        return db.case(
-            (performance_avg == None, 1 * hv.thing_divisors[cls.wtype]),  # noqa E712
-            else_=performance_avg,
-        )
+    def __init__(self, **kwargs: Any) -> None:
+        """Seed the materialized ``speed`` to the per-type baseline on construction.
+
+        ``speed`` is NOT NULL and is maintained thereafter by ``record_performance``.
+        Seeding in ``__init__`` (the single construction chokepoint shared by every
+        worker subclass) rather than in ``create`` guarantees the column is populated on
+        every path that persists a worker, including callers that build and commit a
+        worker without going through ``create``. A worker with no performance samples
+        therefore reports the same baseline throughput it did when speed was derived on
+        read.
+        """
+        super().__init__(**kwargs)
+        if self.speed is None:
+            self.speed = self._baseline_speed()
+
+    def _baseline_speed(self) -> float:
+        """Return the throughput a worker reports before it has any performance samples.
+
+        Mirrors the historical speed expression, which substituted one thing per second
+        (scaled into raw units by the worker type's divisor) whenever the performance
+        average was NULL, keeping fresh workers on the same side of the pop-filter
+        thresholds as when speed was derived on read.
+        """
+        return SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors[self.wtype]
 
     def create(self, **kwargs):
         self.check_for_bad_actor()
@@ -395,6 +430,13 @@ class WorkerTemplate(db.Model):
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
         db.session.add(new_performance)
+        # Refresh the materialized rolling average from the retained samples. The
+        # aggregate autoflushes the pending insert and the prune above, so it reflects
+        # exactly the rows a read-time subquery would have seen; recomputing from the
+        # samples (rather than incrementally) also makes this write self-healing if an
+        # earlier sample write was lost.
+        retained_average = db.session.query(func.avg(WorkerPerformance.performance)).filter_by(worker_id=self.id).scalar()
+        self.speed = retained_average if retained_average is not None else self._baseline_speed()
         if commit:
             db.session.commit()
 
@@ -554,10 +596,6 @@ class WorkerTemplate(db.Model):
             "online": not self.is_stale(),
         }
         return ret_dict
-
-
-# Don't know if this works, need to recreate the DB to find out
-# db.Index('ix_image_workers_speed', WorkerTemplate.speed)
 
 
 class Worker(WorkerTemplate):
