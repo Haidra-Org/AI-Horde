@@ -22,7 +22,7 @@ from horde.bridge_reference import (
 from horde.classes.base.detection import Filter
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
-from horde.classes.base.waiting_prompt import WPAllowedWorkers, WPModels
+from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
 from horde.classes.base.worker import WorkerMessage, WorkerModel, WorkerPerformance
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -1506,7 +1506,32 @@ def get_request_avg(request_type="image"):
     return float(perf_cache)
 
 
-def wp_has_valid_workers(wp):
+def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
+    # An in-flight generation means a worker is actively serving this request, so it
+    # is possible regardless of the memoized verdict or the serving worker's current
+    # staleness. This live-state check runs before the cache so a pinned-false verdict
+    # cannot contradict a request that is presently being generated.
+    # Fake generations are decoys handed to paused/tricked workers and never yield a
+    # real result, so they are excluded here just as count_processing_gens excludes
+    # them from the processing bucket.
+    inflight_procgen_class = {
+        "image": ImageProcessingGeneration,
+        "text": TextProcessingGeneration,
+    }.get(wp.wp_type)
+    if inflight_procgen_class is not None:
+        has_inflight_generation = (
+            db.session.query(inflight_procgen_class.id)
+            .filter(
+                inflight_procgen_class.wp_id == wp.id,
+                inflight_procgen_class.generation.is_(None),
+                inflight_procgen_class.faulted.is_(False),
+                inflight_procgen_class.fake.is_(False),
+            )
+            .first()
+            is not None
+        )
+        if has_inflight_generation:
+            return True
     cached_validity = hr.horde_r_get(f"wp_validity_{wp.id}")
     if cached_validity is not None:
         return bool(int(cached_validity))
