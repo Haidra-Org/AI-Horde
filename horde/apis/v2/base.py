@@ -664,7 +664,10 @@ class JobPopTemplate(Resource):
         if self.worker.paused and wp.user != self.worker.user:
             ret = wp.fake_generation(self.worker)
         else:
-            ret = wp.start_generation(self.worker, self.args.amount)
+            # ``self.models`` is the model list the pop SQL matched this WP
+            # against, so the recorded model is chosen from what the worker
+            # declared it would run rather than from later-read worker state.
+            ret = wp.start_generation(self.worker, self.args.amount, declared_models=self.models)
         return ret
 
     # We split this to its own function so that it can be extended with the specific vars needed to check in

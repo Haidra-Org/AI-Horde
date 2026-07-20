@@ -58,10 +58,14 @@ class ProcessingGeneration(db.Model):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # If there has been no explicit model requested by the user, we just choose the first available from the worker
         db.session.add(self)
         db.session.commit()
         if kwargs.get("model") is None:
+            # Callers on the pop path pass an explicit model selected against the
+            # worker's declared list. This branch serves the remaining callers
+            # (e.g. fake generations) that construct without one, deriving the
+            # model from the intersection of the worker's hosted models and the
+            # WP's requested models.
             worker_models = list(self.worker.get_model_names())
             # Under load, cache/session staleness can return an empty model list right
             # after check-in updates. Fall back to a direct DB read before giving up.
@@ -71,22 +75,16 @@ class ProcessingGeneration(db.Model):
                 worker_models = [
                     row.model for row in db.session.query(WorkerModel.model).filter(WorkerModel.worker_id == self.worker_id).all()
                 ]
-            # If we reached this point, it means there is at least 1 matching model between worker and client
-            # so we pick the first one.
             wp_models = list(self.wp.get_model_names())
-            matching_models = worker_models.copy()
             if len(wp_models) != 0:
                 matching_models = [model for model in wp_models if model in worker_models]
+            else:
+                matching_models = worker_models.copy()
             if len(matching_models) == 0:
+                # Record no model rather than a WP model the worker does not
+                # host: a mislabeled hosted model is worse than an empty one.
                 logger.warning(
-                    f"Unexpectedly No models matched between worker and request!: Worker Models: {worker_models}. "
-                    f"Request Models: {wp_models}. Will use random worker model.",
-                )
-                # If worker model metadata is missing, prefer the explicit request model over crashing.
-                matching_models = wp_models if len(wp_models) != 0 else worker_models
-            if len(matching_models) == 0:
-                logger.warning(
-                    f"No models available for generation {self.id}. "
+                    f"No models matched between worker and request for generation {self.id}. "
                     f"Worker Models: {worker_models}. Request Models: {wp_models}. Using empty model string.",
                 )
                 self.model = ""
