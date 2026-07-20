@@ -60,8 +60,15 @@ class TextWorker(Worker):
         )
         db.session.commit()
 
-    def refresh_softprompt_cache(self):
-        softprompts_list = [s.softprompt for s in self.softprompts]
+    def refresh_softprompt_cache(self) -> list[str]:
+        # Read the authoritative rows straight from text_worker_softprompts rather than
+        # the self.softprompts relationship collection. Under expire_on_commit=False that
+        # collection can remain loaded with pre-change rows across a commit, which would
+        # republish a stale list. A direct query always reflects what was written.
+        softprompts_list = [
+            row.softprompt
+            for row in db.session.query(TextWorkerSoftprompts.softprompt).filter_by(worker_id=self.id).all()
+        ]
         try:
             hr.horde_r_setex(
                 f"worker_{self.id}_softprompts_cache",
