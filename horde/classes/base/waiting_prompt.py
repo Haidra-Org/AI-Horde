@@ -313,16 +313,55 @@ class WaitingPrompt(db.Model):
     def needs_gen(self):
         return self.n > 0
 
-    def start_generation(self, worker, amount=1):
+    def start_generation(self, worker, amount: int = 1, declared_models: list[str] | None = None):
         with logfire.span(
             "horde.wp.start_generation",
             wp_id=str(self.id),
             worker_id=str(worker.id),
             amount=amount,
         ) as gen_span:
-            return self._start_generation(worker, amount, gen_span)
+            return self._start_generation(worker, amount, gen_span, declared_models)
 
-    def _start_generation(self, worker, amount=1, gen_span=None):
+    def _select_model(self, worker, declared_models: list[str] | None = None) -> str:
+        """Choose the single model recorded for every procgen in a batch.
+
+        ``declared_models`` is the model list the pop SQL matched this WP
+        against (the worker's declared list in the pop payload). It is the set
+        the worker committed to running, so the recorded model is drawn from it
+        rather than from later-read worker state. When absent (callers outside
+        the pop flow), the worker's currently hosted models stand in for it.
+        """
+        if declared_models is None:
+            declared_models = list(worker.get_model_names())
+            # A cache/session race right after check-in can momentarily return
+            # an empty hosted-model list, so fall back to a direct DB read.
+            if len(declared_models) == 0:
+                from horde.classes.base.worker import WorkerModel
+
+                declared_models = [
+                    row.model
+                    for row in db.session.query(WorkerModel.model).filter(WorkerModel.worker_id == worker.id).all()
+                ]
+        wp_models = list(self.get_model_names())
+        if len(wp_models) != 0:
+            candidates = [model for model in wp_models if model in declared_models]
+        else:
+            candidates = list(declared_models)
+        # The pop SQL matched this WP against ``declared_models``, so an empty
+        # overlap means the WP carried no constraint the match narrowed on; any
+        # declared model is one the worker will actually run.
+        if len(candidates) == 0:
+            candidates = list(declared_models)
+        if len(candidates) == 0:
+            logger.warning(
+                f"No models available to record for a generation on WP {self.id} by worker {worker.id}. "
+                f"WP Models: {wp_models}. Declared Models: {declared_models}.",
+            )
+            return ""
+        random.shuffle(candidates)
+        return candidates[0]
+
+    def _start_generation(self, worker, amount=1, gen_span=None, declared_models: list[str] | None = None):
         # # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
         # myself_refresh = db.session.query(
         #     type(self)
@@ -348,13 +387,13 @@ class WaitingPrompt(db.Model):
         self.refresh(worker)
         procgen_class = procgen_classes[self.wp_type]
         gens_list = []
-        model = None
+        # Select the batch's model once from the pop-declared list so every
+        # procgen records the same model the worker committed to running.
+        model = self._select_model(worker, declared_models)
         while safe_amount >= 1:
             safe_amount -= 1
             current_n -= 1
             new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, model=model)
-            # For batched requests, we need all procgens to use the same model
-            model = new_gen.model
             logger.info(
                 f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
                 f"('{worker.name}' / {worker.ipaddr}) - {current_n} gens left",
