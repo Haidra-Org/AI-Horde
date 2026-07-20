@@ -599,8 +599,12 @@ class Worker(WorkerTemplate):
             db.session.add(blacklisted_word)
         db.session.flush()
 
-    def refresh_model_cache(self):
-        models_list = [m.model for m in self.models]
+    def refresh_model_cache(self) -> list[str]:
+        # Read the authoritative rows straight from worker_models rather than the
+        # self.models relationship collection. Under expire_on_commit=False that
+        # collection can remain loaded with pre-change rows across a commit, which
+        # would republish a stale list. A direct query always reflects what was written.
+        models_list = [row.model for row in db.session.query(WorkerModel.model).filter_by(worker_id=self.id).all()]
         try:
             hr.horde_r_setex(
                 f"worker_{self.id}_model_cache",
