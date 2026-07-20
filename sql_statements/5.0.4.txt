@@ -1,0 +1,4 @@
+ALTER TABLE workers ADD COLUMN speed double precision;
+UPDATE workers w SET speed = COALESCE((SELECT avg(wp.performance) FROM worker_performances wp WHERE wp.worker_id = w.id), CASE WHEN w.worker_type IN ('stable_worker', 'worker') THEN 1000000 ELSE 1 END);
+ALTER TABLE workers ALTER COLUMN speed SET NOT NULL;
+CREATE INDEX ix_workers_speed ON public.workers USING btree (speed);
