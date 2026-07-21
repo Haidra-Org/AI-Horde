@@ -15,6 +15,10 @@ the lock-convoy signature, whether the run reproduced it:
   row specifically (waiting ``FOR NO KEY UPDATE``),
 - blocking chains headed by ``idle in transaction`` sessions, and the age of the
   oldest blocking transaction,
+- migrated contention on the rows still updated inline (``user_stats`` and
+  ``user_records`` tuple-lock queue depth, and idle-in-transaction chains whose
+  blocker query targets those rows), reported separately so an A/B shows the old
+  users-row signature disappearing while a new one may or may not appear,
 - the ``FOR NO KEY UPDATE`` statement's windowed mean and cumulative max latency
   from the ``pg_stat_statements`` delta,
 - pop and status latency per phase, and whether reads degraded less than writes,
@@ -29,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +49,12 @@ _TRACKED_NAMES = [_POP, _SUBMIT, _ASYNC_ANON, _ASYNC_HEAVY, _STATUS_POLL, _KUDOS
 _PHASE_ORDER = ["baseline", "pressure", "relief"]
 
 _FNKU_MARKER = "for no key update"
+
+# Relations that would carry contention migrating off the users row. A blocker
+# query naming one of these, at the head of an idle-in-transaction chain, is the
+# post-fix signature the users-only classification cannot see.
+_USER_STATS_RE = re.compile(r"\buser_stats\b", re.IGNORECASE)
+_USER_RECORDS_RE = re.compile(r"\buser_records\b", re.IGNORECASE)
 
 
 @dataclass
@@ -150,10 +161,14 @@ class _ProberPhase:
     users_tuple_lock_waiting: list[int] = field(default_factory=list)
     users_fnku_waits: list[int] = field(default_factory=list)
     users_fnku_id_zero_waits: list[int] = field(default_factory=list)
+    user_stats_tuple_lock_waiting: list[int] = field(default_factory=list)
+    user_records_tuple_lock_waiting: list[int] = field(default_factory=list)
+    migrated_idle_chains: list[int] = field(default_factory=list)
     blocking_chain_count: list[int] = field(default_factory=list)
     blocking_chains_idle_blocker: list[int] = field(default_factory=list)
     max_blocker_xact_age_s: list[float] = field(default_factory=list)
     deep_chain_example: dict | None = None
+    migrated_chain_example: dict | None = None
 
     def mx(self, xs: list) -> float:
         return max(xs) if xs else 0
@@ -187,16 +202,32 @@ def _load_prober(prober_jsonl: Path, phases: _Phases) -> dict[str, _ProberPhase]
         bucket.users_tuple_lock_waiting.append(int(record.get("users_tuple_lock_waiting", 0)))
         bucket.users_fnku_waits.append(int(record.get("users_fnku_waits", 0)))
         bucket.users_fnku_id_zero_waits.append(int(record.get("users_fnku_id_zero_waits", 0)))
+        # Per-relation tuple-lock waits (absent on pre-migration artifacts -> 0).
+        by_rel = record.get("tuple_lock_waiting_by_relation", {}) or {}
+        bucket.user_stats_tuple_lock_waiting.append(int(by_rel.get("user_stats", 0)))
+        bucket.user_records_tuple_lock_waiting.append(int(by_rel.get("user_records", 0)))
         bucket.blocking_chain_count.append(int(record.get("blocking_chain_count", 0)))
         bucket.blocking_chains_idle_blocker.append(int(record.get("blocking_chains_idle_blocker", 0)))
         bucket.max_blocker_xact_age_s.append(float(record.get("max_blocker_xact_age_s", 0.0)))
-        # Keep the sample's fullest idle-blocker chain as an exemplar for the report.
+        # Keep the sample's fullest idle-blocker chain as an exemplar for the report,
+        # and count (plus keep an exemplar of) those whose blocker targets
+        # user_stats/user_records: the migrated-contention chain the users-row
+        # classification cannot flag.
+        migrated = 0
         for chain in record.get("blocking_chains", []):
             if not chain.get("blocker_idle_in_transaction"):
                 continue
+            age = float(chain.get("blocker_xact_age_s", 0))
             best = bucket.deep_chain_example
-            if best is None or float(chain.get("blocker_xact_age_s", 0)) > float(best.get("blocker_xact_age_s", 0)):
+            if best is None or age > float(best.get("blocker_xact_age_s", 0)):
                 bucket.deep_chain_example = chain
+            blocker_query = chain.get("blocker_query") or ""
+            if _USER_STATS_RE.search(blocker_query) or _USER_RECORDS_RE.search(blocker_query):
+                migrated += 1
+                mbest = bucket.migrated_chain_example
+                if mbest is None or age > float(mbest.get("blocker_xact_age_s", 0)):
+                    bucket.migrated_chain_example = chain
+        bucket.migrated_idle_chains.append(migrated)
     return per_phase
 
 
@@ -276,6 +307,9 @@ def _print_prober_table(prober: dict[str, _ProberPhase]) -> None:
         ("users tuple-lock waiting (max)", lambda b: b.mx(b.users_tuple_lock_waiting)),
         ("users FOR-NO-KEY-UPDATE waits (max)", lambda b: b.mx(b.users_fnku_waits)),
         ("users.id=0 FNKU waits (max)", lambda b: b.mx(b.users_fnku_id_zero_waits)),
+        ("user_stats tuple-lock waiting (max)", lambda b: b.mx(b.user_stats_tuple_lock_waiting)),
+        ("user_records tuple-lock waiting (max)", lambda b: b.mx(b.user_records_tuple_lock_waiting)),
+        ("migrated idle-in-txn chains (max)", lambda b: b.mx(b.migrated_idle_chains)),
         ("blocking chains (max)", lambda b: b.mx(b.blocking_chain_count)),
         ("chains w/ idle-in-txn blocker (max)", lambda b: b.mx(b.blocking_chains_idle_blocker)),
         ("oldest blocking txn age s (max)", lambda b: round(b.mx(b.max_blocker_xact_age_s), 1)),
@@ -323,12 +357,20 @@ def _print_conclusion(
     press_idle_chains = press.mx(press.blocking_chains_idle_blocker)
     press_chain_depth = press.mx(press.blocking_chain_count)
     press_oldest_txn = press.mx(press.max_blocker_xact_age_s)
+    press_user_stats_tuple = press.mx(press.user_stats_tuple_lock_waiting)
+    press_user_records_tuple = press.mx(press.user_records_tuple_lock_waiting)
+    press_migrated_chains = press.mx(press.migrated_idle_chains)
 
     # Signature elements. Thresholds separate a clear reproduction from a weaker
     # partial so a partial is never rounded up to a confirmation.
     users_tuple_queue = _verdict(press_users_tuple >= 5, press_users_tuple >= 1)
     users0_queue = _verdict(press_users0 >= 3, press_users0 >= 1)
     idle_chain = _verdict(press_idle_chains >= 3, press_idle_chains >= 1)
+    # Migrated-contention elements reuse the users-row thresholds so a shift onto
+    # the sibling rows reads on the same scale as the signature it replaces.
+    user_stats_queue = _verdict(press_user_stats_tuple >= 5, press_user_stats_tuple >= 1)
+    user_records_queue = _verdict(press_user_records_tuple >= 5, press_user_records_tuple >= 1)
+    migrated_chain = _verdict(press_migrated_chains >= 3, press_migrated_chains >= 1)
     fnku_slow = "NOT REPRODUCED"
     if statement_delta is not None:
         fnku_slow = _verdict(
@@ -372,6 +414,18 @@ def _print_conclusion(
     print(f"{'recovery on relief':<40}: {recovery}")
     print("-" * 96)
 
+    # Migrated-contention watch: reported separately from the users-row verdict so
+    # an A/B shows the old signature disappearing while a new one may appear on the
+    # rows still updated inline. These do not feed the overall convoy verdict.
+    print("MIGRATED CONTENTION (rows still updated inline: user_stats / user_records)")
+    print(f"user_stats tuple-lock queue (press, max)   : {press_user_stats_tuple}")
+    print(f"user_records tuple-lock queue (press, max) : {press_user_records_tuple}")
+    print(f"migrated idle-in-txn chains (press, max)   : {press_migrated_chains}")
+    print(f"{'user_stats tuple-lock queue':<40}: {user_stats_queue}")
+    print(f"{'user_records tuple-lock queue':<40}: {user_records_queue}")
+    print(f"{'idle-in-txn chains on stats/records':<40}: {migrated_chain}")
+    print("-" * 96)
+
     exemplar = press.deep_chain_example
     if exemplar is not None:
         print("\ndeepest idle-in-transaction blocking chain observed in the pressure phase:")
@@ -382,6 +436,17 @@ def _print_conclusion(
         print(f"    blocker query: {(exemplar.get('blocker_query') or '')[:160]}")
         print(f"  blocked pid {exemplar.get('blocked_pid')} wait={exemplar.get('blocked_wait')!r}")
         print(f"    blocked query: {(exemplar.get('blocked_query') or '')[:160]}")
+
+    migrated_exemplar = press.migrated_chain_example
+    if migrated_exemplar is not None:
+        print("\ndeepest idle-in-transaction chain whose blocker targets user_stats/user_records:")
+        print(
+            f"  blocker pid {migrated_exemplar.get('blocker_pid')} state={migrated_exemplar.get('blocker_state')!r} "
+            f"xact_age={migrated_exemplar.get('blocker_xact_age_s')}s",
+        )
+        print(f"    blocker query: {(migrated_exemplar.get('blocker_query') or '')[:160]}")
+        print(f"  blocked pid {migrated_exemplar.get('blocked_pid')} wait={migrated_exemplar.get('blocked_wait')!r}")
+        print(f"    blocked query: {(migrated_exemplar.get('blocked_query') or '')[:160]}")
 
     core = [users_tuple_queue, users0_queue, idle_chain, fnku_slow]
     strong = core.count("REPRODUCED")

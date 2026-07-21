@@ -24,6 +24,12 @@ lock-convoy hypothesis:
 - Lock counts confined to the ``users`` table (tuple-lock granted/waiting and
   the total waiting across modes), which localise contention to the hot-user
   row family.
+- Per-relation tuple-lock counts (granted and waiting) bucketed by relation name
+  for a tracked set (``users``, ``user_stats``, ``user_records``,
+  ``worker_stats``, ``waiting_prompts``) plus an ``other`` bucket. The users-only
+  probe above cannot see contention that migrates off the users row onto the
+  sibling per-user rows still updated inline; this per-relation view attributes a
+  tuple-lock wait to whichever relation it actually lands on.
 - Blocking chains derived from ``pg_blocking_pids``: each blocked/blocker edge
   with the blocker's session state and transaction age, the blocked and blocker
   query texts (truncated), and per-chain flags marking the implicated
@@ -100,6 +106,24 @@ FROM pg_locks
 WHERE relation = (SELECT oid FROM pg_class WHERE relname = 'users' LIMIT 1)
 GROUP BY locktype, granted
 """
+
+# Per-relation tuple-lock counts. A ``tuple`` lock names its table through the
+# ``relation`` oid, so joining ``pg_locks`` to ``pg_class`` attributes each
+# row-level wait to the relation it targets. Grouping by name (rather than
+# resolving a single oid) lets a wait that has migrated off the users row onto a
+# sibling per-user row be seen where it lands instead of vanishing.
+_RELATION_TUPLE_LOCKS_SQL = """
+SELECT c.relname AS relname, l.granted AS granted, count(*) AS n
+FROM pg_locks AS l
+JOIN pg_class AS c ON c.oid = l.relation
+WHERE l.locktype = 'tuple'
+GROUP BY c.relname, l.granted
+"""
+
+# Relations whose per-user or per-worker rows are updated inline per request and
+# are the candidate homes for contention migrating off the users row. Anything
+# outside this set is folded into an ``other`` bucket.
+_TRACKED_LOCK_RELATIONS = ("users", "user_stats", "user_records", "worker_stats", "waiting_prompts")
 
 # Blocking chains derived from ``pg_blocking_pids``: one row per (blocked pid,
 # blocker pid) edge, carrying the blocker's session state and transaction age so
@@ -186,6 +210,35 @@ def _sample_users_locks(cur: psycopg2.extensions.cursor, record: dict[str, objec
     record["users_tuple_lock_waiting"] = tuple_waiting
     record["users_tuple_lock_granted"] = tuple_granted
     record["users_lock_waiting_total"] = waiting_total
+
+
+def _sample_relation_locks(cur: psycopg2.extensions.cursor, record: dict[str, object]) -> None:
+    """Fold per-relation tuple-lock counts into ``record`` (best effort).
+
+    Generalises the users-only probe so a tuple-lock wait is attributed to the
+    relation it targets (``user_stats``/``user_records`` in particular, the rows
+    an append-only kudos ledger leaves updated inline). Relations outside the
+    tracked set fall into an ``other`` bucket. A failure is attached as
+    ``relation_lock_error`` and left non-fatal, matching the users probe, so the
+    base series and the users-specific fields are never lost to this addition.
+    """
+    try:
+        cur.execute(_RELATION_TUPLE_LOCKS_SQL)
+    except psycopg2.Error as exc:
+        record["relation_lock_error"] = str(exc)
+        return
+    waiting = {name: 0 for name in _TRACKED_LOCK_RELATIONS}
+    granted = {name: 0 for name in _TRACKED_LOCK_RELATIONS}
+    waiting["other"] = 0
+    granted["other"] = 0
+    for relname, is_granted, count in cur.fetchall():
+        bucket = relname if relname in waiting else "other"
+        if is_granted:
+            granted[bucket] += int(count)
+        else:
+            waiting[bucket] += int(count)
+    record["tuple_lock_waiting_by_relation"] = waiting
+    record["tuple_lock_granted_by_relation"] = granted
 
 
 def _sample_blocking_chains(cur: psycopg2.extensions.cursor, dbname: str, record: dict[str, object]) -> None:
@@ -288,6 +341,7 @@ def _sample(conn: psycopg2.extensions.connection, dbname: str) -> dict[str, obje
         record["backlog_image"] = backlog.get("image", 0)
 
         _sample_users_locks(cur, record)
+        _sample_relation_locks(cur, record)
         _sample_blocking_chains(cur, dbname, record)
     return record
 
