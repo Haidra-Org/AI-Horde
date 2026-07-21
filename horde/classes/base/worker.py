@@ -271,7 +271,7 @@ class WorkerTemplate(db.Model):
         db.session.commit()
         return "OK"
 
-    # This should be overwriten by each specific horde
+    # This should be overwritten by each specific horde
     def calculate_uptime_reward(self):
         return 100
 
