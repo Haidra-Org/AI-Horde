@@ -161,9 +161,9 @@ wp_calculate_kudos_duration = _seconds_histogram(
     "horde.wp.calculate_kudos.duration",
     "Duration of ImageWaitingPrompt.calculate_kudos",
 )
-wp_kudos_torch_duration = _seconds_histogram(
+wp_kudos_model_duration = _seconds_histogram(
     "horde.wp.kudos.torch.duration",
-    "Duration of KudosModel.calculate_kudos torch forward pass",
+    "Duration of KudosModel.calculate_kudos model forward pass",
 )
 wp_kudos_commit_duration = _seconds_histogram(
     "horde.wp.kudos.commit.duration",

@@ -22,6 +22,7 @@ on:
       - '.pre-commit-config.yaml'
       - 'requirements*.txt'
       - 'tests/**'
+      - '**.npz'
 
 permissions:
   contents: read

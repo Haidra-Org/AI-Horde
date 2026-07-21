@@ -2,12 +2,10 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import copy
 import pathlib
-import pickle
 import sys
 
-import torch
+import numpy as np
 from loguru import logger
 
 
@@ -16,8 +14,8 @@ class KudosModel:
 
     Simple usage example:
 
-        # Initial one time setup (filename of the model)
-        kudos_model = KudosModel("kudos-v12-10.ckpt")
+        # Initial one time setup
+        kudos_model = KudosModel()
 
         # If our job JSON is in "payload":
         kudos = kudos_model.calculate_kudos(payload)
@@ -104,15 +102,9 @@ class KudosModel:
     """Instance copy - use this"""
 
     _instance = None
-    """Process-wide singleton; KudosModel() returns this after the first call.
+    """Process-wide singleton; KudosModel() returns this after the first call."""
 
-    Inference is read-only (torch.no_grad forward pass), so a single shared
-    model object is safe across threads. The previous design did a full
-    copy.deepcopy(_model) AND re-ran the basis-time inference on every
-    instantiation, which was the dominant cost of WP.activate() under load.
-    """
-
-    def __new__(cls):
+    def __new__(cls, model_filename=None):
         if cls._instance is not None:
             return cls._instance
 
@@ -126,19 +118,19 @@ class KudosModel:
         KudosModel.KNOWN_SOURCE_PROCESSING.sort()
 
         if not cls._model:
-            cls._model = cls.load_model(cls)
+            cls._model = cls.load_model(cls, model_filename)
 
         instance = super().__new__(cls)
         cls._instance = instance
         return instance
 
-    def __init__(self):
+    def __init__(self, model_filename=None):
         # __init__ still runs on every KudosModel() call even with __new__
         # returning a cached instance. Make it idempotent so we don't re-run
-        # deepcopy + calculate_basis_time on every request.
+        # calculate_basis_time on every request.
         if getattr(self, "_initialized", False):
             return
-        # Share the singleton model; inference is read-only under torch.no_grad
+        # Share the singleton weights; inference is read-only.
         self.model = KudosModel._model
         self.calculate_basis_time()
         self._initialized = True
@@ -175,21 +167,21 @@ class KudosModel:
 
     @classmethod
     def one_hot_encode(cls, strings, unique_strings):
-        one_hot = torch.zeros(len(strings), len(unique_strings))
+        one_hot = np.zeros((len(strings), len(unique_strings)), dtype=np.float32)
         for i, string in enumerate(strings):
             one_hot[i, unique_strings.index(string)] = 1
         return one_hot
 
     @classmethod
     def one_hot_encode_combined(cls, strings, unique_strings):
-        one_hot = torch.zeros(len(strings), len(unique_strings))
+        one_hot = np.zeros((len(strings), len(unique_strings)), dtype=np.float32)
         for i, string in enumerate(strings):
             one_hot[i, unique_strings.index(string)] = 1
 
-        return torch.sum(one_hot, dim=0, keepdim=True)
+        return np.sum(one_hot, axis=0, keepdims=True)
 
     @classmethod
-    def payload_to_tensor(cls, payload):
+    def payload_to_vector(cls, payload):
         data = []
         data_samplers = []
         data_control_types = []
@@ -235,7 +227,7 @@ class KudosModel:
         data_post_processors = payload.get("post_processing", [])[:]
         # logger.debug([data,data_control_types,data_source_processing_types,data_post_processors])
 
-        _data_floats = torch.tensor(data).float()
+        _data_floats = np.asarray(data, dtype=np.float32)
         _data_samplers = cls.one_hot_encode(data_samplers, KudosModel.KNOWN_SAMPLERS)
         _data_control_types = cls.one_hot_encode(data_control_types, KudosModel.KNOWN_CONTROL_TYPES)
         _data_source_processing_types = cls.one_hot_encode(
@@ -243,7 +235,7 @@ class KudosModel:
             KudosModel.KNOWN_SOURCE_PROCESSING,
         )
         _data_post_processors = cls.one_hot_encode_combined(data_post_processors, KudosModel.KNOWN_POST_PROCESSORS)
-        return torch.cat(
+        return np.concatenate(
             (
                 _data_floats,
                 _data_samplers,
@@ -251,33 +243,37 @@ class KudosModel:
                 _data_source_processing_types,
                 _data_post_processors,
             ),
-            dim=1,
+            axis=1,
         )
+
+    # Backwards-compatible alias for older callers/tests. This returns a NumPy
+    # array now; the historical name described the former torch implementation.
+    payload_to_tensor = payload_to_vector
 
     def load_model(self, model_filename=None):
         """Load the target model, or the default model if none is specified.
         If `self.model` is defined, it will be returned instead."""
         if not model_filename and not self.model:
-            model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v21-206.ckpt").resolve())
+            model_filename = str(pathlib.Path(__file__).parent.joinpath("kudos-v21-206.npz").resolve())
             logger.warning(f"Loading default kudos model {model_filename}")
 
         if self.model:
             return self.model
 
-        with open(model_filename, "rb") as infile:
-            model = pickle.load(infile)
-
-        return model
+        with np.load(model_filename) as loaded:
+            return tuple((loaded[f"w{i}"].astype(np.float32), loaded[f"b{i}"].astype(np.float32)) for i in range(4))
 
     @classmethod
     def copy_model(cls):
-        return copy.deepcopy(cls._model)
+        return tuple((weight.copy(), bias.copy()) for weight, bias in cls._model)
 
     # Pass in a horde payload, get back a predicted time in seconds
     def payload_to_time(self, payload):
-        inputs = self.payload_to_tensor(payload).squeeze()
-        with torch.no_grad():
-            output = self.model(inputs)
+        inputs = self.payload_to_vector(payload).squeeze()
+        for weight, bias in self.model[:-1]:
+            inputs = np.maximum(inputs @ weight.T + bias, 0)
+        weight, bias = self.model[-1]
+        output = inputs @ weight.T + bias
         return round(float(output.item()), 2)
 
     # Determine how long the basic job that costs KUDOS_BASIS kudos takes to run
