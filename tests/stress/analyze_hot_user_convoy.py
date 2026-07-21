@@ -462,6 +462,39 @@ def _print_conclusion(
     print("=" * 96)
 
 
+def _print_population_health(stats_csv: Path) -> bool:
+    """Report per-population failure rates; return False when the run is invalid.
+
+    A population failing wholesale (for example every anonymous request 401ing
+    because the seeded key hash predates the current salt) silently removes its
+    load from the measured signature while every downstream verdict still
+    renders. Surface it as a loud invalid-run banner so a broken run is never
+    mistaken for a clean one.
+    """
+    if not stats_csv.is_file():
+        print(f"WARNING: {stats_csv} missing; cannot check population health")
+        return True
+    broken: list[tuple[str, int, int]] = []
+    with stats_csv.open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            name = row.get("Name", "")
+            if name == "Aggregated":
+                continue
+            requests = int(row.get("Request Count", 0) or 0)
+            failures = int(row.get("Failure Count", 0) or 0)
+            if requests >= 50 and failures / requests > 0.5:
+                broken.append((name, failures, requests))
+    if not broken:
+        return True
+    print("=" * 96)
+    print("INVALID RUN: population(s) failing wholesale; their load is ABSENT from the signature")
+    for name, failures, requests in broken:
+        print(f"  {name}: {failures}/{requests} failed")
+    print("  Fix the failing population and rerun; verdicts below describe a DIFFERENT scenario.")
+    print("=" * 96)
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Analyze hot-user-convoy run artifacts into a verdict.")
     parser.add_argument("--run-dir", required=True, help="Directory containing the run artifacts.")
@@ -489,10 +522,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"prober jsonl: {prober_jsonl} ({'present' if prober_jsonl.is_file() else 'MISSING'})")
     print(f"pgss snaps  : {'present' if before_path.is_file() and after_path.is_file() else 'MISSING'}")
 
+    healthy = _print_population_health(run_dir / "hc_stats.csv")
     _print_latency_table(latency)
     _print_prober_table(prober)
     _print_conclusion(latency, prober, statement_delta)
-    return 0
+    return 0 if healthy else 3
 
 
 if __name__ == "__main__":
