@@ -2,15 +2,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Kudos invariants the implementation is intended to honour but does not yet.
+"""Kudos settlement invariants for the interrogation flows.
 
-Each test pins a contract the system is meant to satisfy and asserts the intended
-behaviour directly. Because the underlying flows still violate these contracts,
-the tests are marked ``xfail(strict=True)``: they register as expected failures
-and stay out of the green characterization baseline. When a defect is corrected
-its test begins to pass, the strict marker turns that pass into a hard failure,
-and the failure is the signal to drop the marker and fold the case into the
-baseline.
+Each test pins a durable contract the interrogation credit paths must honour.
+They live in their own module so the settlement invariants stay grouped and
+independently runnable.
 
 The pinned contracts:
   * An interrogation worker crossing its uptime threshold grants an untrusted
@@ -78,7 +74,6 @@ def _processing_form(db_session: Session, requester: User, owner: User) -> Inter
     return form
 
 
-@pytest.mark.xfail(strict=True, reason="Untrusted alchemist owner is double-credited (balance and escrow) per crossing.")
 def test_interrogation_uptime_credits_untrusted_owner_balance_without_escrow(
     db_session: Session,
     make_user: MakeUser,
@@ -95,7 +90,6 @@ def test_interrogation_uptime_credits_untrusted_owner_balance_without_escrow(
     assert owner.evaluating_kudos == 0
 
 
-@pytest.mark.xfail(strict=True, reason="Untrusted alchemist owner is double-credited (balance and escrow) per crossing.")
 def test_interrogation_uptime_grants_untrusted_owner_exactly_one_reward(
     db_session: Session,
     make_user: MakeUser,
@@ -110,9 +104,6 @@ def test_interrogation_uptime_grants_untrusted_owner_exactly_one_reward(
     assert total_gain == INTERROGATION_UPTIME_REWARD
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Cancelling a PROCESSING interrogation form flips state before the settle check, so it settles nothing."
-)
 def test_cancelling_in_flight_interrogation_form_settles_like_a_submit(
     db_session: Session,
     make_user: MakeUser,

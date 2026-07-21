@@ -107,10 +107,15 @@ class InterrogationForms(db.Model):
         return self.kudos
 
     def cancel(self):
+        # Settle a form the worker is still processing exactly like a submission
+        # (mirrors ProcessingGeneration.cancel). The pre-flip state is captured
+        # first because record() otherwise becomes unreachable once state moves to
+        # CANCELLED, while CANCELLED is set before record() so its log reflects it.
+        was_processing = self.state == State.PROCESSING
         if self.state != State.DONE:
             self.result = None
             self.state = State.CANCELLED
-        if self.state == State.PROCESSING:
+        if was_processing:
             self.record(self.kudos)
         db.session.commit()
         return self.kudos
