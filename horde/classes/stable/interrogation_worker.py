@@ -55,11 +55,13 @@ class InterrogationWorker(WorkerTemplate):
         )
 
     def calculate_uptime_reward(self):
-        # If the alchemist is not trusted yet, we give them some extra uptime kudos to tide them over until they get trusted
-        # as otherwise due to the low amount of jobs, they won't be a making any kudos
-        if not self.user.trusted and not self.user.is_anon():
-            self.user.record_uptime(40, True)
         return 40
+
+    def uptime_reward_bypasses_eval(self):
+        # Alchemists earn few jobs, so their owners get the uptime reward on the
+        # spendable balance directly rather than accruing it in trust escrow;
+        # otherwise an untrusted owner could never make usable kudos.
+        return True
 
     def can_interrogate(self, interrogation_form):
         if interrogation_form.interrogation.trusted_workers and not self.user.trusted:

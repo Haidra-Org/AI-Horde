@@ -322,6 +322,15 @@ class WorkerTemplate(db.Model):
     def calculate_uptime_reward(self):
         return 100
 
+    def uptime_reward_bypasses_eval(self):
+        """Whether an uptime reward credits the owner's spendable balance directly.
+
+        The default routes uptime rewards through the normal trust evaluation
+        (untrusted non-anonymous owners accrue them in escrow). Worker types that
+        need untrusted owners to spend the reward immediately override this.
+        """
+        return False
+
     def toggle_maintenance(self, is_maintenance_active, maintenance_msg=None):
         self.maintenance = is_maintenance_active
         self.maintenance_msg = self.default_maintenance_msg
@@ -360,7 +369,7 @@ class WorkerTemplate(db.Model):
                     self.team.record_uptime(self.uptime_reward_threshold)
                 kudos = self.calculate_uptime_reward()
                 self.modify_kudos(kudos, "uptime")
-                self.user.record_uptime(kudos)
+                self.user.record_uptime(kudos, bypass_eval=self.uptime_reward_bypasses_eval())
                 logger.debug(
                     f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.",
                 )
