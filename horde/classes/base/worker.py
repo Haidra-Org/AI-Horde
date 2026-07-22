@@ -45,10 +45,16 @@ class WorkerStats(db.Model):
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
+    # Indexed because ``Worker.record_performance`` filters this table by ``worker_id``
+    # twice per completed job (once to prune older samples, once to recompute the
+    # average that maintains ``Worker.speed``). PostgreSQL does not index foreign key
+    # columns automatically, so without this both are sequential scans of the full
+    # sample table on every job completion.
     worker_id = db.Column(
         uuid_column_type(),
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     worker = db.relationship("Worker", back_populates="performance")
     performance = db.Column(db.Float, primary_key=False)
@@ -181,11 +187,17 @@ class WorkerTemplate(db.Model):
     # reproducing the historical CASE expression that substituted that baseline whenever
     # the average was NULL. This preserves the exact pop-filter outcomes for fresh
     # workers: image workers clear the ``>= 500000`` threshold, while text and
-    # interrogation workers stay below theirs until real samples arrive. The stored value
-    # follows COALESCE(avg, baseline) semantics, falling back only on a NULL average; it
-    # deliberately does not also treat a zero average as "no samples", unlike the former
-    # Python getter's truthiness check (the two forms already disagreed there, and the
-    # SQL form is canonical).
+    # interrogation workers stay below theirs until real samples arrive.
+    #
+    # The stored value falls back to the baseline on a zero average as well as on a NULL
+    # one, matching the former Python getter's truthiness check rather than the former
+    # SQL expression's NULL-only CASE. The two forms disagreed, and the Python form is
+    # the one that must be preserved: ``speed`` is a divisor in
+    # ``ProcessingGeneration.get_seconds_needed``, so a stored zero raises
+    # ZeroDivisionError there. The substitution is invisible to every pop filter, since
+    # zero and the baseline fall on the same side of all four thresholds
+    # (``>= 500000``, ``>= 2``, ``>= slow_speed`` where slow_speed is 3 to 5, and
+    # ``< 10``).
     speed = db.Column(db.Float, nullable=False, index=True)
 
     def __init__(self, **kwargs: Any) -> None:
@@ -436,7 +448,9 @@ class WorkerTemplate(db.Model):
         # samples (rather than incrementally) also makes this write self-healing if an
         # earlier sample write was lost.
         retained_average = db.session.query(func.avg(WorkerPerformance.performance)).filter_by(worker_id=self.id).scalar()
-        self.speed = retained_average if retained_average is not None else self._baseline_speed()
+        # A zero average falls back to the baseline alongside a NULL one; see the
+        # ``speed`` column comment for why a stored zero is not a permissible value.
+        self.speed = retained_average if retained_average else self._baseline_speed()
         if commit:
             db.session.commit()
 

@@ -1,4 +1,67 @@
+-- Run with psql in its default autocommit mode. Do NOT pass --single-transaction: this
+-- file contains CREATE INDEX CONCURRENTLY and VACUUM, neither of which can run inside a
+-- transaction block. Pass -v ON_ERROR_STOP=1 so a failure halts rather than continuing.
+--
+-- Safe to run against a fleet still on 5.0.3, and intended to be run before 5.0.4 is
+-- deployed. A 5.0.3 instance does not select the new column, so its reads are unaffected;
+-- its worker INSERT omits the column, which the trigger below covers.
+--
+-- The trigger is rollout scaffolding with a defined lifetime. It supplies the
+-- type-correct baseline for INSERTs that predate the application-side default, which is
+-- what allows the column to be NOT NULL from the outset and what keeps a rollback to
+-- 5.0.3 viable. sql_statements/5.0.4-post.txt removes it once no 5.0.3 instance remains.
+--
+-- A partial failure part-way through leaves the column present and nullable with the
+-- trigger installed, which 5.0.3 tolerates. Re-running requires dropping the column,
+-- trigger and function first.
+
+SET lock_timeout = '3s';
+
+-- worker_performances.worker_id carries a foreign key but no index, and PostgreSQL does
+-- not index foreign key columns automatically. The backfill below and every
+-- record_performance call filter by it, and scan the whole sample table without it.
+CREATE INDEX CONCURRENTLY ix_worker_performances_worker_id
+  ON public.worker_performances USING btree (worker_id);
+
 ALTER TABLE workers ADD COLUMN speed double precision;
-UPDATE workers w SET speed = COALESCE((SELECT avg(wp.performance) FROM worker_performances wp WHERE wp.worker_id = w.id), CASE WHEN w.worker_type IN ('stable_worker', 'worker') THEN 1000000 ELSE 1 END);
+
+CREATE FUNCTION workers_speed_baseline() RETURNS trigger AS $$
+BEGIN
+  IF NEW.speed IS NULL THEN
+    NEW.speed := CASE WHEN NEW.worker_type IN ('stable_worker', 'worker', 'worker_template')
+                      THEN 1000000 ELSE 1 END;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER workers_speed_baseline_trg BEFORE INSERT ON workers
+  FOR EACH ROW EXECUTE FUNCTION workers_speed_baseline();
+
+-- NULLIF mirrors the application fallback: a zero average is treated as no samples,
+-- because speed is a divisor in ProcessingGeneration.get_seconds_needed and a stored
+-- zero raises there.
+WITH avgs AS (
+  SELECT worker_id, NULLIF(avg(performance), 0) AS avg_perf
+  FROM worker_performances GROUP BY worker_id
+)
+UPDATE workers w
+SET speed = COALESCE(a.avg_perf,
+                     CASE WHEN w.worker_type IN ('stable_worker', 'worker', 'worker_template')
+                          THEN 1000000 ELSE 1 END)
+FROM workers w2
+LEFT JOIN avgs a ON a.worker_id = w2.id
+WHERE w.id = w2.id;
+
+-- The NOT VALID / VALIDATE pair lets SET NOT NULL skip its full table scan under
+-- ACCESS EXCLUSIVE (PostgreSQL 12+); VALIDATE itself takes only SHARE UPDATE EXCLUSIVE.
+ALTER TABLE workers ADD CONSTRAINT workers_speed_nn CHECK (speed IS NOT NULL) NOT VALID;
+ALTER TABLE workers VALIDATE CONSTRAINT workers_speed_nn;
 ALTER TABLE workers ALTER COLUMN speed SET NOT NULL;
-CREATE INDEX ix_workers_speed ON public.workers USING btree (speed);
+ALTER TABLE workers DROP CONSTRAINT workers_speed_nn;
+
+-- ANALYZE is required before the planner will use ix_workers_speed well; it has no
+-- statistics for a column this new.
+VACUUM (ANALYZE) workers;
+
+CREATE INDEX CONCURRENTLY ix_workers_speed ON public.workers USING btree (speed);

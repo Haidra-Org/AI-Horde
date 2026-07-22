@@ -138,6 +138,38 @@ class TestRecordPerformanceMaintainsAverage:
         assert worker.speed == pytest.approx(sum(retained) / len(retained))
 
 
+class TestZeroAverageFallsBackToBaseline:
+    """Samples averaging zero leave ``speed`` at the baseline rather than storing zero.
+
+    ``speed`` is a divisor in ``ProcessingGeneration.get_seconds_needed``, so a stored
+    zero makes that reader raise. A worker whose retained samples average to zero is
+    therefore treated the same as one with no samples at all.
+    """
+
+    def test_zero_sample_leaves_speed_at_baseline(self, db_session, make_user):
+        worker = _make_text_worker(db_session, make_user(), name="speed_zero_sample")
+
+        worker.record_performance(0.0)
+
+        assert worker.speed == SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["text"]
+
+    def test_speed_stays_nonzero_for_division_by_reading_callers(self, db_session, make_user):
+        worker = _make_text_worker(db_session, make_user(), name="speed_zero_divisor")
+
+        worker.record_performance(0.0)
+
+        assert worker.speed != 0
+        assert 100 / worker.speed > 0
+
+    def test_nonzero_sample_after_zero_restores_the_average(self, db_session, make_user):
+        worker = _make_text_worker(db_session, make_user(), name="speed_zero_then_real")
+
+        worker.record_performance(0.0)
+        worker.record_performance(10.0)
+
+        assert worker.speed == pytest.approx(5.0)
+
+
 class TestSpeedReaders:
     """Readers that consume ``speed`` work in both the baseline and sampled states."""
 
