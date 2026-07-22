@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tazlin <tazlin.on.github@gmail.com>
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 # Stress testing
 
 The `tests/stress/` suite drives a running AI Horde deployment with
