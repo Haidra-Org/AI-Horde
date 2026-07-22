@@ -1,0 +1,11 @@
+-- Removes the rollout scaffolding added by 5.0.4.txt.
+--
+-- Run only once no 5.0.3 instance remains in the fleet. A 5.0.3 worker registration
+-- omits the speed column, and once this trigger is gone that INSERT fails against the
+-- NOT NULL constraint. Until then the trigger is also what keeps a rollback to 5.0.3
+-- viable.
+
+SET lock_timeout = '3s';
+
+DROP TRIGGER IF EXISTS workers_speed_baseline_trg ON workers;
+DROP FUNCTION IF EXISTS workers_speed_baseline();
