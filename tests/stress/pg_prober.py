@@ -52,7 +52,7 @@ import re
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 
@@ -303,7 +303,7 @@ def _sample(conn: psycopg2.extensions.connection, dbname: str) -> dict[str, obje
     """Take one sample of the catalog views, returning a JSON-serialisable record."""
     record: dict[str, object] = {
         "ts": time.time(),
-        "iso": datetime.now(timezone.utc).isoformat(),
+        "iso": datetime.now(UTC).isoformat(),
     }
     with conn.cursor() as cur:
         cur.execute(_ACTIVITY_STATE_SQL, (dbname, _APPLICATION_NAME))
@@ -375,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 record = _sample(conn, args.dbname)
             except psycopg2.Error as exc:
-                record = {"ts": time.time(), "iso": datetime.now(timezone.utc).isoformat(), "sample_error": str(exc)}
+                record = {"ts": time.time(), "iso": datetime.now(UTC).isoformat(), "sample_error": str(exc)}
                 # A dropped/timed-out connection (e.g. across a Postgres restart) is
                 # recovered rather than fatal, since the run tunes and restarts PG.
                 try:

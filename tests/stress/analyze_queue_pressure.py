@@ -353,7 +353,11 @@ def _print_conclusion(
     print(f"{'recovery on relief':<40}: {recovery}")
     print("-" * 96)
 
-    for label, lines in (("deadlock detected", pg_findings["deadlock"]), ("lock waits", pg_findings["lock_wait"]), ("connection exhaustion", pg_findings["too_many_connections"])):
+    for label, lines in (
+        ("deadlock detected", pg_findings["deadlock"]),
+        ("lock waits", pg_findings["lock_wait"]),
+        ("connection exhaustion", pg_findings["too_many_connections"]),
+    ):
         if lines:
             print(f"\npg-log evidence [{label}] (up to 8 lines):")
             for entry in lines:

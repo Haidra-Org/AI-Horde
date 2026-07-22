@@ -163,11 +163,7 @@ def _claim_backlog_key() -> str | None:
     with qp_state.lock:
         if qp_state.backlog_created >= qp_state.backlog_target:
             return None
-        candidates = [
-            key
-            for key in qp_state.backlog_keys
-            if qp_state.backlog_key_inflight.get(key, 0) < qp_state.backlog_per_key_cap
-        ]
+        candidates = [key for key in qp_state.backlog_keys if qp_state.backlog_key_inflight.get(key, 0) < qp_state.backlog_per_key_cap]
         if not candidates:
             return None
         key = min(candidates, key=lambda k: qp_state.backlog_key_inflight.get(k, 0))
@@ -396,7 +392,9 @@ class ServedRequester(HttpUser):
                 return
             if resp.status_code == 429 or (resp.status_code == 400 and _is_expected_rc(body, {"TooManyPrompts", "KudosUpfront"})):
                 resp.success()
-                _record_expected(self.environment, "POST", "[qp] async served", resp.elapsed.total_seconds() * 1000, len(resp.content or b""))
+                _record_expected(
+                    self.environment, "POST", "[qp] async served", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
+                )
                 return
             resp.failure(f"served async failed: {resp.status_code}: {resp.text[:200]}")
 

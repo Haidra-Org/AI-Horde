@@ -99,10 +99,18 @@ def _add_queue_pressure_arguments(parser) -> None:
     group.add_argument("--qp-baseline", type=float, env_var="QP_BASELINE", default=60.0, help="Baseline phase duration (seconds).")
     group.add_argument("--qp-pressure", type=float, env_var="QP_PRESSURE", default=180.0, help="Pressure phase duration (seconds).")
     group.add_argument("--qp-relief", type=float, env_var="QP_RELIEF", default=60.0, help="Relief phase duration (seconds).")
-    group.add_argument("--qp-gen-time-min", type=float, env_var="QP_GEN_TIME_MIN", default=0.5, help="Min simulated worker generation time (s).")
-    group.add_argument("--qp-gen-time-max", type=float, env_var="QP_GEN_TIME_MAX", default=2.5, help="Max simulated worker generation time (s).")
-    group.add_argument("--qp-served-max-length", type=int, env_var="QP_SERVED_MAX_LENGTH", default=32, help="max_length for served/backlog prompts.")
-    group.add_argument("--qp-worker-max-length", type=int, env_var="QP_WORKER_MAX_LENGTH", default=512, help="max_length advertised by ServingWorker pops.")
+    group.add_argument(
+        "--qp-gen-time-min", type=float, env_var="QP_GEN_TIME_MIN", default=0.5, help="Min simulated worker generation time (s)."
+    )
+    group.add_argument(
+        "--qp-gen-time-max", type=float, env_var="QP_GEN_TIME_MAX", default=2.5, help="Max simulated worker generation time (s)."
+    )
+    group.add_argument(
+        "--qp-served-max-length", type=int, env_var="QP_SERVED_MAX_LENGTH", default=32, help="max_length for served/backlog prompts."
+    )
+    group.add_argument(
+        "--qp-worker-max-length", type=int, env_var="QP_WORKER_MAX_LENGTH", default=512, help="max_length advertised by ServingWorker pops."
+    )
     group.add_argument(
         "--qp-worker-max-context-length",
         type=int,
