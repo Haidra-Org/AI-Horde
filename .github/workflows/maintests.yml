@@ -185,6 +185,179 @@ jobs:
           fi
           docker compose -f tests/docker-compose.yml down
 
+  stress-shaped-job:
+    name: Locust staged-shape stress (no 5xx/crashes)
+    runs-on: ubuntu-latest
+    env:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      HORDE_TEST_APIKEYS: '1'
+      AI_HORDE_TELEMETRY_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - uses: ./.github/actions/start-test-stack
+
+      - name: Start AI-Horde server
+        run: |
+          uv run python server.py -vvvvi --horde stable > server.log 2>&1 &
+          echo "$!" > server.pid
+
+          timeout=120
+          until curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
+            timeout=$((timeout - 2))
+            if [[ "$timeout" -le 0 ]]; then
+              echo "Server failed to start within timeout"
+              cat server.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run staged-shape Locust run
+        # HordeStagesShape owns the user count, spawn rate, and total duration, so
+        # --users/--spawn-rate/--run-time are deliberately absent: Locust ignores
+        # them whenever a LoadTestShape is present. The 'smoke' profile ramps
+        # 2 -> 8 -> 2 users and stops itself at 120s.
+        run: |
+          uv run locust -f tests/stress/locustfile_shaped.py \
+            --host http://localhost:7001 \
+            --headless \
+            --stress-shape-profile smoke \
+            --bootstrap-requestors 4 \
+            --bootstrap-workers 8 \
+            --preflight-fail-hard \
+            --bootstrap-fail-hard \
+            --csv shaped \
+            --exit-code-on-error 0 \
+            --only-summary
+
+      - name: Gate on crash-class failures
+        run: uv run python tests/stress/check_smoke_results.py --stats shaped_stats.csv --failures shaped_failures.csv
+
+      - name: Scan server log for tracebacks
+        if: always()
+        run: |
+          if grep -n "Traceback (most recent call last)" server.log; then
+            echo "::warning::Server log contains a Python traceback during the staged-shape run; see the uploaded server.log artifact."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-shaped-artifacts
+          path: |
+            server.log
+            shaped_stats.csv
+            shaped_failures.csv
+            shaped_stats_history.csv
+          if-no-files-found: ignore
+
+      - name: Stop server and local test stack
+        if: always()
+        run: |
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" || true
+          fi
+          docker compose -f tests/docker-compose.yml down
+
+  stress-attribution-job:
+    name: Locust attribution oracle (no violations)
+    runs-on: ubuntu-latest
+    env:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      HORDE_TEST_APIKEYS: '1'
+      AI_HORDE_TELEMETRY_ENABLED: '1'
+      # The oracle probes pop/declare and maintenance interleavings, not
+      # rate-limit behaviour. Leaving the limiter in force throttles the
+      # adversarial cadence the scenario depends on, which would let a run that
+      # never reached the interesting interleavings pass the zero-violation gate.
+      HORDE_TEST_RATELIMIT_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - uses: ./.github/actions/start-test-stack
+
+      - name: Start AI-Horde server
+        run: |
+          uv run python server.py -vvvvi --horde stable > server.log 2>&1 &
+          echo "$!" > server.pid
+
+          timeout=120
+          until curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
+            timeout=$((timeout - 2))
+            if [[ "$timeout" -le 0 ]]; then
+              echo "Server failed to start within timeout"
+              cat server.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run attribution scenario
+        # Every user class sets fixed_count, so --users must equal their sum or
+        # Locust distributes the remainder by weight and distorts the shape:
+        # 6 pairs -> 12 flapping workers + 12 requesters, 2 maintenance workers
+        # -> 2 + 4 requesters. Each pair takes a disjoint 3-key slice of the
+        # worker pool for churn rotation, hence 20 bootstrapped worker owners.
+        run: |
+          uv run locust -f tests/stress/locustfile_attribution.py \
+            --host http://localhost:7001 \
+            --headless \
+            --users 30 \
+            --spawn-rate 10 \
+            --run-time 150s \
+            --attribution-pairs 6 \
+            --maintenance-workers 2 \
+            --attribution-evidence attribution_evidence.jsonl \
+            --bootstrap-requestors 8 \
+            --bootstrap-workers 20 \
+            --preflight-fail-hard \
+            --bootstrap-fail-hard \
+            --csv attribution \
+            --exit-code-on-error 0 \
+            --only-summary
+
+      - name: Gate on oracle violations
+        # --stats makes the checker reject a vacuous run that drove no requests,
+        # so "no violations" cannot pass by way of the workload never starting.
+        run: |
+          uv run python tests/stress/check_attribution_results.py \
+            --evidence attribution_evidence.jsonl \
+            --stats attribution_stats.csv
+
+      - name: Scan server log for tracebacks
+        if: always()
+        run: |
+          if grep -n "Traceback (most recent call last)" server.log; then
+            echo "::warning::Server log contains a Python traceback during the attribution run; see the uploaded server.log artifact."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-attribution-artifacts
+          path: |
+            server.log
+            attribution_evidence.jsonl
+            attribution_stats.csv
+            attribution_failures.csv
+            attribution_stats_history.csv
+          if-no-files-found: ignore
+
+      - name: Stop server and local test stack
+        if: always()
+        run: |
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" || true
+          fi
+          docker compose -f tests/docker-compose.yml down
+
   unit-test-job:
     name: Unit tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest

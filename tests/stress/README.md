@@ -42,8 +42,8 @@ that re-export the User classes Locust should discover:
 
 ## Prerequisites
 
-- Install Locust into the project environment (`pip install locust`, or add it
-  to the dev extras your environment already uses).
+- Install Locust into the project environment (`uv sync --dev` or if not using
+  uv, `pip install locust`).
 - Bring up a running AI Horde deployment for Locust to target. The suite never
   starts the server or its backends itself; it only sends HTTP requests to the
   `--host` you give it.
@@ -228,3 +228,31 @@ own deployment with `--host`, `--port`, `--dbname`, `--user`, and `--password`.
 python tests/stress/pg_prober.py --port 15432 --duration 300 > pg_prober.jsonl
 ```
 
+## Continuous integration
+
+Three entrypoints run as parallel jobs on pull requests and on pushes to `main`
+(`.github/workflows/prtests.yml` and `maintests.yml`). Each job stands up the
+`tests/docker-compose.yml` stack, starts one server, bootstraps its keys through
+`/register`, and gates on a checker:
+
+| Job | Entrypoint | Gate |
+| --- | ---------- | ---- |
+| `stress-smoke-job` | `locustfile.py` | `check_smoke_results.py` |
+| `stress-shaped-job` | `locustfile_shaped.py` (`smoke` profile) | `check_smoke_results.py` |
+| `stress-attribution-job` | `locustfile_attribution.py` | `check_attribution_results.py` |
+
+The attribution job runs its server with `HORDE_TEST_RATELIMIT_DISABLED=1`: the
+oracle probes pop/declare and maintenance interleavings rather than rate-limit
+behaviour, and a throttled run could reach zero violations without ever reaching
+the interleavings the gate is meant to protect. It passes `--stats` to the
+checker for the same reason, so a run that drove no requests fails instead of
+reporting a vacuous pass. The two smoke jobs leave the limiter in force, since
+the suite counts 429s as successes and the gate is crash-class only.
+
+The hot-user convoy and queue-pressure scenarios are not in CI. Their verdicts
+come from `analyze_hot_user_convoy.py` and `analyze_queue_pressure.py`, which are
+descriptive rather than pass/fail, and both need a phase-aligned run directory
+(prober JSONL, `phases.json`, container logs) that a shared CI runner cannot
+produce meaningfully. Run them as described above. If they are added to CI later,
+run the analyzer as a non-gating step and keep the run directory as an uploaded
+artifact.
