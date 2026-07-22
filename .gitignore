@@ -158,3 +158,6 @@ horde_sdk**
 
 locust.conf
 .claude/*
+
+# Local design-scratch area for in-progress design notes; never committed.
+docs/design/
