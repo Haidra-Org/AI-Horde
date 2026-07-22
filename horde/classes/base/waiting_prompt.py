@@ -515,7 +515,18 @@ class WaitingPrompt(db.Model):
     ):
         active_worker_thread_count = active_worker_count[1]
         ret_dict = self.count_processing_gens()
-        ret_dict["waiting"] = max(self.n, 0)
+        # `self.n` holds the value read when this instance was loaded, which is
+        # earlier than the generation counts above: a generation started in
+        # between is counted here while `n` still includes the slot it consumed,
+        # reporting more outstanding generations than the request asked for. The
+        # slot count reconciles `waiting` against the counts actually reported.
+        # A faulted generation returns its slot to `n` and is reported separately
+        # as `restarted`, so it is not subtracted here. `jobs` is zero on rows
+        # predating the column, where no reconciliation is possible.
+        waiting = max(self.n, 0)
+        if self.jobs > 0:
+            waiting = min(waiting, max(self.jobs - ret_dict["processing"] - ret_dict["finished"], 0))
+        ret_dict["waiting"] = waiting
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
         if self.n < 0:
             logger.error("Request was popped more times than requested!")
@@ -552,7 +563,12 @@ class WaitingPrompt(db.Model):
         wait_time += highest_expected_time_left
         ret_dict["wait_time"] = round(wait_time)
         ret_dict["kudos"] = round(self.consumed_kudos)
-        ret_dict["is_possible"] = has_valid_workers
+        # The caller samples the validity verdict before these counts are taken, so
+        # it can predate an in-flight generation and contradict the processing count
+        # it is reported beside. An in-flight generation means a worker is serving
+        # this request, which is the same conclusion `wp_has_valid_workers` reaches
+        # from its own in-flight check.
+        ret_dict["is_possible"] = has_valid_workers or ret_dict["processing"] > 0
         return ret_dict
 
     def get_lite_status(self, **kwargs):
