@@ -14,13 +14,23 @@ from __future__ import annotations
 import contextlib
 import uuid
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import sqlalchemy
 from sqlalchemy import event
 
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
+from tests.fixture_types import MakeUser, MakeUserRole
+
+if TYPE_CHECKING:
+    from flask import Flask
+    from flask.testing import FlaskClient
+    from flask_sqlalchemy.session import Session
+    from sqlalchemy.orm import scoped_session
+
+    from horde.classes.base.user import User, UserRole
+    from horde.enums import UserRoleTypes
 
 
 @pytest.fixture(scope="session")
@@ -40,7 +50,7 @@ def _pg_schema(_pg_dsn: str) -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def app(_pg_dsn: str, _pg_schema: str):
+def app(_pg_dsn: str, _pg_schema: str) -> Iterator[Flask]:
     """Flask app pointed at test Postgres with an isolated schema."""
     from horde.flask import create_app, db
 
@@ -70,13 +80,13 @@ def app(_pg_dsn: str, _pg_schema: str):
 
 
 @pytest.fixture
-def client(app):
+def client(app: Flask) -> FlaskClient:
     """Flask test client."""
     return app.test_client()
 
 
 @pytest.fixture
-def db_session(app) -> Iterator[Any]:
+def db_session(app: Flask) -> Iterator[scoped_session[Session]]:
     """Per-test ORM session. Truncates all tables after each test.
 
     Tests are free to call ``db.session.commit()``. The truncation runs
@@ -186,7 +196,7 @@ def _unique_suffix() -> str:
 
 
 @pytest.fixture
-def make_user(db_session):
+def make_user(db_session: scoped_session[Session]) -> MakeUser:
     """Factory: build and persist a ``User`` with sensible defaults.
 
     Returns a callable. Any kwarg overrides a default field. The user is
@@ -194,7 +204,7 @@ def make_user(db_session):
     """
     from horde.classes.base.user import User
 
-    def _make(**overrides: Any):
+    def _make(**overrides: Any) -> User:
         suffix = _unique_suffix()
         defaults: dict[str, Any] = {
             "username": f"test_user_{suffix}",
@@ -211,11 +221,11 @@ def make_user(db_session):
 
 
 @pytest.fixture
-def make_user_role(db_session):
+def make_user_role(db_session: scoped_session[Session]) -> MakeUserRole:
     """Factory: attach a ``UserRole`` to a user."""
     from horde.classes.base.user import UserRole
 
-    def _make(user, role_type, *, value: bool = True):
+    def _make(user: User, role_type: UserRoleTypes, *, value: bool = True) -> UserRole:
         role = UserRole(user_id=user.id, user_role=role_type, value=value)
         db_session.add(role)
         db_session.flush()
