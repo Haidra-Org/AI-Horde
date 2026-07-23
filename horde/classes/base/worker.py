@@ -432,10 +432,7 @@ class WorkerTemplate(db.Model):
         if performances.count() >= 20:
             # Keep only the 20 most recent performance records
             keep_ids = (
-                db.session.query(WorkerPerformance.id)
-                .filter_by(worker_id=self.id)
-                .order_by(WorkerPerformance.created.desc())
-                .limit(20)
+                db.session.query(WorkerPerformance.id).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.desc()).limit(20)
             )
             db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(
                 WorkerPerformance.id.not_in(keep_ids),

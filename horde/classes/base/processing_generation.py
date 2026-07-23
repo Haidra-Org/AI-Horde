@@ -196,13 +196,7 @@ class ProcessingGeneration(db.Model):
         lock_user_ids = {self.worker.user_id, self.wp.user_id}
         lock_user_ids.discard(None)
         if len(lock_user_ids) > 1:
-            (
-                db.session.query(User.id)
-                .filter(User.id.in_(lock_user_ids))
-                .order_by(User.id.asc())
-                .with_for_update(key_share=True)
-                .all()
-            )
+            (db.session.query(User.id).filter(User.id.in_(lock_user_ids)).order_by(User.id.asc()).with_for_update(key_share=True).all())
 
         cancel_txt = ""
         if self.cancelled:

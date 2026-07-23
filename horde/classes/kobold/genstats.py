@@ -82,8 +82,7 @@ def get_compiled_textgen_stats_totals() -> dict[str, dict[str, int]]:
             stats_dict[period]["tokens"] = getattr(query, f"{period}_tokens")
     else:
         logger.warning(
-            "No compiled text generation totals found; returning zeros. "
-            "Is the 'compile_textgen_stats_totals' pg_cron job running?",
+            "No compiled text generation totals found; returning zeros. Is the 'compile_textgen_stats_totals' pg_cron job running?",
         )
 
     return stats_dict
