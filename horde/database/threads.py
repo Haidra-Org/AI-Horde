@@ -530,10 +530,7 @@ def increment_extra_priority():
                 )
                 if last_id is not None:
                     id_query = id_query.filter(wp_class.id > last_id)
-                locked_ids = [
-                    row.id
-                    for row in id_query.order_by(wp_class.id.asc()).limit(chunk_size).with_for_update(skip_locked=True)
-                ]
+                locked_ids = [row.id for row in id_query.order_by(wp_class.id.asc()).limit(chunk_size).with_for_update(skip_locked=True)]
                 if not locked_ids:
                     break
                 last_id = locked_ids[-1]

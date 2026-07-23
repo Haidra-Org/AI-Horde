@@ -226,18 +226,15 @@ class WaitingPrompt(db.Model):
                 db.session.rollback()
                 if attempt == WP_ACTIVATE_DEADLOCK_RETRIES - 1:
                     logger.error(
-                        f"Deadlock activating WP {self.id}; retries exhausted "
-                        f"({WP_ACTIVATE_DEADLOCK_RETRIES} attempts)",
+                        f"Deadlock activating WP {self.id}; retries exhausted ({WP_ACTIVATE_DEADLOCK_RETRIES} attempts)",
                     )
                     raise
                 logger.warning(
-                    f"Deadlock activating WP {self.id}; retrying "
-                    f"(attempt {attempt + 1}/{WP_ACTIVATE_DEADLOCK_RETRIES})",
+                    f"Deadlock activating WP {self.id}; retrying (attempt {attempt + 1}/{WP_ACTIVATE_DEADLOCK_RETRIES})",
                 )
                 # Small jittered backoff so racing transactions re-attempt out of
                 # phase instead of colliding on the same rows again immediately.
                 time.sleep(random.uniform(0.005, 0.03) * (attempt + 1))
-
 
     def _activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
@@ -339,8 +336,7 @@ class WaitingPrompt(db.Model):
                 from horde.classes.base.worker import WorkerModel
 
                 declared_models = [
-                    row.model
-                    for row in db.session.query(WorkerModel.model).filter(WorkerModel.worker_id == worker.id).all()
+                    row.model for row in db.session.query(WorkerModel.model).filter(WorkerModel.worker_id == worker.id).all()
                 ]
         wp_models = list(self.get_model_names())
         if len(wp_models) != 0:

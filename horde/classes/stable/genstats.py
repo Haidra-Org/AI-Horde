@@ -201,8 +201,7 @@ def get_compiled_imagegen_stats_totals() -> dict[str, dict[str, int]]:
             stats[period]["ps"] = getattr(latest_entry, f"{period}_pixels")
     else:
         logger.warning(
-            "No compiled image generation totals found; returning zeros. "
-            "Is the 'compile_imagegen_stats_totals' pg_cron job running?",
+            "No compiled image generation totals found; returning zeros. Is the 'compile_imagegen_stats_totals' pg_cron job running?",
         )
 
     return stats

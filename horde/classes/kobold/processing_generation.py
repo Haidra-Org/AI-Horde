@@ -99,10 +99,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         # Also inject a csam metadata entry when state == "csam" so the
         # authoritative source (gen_metadata) is always consistent.
         gen_metadata = list(kwargs.get("gen_metadata", self.gen_metadata or []))
-        has_csam_meta = any(
-            isinstance(m, dict) and m.get("type") == "censorship" and m.get("value") == "csam"
-            for m in gen_metadata
-        )
+        has_csam_meta = any(isinstance(m, dict) and m.get("type") == "censorship" and m.get("value") == "csam" for m in gen_metadata)
         if not has_csam_meta and state == "csam":
             gen_metadata.append({"type": "censorship", "value": "csam"})
             kwargs = {**kwargs, "gen_metadata": gen_metadata}
