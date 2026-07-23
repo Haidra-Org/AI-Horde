@@ -334,7 +334,11 @@ class HeavyProxyRequester(HttpUser):
             if resp.status_code == 429 or (resp.status_code == 400 and _is_expected_rc(body, _EXPECTED_ASYNC_RC)):
                 resp.success()
                 _record_expected(
-                    self.environment, "POST", "[hc] async heavy", resp.elapsed.total_seconds() * 1000, len(resp.content or b""),
+                    self.environment,
+                    "POST",
+                    "[hc] async heavy",
+                    resp.elapsed.total_seconds() * 1000,
+                    len(resp.content or b""),
                 )
                 return
             resp.failure(f"heavy async failed: {resp.status_code}: {resp.text[:200]}")
@@ -529,7 +533,11 @@ class KudosTransfer(HttpUser):
             if resp.status_code == 429 or (resp.status_code == 400 and _is_expected_rc(body, _EXPECTED_KUDOS_RC)):
                 resp.success()
                 _record_expected(
-                    self.environment, "POST", "[hc] kudos transfer", resp.elapsed.total_seconds() * 1000, len(resp.content or b""),
+                    self.environment,
+                    "POST",
+                    "[hc] kudos transfer",
+                    resp.elapsed.total_seconds() * 1000,
+                    len(resp.content or b""),
                 )
                 return
             resp.failure(f"kudos transfer failed: {resp.status_code}: {resp.text[:200]}")
