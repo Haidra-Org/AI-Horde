@@ -6,11 +6,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy
 
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name, postgres_reachable
+from tests.fixture_types import ApiUser, MakeApiUser
+
+if TYPE_CHECKING:
+    from flask import Flask
+    from flask.testing import FlaskClient
 
 TEST_USER_BOOTSTRAP_PAYLOAD = {
     "username": "test_user",
@@ -66,7 +72,7 @@ def _pg_schema(pg_dsn: str) -> Iterator[str]:
 
 
 @pytest.fixture(scope="module")
-def app(pg_dsn: str, _pg_schema: str):
+def app(pg_dsn: str, _pg_schema: str) -> Iterator[Flask]:
     from horde.flask import create_app, db
 
     app = create_app(
@@ -164,7 +170,7 @@ def _reset_redis_state() -> None:
 
 
 @pytest.fixture
-def client(app):
+def client(app: Flask) -> FlaskClient:
     return app.test_client()
 
 
@@ -177,7 +183,7 @@ def request_headers(api_key: str, CIVERSION: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def make_api_user(app):
+def make_api_user(app: Flask) -> MakeApiUser:
     """Factory: create a registered user and return its id/api_key/username/alias.
 
     Used by endpoint tests that need actors at specific privilege levels (a
@@ -185,17 +191,20 @@ def make_api_user(app):
     moderator+trusted ``api_key`` fixture user.
     """
     import uuid
-    from types import SimpleNamespace
 
     from horde.classes.base.user import User
     from horde.utils import generate_api_key, hash_api_key
 
-    def _make(*, trusted: bool = False, moderator: bool = False, kudos: int = 0):
+    def _make(*, trusted: bool = False, moderator: bool = False, kudos: int = 0) -> ApiUser:
         suffix = uuid.uuid4().hex[:8]
         username = f"user_{suffix}"
         raw_api_key = generate_api_key()
         with app.app_context():
-            user = User(username=username, oauth_id=f"oauth_{suffix}", api_key=hash_api_key(raw_api_key))
+            user = User(
+                username=username,
+                oauth_id=f"oauth_{suffix}",
+                api_key=hash_api_key(raw_api_key),
+            )
             user.create()
             if moderator:
                 user.set_moderator(True)
@@ -204,7 +213,7 @@ def make_api_user(app):
             if kudos:
                 user.modify_kudos(kudos, "admin")
             user.refresh_cache()
-            return SimpleNamespace(
+            return ApiUser(
                 id=user.id,
                 api_key=raw_api_key,
                 username=username,
@@ -215,7 +224,7 @@ def make_api_user(app):
 
 
 @pytest.fixture
-def api_key(app) -> str:
+def api_key(app: Flask) -> str:
     """Create or refresh the integration test user and return a plaintext API key."""
     from horde.classes.base.user import User
     from horde.database import functions as database

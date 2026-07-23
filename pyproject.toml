@@ -80,6 +80,7 @@ dev = [
     "reuse",
     "pre-commit",
     "locust>=2.43.4",
+    "types-python-dateutil>=2.9.0.20260716",
 ]
 # Optional runtime group used by the Dockerfile's AI_HORDE_DEPENDENCY_GROUPS
 # build arg. Keep profiler wheels out of the default image; publish/use the
@@ -162,6 +163,7 @@ output = "coverage.xml"
 # Permissive baseline so existing untyped modules don't block adoption.
 # Files explicitly listed under [[tool.mypy.overrides]] with strict = true
 # form the "typed allowlist".
+plugins = ["sqlalchemy.ext.mypy.plugin"]
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "silent"

@@ -59,6 +59,7 @@ dev = [
     { name = "ruff" },
     { name = "testcontainers", extra = ["redis"] },
     { name = "tox" },
+    { name = "types-python-dateutil" },
 ]
 telemetry-profiling = [
     { name = "pyroscope-io" },
@@ -119,6 +120,7 @@ dev = [
     { name = "ruff", specifier = "==0.15.12" },
     { name = "testcontainers", extras = ["postgres", "redis"] },
     { name = "tox", specifier = "~=4.14.1" },
+    { name = "types-python-dateutil", specifier = ">=2.9.0.20260716" },
 ]
 telemetry-profiling = [
     { name = "pyroscope-io" },
@@ -2532,6 +2534,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/e2/98cbdadaa14d53b0f37ffcf4cbb1652ffb21f8b2f300e43f17167136af1c/tox-4.14.2.tar.gz", hash = "sha256:0defb44f6dafd911b61788325741cc6b2e12ea71f987ac025ad4d649f1f1a104", size = 178515, upload-time = "2024-03-22T15:44:45.756Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f6/7e/496c1b338a9ef244a03a654fcb9e922c37a9c547d00e73f99f3a94ac838e/tox-4.14.2-py3-none-any.whl", hash = "sha256:2900c4eb7b716af4a928a7fdc2ed248ad6575294ed7cfae2ea41203937422847", size = 155382, upload-time = "2024-03-22T15:44:43.079Z" },
+]
+
+[[package]]
+name = "types-python-dateutil"
+version = "2.9.0.20260716"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/9a/aefb9f80ff79641d36149352afe66ca835c5e6894deb518418f786f4b8ad/types_python_dateutil-2.9.0.20260716.tar.gz", hash = "sha256:1d55d1c3024bdb4861bb6a6622c9ec800c433d87bdc5b16fb84cdd0eed4ef2cb", size = 17516, upload-time = "2026-07-16T04:48:06.604Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/85/cff97326a81e7e8877803e78e3ea56c840b85bb811934b9c936f7c40f185/types_python_dateutil-2.9.0.20260716-py3-none-any.whl", hash = "sha256:1ae41d51a5c5f6bbeeb7f1f34df7086d55ff1605cf88d2ed71a7a276e1a7794e", size = 18443, upload-time = "2026-07-16T04:48:05.793Z" },
 ]
 
 [[package]]
