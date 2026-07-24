@@ -17,6 +17,7 @@ from sqlalchemy.sql import expression
 
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
+from horde.classes.base.kudos import kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -38,16 +39,10 @@ procgen_classes = {
     "text": TextProcessingGeneration,
 }
 
+WP_ACTIVATION_MAX_ATTEMPTS = 4
+
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
-
-# Activating a WP updates several shared rows in one transaction -- most notably
-# the requester's `users`/`user_stats` rows, which for the Anonymous user are
-# hammered by every concurrent request. Under load this can form a lock cycle
-# with the worker-submit path and PostgreSQL aborts this transaction as the
-# deadlock victim (SQLSTATE 40P01). Deadlocks are transient, so we retry the
-# activation a bounded number of times rather than failing the request.
-WP_ACTIVATE_DEADLOCK_RETRIES = 4
 
 
 class WPAllowedWorkers(db.Model):
@@ -186,13 +181,30 @@ class WaitingPrompt(db.Model):
             model_entry = WPModels(model=model, wp_id=self.id)
             db.session.add(model_entry)
 
-    def activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
+    def activate(
+        self,
+        downgrade_wp_priority: bool = False,
+        extra_source_images: list[dict[str, object]] | None = None,
+        kudos_adjustment: float = 0,
+    ) -> None:
         with logfire.span("horde.wp.activate", wp_id=str(self.id)):
             t0 = time.monotonic()
             wp_type = getattr(self, "wp_type", "unknown")
             created = getattr(self, "created", None)
             try:
-                self._activate_with_deadlock_retry(downgrade_wp_priority, extra_source_images, kudos_adjustment)
+                for attempt in range(1, WP_ACTIVATION_MAX_ATTEMPTS + 1):
+                    try:
+                        self._activate(downgrade_wp_priority, extra_source_images, kudos_adjustment)
+                        break
+                    except OperationalError as error:
+                        if not is_deadlock_error(error) or attempt == WP_ACTIVATION_MAX_ATTEMPTS:
+                            raise
+                        # PostgreSQL has already aborted the victim transaction;
+                        # reset SQLAlchemy before touching ORM state again. Jitter
+                        # keeps concurrently retried activations from re-forming
+                        # the same cycle.
+                        db.session.rollback()
+                        time.sleep(random.uniform(0.025, 0.1) * attempt)
             finally:
                 wp_activate_duration.record(time.monotonic() - t0, {"horde.wp_type": wp_type})
                 # Elapsed seconds between WP row insert and activation.
@@ -203,51 +215,19 @@ class WaitingPrompt(db.Model):
                     if age >= 0:
                         wp_activation_age.record(age, {"horde.wp_type": wp_type})
 
-    def _activate_with_deadlock_retry(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
-        """Run ``_activate``, retrying if PostgreSQL aborts it as a deadlock victim.
-
-        A deadlock leaves the session in a failed state, so we ``rollback`` before
-        retrying. The rollback expires our in-memory ORM objects, meaning the next
-        attempt re-reads the requester's kudos/usage from the committed DB state
-        and recomputes from a clean baseline -- there is no double counting.
-        """
-        for attempt in range(WP_ACTIVATE_DEADLOCK_RETRIES):
-            try:
-                self._activate(downgrade_wp_priority, extra_source_images, kudos_adjustment)
-                return
-            except OperationalError as err:
-                if not is_deadlock_error(err):
-                    raise
-                # Always roll back the aborted transaction so the session is left
-                # clean, both for the next retry and, on the final attempt, for
-                # the caller. Without this the session stays in a
-                # PendingRollbackError state and any subsequent attribute access
-                # (e.g. telemetry) raises and masks this deadlock error.
-                db.session.rollback()
-                if attempt == WP_ACTIVATE_DEADLOCK_RETRIES - 1:
-                    logger.error(
-                        f"Deadlock activating WP {self.id}; retries exhausted ({WP_ACTIVATE_DEADLOCK_RETRIES} attempts)",
-                    )
-                    raise
-                logger.warning(
-                    f"Deadlock activating WP {self.id}; retrying (attempt {attempt + 1}/{WP_ACTIVATE_DEADLOCK_RETRIES})",
-                )
-                # Small jittered backoff so racing transactions re-attempt out of
-                # phase instead of colliding on the same rows again immediately.
-                time.sleep(random.uniform(0.005, 0.03) * (attempt + 1))
-
-    def _activate(self, downgrade_wp_priority=False, extra_source_images=None, kudos_adjustment=0):
+    def _activate(
+        self,
+        downgrade_wp_priority: bool = False,
+        extra_source_images: list[dict[str, object]] | None = None,
+        kudos_adjustment: float = 0,
+    ) -> None:
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
         """
-        # Gate on the requester's user row before mutating anything, so every
-        # kudos-mutating transaction for this (often Anonymous, hence hot) user
-        # serializes here and cannot form an FK lock cycle with the submit path.
-        if self.user_id is not None:
-            from horde.classes.base.user import User
-
-            db.session.query(User.id).filter(User.id == self.user_id).with_for_update(key_share=True).first()
-
+        # The up-front horde-tax debit is now a ledger posting rather than an
+        # in-place `users` row UPDATE, removing that users-row lock from this path.
+        # Activation still touches several related rows and therefore retains a
+        # bounded retry for any other PostgreSQL deadlock cycle.
         self.active = True
         with logfire.span("horde.wp.activate.priority_calc"):
             if self.user.flagged and self.user.kudos > 10:
@@ -271,7 +251,8 @@ class WaitingPrompt(db.Model):
         with logfire.span("horde.wp.activate.record_usage", horde_tax=horde_tax):
             _t_ru = time.monotonic()
             try:
-                self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
+                with kudos_event(job_id=self.id, wp_type=self.wp_type):
+                    self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
             finally:
                 wp_activate_base_record_usage_duration.record(time.monotonic() - _t_ru, {})
         # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
@@ -584,7 +565,14 @@ class WaitingPrompt(db.Model):
         """
         return kudos
 
-    def record_usage(self, raw_things, kudos, usage_type, avoid_burn=False, commit=True):
+    def record_usage(
+        self,
+        raw_things: float,
+        kudos: float,
+        usage_type: str,
+        avoid_burn: bool = False,
+        commit: bool = True,
+    ) -> None:
         """Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
@@ -593,7 +581,13 @@ class WaitingPrompt(db.Model):
             kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos, commit=False)
-        self.user.record_usage(raw_things, kudos, usage_type, commit=False)
+        self.user.record_usage(
+            raw_things,
+            kudos,
+            usage_type,
+            commit=False,
+            reservation_id=f"upfront:{self.id}",
+        )
         self.consumed_kudos = round(self.consumed_kudos + kudos, 2)
         self.refresh(commit=commit)
 
@@ -609,6 +603,9 @@ class WaitingPrompt(db.Model):
         )
 
     def delete(self):
+        from horde.database.kudos_reservations import release_reservation
+
+        release_reservation(f"upfront:{self.id}")
         for gen in self.processing_gens:
             if not self.faulted and not gen.fake:
                 gen.cancel()

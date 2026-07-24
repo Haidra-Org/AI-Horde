@@ -22,10 +22,10 @@ db = SQLAlchemy(session_options={"expire_on_commit": False})
 cache = Cache()
 SQLITE_MODE = os.getenv("USE_SQLITE", "0") == "1"
 
-_app_instance = None
+_app_instance: Flask | None = None
 
 
-def get_app():
+def get_app() -> Flask:
     """Return the app instance for background threads that need app_context()."""
     if _app_instance is None:
         raise RuntimeError("App not created yet: call create_app() first")
@@ -50,7 +50,7 @@ class _InstrumentedQueuePool(_BaseQueuePool):
             raise
 
 
-def create_app(config=None):
+def create_app(config: dict[str, object] | None = None) -> Flask:
     global _app_instance
 
     app = Flask(__name__)

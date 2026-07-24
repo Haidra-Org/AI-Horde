@@ -16,7 +16,7 @@ succeed so the kudos award is observed deterministically.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -95,10 +95,12 @@ class TestAestheticsReward:
         app: Flask,
         make_api_user: MakeApiUser,
         _stub_ratings_server: None,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """Each rating submitted for a shared request awards the requester five kudos."""
         requester = make_api_user(kudos=1000)
         wp_id, procgen_id = _build_completed_shared_wp(app, requester.id, consumed_kudos=100)
+        settle_kudos()
         before = _requester_kudos(app, requester.id)
 
         resp = client.post(
@@ -108,6 +110,7 @@ class TestAestheticsReward:
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert resp.get_json()["reward"] == 5
+        settle_kudos()
         assert _requester_kudos(app, requester.id) == before + 5
 
     def test_reward_is_capped_at_consumed_kudos_minus_one(
@@ -116,11 +119,13 @@ class TestAestheticsReward:
         app: Flask,
         make_api_user: MakeApiUser,
         _stub_ratings_server: None,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """The rating reward is capped at the request's consumed kudos minus one."""
         requester = make_api_user(kudos=1000)
         # One rating would award 5, but the request only consumed 3 kudos.
         wp_id, procgen_id = _build_completed_shared_wp(app, requester.id, consumed_kudos=3)
+        settle_kudos()
         before = _requester_kudos(app, requester.id)
 
         resp = client.post(
@@ -130,4 +135,5 @@ class TestAestheticsReward:
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert resp.get_json()["reward"] == 2
+        settle_kudos()
         assert _requester_kudos(app, requester.id) == before + 2

@@ -14,6 +14,7 @@ while an untrusted owner's share is held in the evaluation escrow.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import pytest
@@ -59,6 +60,7 @@ class TestUptimeRewardCrossing:
         db_session: Session,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A trusted owner is credited the reward on the spendable balance."""
         owner = make_user(kudos=1000)
@@ -66,17 +68,19 @@ class TestUptimeRewardCrossing:
         worker = _make_worker(db_session, owner, primed_to_cross=True)
 
         worker.check_in(ipaddr="10.0.0.1")
+        settle_kudos()
 
         assert worker.kudos == BASE_UPTIME_REWARD
         assert owner.kudos == 1000 + BASE_UPTIME_REWARD
         assert owner.evaluating_kudos == 0
 
-    def test_untrusted_owner_share_goes_to_escrow(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_untrusted_owner_share_goes_to_escrow(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """An untrusted owner's reward is held in escrow while the worker is still credited."""
         owner = make_user(kudos=1000)
         worker = _make_worker(db_session, owner, primed_to_cross=True)
 
         worker.check_in(ipaddr="10.0.0.1")
+        settle_kudos()
 
         # The worker is always credited, but the untrusted owner's share is held
         # for evaluation rather than reaching the spendable balance.
@@ -113,31 +117,38 @@ class TestUptimeOwnerRouting:
         db_session: Session,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A trusted owner's uptime credit lands on the spendable balance."""
         owner = make_user(kudos=1000)
         make_user_role(owner, UserRoleTypes.TRUSTED)
         owner.record_uptime(100)
+        settle_kudos()
         assert owner.kudos == 1100
         assert owner.evaluating_kudos == 0
 
-    def test_untrusted_owner_credited_to_escrow(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_untrusted_owner_credited_to_escrow(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """An untrusted owner's uptime credit lands in the evaluation escrow."""
         owner = make_user(kudos=1000)
         owner.record_uptime(100)
+        settle_kudos()
         assert owner.kudos == 1000
         assert owner.evaluating_kudos == 100
 
-    def test_anonymous_owner_credited_on_balance(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_anonymous_owner_credited_on_balance(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """An anonymous owner's uptime credit lands on the spendable balance."""
         anon = make_user(username="Anonymous", oauth_id="anon", kudos=1000)
         anon.record_uptime(100)
+        settle_kudos()
         assert anon.kudos == 1100
         assert anon.evaluating_kudos == 0
 
-    def test_bypass_credits_balance_despite_untrusted(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_bypass_credits_balance_despite_untrusted(
+        self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]
+    ) -> None:
         """The evaluation bypass credits the balance even for an untrusted owner."""
         owner = make_user(kudos=1000)
         owner.record_uptime(100, bypass_eval=True)
+        settle_kudos()
         assert owner.kudos == 1100
         assert owner.evaluating_kudos == 0

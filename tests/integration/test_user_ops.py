@@ -144,7 +144,7 @@ class TestUserModify:
 
 
 class TestKudosTransfer:
-    def test_transfer_moves_kudos_between_accounts(self, client, app, api_key, make_api_user):
+    def test_transfer_moves_kudos_between_accounts(self, client, app, api_key, make_api_user, settle_kudos):
         from horde.database import functions as database
 
         with app.app_context():
@@ -153,6 +153,9 @@ class TestKudosTransfer:
             sender_alias = sender.get_unique_alias()
         receiver = make_api_user(kudos=100)
 
+        # Fold the seeded balances so the sufficiency check and the observed
+        # starting balances see materialized values.
+        settle_kudos()
         sender_before = _user_kudos(app, sender_id)
         receiver_before = _user_kudos(app, receiver.id)
 
@@ -165,6 +168,7 @@ class TestKudosTransfer:
         assert resp.get_json()["transferred"] == 500
 
         # Semantic: conservation of kudos across the two accounts.
+        settle_kudos()
         assert _user_kudos(app, sender_id) == sender_before - 500
         assert _user_kudos(app, receiver.id) == receiver_before + 500
         assert sender_alias  # sanity: alias resolved

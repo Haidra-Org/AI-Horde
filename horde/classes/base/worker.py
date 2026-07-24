@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -12,7 +13,14 @@ from sqlalchemy.dialects.postgresql import UUID
 
 from horde import vars as hv
 from horde.classes.base import settings
+from horde.classes.base.kudos import emit_kudos_stat_event, kudos_event
+from horde.database.kudos_legacy_projection import (
+    project_worker_contribution,
+    project_worker_fulfilment,
+    project_worker_kudos,
+)
 from horde.discord import send_pause_notification
+from horde.enums import KudosAggregate, KudosEntryType, KudosStatRecord, KudosUnit
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -31,6 +39,7 @@ SPEED_BASELINE_THINGS_PER_SEC = 1
 
 class WorkerStats(db.Model):
     __tablename__ = "worker_stats"
+    __table_args__ = (db.UniqueConstraint("worker_id", "action", name="uq_worker_stats_worker_action"),)
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(
         uuid_column_type(),
@@ -343,7 +352,7 @@ class WorkerTemplate(db.Model):
         db.session.commit()
 
     # This should be extended by each worker type
-    def check_in(self, **kwargs):
+    def check_in(self, **kwargs: Any) -> bool:
         # To avoid excessive commits and UPDATE churn under heavy pop load,
         # we only update the worker on check_in every 30 seconds (after the first 30s of life).
         # Returns True if the check_in actually performed work, False if it was debounced.
@@ -366,10 +375,15 @@ class WorkerTemplate(db.Model):
             # Every 10 minutes of uptime gets 100 kudos rewarded
             if self.uptime - self.last_reward_uptime > self.uptime_reward_threshold:
                 if self.team:
-                    self.team.record_uptime(self.uptime_reward_threshold)
+                    self.team.record_uptime(self.uptime_reward_threshold, commit=False)
                 kudos = self.calculate_uptime_reward()
-                self.modify_kudos(kudos, "uptime")
-                self.user.record_uptime(kudos, bypass_eval=self.uptime_reward_bypasses_eval())
+                with kudos_event(wp_type=self.wtype):
+                    self.modify_kudos(kudos, "uptime", commit=False, entry_type=KudosEntryType.UPTIME_REWARD)
+                    self.user.record_uptime(
+                        kudos,
+                        bypass_eval=self.uptime_reward_bypasses_eval(),
+                        commit=False,
+                    )
                 logger.debug(
                     f"Worker '{self.name}' received {kudos} kudos for uptime of {self.uptime_reward_threshold} seconds.",
                 )
@@ -392,32 +406,59 @@ class WorkerTemplate(db.Model):
             return f"{round(self.uptime / 60 / 60 / 24, 2)} days"
 
     # We split it to its own function to make it extendable
-    def convert_contribution(self, raw_things):
+    def convert_contribution(self, raw_things: float, team_id: uuid.UUID | None = None) -> float:
         converted = round(raw_things / hv.thing_divisors[self.wtype], 2)
-        self.contributions = round(self.contributions + converted, 2)
-        # We reurn the converted amount as well in case we need it
+        # workers.contributions is applier-maintained: append a STAT_CONTRIBUTION
+        # posting (things) the applier folds into the row instead of mutating the
+        # hot workers row here. team_id, when set, also folds into the team's
+        # contribution aggregate. We return the converted amount for the caller.
+        project_worker_contribution(self, converted)
+        emit_kudos_stat_event(
+            KudosEntryType.STAT_CONTRIBUTION,
+            converted,
+            worker_id=self.id,
+            worker_user_id=self.user_id,
+            team_id=team_id,
+            unit=KudosUnit.THINGS,
+            stat_action=KudosAggregate.CONTRIBUTIONS,
+        )
         return converted
 
-    def get_bridge_kudos_multiplier(self):
+    def get_bridge_kudos_multiplier(self) -> float:
         """To override in case we want to adjust the worker reward based on their bridge version"""
         return 1
 
-    def record_contribution(self, raw_things, kudos, things_per_sec):
+    def record_contribution(self, raw_things: float, kudos: float, things_per_sec: float) -> None:
         with logfire.span("horde.worker.record_contribution", worker_id=str(self.id), kudos=kudos):
             self._record_contribution(raw_things, kudos, things_per_sec)
 
     @logger.catch(reraise=True)
-    def _record_contribution(self, raw_things, kudos, things_per_sec):
+    def _record_contribution(self, raw_things: float, kudos: float, things_per_sec: float) -> None:
         """We record the servers newest contribution
         We do not need to know what type the contribution is, to avoid unnecessarily extending this method
         """
         kudos = kudos * self.get_bridge_kudos_multiplier()
+        # The team aggregates are derived by stamping team_id on this worker's own
+        # postings, so the settlement writes no team row. The gate matches the prior
+        # inline write: an image worker that belongs to a team. Attribution is fixed
+        # here, in the emitting transaction, so a later team change cannot move it.
+        team_id = self.team_id if (self.team and self.wtype == "image") else None
         self.user.record_contributions(raw_things=raw_things, kudos=kudos, contrib_type=self.wtype, commit=False)
-        self.modify_kudos(kudos, "generated", commit=False)
-        converted_amount = self.convert_contribution(raw_things)
-        self.fulfilments += 1
-        if self.team and self.wtype == "image":
-            self.team.record_contribution(converted_amount, kudos)
+        self.modify_kudos(kudos, "generated", commit=False, entry_type=KudosEntryType.GENERATION, team_id=team_id)
+        self.convert_contribution(raw_things, team_id=team_id)
+        # workers.fulfilments is applier-maintained: append a STAT_CONTRIBUTION
+        # count posting the applier folds into the row instead of incrementing the
+        # hot workers row here. team_id, when set, also folds the team fulfilment.
+        emit_kudos_stat_event(
+            KudosEntryType.STAT_CONTRIBUTION,
+            1,
+            worker_id=self.id,
+            worker_user_id=self.user_id,
+            team_id=team_id,
+            unit=KudosUnit.COUNT,
+            stat_action=KudosAggregate.FULFILMENTS,
+        )
+        project_worker_fulfilment(self, team_id=team_id, raw_things=raw_things, kudos=kudos)
         # Note: deferred commit; caller (procgen.set_generation) commits once at the end.
         # The worker_performances prune+insert is intentionally NOT done here; it is
         # persisted separately via record_performance() after the main commit so it
@@ -428,7 +469,7 @@ class WorkerTemplate(db.Model):
                 formats=[round(things_per_sec / hv.thing_divisors[self.wtype], 2)],
             )
 
-    def record_performance(self, things_per_sec, commit=True):
+    def record_performance(self, things_per_sec: float, commit: bool = True) -> None:
         """Persist a worker performance sample, pruning to the 20 most recent.
 
         Split out of _record_contribution so it runs in its own transaction after
@@ -460,19 +501,34 @@ class WorkerTemplate(db.Model):
         if commit:
             db.session.commit()
 
-    def modify_kudos(self, kudos, action="generated", commit=True):
-        self.kudos = round(self.kudos + kudos, 2)
-        kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).filter_by(action=action).first()
-        if not kudos_details:
-            kudos_details = WorkerStats(worker_id=self.id, action=action, value=round(kudos, 2))
-            db.session.add(kudos_details)
-            if commit:
-                db.session.commit()
-        else:
-            kudos_details.value = round(kudos_details.value + kudos, 2)
-            if commit:
-                db.session.commit()
-        logger.trace([kudos_details, kudos_details.value])
+    def modify_kudos(
+        self,
+        kudos: float,
+        action: str = "generated",
+        commit: bool = True,
+        entry_type: KudosEntryType = KudosEntryType.GENERATION,
+        team_id: uuid.UUID | None = None,
+    ) -> None:
+        # The worker balance and the per-action WorkerStats total are both
+        # applier-maintained: record the movement as a signed worker-balance ledger
+        # posting (owner id kept for audit) stamped with the stats bucket, and the
+        # applier folds workers.kudos and worker_stats from it. No inline write of
+        # the hot workers row or stats row. team_id, set only on an image-submit
+        # credit, also folds into the team's display kudos total.
+        project_worker_kudos(self, kudos, action)
+        emit_kudos_stat_event(
+            entry_type,
+            kudos,
+            worker_id=self.id,
+            worker_user_id=self.user_id,
+            team_id=team_id,
+            unit=KudosUnit.KUDOS,
+            stat_action=action,
+            record=KudosStatRecord.WORKER_KUDOS,
+        )
+        if commit:
+            db.session.commit()
+        logger.trace(f"modified {kudos} worker kudos stat ({action}) for {self.id}")
 
     def log_aborted_job(self):
         # We count the number of jobs aborted in an 1 hour period. So we only log the new timer each time an hour expires.

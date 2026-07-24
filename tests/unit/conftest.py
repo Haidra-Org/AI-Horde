@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -94,16 +94,48 @@ def db_session(app: Flask) -> Iterator[scoped_session[Session]]:
     Slightly more expensive than a SAVEPOINT-rollback fixture but resilient
     to commits triggered deep inside production code paths.
     """
+    from horde.classes.base.kudos import KudosLedgerControl
+    from horde.enums import KudosLedgerMode
     from horde.flask import db
 
     with app.app_context():
         try:
+            db.session.add(KudosLedgerControl(id=1, mode=str(KudosLedgerMode.LEDGER)))
+            db.session.commit()
             yield db.session
         finally:
             db.session.rollback()
             for table in reversed(db.metadata.sorted_tables):
                 db.session.execute(table.delete())
             db.session.commit()
+
+
+@pytest.fixture
+def settle_kudos(db_session: scoped_session[Session]) -> Callable[[], int]:
+    """Return a helper that folds all pending kudos ledger rows immediately.
+
+    Kudos balances are applier-maintained: a movement is recorded as a ledger
+    posting and materialized into ``users.kudos``/``users.evaluating_kudos``/
+    ``workers.kudos`` by the applier. Call the returned helper before asserting a
+    balance so the assertion observes the folded result. Amounts and routing are
+    unchanged; only the observation point is.
+
+    Folding runs to quiescence: a fold can emit follow-on postings (a trusted
+    user's escrow drains via an applier-emitted delta pair), so this iterates
+    cycles until one does no work, up to a bounded cap.
+    """
+    from horde.database.kudos_ledger import apply_pending_kudos
+
+    def _settle() -> int:
+        total = 0
+        for _ in range(10):
+            folded = apply_pending_kudos()
+            total += folded
+            if folded == 0:
+                break
+        return total
+
+    return _settle
 
 
 @pytest.fixture

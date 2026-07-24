@@ -21,6 +21,7 @@ end to end over HTTP.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -45,22 +46,25 @@ def _make_worker(db_session: Session, owner: User) -> WorkerTemplate:
 class TestRequesterDebit:
     """Usage debits the requester by the charged amount."""
 
-    def test_usage_debits_requester_balance(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_usage_debits_requester_balance(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """Recorded usage lowers the requester's balance by the charged kudos."""
         user = make_user(kudos=1000)
         user.record_usage(raw_things=10, kudos=50, usage_type="image")
+        settle_kudos()
         assert user.kudos == 950
 
-    def test_horde_tax_debit_uses_the_same_path(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_horde_tax_debit_uses_the_same_path(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """The up-front horde tax debits through the same usage path as ordinary usage."""
         user = make_user(kudos=1000)
         user.record_usage(raw_things=0, kudos=1, usage_type="image")
+        settle_kudos()
         assert user.kudos == 999
 
-    def test_usage_debit_respects_the_floor(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_usage_debit_respects_the_floor(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """A usage debit cannot push the requester below the user-class floor."""
         user = make_user(kudos=30)
         user.record_usage(raw_things=0, kudos=1000, usage_type="image")
+        settle_kudos()
         assert user.kudos == 25
 
 
@@ -84,10 +88,11 @@ class TestCensoredDebit:
 class TestStyleOwnerCredit:
     """A styled generation credits the style owner a fixed +2."""
 
-    def test_style_credit_adds_two_kudos(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_style_credit_adds_two_kudos(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """Recording a style credits the owner two kudos."""
         owner = make_user(kudos=1000)
         owner.record_style(2, "image")
+        settle_kudos()
         assert owner.kudos == 1002
 
 
@@ -99,6 +104,7 @@ class TestWorkerContributionCredit:
         db_session: Session,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A trusted owner receives the whole contribution credit on the spendable balance."""
         owner = make_user(kudos=1000)
@@ -107,6 +113,7 @@ class TestWorkerContributionCredit:
 
         worker.record_contribution(raw_things=1000, kudos=100, things_per_sec=1)
         db_session.commit()
+        settle_kudos()
 
         assert worker.kudos == 100
         assert owner.kudos == 1100
@@ -118,6 +125,7 @@ class TestWorkerContributionCredit:
         make_user: MakeUser,
         make_user_role: MakeUserRole,
         monkeypatch: pytest.MonkeyPatch,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """The bridge multiplier scales both the worker and owner contribution credit."""
         owner = make_user(kudos=1000)
@@ -127,6 +135,7 @@ class TestWorkerContributionCredit:
 
         worker.record_contribution(raw_things=1000, kudos=100, things_per_sec=1)
         db_session.commit()
+        settle_kudos()
 
         assert worker.kudos == 200
         assert owner.kudos == 1200
@@ -140,6 +149,7 @@ class TestUntrustedEscrowSplit:
         db_session: Session,
         make_user: MakeUser,
         monkeypatch: pytest.MonkeyPatch,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """An untrusted owner's contribution credit splits evenly between balance and escrow."""
         # A fresh account is not yet trusted, so half its contribution credit is
@@ -151,19 +161,21 @@ class TestUntrustedEscrowSplit:
 
         worker.record_contribution(raw_things=1000, kudos=100, things_per_sec=1)
         db_session.commit()
+        settle_kudos()
 
         assert owner.kudos == 1050
         assert owner.evaluating_kudos == 50
         # The worker itself is always credited the full contribution.
         assert worker.kudos == 100
 
-    def test_anonymous_owner_is_not_escrowed(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_anonymous_owner_is_not_escrowed(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """An anonymous owner receives the whole contribution credit on the balance."""
         anon = make_user(username="Anonymous", oauth_id="anon", kudos=1000)
         worker = _make_worker(db_session, anon)
 
         worker.record_contribution(raw_things=1000, kudos=100, things_per_sec=1)
         db_session.commit()
+        settle_kudos()
 
         assert anon.kudos == 1100
         assert anon.evaluating_kudos == 0
@@ -177,6 +189,7 @@ class TestTrustPromotion:
         db_session: Session,
         make_user: MakeUser,
         monkeypatch: pytest.MonkeyPatch,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """Crossing the threshold empties escrow into the balance and records a trusted role."""
         monkeypatch.setenv("KUDOS_TRUST_THRESHOLD", "100")
@@ -185,6 +198,7 @@ class TestTrustPromotion:
         db_session.flush()
 
         owner.check_for_trust()
+        settle_kudos()
 
         assert owner.evaluating_kudos == 0
         assert owner.kudos == 1250

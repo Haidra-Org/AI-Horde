@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 
 import pytest
@@ -62,6 +62,7 @@ class TestKudosTransferAudit:
         app: Flask,
         api_key: str,
         make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A successful transfer writes an audit-log row capturing the sender, receiver, and amount."""
         from horde.classes.base.user import KudosTransferLog
@@ -71,6 +72,9 @@ class TestKudosTransferAudit:
             sender_id = database.find_user_by_api_key(api_key).id
         receiver = make_api_user(kudos=100)
 
+        # The sender's seeded balance must be folded before the transfer's
+        # sufficiency check reads it.
+        settle_kudos()
         resp = client.post(
             "/api/v2/kudos/transfer",
             json={"username": receiver.alias, "amount": 500},
@@ -108,6 +112,7 @@ class TestKudosTransferToSharedKey:
         app: Flask,
         api_key: str,
         make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """Transferring to a shared key id credits the key's budget by the transferred amount."""
         from horde.classes.base.user import UserSharedKey
@@ -127,6 +132,9 @@ class TestKudosTransferToSharedKey:
             db.session.commit()
             shared_key_id = str(shared_key.id)
 
+        # The sender's seeded balance must be folded before the transfer's
+        # sufficiency check reads it.
+        settle_kudos()
         resp = client.post(
             "/api/v2/kudos/transfer",
             json={"username": shared_key_id, "amount": 500},
@@ -183,6 +191,7 @@ class TestKudosAward:
         client: FlaskClient,
         app: Flask,
         make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """The award-privileged caller credits the target's balance by the awarded amount."""
         privileged_key = _provision_privileged_user(app)
@@ -196,6 +205,7 @@ class TestKudosAward:
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert resp.get_json()["awarded"] == 5000
+        settle_kudos()
         assert _user_kudos(app, target.id) == target_before + 5000
 
 
@@ -209,6 +219,7 @@ class TestAdminKudosAdjust:
         api_key: str,
         make_api_user: MakeApiUser,
         monkeypatch: pytest.MonkeyPatch,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """An admin's kudos delta on a user credits that user's balance by the delta."""
         from horde.database import functions as database
@@ -226,6 +237,7 @@ class TestAdminKudosAdjust:
             headers=_headers(api_key),
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
+        settle_kudos()
         assert _user_kudos(app, target.id) == target_before + 1000
 
     def test_admin_monthly_kudos_grant_credits_immediately(
@@ -235,6 +247,7 @@ class TestAdminKudosAdjust:
         api_key: str,
         make_api_user: MakeApiUser,
         monkeypatch: pytest.MonkeyPatch,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """An admin's monthly-kudos grant is stored as entitlement and credited to balance at once."""
         from horde.database import functions as database
@@ -253,6 +266,7 @@ class TestAdminKudosAdjust:
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
 
+        settle_kudos()
         with app.app_context():
             refreshed = database.find_user_by_id(target.id)
             assert refreshed.monthly_kudos == 500

@@ -20,6 +20,7 @@ from horde.bridge_reference import (
     get_supported_samplers,
 )
 from horde.classes.base.detection import Filter
+from horde.classes.base.kudos import KudosLedger, kudos_event
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
@@ -33,15 +34,17 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.database.classes import FakeWPRow
-from horde.enums import State
+from horde.database.kudos_reservations import reserve_kudos
+from horde.enums import KudosAuditDetail, KudosEntryType, State
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
-from horde.metrics import pop_query_duration
+from horde.metrics import kudos_transfers_idempotent_replays, pop_query_duration
 from horde.model_reference import model_reference
 from horde.utils import hash_api_key, validate_regex
 
 ALLOW_ANONYMOUS = True
+type KudosTransferResult = list[int | float | str | bool | None]
 WORKER_CLASS_MAP = {
     "image": ImageWorker,
     "text": TextWorker,
@@ -476,7 +479,12 @@ def retrieve_available_models(model_type=None, min_count=None, max_count=None, m
     return models_ret
 
 
-def transfer_kudos(source_user, dest_user, amount):
+def transfer_kudos(
+    source_user: User,
+    dest_user: User,
+    amount: float,
+    idempotency_key: str | None = None,
+) -> KudosTransferResult:
     reverse_transfer = hr.horde_r_get(f"kudos_transfer_{dest_user.id}-{source_user.id}")
     if reverse_transfer:
         return [
@@ -516,26 +524,72 @@ def transfer_kudos(source_user, dest_user, amount):
         return [0, "This source account has been scheduled for deletion and is disabled", "DeletedUser"]
     if amount < 0:
         return [0, "Nice try...", "NegativeKudosTransfer"]
-    if amount > source_user.kudos - source_user.get_min_kudos():
-        return [0, "Not enough kudos.", "KudosTransferNotEnough"]
-    hr.horde_r_setex(f"kudos_transfer_{source_user.id}-{dest_user.id}", timedelta(seconds=60), 1)
-    transfer_log = KudosTransferLog(
-        source_id=source_user.id,
-        dest_id=dest_user.id,
-        kudos=amount,
-    )
-    db.session.add(transfer_log)
-    db.session.commit()
+    if amount == 0:
+        return [0, "Transfer amount must be positive.", "InvalidKudosTransferAmount"]
     transfer_type = "gifted"
     if dest_user.education:
         transfer_type = "donated"
-    source_user.modify_kudos(-amount, transfer_type)
-    dest_user.modify_kudos(amount, "received")
+    # The payer hold, audit row, debit, and credit are one transaction.  The
+    # reservation serializes only this payer and remains active until the
+    # applier materializes both postings.
+    scoped_retry_key = None if idempotency_key is None else f"transfer:{source_user.id}:{idempotency_key}"
+    with kudos_event(idempotency_key=scoped_retry_key) as event:
+        prior_postings = db.session.query(KudosLedger).filter(KudosLedger.event_id == event.event_id).all()
+        if prior_postings:
+            same_request = any(row.user_id == source_user.id and row.amount == -amount for row in prior_postings) and any(
+                row.user_id == dest_user.id and row.amount == amount for row in prior_postings
+            )
+            if not same_request:
+                return [0, "Idempotency key was already used with different transfer parameters.", "IdempotencyKeyConflict"]
+            kudos_transfers_idempotent_replays.add(1)
+            return [amount, "OK", None, True]
+        reservation = reserve_kudos(
+            source_user,
+            amount,
+            business_id=f"transfer:{source_user.id}:{event.event_id}",
+            event_id=event.event_id,
+        )
+        if reservation is None:
+            db.session.rollback()
+            return [0, "Not enough kudos.", "KudosTransferNotEnough"]
+        # The payer lock acquired by reserve_kudos closes the concurrent retry
+        # race between the optimistic check above and the first commit.
+        prior_postings = db.session.query(KudosLedger).filter(KudosLedger.event_id == event.event_id).all()
+        if prior_postings:
+            db.session.rollback()
+            same_request = any(row.user_id == source_user.id and row.amount == -amount for row in prior_postings) and any(
+                row.user_id == dest_user.id and row.amount == amount for row in prior_postings
+            )
+            if not same_request:
+                return [0, "Idempotency key was already used with different transfer parameters.", "IdempotencyKeyConflict"]
+            kudos_transfers_idempotent_replays.add(1)
+            return [amount, "OK", None, True]
+        transfer_log = KudosTransferLog(
+            source_id=source_user.id,
+            dest_id=dest_user.id,
+            kudos=amount,
+        )
+        db.session.add(transfer_log)
+        source_user.modify_kudos(
+            -amount,
+            transfer_type,
+            commit=False,
+            entry_type=KudosEntryType.TRANSFER,
+            detail={KudosAuditDetail.RESERVATION_ID: reservation.business_id},
+        )
+        dest_user.modify_kudos(amount, "received", commit=False, entry_type=KudosEntryType.TRANSFER)
+        db.session.commit()
+    hr.horde_r_setex(f"kudos_transfer_{source_user.id}-{dest_user.id}", timedelta(seconds=60), 1)
     logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
-    return [amount, "OK"]
+    return [amount, "OK", None, False]
 
 
-def transfer_kudos_to_username(source_user, dest_username, amount):
+def transfer_kudos_to_username(
+    source_user: User,
+    dest_username: str,
+    amount: float,
+    idempotency_key: str | None = None,
+) -> KudosTransferResult:
     dest_user = find_user_by_username(dest_username)
     shared_key = None
     if not dest_user:
@@ -549,20 +603,26 @@ def transfer_kudos_to_username(source_user, dest_username, amount):
         return [0, "Tried to burn kudos via sending to Anonymous. Assuming PEBKAC and aborting.", "KudosTransferToAnon"]
     if dest_user == source_user:
         return [0, "Cannot send kudos to yourself, ya monkey!", "KudosTransferToSelf"]
-    kudos = transfer_kudos(source_user, dest_user, amount)
-    if kudos[0] > 0 and shared_key is not None and shared_key.kudos != -1:
+    kudos = transfer_kudos(source_user, dest_user, amount, idempotency_key=idempotency_key)
+    replayed = len(kudos) > 3 and kudos[3]
+    if kudos[0] > 0 and not replayed and shared_key is not None and shared_key.kudos != -1:
         shared_key.kudos += kudos[0]
         db.session.commit()
     return kudos
 
 
-def transfer_kudos_from_apikey_to_username(source_api_key, dest_username, amount):
+def transfer_kudos_from_apikey_to_username(
+    source_api_key: str,
+    dest_username: str,
+    amount: float,
+    idempotency_key: str | None = None,
+) -> KudosTransferResult:
     source_user = find_user_by_api_key(source_api_key)
     if not source_user:
         return [0, "Invalid API Key.", "InvalidAPIKey"]
     if source_user == get_anon():
         return [0, "You cannot transfer Kudos from Anonymous, smart-ass.", "KudosTransferFromAnon"]
-    kudos = transfer_kudos_to_username(source_user, dest_username, amount)
+    kudos = transfer_kudos_to_username(source_user, dest_username, amount, idempotency_key=idempotency_key)
     return kudos
 
 

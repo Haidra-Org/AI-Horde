@@ -28,6 +28,8 @@ from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.database import functions as database
 from horde.database import text_functions as text_database
+from horde.database.kudos_reservations import reserve_kudos
+from horde.enums import KudosEntryType
 from horde.flask import cache, db
 from horde.limiter import limiter
 from horde.logger import logger
@@ -136,8 +138,13 @@ class TextAsyncGenerate(GenerateTemplate):
                     f"to fulfill this reques ({required_kudos}).",
                     rc="SharedKeyInsufficientKudos",
                 )
-        if needs_kudos:
-            if required_kudos > self.user.kudos:
+        if needs_kudos and required_kudos > 0:
+            reservation = reserve_kudos(
+                self.user,
+                required_kudos,
+                business_id=f"upfront:{self.wp.id}",
+            )
+            if reservation is None:
                 if self.args.allow_downgrade and not disable_downgrade:
                     self.wp.downgrade(tokens)
                 else:
@@ -442,5 +449,5 @@ class KoboldKudosTransfer(Resource):
         )
         if user.trusted is False and self.args.trusted is True:
             user.set_trusted(self.args.trusted)
-        user.modify_kudos(self.args.kudos_amount, "koboldai")
+        user.modify_kudos(self.args.kudos_amount, "koboldai", entry_type=KudosEntryType.AWARD)
         return {"new_kudos": user.kudos}, 200

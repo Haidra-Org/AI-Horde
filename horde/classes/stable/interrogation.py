@@ -2,20 +2,28 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 import requests
 from sqlalchemy import JSON, Enum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
+from horde.classes.base.kudos import kudos_event
 from horde.consts import KNOWN_POST_PROCESSORS
+from horde.database.kudos_reservations import release_reservation, reserve_kudos
 from horde.enums import State
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.r2 import generate_procgen_download_url, generate_procgen_upload_url
 from horde.utils import get_db_uuid, get_expiry_date, get_interrogation_form_expiry_date
+
+if TYPE_CHECKING:
+    from horde.classes.stable.interrogation_worker import InterrogationWorker
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
@@ -44,7 +52,7 @@ class InterrogationForms(db.Model):
     expiry = db.Column(db.DateTime, default=None, index=True)
     abort_count = db.Column(db.Integer, default=0, nullable=False)
 
-    def pop(self, worker):
+    def pop(self, worker: InterrogationWorker) -> dict[str, object] | None:
         myself_refresh = (
             db.session.query(InterrogationForms)
             .filter(
@@ -56,6 +64,21 @@ class InterrogationForms(db.Model):
         )
         if not myself_refresh:
             return None
+        requires_hold = (
+            worker.require_upfront_kudos
+            and not self.interrogation.user.trusted
+            and self.interrogation.user.get_unique_alias() not in worker.prioritized_users
+        )
+        if requires_hold:
+            required_kudos = self.kudos + (2 if self.interrogation.slow_workers else 1)
+            reservation = reserve_kudos(
+                self.interrogation.user,
+                required_kudos,
+                business_id=f"interrogation:{self.id}",
+            )
+            if reservation is None:
+                db.session.rollback()
+                return None
         myself_refresh.state = State.PROCESSING
         db.session.commit()
         self.expiry = get_interrogation_form_expiry_date()
@@ -102,8 +125,8 @@ class InterrogationForms(db.Model):
                 )
         self.state = State.DONE
         self.record(self.kudos)
-        self.send_webhook(self.kudos)
         db.session.commit()
+        self.send_webhook(self.kudos)
         return self.kudos
 
     def cancel(self):
@@ -117,6 +140,8 @@ class InterrogationForms(db.Model):
             self.state = State.CANCELLED
         if was_processing:
             self.record(self.kudos)
+        else:
+            release_reservation(f"interrogation:{self.id}")
         db.session.commit()
         return self.kudos
 
@@ -124,23 +149,30 @@ class InterrogationForms(db.Model):
         cancel_txt = ""
         if self.state == State.CANCELLED:
             cancel_txt = " CANCELLED"
-        self.worker.record_interrogation(
-            kudos=self.kudos,
-            seconds_taken=(datetime.utcnow() - self.initiated).total_seconds(),
-        )
-        kudos_burn = 1
-        if self.interrogation.slow_workers:
-            kudos_burn += 1
-        self.interrogation.record_usage(kudos=self.kudos + kudos_burn)
+        # Group the worker/owner credit and the requester debit of this settlement
+        # under one ledger event id.
+        with kudos_event(job_id=self.id, wp_type="interrogation"):
+            self.worker.record_interrogation(
+                kudos=self.kudos,
+                seconds_taken=(datetime.utcnow() - self.initiated).total_seconds(),
+            )
+            kudos_burn = 1
+            if self.interrogation.slow_workers:
+                kudos_burn += 1
+            self.interrogation.record_usage(
+                kudos=self.kudos + kudos_burn,
+                reservation_id=f"interrogation:{self.id}",
+            )
         logger.info(
             f"New{cancel_txt} Form {self.id} ({self.name}) worth {self.kudos} kudos, "
             f"delivered by worker: {self.worker.name} for interrogation {self.interrogation.id}",
         )
 
-    def abort(self):
+    def abort(self) -> None:
         """Called when this request needs to be stopped without rewarding kudos. Say because it timed out due to a worker crash"""
         if self.state != State.PROCESSING:
             return
+        release_reservation(f"interrogation:{self.id}")
         self.worker.log_aborted_job()
         self.log_aborted_interrogation()
         # If it aborted 3 or more times, we consider there's something wrong with its payload and permanently fault it
@@ -356,10 +388,16 @@ class Interrogation(db.Model):
             ret_dict["state"] = State.WAITING.name.lower()
         return ret_dict
 
-    def record_usage(self, kudos):
+    def record_usage(self, kudos: float, reservation_id: str | None = None) -> None:
         """Record that we received a requested interrogation and how much kudos it costs us"""
-        self.user.record_usage(0, kudos, "interrogation")
-        self.refresh()
+        self.user.record_usage(
+            0,
+            kudos,
+            "interrogation",
+            commit=False,
+            reservation_id=reservation_id,
+        )
+        self.expiry = get_expiry_date()
 
     def cancel(self):
         for form in self.forms:

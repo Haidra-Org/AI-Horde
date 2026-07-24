@@ -13,7 +13,7 @@ cost, activation is refused and nothing is charged.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from flask import Flask
@@ -65,10 +65,15 @@ def _headers(api_key: str) -> dict[str, str]:
 class TestActivationDebit:
     """Submitting a request charges an up-front horde tax against the requester's balance."""
 
-    def test_registered_request_debits_the_requester(self, client: FlaskClient, app: Flask, api_key: str) -> None:
+    def test_registered_request_debits_the_requester(
+        self, client: FlaskClient, app: Flask, api_key: str, settle_kudos: Callable[[], int]
+    ) -> None:
         """A registered requester's balance drops by the activation tax when a request is submitted."""
         from horde.database import functions as database
 
+        # The bootstrap balance is seeded through the ledger; fold it so the
+        # observed starting balance is the materialized value.
+        settle_kudos()
         with app.app_context():
             uid = database.find_user_by_api_key(api_key).id
             before = database.find_user_by_id(uid).kudos
@@ -76,11 +81,12 @@ class TestActivationDebit:
         resp = client.post("/api/v2/generate/async", json=SMALL_REQUEST, headers=_headers(api_key))
         assert resp.status_code == 202, resp.get_data(as_text=True)
 
+        settle_kudos()
         with app.app_context():
             after = database.find_user_by_id(uid).kudos
         assert after == before - ACTIVATION_TAX
 
-    def test_anonymous_request_debits_the_anonymous_user(self, client: FlaskClient, app: Flask) -> None:
+    def test_anonymous_request_debits_the_anonymous_user(self, client: FlaskClient, app: Flask, settle_kudos: Callable[[], int]) -> None:
         """The anonymous user is charged the same activation tax as a registered requester."""
         from horde.database import functions as database
         from horde.flask import db
@@ -94,6 +100,7 @@ class TestActivationDebit:
         resp = client.post("/api/v2/generate/async", json=SMALL_REQUEST, headers=_headers(ANON_API_KEY))
         assert resp.status_code == 202, resp.get_data(as_text=True)
 
+        settle_kudos()
         with app.app_context():
             after = database.find_user_by_id(0).kudos
         assert after == 100 - ACTIVATION_TAX
@@ -152,8 +159,11 @@ class TestUpfrontGate:
         client: FlaskClient,
         app: Flask,
         make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A request needing up-front kudos is accepted when the requester can cover the estimated cost."""
         requester = make_api_user(kudos=100000)
+        # The seeded balance reaches the upfront gate only once folded.
+        settle_kudos()
         resp = client.post("/api/v2/generate/async", json=GATED_REQUEST, headers=_headers(requester.api_key))
         assert resp.status_code == 202, resp.get_data(as_text=True)
