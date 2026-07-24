@@ -11,8 +11,7 @@ Group=aipg
 WorkingDirectory=/home/aipg/current
 EnvironmentFile=/etc/aipg/grid.env
 # --proxy-headers + forwarded-allow-ips so rate limiting sees real client IPs
-# behind nginx. Port 7010 (Flask owns 7001-7008; grid_api/routers/images.py
-# proxies to Flask on 7001).
+# behind nginx.
 ExecStart=/home/aipg/current/.venv/bin/uvicorn grid_api.main:app \
     --host 127.0.0.1 --port 7010 --workers 4 \
     --proxy-headers --forwarded-allow-ips 127.0.0.1

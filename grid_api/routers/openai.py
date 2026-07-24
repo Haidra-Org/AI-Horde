@@ -13,7 +13,6 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime, timedelta
 from typing import Optional
 from uuid import uuid4
 
@@ -31,7 +30,6 @@ TEXT_CONCURRENCY = int(os.getenv("GRID_TEXT_CONCURRENCY", "24"))
 # 32768 (le); keep this in step. Tunable via env.
 DEFAULT_MAX_TOKENS = int(os.getenv("GRID_DEFAULT_MAX_TOKENS", "32768"))
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -40,7 +38,6 @@ from ..ratelimit import limiter
 from ..auth import extract_api_key
 
 from .. import format as fmt
-from ..database import new_session, processing_gens_table, waiting_prompts_table
 from ..models.openai import ChatCompletionRequest, ModelInfo, ModelListResponse
 from ..services import accounts as accounts_svc
 from ..services import concurrency
@@ -314,7 +311,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, apikey: str,
     if not available:
         raise HTTPException(
             status_code=503,
-            detail="No streaming workers online. Use /api/v2/generate/text/async for the legacy queue.",
+            detail="No compatible text workers are currently online.",
         )
 
     # Resolve the virtual "auto" model to a concrete ONLINE model via the router
@@ -400,49 +397,6 @@ async def _handle_chat_completions(request: ChatCompletionRequest, apikey: str,
         "top_p": request.top_p,
     }
 
-    # Legacy bookkeeping rows only exist for legacy (Haidra) keys — v2
-    # account ids don't fit the integer FK, and nothing v2 reads these.
-    legacy_rows = user["source"] == "legacy"
-    if legacy_rows:
-      async with await new_session() as session:
-        await session.execute(
-            sa.insert(waiting_prompts_table).values(
-                id=job_id,
-                wp_type="text",
-                user_id=user["id"],
-                prompt=prompt,
-                params=payload,
-                gen_payload=payload,
-                n=1,
-                jobs=1,
-                things=0,
-                total_usage=0,
-                job_ttl=150,
-                disable_batching=False,
-                worker_blacklist=False,
-                active=True,
-                faulted=False,
-                max_length=request.max_tokens or DEFAULT_MAX_TOKENS,
-                max_context_length=2048,
-                expiry=datetime.utcnow() + timedelta(minutes=5),
-                created=datetime.utcnow(),
-                kudos=0,
-                consumed_kudos=0,
-                extra_priority=user.get("kudos", 0),
-                nsfw=False,
-                slow_workers=True,
-                trusted_workers=False,
-                validated_backends=False,
-                extra_slow_workers=False,
-                ipaddr="0.0.0.0",
-                safe_ip=True,
-                client_agent="grid-api/1.0",
-            )
-        )
-        # processing_gen is created by the worker WebSocket handler
-        # when it picks up the job (needs real worker_id for FK constraint)
-        await session.commit()
-
     # ── Billing gate: RESERVE before dispatch (live mode only) ──────────────
     # Fail CLOSED: paid work is never queued unless funds are held first. In
     # dry-run this is a no-op; the collectors only log would-charge observations.
@@ -471,11 +425,9 @@ async def _handle_chat_completions(request: ChatCompletionRequest, apikey: str,
             if not auth["ok"]:
                 raise HTTPException(status_code=402, detail=auth.get("reason", "payment required"))
 
-        # Submit to Redis Stream for workers. _legacy_rows tells the WS handler
-        # whether the horde bookkeeping rows exist for this job.
+        # Submit to the Grid Redis Stream for workers.
         # If dispatch itself fails the job never runs, so the held reservation must be
         # released — otherwise funds are stranded with no settlement path.
-        payload["_legacy_rows"] = legacy_rows
         try:
             await job_queue.submit_job(job_id, payload, [model], preferred_worker=preferred_worker)
         except Exception:

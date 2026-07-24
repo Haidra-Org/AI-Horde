@@ -3,17 +3,18 @@
 ## Purpose
 
 Operational and developer entrypoints that sit outside the Python packages.
-This directory includes the live hourly payout wrapper, legacy queue monitoring,
-tests, and an incomplete testnet model-registry helper.
+This directory includes the live hourly payout wrapper, Grid-native checks,
+account provisioning tools, and an incomplete testnet model-registry helper.
 
 ## Ownership
 
 - `payout_hourly.sh` - production systemd timer entrypoint for custodial AIPG
   payouts and failed-payout reconciliation.
-- `monitor_queues.py` - legacy Flask/Horde SQL queue monitor and optional cleanup.
 - `deploy_model_registry.py` - incomplete Base Sepolia ModelRegistry scaffold;
   not the production Grid Diamond deployment path.
-- `run_tests.sh` - legacy test wrapper.
+- `run_tests.sh` - Grid-native retirement, lint, and offline test wrapper.
+- `check_retired_runtime.py` - CI guard against reintroducing the retired
+  runtime through code, packaging, deploy, or operator scripts.
 - `create_service_account.py` - one-time provisioning for bounded frontend or
   backend service principals; prints the new key exactly once.
 - `rotate_service_key.py` - atomically revokes a service's old keys and prints
@@ -29,9 +30,6 @@ tests, and an incomplete testnet model-registry helper.
   wrapper or print its values.
 - The payout wrapper resolves Python from its own immutable release directory;
   never point it back at the historical mutable production checkout.
-- `monitor_queues.py --cleanup` mutates legacy Horde tables. It does not monitor
-  the Redis Streams `/v1` queue and must not be presented as current Grid queue
-  observability.
 - `deploy_model_registry.py` is a scaffold with no compiled deployment path.
   Never use it for Base mainnet or describe it as the canonical registry tool.
 
@@ -48,7 +46,8 @@ tests, and an incomplete testnet model-registry helper.
 
 - Run `bash -n scripts/payout_hourly.sh` for wrapper edits.
 - Run focused settlement tests before changing payout invocation or periods.
-- Exercise monitoring/cleanup only against a disposable database.
+- Run `scripts/run_tests.sh` from an environment with
+  `requirements.dev.txt` installed.
 - Run `git diff --check` and inspect commands for leaked secrets.
 
 ## Child DOX Index

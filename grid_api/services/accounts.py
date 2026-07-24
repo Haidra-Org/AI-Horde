@@ -1,16 +1,12 @@
 # SPDX-FileCopyrightText: 2026 AI Power Grid
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""v2 accounts: key resolution, account creation, key issuance.
+"""Grid accounts: key resolution, account creation, and key issuance.
 
 Identity model: one canonical Grid account with multiple independently proven
-login identities and individually scoped API keys. During the transition, key resolution checks
-grid_api_keys first and falls back to the legacy Haidra users table, so old
-keys keep working until the horde is decommissioned.
-
-The normalized auth dict returned by authenticate() satisfies the contracts
-of the existing quota/concurrency code (id, kudos, username) regardless of
-which store the key came from.
+login identities and individually scoped API keys. The retired Horde key store
+is intentionally not consulted: accepting those unscoped credentials would
+keep a second identity authority alive after the public API retirement.
 """
 
 import logging
@@ -24,13 +20,12 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from ..auth import hash_api_key
-from ..database import new_session, users_table
+from ..database import new_session
 from ..v2.schema import account_identities as identities_table
 from ..v2.schema import accounts as accounts_table
 from ..v2.schema import api_keys as api_keys_table
 from ..v2.schema import service_clients as service_clients_table
 from ..v2.schema import workers as workers_table
-from .quota import PAID_KUDOS_THRESHOLD
 
 logger = logging.getLogger("grid_api.accounts")
 
@@ -47,11 +42,11 @@ def generate_api_key() -> str:
 async def resolve_api_key(plain_key: str) -> dict | None:
     """Resolve a plaintext key to a normalized auth dict, or None.
 
-    v2 keys win; legacy Haidra users are the fallback. The dict always has:
-      id          — quota/metering identity ("v2:<uuid>" or legacy int)
-      source      — "v2" | "legacy"
+    The dict always has:
+      id          — quota/metering identity ("v2:<uuid>")
+      source      — "v2"
       username    — display name
-      kudos       — legacy paid-tier signal (mapped from flags.paid for v2)
+      quota_exempt — explicit account-policy exemption from request-count quota
       concurrency — request concurrency allowance
       wallet      — payout address if known
     """
@@ -153,23 +148,9 @@ async def resolve_api_key(plain_key: str) -> dict | None:
                 # payout path). Carried on the auth'd user for the settle path.
                 "payout_asset": row["payout_asset"],
                 "payout_aipg_bps": row["payout_aipg_bps"],
-                # Legacy paid-tier signal: quota.is_paid checks kudos against
-                # the threshold, so map the v2 paid flag onto it.
-                "kudos": PAID_KUDOS_THRESHOLD if flags.get("paid") else 0,
+                "quota_exempt": bool(flags.get("quota_exempt") or flags.get("paid")),
                 "concurrency": int(flags.get("concurrency", 30)),
             }
-
-        legacy = (
-            (
-                await session.execute(
-                    sa.select(users_table).where(users_table.c.api_key == hashed),
-                )
-            )
-            .mappings()
-            .first()
-        )
-        if legacy:
-            return {**dict(legacy), "source": "legacy", "wallet": "", "payout_wallet": ""}
 
     return None
 
@@ -203,7 +184,7 @@ async def _account_auth(account_id, *, scopes: list[str] | None = None) -> dict:
         "payout_wallet": row["payout_wallet"] or row["wallet"] or "",
         "payout_asset": row["payout_asset"],
         "payout_aipg_bps": row["payout_aipg_bps"],
-        "kudos": PAID_KUDOS_THRESHOLD if flags.get("paid") else 0,
+        "quota_exempt": bool(flags.get("quota_exempt") or flags.get("paid")),
         "concurrency": int(flags.get("concurrency", 30)),
     }
 

@@ -304,8 +304,6 @@ async def submit_passthrough_job(job_id: str, model: str, api_format: str,
         "request": raw_request,
         "api_format": api_format,
         "max_length": max_length,
-        # Passthrough endpoints are v2-only; no legacy horde bookkeeping rows.
-        "_legacy_rows": False,
     }
     try:
         await job_queue.submit_job(job_id, payload, [model])

@@ -785,7 +785,6 @@ async def probe_assignment(*, account_id, assignment_id: str) -> dict[str, Any]:
             "prompt": prompt,
             "max_length": int(challenge.get("max_tokens") or 32),
             "temperature": float(challenge.get("temperature") or 0),
-            "_legacy_rows": False,
             "_validator_probe": True,
             "_validator_assignment_id": assignment_id,
             "_validator_grid_nonce": row["grid_nonce"],

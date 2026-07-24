@@ -29,13 +29,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..config import get_settings
-from ..database import (
-    LEGACY_WORKER_DEFAULTS,
-    new_session,
-    processing_gens_table,
-    worker_models_table,
-    workers_table,
-)
+from ..database import new_session
 from ..redis_client import get_redis
 from ..services import accounts as accounts_svc
 from ..services import audio, credits, job_queue, signing, storage, token_stream
@@ -71,10 +65,10 @@ _local_ws: dict[str, WebSocket] = {}
 
 
 def _can_connect_worker(user: dict) -> bool:
-    """Allow legacy accounts and v2 keys carrying a worker capability."""
-    if user.get("source") != "v2":
-        return True
-    return bool({"worker.connect", "inference.submit"} & set(user.get("scopes") or []))
+    """Allow only Grid keys carrying an explicit worker capability."""
+    return user.get("source") == "v2" and bool(
+        {"worker.connect", "inference.submit"} & set(user.get("scopes") or []),
+    )
 
 
 def _worker_key_matches_name(user: dict, worker_name: str) -> bool:
@@ -445,107 +439,60 @@ async def worker_websocket(ws: WebSocket):
                 },
             )
 
-        if user["source"] == "v2":
-            # v2 workers live in grid_workers (wallet-keyed, JSON models).
-            now = datetime.utcnow()
-            async with await new_session() as session:
-                row = (
-                    await session.execute(
-                        sa.select(v2_workers_table.c.id, v2_workers_table.c.account_id).where(v2_workers_table.c.name == worker_name),
-                    )
-                ).first()
-                # SECURITY: a worker name is owned by the account that created it. Without
-                # this check any authenticated account could register an existing worker's
-                # name and rebind its wallet → redirect another operator's den/earnings.
-                if row and row[1] != user["account_id"]:
-                    await ws.send_json(
-                        {
-                            "type": "error",
-                            "message": "worker name already registered to another account",
-                        },
-                    )
-                    await ws.close(code=4003)
-                    return
-                if row:
-                    worker_id = str(row[0])
-                    await session.execute(
-                        sa.update(v2_workers_table)
-                        .where(v2_workers_table.c.id == row[0])
-                        .values(
-                            last_seen=now,
-                            models=models,
-                            wallet=wallet_address or None,
-                            type=job_types[0],
-                            capabilities=capabilities,
-                        ),
-                    )
-                else:
-                    worker_id = str(uuid4())
-                    await session.execute(
-                        sa.insert(v2_workers_table).values(
-                            id=worker_id,
-                            account_id=user["account_id"],
-                            name=worker_name,
-                            type=job_types[0],
-                            wallet=wallet_address or None,
-                            models=models,
-                            capabilities=capabilities,
-                            bridge_agent=bridge_agent,
-                            maintenance=False,
-                            first_seen=now,
-                            last_seen=now,
-                            jobs_completed=0,
-                            den_earned=0.0,
-                        ),
-                    )
-                await session.commit()
-        else:
-            # Legacy keys: horde workers table (Haidra bookkeeping).
-            async with await new_session() as session:
-                result = await session.execute(
-                    sa.select(workers_table).where(
-                        workers_table.c.name == worker_name,
-                        workers_table.c.user_id == user["id"],
+        now = datetime.utcnow()
+        async with await new_session() as session:
+            row = (
+                await session.execute(
+                    sa.select(v2_workers_table.c.id, v2_workers_table.c.account_id).where(
+                        v2_workers_table.c.name == worker_name,
                     ),
                 )
-                worker = result.mappings().first()
-
-                if worker:
-                    worker_id = str(worker["id"])
-                    await session.execute(
-                        sa.update(workers_table)
-                        .where(workers_table.c.id == worker["id"])
-                        .values(
-                            last_check_in=datetime.utcnow(),
-                            max_length=max_length,
-                            max_context_length=max_context_length,
-                        ),
-                    )
-                else:
-                    worker_id = str(uuid4())
-                    await session.execute(
-                        sa.insert(workers_table).values(
-                            id=worker_id,
-                            user_id=user["id"],
-                            name=worker_name,
-                            worker_type=job_types[0],
-                            last_check_in=datetime.utcnow(),
-                            max_length=max_length,
-                            max_context_length=max_context_length,
-                            threads=1,
-                            nsfw=False,
-                            maintenance=False,
-                            paused=False,
-                            bridge_agent=init_msg.get("bridge_agent", "grid-ws"),
-                            **LEGACY_WORKER_DEFAULTS,
-                        ),
-                    )
-
-                # Update model list
-                await session.execute(sa.delete(worker_models_table).where(worker_models_table.c.worker_id == worker_id))
-                for model in models:
-                    await session.execute(sa.insert(worker_models_table).values(worker_id=worker_id, model=model))
-                await session.commit()
+            ).first()
+            # SECURITY: a worker name is owned by the account that created it. Without
+            # this check any authenticated account could register an existing worker's
+            # name and rebind its wallet → redirect another operator's den/earnings.
+            if row and row[1] != user["account_id"]:
+                await ws.send_json(
+                    {
+                        "type": "error",
+                        "message": "worker name already registered to another account",
+                    },
+                )
+                await ws.close(code=4003)
+                return
+            if row:
+                worker_id = str(row[0])
+                await session.execute(
+                    sa.update(v2_workers_table)
+                    .where(v2_workers_table.c.id == row[0])
+                    .values(
+                        last_seen=now,
+                        models=models,
+                        wallet=wallet_address or None,
+                        type=job_types[0],
+                        capabilities=capabilities,
+                    ),
+                )
+            else:
+                worker_id = str(uuid4())
+                await session.execute(
+                    sa.insert(v2_workers_table).values(
+                        id=worker_id,
+                        account_id=user["account_id"],
+                        name=worker_name,
+                        type=job_types[0],
+                        wallet=wallet_address or None,
+                        models=models,
+                        capabilities=capabilities,
+                        bridge_agent=bridge_agent,
+                        maintenance=False,
+                        first_seen=now,
+                        last_seen=now,
+                        jobs_completed=0,
+                        den_earned=0.0,
+                    ),
+                )
+            await session.commit()
 
         # Register in Redis (visible to all processes)
         worker_info = {
@@ -773,54 +720,6 @@ async def worker_websocket(ws: WebSocket):
                     current_job = None
                     continue
 
-                # ── Text path ──
-                # Legacy bookkeeping rows (processing_gens FKs onto
-                # waiting_prompts) only exist for jobs submitted with legacy
-                # keys; v2-key jobs carry _legacy_rows=False and skip them.
-                legacy_rows = bool(job["payload"].get("_legacy_rows", True))
-
-                # Create or update processing_gen (may already exist from a requeued job)
-                if legacy_rows:
-                    async with await new_session() as session:
-                        existing = await session.execute(
-                            sa.select(processing_gens_table.c.id).where(processing_gens_table.c.id == job["job_id"]),
-                        )
-                        if existing.first():
-                            await session.execute(
-                                sa.update(processing_gens_table)
-                                .where(processing_gens_table.c.id == job["job_id"])
-                                .values(
-                                    worker_id=worker_id,
-                                    model=selected_model,
-                                    start_time=datetime.utcnow(),
-                                    faulted=False,
-                                    cancelled=False,
-                                ),
-                            )
-                        else:
-                            await session.execute(
-                                sa.insert(processing_gens_table).values(
-                                    id=job["job_id"],
-                                    procgen_type="text",
-                                    wp_id=job["job_id"],
-                                    worker_id=worker_id,
-                                    model=selected_model,
-                                    seed=0,
-                                    start_time=datetime.utcnow(),
-                                    created=datetime.utcnow(),
-                                    cancelled=False,
-                                    faulted=False,
-                                    fake=False,
-                                    censored=False,
-                                    job_ttl=150,
-                                    progress_percent=0,
-                                    current_step=0,
-                                    total_steps=0,
-                                    media_type="text",
-                                ),
-                            )
-                        await session.commit()
-
                 await ws.send_json(
                     {
                         "type": "job",
@@ -953,15 +852,6 @@ async def worker_websocket(ws: WebSocket):
                     model_name=selected_model,
                     generation_time_seconds=gen_time,
                 )
-                if legacy_rows:
-                    async with await new_session() as session:
-                        await session.execute(
-                            sa.update(processing_gens_table)
-                            .where(processing_gens_table.c.id == job["job_id"])
-                            .values(generation=full_text, faulted=False),
-                        )
-                        await session.commit()
-
                 # ── ATOMIC terminal: worker-payout ledger row + demand
                 # settlement commit together (or neither). grid_ledger is the
                 # source of truth the on-chain settlement pays against; the

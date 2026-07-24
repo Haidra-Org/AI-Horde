@@ -1,31 +1,36 @@
-# SPDX-FileCopyrightText: 2022 Konstantinos Thoukydidis <mail@dbzer0.com>
-# SPDX-FileCopyrightText: 2023 Tazlin
-#
+# SPDX-FileCopyrightText: 2026 AI Power Grid
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [project]
-name = "AI Horde"
-version = "4.30.0"
-description = "A Crowdsourced Generative AI cluster for everyone."
+name = "aipg-grid-core"
+version = "1.0.0"
+description = "AI Power Grid coordinator and public Grid API."
 authors = [
-    {name = "db0", email = "mail@dbzer0.com"},
+    {name = "AI Power Grid"},
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
-    "requests",
-    "loguru",
-    "Flask",
-    "flask-restx",
-    "waitress",
-    "flask-dance",
-    "bleach",
-    "redis",
-    "pillow",
-    "SQLAlchemy",
-    "boto3",
-    "semver",
-    "torch",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "SQLAlchemy~=2.0.35",
+    "asyncpg>=0.30.0",
+    "alembic>=1.13.0",
+    "redis>=5.0.0",
+    "pydantic-settings>=2.0.0",
+    "slowapi>=0.1.9",
+    "sse-starlette>=2.0.0",
+    "websockets>=13.0",
+    "httpx>=0.27.0",
+    "boto3>=1.33.7",
+    "pillow>=10.0.1",
+    "prometheus-client>=0.20.0",
+    "tiktoken>=0.7.0",
+    "eth-account==0.13.7",
+    "web3>=6.0.0",
+    "google-auth>=2.29,<3",
+    "python-dotenv>=1.0.0",
+    "aiosqlite>=0.20.0",
 ]
 license = {file = "LICENSE"}
 classifiers = [
@@ -35,8 +40,12 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://aihorde.net"
-"Bug Tracker" = "https://github.com/Haidra-Org/AI-Horde"
+"Homepage" = "https://aipowergrid.io"
+"Documentation" = "https://docs.aipowergrid.io"
+"Source" = "https://github.com/AIPowerGrid/grid-core"
+
+[tool.setuptools.packages.find]
+include = ["grid_api*"]
 
 [tool.ruff]
 line-length = 140
@@ -77,7 +86,3 @@ ignore = [
 [tool.black]
 line-length = 140
 include = '\.pyi?$'
-
-[tool.ruff.per-file-ignores]
-"horde/sandbox.py" = ["F401"]
-"server.py" = ["E402"]

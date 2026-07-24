@@ -28,8 +28,8 @@ content sanitization, and reward settlement.
 - **Worker trust:** `worker_identity.py` verifies a payout-wallet delegation to
   a funds-less per-rig signer plus a fresh registration proof; `signing.py`
   verifies that delegated signer over `aipg-job:{job_id}:{result_hash}`.
-  Managed profiles and audio workers require identity now; legacy workers stay
-  compatible until the global enforcement gate is deliberately enabled.
+  Managed profiles and audio workers require identity now; the global identity
+  gate remains a deliberate rollout for other Grid worker profiles.
 - **Worker enrollment:** `worker_enrollment.py` coordinates a short-lived
   manager/Console pairing in Redis. The manager creates the final API key and
   poll secret locally; Core stores only their hashes, installs only

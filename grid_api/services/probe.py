@@ -147,7 +147,6 @@ async def _run_job(model: str, prompt: str) -> tuple[str, str | None]:
         "max_length": PROBE_MAX_TOKENS,
         "temperature": 0,
         "top_p": 1.0,
-        "_legacy_rows": False,
     }
     await job_queue.submit_job(job_id, payload, [model])
 

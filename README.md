@@ -10,10 +10,10 @@ network. The production application is the FastAPI `grid_api` service: it serves
 the canonical `/v1` text, image, video, account, worker, validator-preview, and
 statistics APIs and dispatches jobs to workers over WebSockets.
 
-The repository still contains the inherited Flask/Horde implementation under
-`horde/`. That code provides legacy compatibility and migration history. New
-clients and workers must use `/v1`; do not build against the old `/api/v2`
-submit/poll queue.
+The inherited Flask/Horde source remains under `horde/` as frozen migration
+history. It is not imported, installed, or served by the Grid runtime. Legacy
+`/api/v2` and `/v2` requests receive a static `410 Gone`; clients and workers
+must use `/v1`.
 
 ## Current architecture
 
@@ -56,7 +56,7 @@ Python, PostgreSQL, and Redis are required. Create `.env` with the `POSTGRES_*`,
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-grid.txt
 python -m alembic upgrade head
 uvicorn grid_api.main:app --reload --host 127.0.0.1 --port 7010
 ```
@@ -80,11 +80,11 @@ Verify `http://127.0.0.1:7010/health` and
 
 - `grid_api/` - production coordinator and APIs
 - `alembic/` - Grid database migrations
-- `deploy/` - existing-host runbook and legacy deployment assets
+- `deploy/` - immutable-release bootstrap, service, Nginx, and runbook assets
 - `docs/` - architecture, economics, verification, and integration docs
 - `recipes/`, `styles/` - curated media policy/catalog data
 - `core-integration-package/` - contract ABIs and integration examples
-- `horde/` - legacy Flask compatibility code
+- `horde/` - frozen historical source; never part of the Grid runtime
 
 Read [AGENTS.md](AGENTS.md) before editing and follow the nested DOX chain.
 

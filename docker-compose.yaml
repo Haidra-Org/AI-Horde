@@ -1,62 +1,70 @@
-# SPDX-FileCopyrightText: 2024 Tazlin <tazlin.on.github@gmail.com>
-# SPDX-FileCopyrightText: 2024 ceruleandeep
-#
+# SPDX-FileCopyrightText: 2026 AI Power Grid
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 services:
-  aihorde:
+  grid-api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: aihorde:latest
-    container_name: aihorde
+    image: aipowergrid/grid-core:local
+    restart: unless-stopped
     ports:
-      - "7001:7001"
-    # The port number written in front of the colon (:) is the port number to be exposed to the outside, so if you change it, you can access it with localhost:{changePort}.
+      - "7002:7002"
     environment:
-      # Flask obtains its environment variables from the .env file.
-      # If you set a profile, the .env_{PROFILE} file is read instead.
-      - PROFILE=docker
-    volumes:
-      # .env_{PROFILE} is copied into the image when it is built.
-      # So that you can change the environment variables without rebuilding the image, mount the .env file.
-      - .env_docker:/app/.env_docker
-      # Likewise, you can mount the horde directory to change the source code without rebuilding the image.
-      - ./horde:/app/horde
-    networks:
-      - aihorde_network
+      POSTGRES_USER: aipg
+      POSTGRES_PASS: local-grid-only
+      POSTGRES_URL: postgres:5432/aipg_grid
+      REDIS_IP: redis
+      REDIS_PORT: "6379"
+      REDIS_STREAM_DB: "7"
+      GRID_API_HOST: 0.0.0.0
+      GRID_API_PORT: "7002"
+      GRID_SALT: local-grid-salt-change-before-sharing
+      GRID_USER_TOKEN_SIGNING_KEY: local-grid-token-key-change-before-sharing
+      GRID_CHARGING_ENABLED: "0"
+    command:
+      - /bin/sh
+      - -c
+      - alembic upgrade head && exec uvicorn grid_api.main:app --host 0.0.0.0 --port 7002
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7002/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 12
 
   postgres:
-    build:
-      context: docker/postgres
-      dockerfile: dockerfile
-    container_name: postgres
+    image: postgres:16-alpine
     restart: always
     environment:
-        POSTGRES_PASSWORD: changeme
+      POSTGRES_USER: aipg
+      POSTGRES_PASSWORD: local-grid-only
+      POSTGRES_DB: aipg_grid
     volumes:
-      # Use a named volume to persist the data even if the container is deleted.
       - postgres_data:/var/lib/postgresql/data/
-    ports:
-      - "5432:5432"
-    networks:
-      - aihorde_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aipg -d aipg_grid"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   redis:
-    image: redis:7
-    container_name: redis
+    image: redis:7-alpine
     restart: always
-    ports:
-      - "6379:6379"
-    networks:
-      - aihorde_network
-
-networks:
-  aihorde_network:
-    driver: bridge
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   postgres_data:

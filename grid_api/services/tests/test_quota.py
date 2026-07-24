@@ -2,7 +2,7 @@
 
 """Tests for the free-tier daily quota.
 
-Verifies: paid users bypass the cap, free users are metered per day, the
+Verifies: policy-exempt users bypass the cap, free users are metered per day, the
 limit raises 429 with a Retry-After, and a Redis outage fails OPEN (never
 blocks inference).
 """
@@ -46,8 +46,8 @@ def fake_redis(monkeypatch):
     return r
 
 
-def _free_user(uid=1, kudos=0):
-    return {"id": uid, "kudos": kudos}
+def _free_user(uid=1):
+    return {"id": uid, "quota_exempt": False}
 
 
 # ── paid bypass ──
@@ -55,19 +55,17 @@ def _free_user(uid=1, kudos=0):
 
 @pytest.mark.asyncio
 async def test_paid_user_is_not_metered(fake_redis, monkeypatch):
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
-    user = _free_user(kudos=5000)
+    user = {"id": 1, "quota_exempt": True}
     # Way over any limit, but paid → never raises, never touches redis.
     for _ in range(10_000):
         await quota.check_and_consume(user)
     assert fake_redis.store == {}
 
 
-def test_is_paid_threshold(monkeypatch):
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
-    assert quota.is_paid({"kudos": 1000}) is True
-    assert quota.is_paid({"kudos": 999}) is False
-    assert quota.is_paid({"kudos": None}) is False
+def test_is_paid_uses_explicit_policy():
+    assert quota.is_paid({"quota_exempt": True}) is True
+    assert quota.is_paid({"quota_exempt": False}) is False
+    assert quota.is_paid({"kudos": 1_000_000}) is False
     assert quota.is_paid({}) is False
 
 
@@ -77,7 +75,6 @@ def test_is_paid_threshold(monkeypatch):
 @pytest.mark.asyncio
 async def test_free_user_allowed_up_to_limit(fake_redis, monkeypatch):
     monkeypatch.setattr(quota, "FREE_DAILY_LIMIT", 5)
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
     user = _free_user()
     for _ in range(5):
         await quota.check_and_consume(user)  # 1..5 ok
@@ -86,7 +83,6 @@ async def test_free_user_allowed_up_to_limit(fake_redis, monkeypatch):
 @pytest.mark.asyncio
 async def test_free_user_blocked_over_limit(fake_redis, monkeypatch):
     monkeypatch.setattr(quota, "FREE_DAILY_LIMIT", 3)
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
     user = _free_user()
     for _ in range(3):
         await quota.check_and_consume(user)
@@ -99,7 +95,6 @@ async def test_free_user_blocked_over_limit(fake_redis, monkeypatch):
 @pytest.mark.asyncio
 async def test_first_request_sets_expiry(fake_redis, monkeypatch):
     monkeypatch.setattr(quota, "FREE_DAILY_LIMIT", 100)
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
     await quota.check_and_consume(_free_user())
     # Exactly one key, with a TTL set on first hit.
     assert len(fake_redis.expires) == 1
@@ -110,7 +105,6 @@ async def test_first_request_sets_expiry(fake_redis, monkeypatch):
 @pytest.mark.asyncio
 async def test_separate_users_have_separate_buckets(fake_redis, monkeypatch):
     monkeypatch.setattr(quota, "FREE_DAILY_LIMIT", 1)
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
     await quota.check_and_consume(_free_user(uid=1))
     # user 2 still has their own allowance
     await quota.check_and_consume(_free_user(uid=2))
@@ -126,7 +120,6 @@ async def test_separate_users_have_separate_buckets(fake_redis, monkeypatch):
 async def test_redis_outage_fails_open(monkeypatch):
     monkeypatch.setattr(quota, "get_redis", lambda: BrokenRedis())
     monkeypatch.setattr(quota, "FREE_DAILY_LIMIT", 1)
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
     # Even far past the limit, a broken quota store must not block requests.
     for _ in range(50):
         await quota.check_and_consume(_free_user())
@@ -135,6 +128,5 @@ async def test_redis_outage_fails_open(monkeypatch):
 @pytest.mark.asyncio
 async def test_missing_user_id_not_blocked(fake_redis, monkeypatch):
     monkeypatch.setattr(quota, "FREE_DAILY_LIMIT", 1)
-    monkeypatch.setattr(quota, "PAID_KUDOS_THRESHOLD", 1000)
-    await quota.check_and_consume({"kudos": 0})  # no id → pass through
-    await quota.check_and_consume({"kudos": 0})
+    await quota.check_and_consume({"quota_exempt": False})  # no id → pass through
+    await quota.check_and_consume({"quota_exempt": False})

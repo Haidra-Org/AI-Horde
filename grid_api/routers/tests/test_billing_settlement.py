@@ -25,11 +25,6 @@ from grid_api.services import credits, den, token_stream
 MODEL = "gpt-oss-120b"
 
 
-def test_legacy_waiting_prompt_columns_have_grid_safe_defaults():
-    assert o.waiting_prompts_table.c.validated_backends.default.arg is False
-    assert o.waiting_prompts_table.c.extra_slow_workers.default.arg is False
-
-
 def _fake_subscribe(events):
     async def gen(job_id, *a, **kw):
         for e in events:

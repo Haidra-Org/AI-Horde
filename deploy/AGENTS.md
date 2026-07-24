@@ -2,31 +2,27 @@
 
 ## Purpose
 
-Existing-host operations plus inherited bootstrap, nginx, and systemd assets for
-grid-core. Production services execute an immutable release selected through
-`/home/aipg/current`; the historical `/home/aipg/system-core` checkout is not a
-release artifact.
+Fresh-host and existing-host operations for the Grid-native core. Production
+executes an immutable release selected through `/home/aipg/current`.
 
 ## Ownership
 
-- `bootstrap.sh` - **quarantined legacy fresh-VM bootstrap**. It still targets an
-  obsolete repo/branch and mixed Flask topology; do not run until rewritten and
-  reviewed.
+- `bootstrap.sh` - fresh-host bootstrap pinned to an operator-supplied full
+  commit SHA. Installs only the Grid API, PostgreSQL, Redis, and Nginx.
 - `env.template` - `/etc/aipg/grid.env` source of production env names.
 - `README.md` - deploy/cutover/runbook notes.
-- `nginx/aipg-api.conf` - public route split between `/v1`, `/api/v2`, `/v2`,
-  metrics, and legacy site routes.
+- `nginx/aipg-api.conf` - Grid routes, restricted metrics, public docs/health,
+  and static `410 Gone` responses for retired API paths.
 - `systemd/aipg-gridapi.service` - uvicorn Grid API unit.
 - `systemd/aipg-payout.{service,timer}` - custodial payout one-shot and hourly
   scheduler. The service invokes the wrapper from the selected release.
-- `systemd/aipg-horde@.service` - legacy Flask unit template.
 
 ## Local Contracts
 
 - Env names in `env.template`, systemd, code, and docs must match exactly.
 - Public route split is intentional:
-  - `/v1/*` -> Grid API.
-  - `/api/v2/*` and `/v2/*` -> legacy Flask compatibility.
+  - `/v1/*`, `/`, `/health`, `/docs`, and `/openapi.json` -> Grid API.
+  - `/api/v2/*` and `/v2/*` -> static `410 Gone`; no legacy process.
   - `/metrics` should remain restricted by nginx.
 - Secrets belong in `/etc/aipg/grid.env` with restrictive permissions, never in
   git, command argv, or logs.
@@ -37,8 +33,8 @@ release artifact.
 
 - When adding services, document ports, health checks, restart behavior, and
   firewall/nginx impact.
-- Keep `GRID_SALT` shared only by server processes that validate the same legacy
-  hashes. The developer console has no local DB/salt path and must not receive it.
+- `GRID_SALT` stays server-side. The developer console has no local DB/salt path
+  and must not receive it.
 - If you rename Base/contract env vars, update `docs/`, `grid_api/services/*`,
   and any SDK examples in the same change.
 

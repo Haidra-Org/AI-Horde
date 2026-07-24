@@ -87,6 +87,10 @@ See: [03-llm-streaming.md](./03-llm-streaming.md)
 
 See: [04-worker-migration.md](./04-worker-migration.md)
 
+## Completed Runtime Retirement
+
+See: [05-horde-retirement.md](./05-horde-retirement.md)
+
 ---
 
 ## Quick Reference

@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 AI Power Grid
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""AI Power Grid — Streaming API Server.
+"""AI Power Grid coordinator and public API.
 
-Runs alongside the Flask API on a separate port. Provides:
+This is the sole production coordinator runtime. Provides:
   - POST /v1/chat/completions  (OpenAI-compatible, streaming)
   - POST /v1/messages          (Anthropic-compatible, streaming)
   - POST /v1/images/generations (OpenAI-compatible image gen)

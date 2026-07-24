@@ -30,7 +30,6 @@ async def db(monkeypatch):
     )
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
-        await conn.run_sync(database.users_table.create)
     old = database._session_factory
     database._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     monkeypatch.setenv("GRID_USER_TOKEN_SIGNING_KEY", "unit-test-" * 4)

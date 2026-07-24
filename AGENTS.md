@@ -2,9 +2,9 @@
 
 ## Purpose
 
-AI Power Grid core runtime: the legacy Horde-compatible Flask API, the live Grid
-FastAPI coordinator, worker dispatch, prepaid demand billing, worker den ledger,
-Base-chain settlement hooks, deployment assets, and integration SDKs.
+AI Power Grid core runtime: FastAPI coordinator, worker dispatch, prepaid demand
+billing, worker den ledger, Base-chain settlement hooks, deployment assets, and
+integration SDKs.
 
 This repository uses the DOX AGENTS.md hierarchy. Before editing, read this file,
 then walk from the repository root to every target path and read each nested
@@ -16,9 +16,9 @@ owning AGENTS.md and any affected parent Child DOX Index.
 
 - `grid_api/` - live v2 FastAPI Grid coordinator for `/v1`, worker WebSockets,
   credits, ledger, den, settlement, recipes, and chain sync.
-- `horde/` - legacy Flask/Horde-compatible app and `/api/v2` compatibility
-  surface. Retained in-tree; prod serves the FastAPI `/v1` coordinator, not the
-  `/api/v2` poll queue.
+- `horde/` - frozen historical Flask source retained for license and migration
+  archaeology. Grid code must not import it; production does not install or run
+  it. `/api/v2` retirement responses are static Nginx responses.
 - `alembic/` - grid-owned database migrations. Must match `grid_api/v2/schema.py`.
 - `deploy/`, `docker/`, root Docker/systemd scripts - production and local
   runtime wiring. Production selects immutable releases through
@@ -30,9 +30,8 @@ owning AGENTS.md and any affected parent Child DOX Index.
   and `grid_api.services.styles`.
 - `sdk/modelvault-worker-sdk/` - TypeScript SDK package for worker/model vault
   integration.
-- `sql_statements/` - legacy Horde SQL migration statements and cron/stored
-  procedures.
-- `tests/` - legacy integration smoke tests. `grid_api/**/tests/` owns v2 unit
+- `sql_statements/` - frozen historical SQL; not run by Grid bootstrap.
+- `tests/` - inherited integration tests; `grid_api/**/tests/` owns current unit
   and router tests.
 - Root-owned files include `server.py`, `server_grid_api.py`, `requirements*.txt`,
   `pyproject.toml`, `Dockerfile`, `docker-compose.yaml`, root READMEs, assets,
@@ -43,10 +42,9 @@ owning AGENTS.md and any affected parent Child DOX Index.
 - Keep hot inference off-chain. Use Base for consensus-critical registry,
   staking/bonding, signed receipt roots, settlement, and audit anchors; never add
   per-request chain calls in a user request path.
-- Production runs the FastAPI `/v1` coordinator (`grid_api`); workers connect via
-  the WebSocket at `/v1/workers/ws`. Legacy Flask/`horde` code still exists in-tree
-  but is not the prod serving shape. Do not delete or bypass legacy code unless the
-  route/deploy impact is explicit.
+- Production runs only the FastAPI `/v1` coordinator (`grid_api`); workers connect
+  at `/v1/workers/ws`. Do not restore legacy key lookup, table writes, Flask
+  processes, or polling routes.
 - Money paths must be fail-closed in live mode, idempotent by durable refs, and
   covered by tests. `GRID_CHARGING_ENABLED=0` is dry-run; do not assume money is
   live just because billing helpers exist.
@@ -63,7 +61,7 @@ owning AGENTS.md and any affected parent Child DOX Index.
 ## Work Guidance
 
 - Prefer `rg` / `rg --files` for exploration.
-- Use the existing stack: Python/FastAPI/Flask/SQLAlchemy/Redis for core, Foundry
+- Use the existing stack: Python/FastAPI/SQLAlchemy/Redis for core, Foundry
   or JS SDKs only inside their owning contract/SDK areas.
 - Keep env names synchronized across code, `deploy/env.template`, systemd,
   docs, and examples.
@@ -79,7 +77,7 @@ owning AGENTS.md and any affected parent Child DOX Index.
 ## Verification
 
 - Full Python sanity: `pytest` from `system-core`.
-- Dependency gate: `pip-audit -r requirements.txt`; investigate every skipped
+- Dependency gate: `pip-audit -r requirements-grid.txt`; investigate every skipped
   non-PyPI dependency separately.
 - Grid-focused: `pytest grid_api/`.
 - Service units: `pytest grid_api/services/`.

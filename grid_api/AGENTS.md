@@ -20,10 +20,11 @@ chain sync, and settlement scaffolding. Entry point: `main.py`.
 
 ## Local Contracts
 
-- **Auth:** API keys are SHA-256 hashed; `auth.py` reimplements the hash to avoid importing
-  the legacy horde - keep it byte-compatible with the dashboard's key generation.
-- **DB:** v2 code should touch only grid-owned tables unless explicitly bridging
-  legacy compatibility. Keep `v2/schema.py` and Alembic in lockstep.
+- **Auth:** API keys are SHA-256 hashed; keep `auth.py` byte-compatible with
+  server-side key issuance. Retired `users.api_key` credentials are not an
+  authentication authority.
+- **DB:** runtime code touches only Grid-owned tables. Keep `v2/schema.py` and
+  Alembic in lockstep; historical tables are read-only archaeology.
 - **Dispatch:** exactly one live job queue - `services/job_queue.py` (Redis streams). The
   `services/p2p/` variants are default-off scaffolding and must not become the
   production path without a dedicated design/test pass.

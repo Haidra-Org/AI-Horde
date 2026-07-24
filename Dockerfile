@@ -1,55 +1,40 @@
-# SPDX-FileCopyrightText: 2024 Tazlin <tazlin.on.github@gmail.com>
-# SPDX-FileCopyrightText: 2024 ceruleandeep
-#
+# SPDX-FileCopyrightText: 2026 AI Power Grid
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Use a slim base image for Python 3.10
-FROM python:3.10-slim AS python
+FROM python:3.12-slim AS build
 
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-##
-## BUILD STAGE
-##
-FROM python AS python-build-stage
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Git
-RUN apt-get update && apt-get install -y git
+WORKDIR /build
+COPY requirements-grid.txt .
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install -r requirements-grid.txt \
+    && /opt/venv/bin/pip check
 
-RUN --mount=type=cache,target=/root/.cache pip install --upgrade pip
+FROM python:3.12-slim AS runtime
 
-# Build dependencies
-COPY ./requirements.txt .
-RUN --mount=type=cache,target=/root/.cache \
-  pip wheel --wheel-dir /usr/src/app/wheels \
-  -r requirements.txt
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 aipg
 
-##
-## RUN STAGE
-##
-FROM python AS python-run-stage
-
-# git is required in the run stage because one dependency is not available in PyPI
-RUN apt-get update && apt-get install -y git
-
-RUN --mount=type=cache,target=/root/.cache pip install --upgrade pip
-
-# Install dependencies
-COPY --from=python-build-stage /usr/src/app/wheels /wheels/
-COPY ./requirements.txt .
-RUN pip install --no-cache-dir --no-index --find-links=/wheels/ \
-  -r requirements.txt \
-	&& rm -rf /wheels/
+COPY --from=build /opt/venv /opt/venv
 
 WORKDIR /app
+COPY --chown=aipg:aipg . .
 
-COPY . /app
+USER aipg
 
-# Set the environment variables
-ENV PROFILE=""
+EXPOSE 7002
 
-# Set the command to run when the container starts
-CMD ["python", "server.py", "-vvvvi", "--horde", "stable"]
-
-# Expose the port
-EXPOSE 7001
+CMD ["uvicorn", "grid_api.main:app", "--host", "0.0.0.0", "--port", "7002", "--proxy-headers", "--forwarded-allow-ips=*"]

@@ -11,6 +11,11 @@ on:
     paths:
       - 'grid_api/**'
       - 'alembic/**'
+      - 'deploy/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+      - 'docker-compose.yaml'
+      - 'pyproject.toml'
       - 'requirements*.txt'
       - '.github/workflows/prtests.yml'
 
@@ -24,6 +29,8 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip wheel setuptools
       - name: Install deps
-        run: pip install -r requirements.txt pytest pytest-asyncio
+        run: pip install -r requirements-grid.txt pytest pytest-asyncio
+      - name: Retired runtime gate
+        run: python scripts/check_retired_runtime.py
       - name: Offline test suite (grid_api)
         run: python -m pytest grid_api -q

@@ -5,9 +5,8 @@
 
 The mission is "free AI for everyone, funded by paid usage." This is the code
 that makes the free part real: every user gets a daily allowance of requests,
-metered per UTC day in Redis. Users with a kudos balance at or above the paid
-threshold (subscribers, stakers, contributors) are unmetered — they're the
-ones funding the free tier.
+metered per UTC day in Redis. Accounts carrying an explicit ``quota_exempt``
+policy flag are unmetered.
 
 Design notes:
   - Meter ACCEPTED requests only: callers invoke this right before a request
@@ -32,11 +31,6 @@ logger = logging.getLogger("grid_api.quota")
 # bounded enough that one anonymous user can't drain scarce workers.
 FREE_DAILY_LIMIT = int(os.getenv("FREE_DAILY_LIMIT", "200"))
 
-# Users at or above this kudos balance are treated as paid/contributor and
-# are not metered. Kudos accrues from subscriptions, staking, and running
-# workers — i.e. the people funding the network.
-PAID_KUDOS_THRESHOLD = int(os.getenv("PAID_KUDOS_THRESHOLD", "1000"))
-
 _QUOTA_PREFIX = "grid:quota:"
 
 
@@ -49,8 +43,8 @@ def _seconds_until_utc_midnight() -> int:
 
 
 def is_paid(user: dict) -> bool:
-    """True if the user is exempt from the daily free cap."""
-    return (user.get("kudos") or 0) >= PAID_KUDOS_THRESHOLD
+    """True if account policy explicitly exempts the user from the daily cap."""
+    return bool(user.get("quota_exempt"))
 
 
 async def check_and_consume(user: dict) -> None:

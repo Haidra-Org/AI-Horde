@@ -1,5 +1,21 @@
-# SPDX-FileCopyrightText: 2024 Tazlin <tazlin.on.github@gmail.com>
-#
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-FileCopyrightText: 2026 AI Power Grid
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
-venv
+# Deny by default. The runtime image receives only the Grid application,
+# migrations, and curated runtime data. In particular, this keeps local
+# secrets and frozen historical source out of image layers.
+*
+
+!grid_api/
+!grid_api/**
+!alembic/
+!alembic/**
+!alembic.ini
+!recipes/
+!recipes/**
+!styles/
+!styles/**
+!lora_blacklist.json
+!requirements-grid.txt
+!pyproject.toml
+!LICENSE

@@ -9,11 +9,9 @@ an atomically replaced symlink to the selected release. The historical
 `/home/aipg/system-core` checkout is retained only for forensics and rollback
 comparison and must never receive another in-place deployment.
 
-`bootstrap.sh`, the legacy Flask fleet unit, and the nginx split were written for
-the old mixed Horde cutover. **Do not use `bootstrap.sh` for a new production
-host in its current form.** It still clones an obsolete repository/branch and
-assumes console salt sharing that no longer exists. Rebuild and review that path
-before using it for fresh infrastructure.
+`bootstrap.sh` installs this same Grid-native topology on a fresh host and
+requires a reviewed full commit SHA. It does not install the retired Flask
+fleet, legacy SQL cron jobs, or polling API.
 
 This file documents updates to the existing managed host. It does not authorize
 deploying from an agent or moving money.
@@ -45,7 +43,7 @@ sudo -H -u aipg git -C "$RELEASE" checkout --detach "$COMMIT"
 test "$(sudo -H -u aipg git -C "$RELEASE" rev-parse HEAD)" = "$COMMIT"
 test -z "$(sudo -H -u aipg git -C "$RELEASE" status --porcelain)"
 sudo -H -u aipg python3 -m venv "$RELEASE/.venv"
-sudo -H -u aipg "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt"
+sudo -H -u aipg "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements-grid.txt"
 sudo -H -u aipg "$RELEASE/.venv/bin/pip" check
 ```
 
@@ -75,9 +73,6 @@ release, so Core and payout accounting cannot silently execute different trees.
 
 `-H` is intentional: asyncpg may otherwise inspect root's PostgreSQL client
 certificate path.
-
-Do not restart the legacy Flask fleet unless a compatibility route or shared
-legacy dependency actually changed.
 
 ## Verification
 
@@ -117,7 +112,5 @@ Restore a database backup only under an incident plan.
 ## Asset status
 
 - `systemd/aipg-gridapi.service` is the FastAPI unit template.
-- `systemd/aipg-horde@.service` and the `/api/v2` nginx routing are legacy
-  compatibility assets.
-- `bootstrap.sh` is quarantined until its repo URL, branch, service topology,
-  migrations, secrets, and fresh-host checks are rewritten and tested.
+- `nginx/aipg-api.conf` serves retirement responses without a legacy process.
+- `bootstrap.sh` requires `GRID_CORE_COMMIT` and installs an immutable release.

@@ -3,10 +3,10 @@
 from grid_api.routers.worker_ws import _can_connect_worker, _worker_key_matches_name
 
 
-def test_worker_connection_accepts_narrow_and_legacy_scopes():
+def test_worker_connection_accepts_narrow_grid_scopes():
     assert _can_connect_worker({"source": "v2", "scopes": ["worker.connect"]})
     assert _can_connect_worker({"source": "v2", "scopes": ["inference.submit"]})
-    assert _can_connect_worker({"source": "legacy", "scopes": []})
+    assert not _can_connect_worker({"source": "legacy", "scopes": []})
 
 
 def test_worker_connection_rejects_unrelated_v2_keys():

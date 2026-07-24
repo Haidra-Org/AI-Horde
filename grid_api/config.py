@@ -12,18 +12,14 @@ class GridSettings(BaseSettings):
     postgres_pass: str = "changeme"
     postgres_url: str = "localhost/postgres"  # host/dbname format from .env
 
-    # Redis
+    # Redis Streams, pub/sub, quota, and rate limiting
     redis_ip: str = "localhost"
     redis_port: int = 6379
-    redis_stream_db: int = 7  # Dedicated DB for Streams + Pub/Sub (avoids 0-5 used by Flask)
+    redis_stream_db: int = 7
 
     # Grid API server
     grid_api_host: str = "0.0.0.0"
     grid_api_port: int = 7002
-
-    # Legacy compatibility setting. Current /v1 media dispatch does not read
-    # this value; keep it only until remaining Flask consumers are removed.
-    flask_api_base: str = "http://127.0.0.1:7001"
 
     # Timeouts
     job_timeout_seconds: int = 300  # 5 min max generation time
