@@ -12,6 +12,7 @@ from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import expression
 
+from horde.classes.base.kudos import kudos_event
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
 from horde.utils import get_db_uuid
@@ -96,7 +97,7 @@ class ProcessingGeneration(db.Model):
         self.set_job_ttl()
         db.session.commit()
 
-    def set_generation(self, generation, things_per_sec, **kwargs):
+    def set_generation(self, generation: str, things_per_sec: float, **kwargs: object) -> float | int:
         from horde.metrics import submit_commit_duration, submit_record_duration, submit_webhook_call_duration
 
         # Use an atomic compare-and-set update so exactly one concurrent submit
@@ -150,13 +151,18 @@ class ProcessingGeneration(db.Model):
         # extend the time the hot `users` row locks are held above. Performance
         # samples are telemetry, so a separate follow-up transaction is safe.
         self.worker.record_performance(things_per_sec)
+        if self.wp.is_completed():
+            from horde.database.kudos_reservations import release_reservation
+
+            release_reservation(f"upfront:{self.wp.id}")
+            db.session.commit()
         # Send webhook after commit so external I/O does not hold DB locks.
         _t = time.monotonic()
         self.send_webhook(kudos)
         submit_webhook_call_duration.record(time.monotonic() - _t)
         return kudos
 
-    def cancel(self):
+    def cancel(self) -> float | None:
         """Cancelling requests in progress still rewards/burns the relevant amount of kudos"""
         if self.is_completed() or self.is_faulted():
             return None
@@ -169,59 +175,47 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
         # See set_generation: keep the performance write out of the locked window.
         self.worker.record_performance(things_per_sec)
+        if self.wp.is_completed():
+            from horde.database.kudos_reservations import release_reservation
+
+            release_reservation(f"upfront:{self.wp.id}")
+            db.session.commit()
         return kudos * self.worker.get_bridge_kudos_multiplier()
 
     def record(self, things_per_sec, kudos):
-        from horde.classes.base.user import User
         from horde.metrics import submit_worker_contrib_duration, submit_wp_record_usage_duration
 
-        # This transaction credits the worker's owner (record_contribution) and
-        # debits the request's owner (record_usage), which is up to two distinct
-        # `users` rows updated before a single commit. Two concurrent submissions
-        # that touch the same pair of users in the opposite order would deadlock when
-        # those UPDATEs flush ("deadlock detected ... updating tuple in relation
-        # users"). Acquire both row locks up-front in a deterministic
-        # id-ascending order so every submission locks them in the same order
-        # and no lock cycle can form. Nothing is dirty yet, so the locking SELECT
-        # does not itself flush anything.
-        #
-        # Use FOR NO KEY UPDATE (key_share=True), not the stronger FOR UPDATE: we
-        # only ever mutate non-key columns of these rows (kudos/counters), so this
-        # is sufficient for the deadlock ordering above AND it matches the lock the
-        # request path already takes in WaitingPrompt._activate(). Crucially, FOR NO
-        # KEY UPDATE does NOT conflict with the FOR KEY SHARE lock that the
-        # waiting_prompts INSERT's foreign key takes on the requester's row, so a
-        # submit no longer blocks concurrent /generate/async inserts for the same
-        # (often Anonymous, hence hot) user.
-        lock_user_ids = {self.worker.user_id, self.wp.user_id}
-        lock_user_ids.discard(None)
-        if len(lock_user_ids) > 1:
-            (db.session.query(User.id).filter(User.id.in_(lock_user_ids)).order_by(User.id.asc()).with_for_update(key_share=True).all())
-
-        cancel_txt = ""
-        if self.cancelled:
-            cancel_txt = " Cancelled"
-        if self.fake and self.worker.user == self.wp.user:
-            # We do not record usage for paused workers, unless the requestor was the same owner as the worker
-            _t = time.monotonic()
-            self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
-            submit_worker_contrib_duration.record(time.monotonic() - _t)
-            logger.info(
-                f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: "
-                f"{self.worker.name} for wp {self.wp.id}",
-            )
-        else:
-            _t = time.monotonic()
-            self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
-            submit_worker_contrib_duration.record(time.monotonic() - _t)
-            _t = time.monotonic()
-            self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos), commit=False)
-            submit_wp_record_usage_duration.record(time.monotonic() - _t)
-            log_string = (
-                f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
-            )
-            log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
-            logger.info(log_string)
+        # The worker-owner credit and the requester debit are now recorded as
+        # ledger postings (see kudos.py) rather than in-place `users` row UPDATEs,
+        # so this settlement no longer takes any users-row lock and cannot form the
+        # activate/submit deadlock cycle the old FOR NO KEY UPDATE ordering guarded
+        # against. Grouping every posting of this settlement under one event id.
+        with kudos_event(job_id=self.id, wp_type=self.wp.wp_type):
+            cancel_txt = ""
+            if self.cancelled:
+                cancel_txt = " Cancelled"
+            if self.fake and self.worker.user == self.wp.user:
+                # We do not record usage for paused workers, unless the requestor was the same owner as the worker
+                _t = time.monotonic()
+                self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
+                submit_worker_contrib_duration.record(time.monotonic() - _t)
+                logger.info(
+                    f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: "
+                    f"{self.worker.name} for wp {self.wp.id}",
+                )
+            else:
+                _t = time.monotonic()
+                self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
+                submit_worker_contrib_duration.record(time.monotonic() - _t)
+                _t = time.monotonic()
+                self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos), commit=False)
+                submit_wp_record_usage_duration.record(time.monotonic() - _t)
+                log_string = (
+                    f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, "
+                    f"delivered by worker: {self.worker.name} for wp {self.wp.id} "
+                )
+                log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
+                logger.info(log_string)
 
     def adjust_user_kudos(self, kudos):
         if self.censored:

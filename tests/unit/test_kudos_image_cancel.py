@@ -19,6 +19,7 @@ end to end over HTTP.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 import pytest
 from sqlalchemy.orm import Session
@@ -78,6 +79,7 @@ class TestInFlightCancelSettles:
         db_session: Session,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """Cancellation credits the worker and its owner the bridge-adjusted reward and returns it."""
         requester = make_user(kudos=1000)
@@ -86,6 +88,7 @@ class TestInFlightCancelSettles:
         procgen = _build_processing_generation(db_session, requester, owner)
 
         returned = procgen.cancel()
+        settle_kudos()
 
         assert procgen.worker.kudos == WORKER_REWARD
         assert owner.kudos == 1000 + WORKER_REWARD
@@ -97,6 +100,7 @@ class TestInFlightCancelSettles:
         db_session: Session,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """Cancellation debits the requester the generation kudos plus the request burn."""
         requester = make_user(kudos=1000)
@@ -105,6 +109,7 @@ class TestInFlightCancelSettles:
         procgen = _build_processing_generation(db_session, requester, owner)
 
         procgen.cancel()
+        settle_kudos()
 
         assert requester.kudos == 1000 - (GEN_KUDOS + REQUEST_BURN)
 

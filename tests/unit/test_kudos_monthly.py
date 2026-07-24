@@ -18,6 +18,7 @@ entitlement behaviour is observed deterministically.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import dateutil.relativedelta
@@ -44,10 +45,12 @@ class TestModifyMonthlyEntitlement:
         self,
         db_session: Session,
         make_user: MakeUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A positive grant credits the balance and stores the entitlement."""
         user = make_user(kudos=1000)
         user.modify_monthly_kudos(500)
+        settle_kudos()
         assert user.kudos == 1500
         assert user.monthly_kudos == 500
         assert user.monthly_kudos_last_received is not None
@@ -56,12 +59,14 @@ class TestModifyMonthlyEntitlement:
         self,
         db_session: Session,
         make_user: MakeUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """Raising an entitlement credits only the increase and leaves the received-date cursor untouched."""
         user = make_user(kudos=1000)
         user.modify_monthly_kudos(500)
         first_received = user.monthly_kudos_last_received
         user.modify_monthly_kudos(200)
+        settle_kudos()
         assert user.kudos == 1700
         assert user.monthly_kudos == 700
         assert user.monthly_kudos_last_received == first_received
@@ -70,11 +75,13 @@ class TestModifyMonthlyEntitlement:
         self,
         db_session: Session,
         make_user: MakeUser,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A reduction clamps the stored entitlement at zero and never debits the balance."""
         user = make_user(kudos=1000)
         user.modify_monthly_kudos(100)
         user.modify_monthly_kudos(-500)
+        settle_kudos()
         assert user.monthly_kudos == 0
         assert user.kudos == 1100
 
@@ -82,12 +89,13 @@ class TestModifyMonthlyEntitlement:
 class TestReceiveMonthlyKudos:
     """The recurring award credits the entitlement once per month."""
 
-    def test_entitlement_credited_on_first_receipt(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_entitlement_credited_on_first_receipt(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """The first receipt credits the stored entitlement and stamps the received-date cursor."""
         user = make_user(kudos=1000)
         user.monthly_kudos = 500
         db_session.flush()
         user.receive_monthly_kudos()
+        settle_kudos()
         assert user.kudos == 1500
         assert user.monthly_kudos_last_received is not None
 
@@ -96,15 +104,17 @@ class TestReceiveMonthlyKudos:
         db_session: Session,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        settle_kudos: Callable[[], int],
     ) -> None:
         """A moderator receives the monthly bonus on top of any entitlement."""
         user = make_user(kudos=1000)
         make_user_role(user, UserRoleTypes.MODERATOR)
         db_session.flush()
         user.receive_monthly_kudos()
+        settle_kudos()
         assert user.kudos == 1000 + MODERATOR_MONTHLY_BONUS
 
-    def test_cursor_advances_by_one_month(self, db_session: Session, make_user: MakeUser) -> None:
+    def test_cursor_advances_by_one_month(self, db_session: Session, make_user: MakeUser, settle_kudos: Callable[[], int]) -> None:
         """Receipt advances the received-date cursor exactly one month from its prior value."""
         user = make_user(kudos=1000)
         previous = datetime.utcnow() - timedelta(days=40)
@@ -113,6 +123,7 @@ class TestReceiveMonthlyKudos:
         db_session.flush()
 
         user.receive_monthly_kudos()
+        settle_kudos()
 
         assert user.kudos == 1500
         expected = previous + dateutil.relativedelta.relativedelta(months=+1)

@@ -329,3 +329,60 @@ db_pool_timeout = logfire.metric_counter(
     unit="1",
     description="SQLAlchemy QueuePool TimeoutError occurrences",
 )
+kudos_applier_lag_seconds = _seconds_histogram(
+    "horde.kudos.applier_lag",
+    "Seconds between now and the kudos ledger applier's last fold, per applier cycle",
+)
+kudos_oldest_pending_seconds = _seconds_histogram(
+    "horde.kudos.oldest_pending",
+    "Age of the oldest unapplied kudos posting",
+)
+kudos_pending_rows = logfire.metric_histogram(
+    "horde.kudos.pending_rows",
+    unit="{posting}",
+    description="Number of unapplied kudos postings",
+)
+kudos_active_reservations = logfire.metric_histogram(
+    "horde.kudos.active_reservations",
+    unit="{reservation}",
+    description="Number of active kudos holds",
+)
+kudos_oldest_reservation_seconds = _seconds_histogram(
+    "horde.kudos.oldest_reservation",
+    "Age of the oldest active kudos hold",
+)
+kudos_applier_folded = logfire.metric_counter(
+    "horde.kudos.applier.folded",
+    unit="1",
+    description="Ledger rows folded by the applier, by row_type (currency/stat)",
+)
+kudos_applier_cycles = logfire.metric_counter(
+    "horde.kudos.applier.cycles",
+    unit="1",
+    description="Applier fold cycles run",
+)
+kudos_applier_saturation = logfire.metric_counter(
+    "horde.kudos.applier.saturation",
+    unit="1",
+    description="Applier ticks that exhausted the catch-up cycle bound with a full final batch",
+)
+kudos_floor_adjustments = logfire.metric_counter(
+    "horde.kudos.floor_adjustments",
+    unit="1",
+    description="Floor-adjustment postings the applier emitted (currency minted by the balance floor)",
+)
+kudos_floor_adjustments_created = logfire.metric_counter(
+    "horde.kudos.floor_adjustments.kudos",
+    unit="kudos",
+    description="Total kudos created by floor adjustments",
+)
+kudos_reservations_rejected = logfire.metric_counter(
+    "horde.kudos.reservations.rejected",
+    unit="1",
+    description="reserve_kudos admission denials (insufficient available balance)",
+)
+kudos_transfers_idempotent_replays = logfire.metric_counter(
+    "horde.kudos.transfers.idempotent_replays",
+    unit="1",
+    description="transfer_kudos calls short-circuited as an idempotent replay",
+)

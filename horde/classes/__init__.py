@@ -9,6 +9,14 @@ from sqlalchemy.sql import text
 import horde.classes.base.stats  # noqa 401
 from horde.argparser import args
 from horde.classes.base.detection import Filter  # noqa 401
+from horde.classes.base.kudos import (  # noqa 401
+    KudosBalanceSnapshot,
+    KudosLedger,
+    KudosLedgerApplierState,
+    KudosLedgerControl,
+    KudosReservation,
+    KudosStatEvent,
+)
 from horde.classes.base.settings import HordeSettings
 from horde.classes.base.style import Style
 from horde.classes.base.team import Team  # noqa 401

@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import os
 import uuid
 from datetime import datetime, timedelta
 
@@ -12,9 +11,23 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 
 from horde import vars as hv
+from horde.classes.base.kudos import (
+    KudosAmount,
+    emit_kudos_ledger_entry,
+    emit_kudos_stat_event,
+    get_kudos_trust_threshold,
+)
 from horde.countermeasures import CounterMeasures
+from horde.database.kudos_legacy_projection import (
+    consume_user_reservation,
+    project_trust_promotion,
+    project_user_balance,
+    project_user_escrow,
+    project_user_record,
+    touch_user_activity,
+)
 from horde.discord import send_problem_user_notification
-from horde.enums import UserRecordTypes, UserRoleTypes
+from horde.enums import KudosAuditDetail, KudosEntryType, KudosStatRecord, KudosUnit, UserRecordTypes, UserRoleTypes
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -24,6 +37,17 @@ from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import generate_api_key, generate_client_id, get_db_uuid, is_profane, sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+
+# Which unit a STAT_RECORD posting denominates, by record type: request and
+# fulfilment and style rows count events; usage and contribution rows total
+# scaled things. Kept beside the emitting primitive so the mapping is one place.
+_USER_RECORD_UNITS: dict[UserRecordTypes, KudosUnit] = {
+    UserRecordTypes.CONTRIBUTION: KudosUnit.THINGS,
+    UserRecordTypes.USAGE: KudosUnit.THINGS,
+    UserRecordTypes.FULFILLMENT: KudosUnit.COUNT,
+    UserRecordTypes.REQUEST: KudosUnit.COUNT,
+    UserRecordTypes.STYLE: KudosUnit.COUNT,
+}
 
 
 class UserProblemJobs(db.Model):
@@ -51,6 +75,7 @@ class UserProblemJobs(db.Model):
 
 class UserStats(db.Model):
     __tablename__ = "user_stats"
+    __table_args__ = (UniqueConstraint("user_id", "action", name="uq_user_stats_user_action"),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = db.relationship("User", back_populates="stats")
@@ -235,6 +260,21 @@ class UserSharedKey(db.Model):
 
 class User(db.Model):
     __tablename__ = "users"
+    __table_args__ = (
+        # Backs the applier's trusted-escrow drain scan: it looks for users still
+        # holding evaluation escrow so a trusted user's escrow drains to their
+        # spendable balance. The index holds exactly the users currently carrying
+        # escrow (the active evaluating population), not an empty set. Trusted
+        # state lives in user_roles, not on this table, so it cannot be part of a
+        # single-table partial index; the scan's join applies the trust filter,
+        # which narrows the result to a normally-empty set (trusted users rarely
+        # carry residual escrow).
+        db.Index(
+            "ix_users_evaluating_kudos_positive",
+            "id",
+            postgresql_where=db.text("evaluating_kudos > 0"),
+        ),
+    )
     SUSPICION_THRESHOLD = 5
     SAME_IP_WORKER_THRESHOLD = 3
     SAME_IP_TRUSTED_WORKER_THRESHOLD = 20
@@ -479,7 +519,7 @@ class User(db.Model):
             db.session.delete(sk)
         db.session.commit()
 
-    def get_min_kudos(self):
+    def get_min_kudos(self) -> int:
         if self.is_anon():
             return -50
         elif self.is_pseudonymous():
@@ -616,27 +656,61 @@ class User(db.Model):
     def get_unique_alias(self):
         return f"{self.username}#{self.id}"
 
-    def update_user_record(self, record_type, record, increment_value, commit=True):
-        record_details = db.session.query(UserRecords).filter_by(user_id=self.id, record_type=record_type, record=record).first()
-        if not record_details:
-            record_details = UserRecords(
-                user_id=self.id,
-                record_type=record_type,
-                record=record,
-                value=round(increment_value, 2),
-            )
-            db.session.add(record_details)
-        else:
-            # The value is always added to the existing value
-            record_details.value = round(record_details.value + increment_value, 2)
-        if commit:
-            db.session.commit()
+    def update_user_record(
+        self,
+        record_type: UserRecordTypes,
+        record: str,
+        increment_value: float,
+        commit: bool = True,
+        touch_activity: bool = False,
+    ) -> None:
+        # user_records is applier-maintained: append a counter posting the applier
+        # folds into the row instead of upserting the hot row here. The quantity is
+        # dimensioned by things or request counts, not kudos, so it rides the ledger
+        # as a STAT_RECORD posting with the record type and record as its dimensions.
+        project_user_record(
+            self,
+            record_type=record_type,
+            record=record,
+            increment=increment_value,
+            touch_activity=touch_activity,
+        )
+        emit_kudos_stat_event(
+            KudosEntryType.STAT_RECORD,
+            round(increment_value, 2),
+            user_id=self.id,
+            unit=_USER_RECORD_UNITS[record_type],
+            stat_action=record_type.name,
+            record=record,
+            detail={KudosAuditDetail.TOUCH_LAST_ACTIVE: True} if touch_activity else None,
+            commit=commit,
+        )
 
-    def record_usage(self, raw_things, kudos, usage_type, commit=True):
-        if not self.is_anon():
-            self.last_active = datetime.utcnow()
-        self.modify_kudos(-kudos, "accumulated", commit=False)
-        self.update_user_record(record_type=UserRecordTypes.REQUEST, record=usage_type, increment_value=1, commit=False)
+    def record_usage(
+        self,
+        raw_things: float,
+        kudos: float,
+        usage_type: str,
+        commit: bool = True,
+        reservation_id: str | None = None,
+    ) -> None:
+        detail = {KudosAuditDetail.RESERVATION_ID: reservation_id} if reservation_id is not None else None
+        self.modify_kudos(
+            -kudos,
+            "accumulated",
+            commit=False,
+            entry_type=KudosEntryType.GENERATION,
+            detail=detail,
+        )
+        if reservation_id is not None:
+            consume_user_reservation(reservation_id, kudos)
+        self.update_user_record(
+            record_type=UserRecordTypes.REQUEST,
+            record=usage_type,
+            increment_value=1,
+            commit=False,
+            touch_activity=not self.is_anon(),
+        )
         self.update_user_record(
             record_type=UserRecordTypes.USAGE,
             record=usage_type,
@@ -647,22 +721,22 @@ class User(db.Model):
             db.session.commit()
 
     def record_contributions(self, raw_things, kudos, contrib_type, commit=True):
-        self.last_active = datetime.utcnow()
         self.update_user_record(
             record_type=UserRecordTypes.FULFILLMENT,
             record=contrib_type,
             increment_value=1,
             commit=False,
+            touch_activity=True,
         )
         # While a worker is untrusted, half of all generated kudos go for evaluation
         if not self.trusted and not self.is_anon():
             kudos_eval = round(kudos / 2, 2)
             kudos -= kudos_eval
-            self.evaluating_kudos += kudos_eval
-            self.modify_kudos(kudos, "accumulated", commit=False)
+            self.modify_evaluating_kudos(kudos_eval, KudosEntryType.GENERATION)
+            self.modify_kudos(kudos, "accumulated", commit=False, entry_type=KudosEntryType.GENERATION)
             self.check_for_trust()
         else:
-            self.modify_kudos(kudos, "accumulated", commit=False)
+            self.modify_kudos(kudos, "accumulated", commit=False, entry_type=KudosEntryType.GENERATION)
         self.update_user_record(
             record_type=UserRecordTypes.CONTRIBUTION,
             record=contrib_type,
@@ -672,29 +746,42 @@ class User(db.Model):
         if commit:
             db.session.commit()
 
-    def record_uptime(self, kudos, bypass_eval=False):
-        self.last_active = datetime.utcnow()
+    def record_uptime(self, kudos: float, bypass_eval: bool = False, commit: bool = True) -> None:
+        touch_user_activity(self)
+        emit_kudos_stat_event(
+            KudosEntryType.STAT_ACTIVITY,
+            0,
+            user_id=self.id,
+            unit=KudosUnit.COUNT,
+            record=KudosStatRecord.LAST_ACTIVE,
+            detail={KudosAuditDetail.TOUCH_LAST_ACTIVE: True},
+        )
         # While a worker is untrusted, all uptime kudos go for evaluation
         if not bypass_eval and not self.trusted and not self.is_anon():
-            self.evaluating_kudos += kudos
+            self.modify_evaluating_kudos(kudos, KudosEntryType.UPTIME_REWARD)
             self.check_for_trust()
         else:
-            self.modify_kudos(kudos, "accumulated")
+            self.modify_kudos(kudos, "accumulated", commit=False, entry_type=KudosEntryType.UPTIME_REWARD)
+        if commit:
+            db.session.commit()
 
     def record_style(self, kudos, contrib_type):
         self.update_user_record(
             record_type=UserRecordTypes.STYLE,
             record=contrib_type,
             increment_value=1,
+            commit=False,
         )
-        self.modify_kudos(kudos, "styled")
+        self.modify_kudos(kudos, "styled", commit=False, entry_type=KudosEntryType.STYLE_REWARD)
+        db.session.commit()
 
-    def check_for_trust(self):
+    def check_for_trust(self) -> None:
         """After a user passes the evaluation threshold (?? kudos)
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         """
-        if self.evaluating_kudos <= int(os.getenv("KUDOS_TRUST_THRESHOLD")):
+        threshold = get_kudos_trust_threshold()
+        if threshold is None or self.evaluating_kudos <= threshold:
             return
         if self.is_suspicious():
             return
@@ -703,16 +790,20 @@ class User(db.Model):
         # An account has to exist for at least 1 week to become trusted automatically
         if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
             return
-        self.modify_kudos(self.evaluating_kudos, "accumulated")
-        self.evaluating_kudos = 0
+        # The escrow-to-balance movement is applier-owned: the fold rule is that a
+        # trusted user's evaluation escrow always drains to the spendable balance,
+        # emitted by the applier as an EVALUATION_PROMOTION delta pair. Flipping the
+        # trust flag is the whole decision here; no kudos posting is emitted inline,
+        # so promotion timing can never strand an escrow posting.
         self.set_trusted(True)
+        project_trust_promotion(self)
 
     def modify_monthly_kudos(self, monthly_kudos):
         # We always give upfront the monthly kudos to the user once.
         # If they already had some, we give the difference but don't change the date
         logger.info(f"Modifying monthly kudos of {self.get_unique_alias()} by {monthly_kudos}")
         if monthly_kudos > 0:
-            self.modify_kudos(monthly_kudos, "recurring")
+            self.modify_kudos(monthly_kudos, "recurring", entry_type=KudosEntryType.AWARD)
         if not self.monthly_kudos_last_received:
             self.monthly_kudos_last_received = datetime.utcnow()
             logger.info(f"Last received date set to {self.monthly_kudos_last_received}")
@@ -749,7 +840,7 @@ class User(db.Model):
             # We increase the last received date by 1 exact month from the previous reward time, to avoid date creeping forward
             elif not prevent_date_change:
                 self.monthly_kudos_last_received = self.monthly_kudos_last_received + dateutil.relativedelta.relativedelta(months=+1)
-            self.modify_kudos(kudos_amount, "recurring")
+            self.modify_kudos(kudos_amount, "recurring", entry_type=KudosEntryType.AWARD)
             logger.info(
                 f"User {self.get_unique_alias()} received their {kudos_amount} monthly Kudos. "
                 f"Their new total is {self.kudos} and the last received date set to {self.monthly_kudos_last_received}",
@@ -763,27 +854,63 @@ class User(db.Model):
         base_amount += stripe_subs.get_monthly_kudos(self.id)
         return base_amount
 
-    def modify_kudos(self, kudos, action="accumulated", commit=True):
-        logger.debug(f"modifying existing {self.kudos} kudos of {self.get_unique_alias()} by {kudos} for {action}")
-        self.kudos = round(self.kudos + kudos, 2)
-        self.ensure_kudos_positive()
-        kudos_details = db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
-        if not kudos_details:
-            kudos_details = UserStats(user_id=self.id, action=action, value=round(kudos, 2))
-            db.session.add(kudos_details)
-        else:
-            kudos_details.value = round(kudos_details.value + kudos, 2)
+    def modify_kudos(
+        self,
+        kudos: KudosAmount,
+        action: str = "accumulated",
+        commit: bool = True,
+        entry_type: KudosEntryType = KudosEntryType.ADMIN_ADJUSTMENT,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        # The spendable balance is applier-maintained: record the movement as a
+        # signed ledger posting instead of mutating users.kudos here. The floor
+        # clamp (ensure_kudos_positive) is reproduced by the applier at fold time.
+        # The per-action UserStats total is unchanged and stays lock-free.
+        logger.debug(f"recording {kudos} kudos movement for {self.get_unique_alias()} ({action}/{entry_type})")
+        # The per-action UserStats total is applier-maintained too: the movement's
+        # own posting carries the stats bucket in stat_action, and the applier folds
+        # user_stats from it. No inline write of the hot per-user stats row.
+        floor_adjustment = project_user_balance(self, kudos, action)
+        emit_kudos_ledger_entry(entry_type, kudos, user_id=self.id, detail=detail)
+        if floor_adjustment > 0:
+            emit_kudos_ledger_entry(
+                KudosEntryType.FLOOR_ADJUSTMENT,
+                floor_adjustment,
+                user_id=self.id,
+                detail={KudosAuditDetail.REASON: "minimum_balance_floor"},
+            )
+        emit_kudos_stat_event(
+            entry_type,
+            kudos,
+            user_id=self.id,
+            unit=KudosUnit.KUDOS,
+            stat_action=action,
+            record=KudosStatRecord.USER_KUDOS,
+        )
         if commit:
             db.session.commit()
 
-    def ensure_kudos_positive(self):
+    def modify_evaluating_kudos(
+        self,
+        kudos: KudosAmount,
+        entry_type: KudosEntryType,
+        commit: bool = False,
+    ) -> None:
+        # The evaluation escrow is applier-maintained too: record an escrow-marked
+        # ledger posting instead of mutating users.evaluating_kudos here.
+        project_user_escrow(self, kudos)
+        emit_kudos_ledger_entry(entry_type, kudos, user_id=self.id, escrow=True)
+        if commit:
+            db.session.commit()
+
+    def ensure_kudos_positive(self) -> None:
         if self.kudos < self.get_min_kudos():
             self.kudos = self.get_min_kudos()
 
     # def get_last_kudos_stat_time(action = "award"):
     #     return db.session.query(UserStats).filter_by(user_id=self.id).filter_by(action=action).first()
 
-    def is_anon(self):
+    def is_anon(self) -> bool:
         if self.oauth_id == "anon":
             return True
         return False
@@ -858,7 +985,7 @@ class User(db.Model):
             return 1000
         return 3
 
-    def is_suspicious(self):
+    def is_suspicious(self) -> bool:
         if self.trusted:
             return False
         if len(self.suspicions) >= self.SUSPICION_THRESHOLD:

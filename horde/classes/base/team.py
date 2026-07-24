@@ -101,17 +101,11 @@ class Team(db.Model):
             worker.set_team(None)
         db.session.commit()
 
-    def record_uptime(self, seconds):
+    def record_uptime(self, seconds: int | float, commit: bool = True) -> None:
         self.uptime += seconds
         self.last_active = datetime.utcnow()
-        db.session.commit()
-
-    def record_contribution(self, contributions, kudos):
-        self.contributions = round(self.contributions + contributions, 2)
-        self.fulfilments += 1
-        self.kudos = round(self.kudos + kudos, 2)
-        self.last_active = datetime.utcnow()
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
     # Should be extended by each specific horde
     @logger.catch(reraise=True)

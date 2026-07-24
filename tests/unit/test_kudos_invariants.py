@@ -20,6 +20,7 @@ The pinned contracts:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import pytest
@@ -77,12 +78,14 @@ def _processing_form(db_session: Session, requester: User, owner: User) -> Inter
 def test_interrogation_uptime_credits_untrusted_owner_balance_without_escrow(
     db_session: Session,
     make_user: MakeUser,
+    settle_kudos: Callable[[], int],
 ) -> None:
     """The untrusted-owner bypass places the whole interrogation uptime reward on the balance and mints no escrow."""
     owner = make_user(kudos=1000)  # untrusted, non-anonymous
     worker = _primed_uptime_worker(db_session, owner)
 
     worker.check_in(4, forms=["caption"], ipaddr="10.0.0.1")
+    settle_kudos()
 
     # The bypass routes the whole reward to the spendable balance...
     assert owner.kudos == 1000 + INTERROGATION_UPTIME_REWARD
@@ -93,12 +96,14 @@ def test_interrogation_uptime_credits_untrusted_owner_balance_without_escrow(
 def test_interrogation_uptime_grants_untrusted_owner_exactly_one_reward(
     db_session: Session,
     make_user: MakeUser,
+    settle_kudos: Callable[[], int],
 ) -> None:
     """An interrogation uptime crossing grants an untrusted owner exactly one reward across balance and escrow."""
     owner = make_user(kudos=1000)
     worker = _primed_uptime_worker(db_session, owner)
 
     worker.check_in(4, forms=["caption"], ipaddr="10.0.0.1")
+    settle_kudos()
 
     total_gain = (owner.kudos - 1000) + owner.evaluating_kudos
     assert total_gain == INTERROGATION_UPTIME_REWARD
@@ -108,6 +113,7 @@ def test_cancelling_in_flight_interrogation_form_settles_like_a_submit(
     db_session: Session,
     make_user: MakeUser,
     make_user_role: MakeUserRole,
+    settle_kudos: Callable[[], int],
 ) -> None:
     """Cancelling a still-processing interrogation form settles it like a submission."""
     requester = make_user(kudos=1000)
@@ -116,6 +122,7 @@ def test_cancelling_in_flight_interrogation_form_settles_like_a_submit(
     form = _processing_form(db_session, requester, owner)
 
     form.cancel()
+    settle_kudos()
 
     assert form.worker.kudos == FORM_KUDOS
     assert owner.kudos == 1000 + FORM_KUDOS
