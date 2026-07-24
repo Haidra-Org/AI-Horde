@@ -69,6 +69,33 @@ class LegacyWorker(Protocol):
     team: LegacyTeam
 
 
+def _refresh_after_shadow_pin(obj: object) -> None:
+    """Reload a fold-maintained row once shadow mode is pinned for this transaction.
+
+    The inline projectors below own a fold-maintained column through an absolute
+    read-modify-write while shadow mode is active. The instance attribute they read
+    can have been loaded before this transaction took its mode pin: any earlier
+    attribute access reloads the row while the mode is still unresolved (the
+    spendable-balance path reloads it through the movement log line in
+    ``User.modify_kudos`` before the pin). A ledger->shadow transition fold that
+    commits between that load and the pin would then be silently overwritten by the
+    absolute write computed from the stale base.
+
+    Once ``kudos_projection_is_async`` has resolved to shadow the mode pin is held,
+    so the value is stable for the rest of the transaction: a transition needs the
+    exclusive control lock that this transaction's key-share pin now blocks, and the
+    standalone applier folds nothing in shadow (shadow emissions are applied at
+    emit; the ledger-mode tail is drained inside the transition). Flushing before
+    the refresh persists any earlier in-transaction writes to the object so the
+    refresh does not discard them; under read-committed the reload then reflects
+    this transaction's own flushed writes plus any committed transition fold.
+    """
+    from horde.flask import db
+
+    db.session.flush()
+    db.session.refresh(obj)
+
+
 def project_user_record(
     user: LegacyUser,
     *,
@@ -114,6 +141,7 @@ def project_user_balance(user: LegacyUser, amount: KudosAmount, action: str) -> 
     from horde.classes.base.user import UserStats
     from horde.database.kudos_counters import increment_counter
 
+    _refresh_after_shadow_pin(user)
     original_balance = Decimal(str(user.kudos))
     amount_decimal = Decimal(str(amount))
     user.kudos = float((original_balance + amount_decimal).quantize(Decimal("0.01")))
@@ -125,6 +153,7 @@ def project_user_balance(user: LegacyUser, amount: KudosAmount, action: str) -> 
 def project_user_escrow(user: LegacyUser, amount: KudosAmount) -> None:
     """Apply the pre-ledger evaluation-escrow mutation while shadowing."""
     if not kudos_projection_is_async():
+        _refresh_after_shadow_pin(user)
         user.evaluating_kudos = round(user.evaluating_kudos + float(amount), 2)
 
 
@@ -151,6 +180,7 @@ def project_trust_promotion(user: LegacyUser) -> None:
 def project_worker_contribution(worker: LegacyWorker, amount: float) -> None:
     """Apply the legacy worker contribution aggregate while shadowing."""
     if not kudos_projection_is_async():
+        _refresh_after_shadow_pin(worker)
         worker.contributions = round(worker.contributions + amount, 2)
 
 
@@ -164,11 +194,13 @@ def project_worker_fulfilment(
     """Apply legacy worker/team settlement aggregates while shadowing."""
     if kudos_projection_is_async():
         return
+    _refresh_after_shadow_pin(worker)
     worker.fulfilments += 1
     if team_id is None:
         return
     from horde import vars as hv
 
+    _refresh_after_shadow_pin(worker.team)
     worker.team.contributions = round(worker.team.contributions + raw_things / hv.thing_divisors[worker.wtype], 2)
     worker.team.fulfilments += 1
     worker.team.kudos = round(worker.team.kudos + kudos, 2)
@@ -181,5 +213,6 @@ def project_worker_kudos(worker: LegacyWorker, amount: float, action: str) -> No
     from horde.classes.base.worker import WorkerStats
     from horde.database.kudos_counters import increment_counter
 
+    _refresh_after_shadow_pin(worker)
     worker.kudos = round(worker.kudos + amount, 2)
     increment_counter(WorkerStats, {"worker_id": worker.id, "action": action}, amount)
