@@ -390,7 +390,17 @@ jobs:
         # Strict allowlist defined under [[tool.mypy.overrides]] in pyproject.
         # Failing here means a typed module regressed; fix the regression rather
         # than dropping the file from the allowlist.
-        run: uv run mypy horde/telemetry.py horde/metrics.py
+        run: >-
+          uv run mypy
+          horde/telemetry.py
+          horde/metrics.py
+          horde/classes/base/kudos.py
+          horde/database/kudos_counters.py
+          horde/database/kudos_db.py
+          horde/database/kudos_ledger.py
+          horde/database/kudos_legacy_projection.py
+          horde/database/kudos_reconciliation.py
+          horde/database/kudos_reservations.py
 
   deprecation-warnings-job:
     runs-on: ubuntu-latest

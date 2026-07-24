@@ -6,6 +6,8 @@ import json
 import os
 from datetime import date, datetime, timedelta
 
+import logfire
+
 try:
     import patreon
 except ImportError:
@@ -41,6 +43,7 @@ from horde.database.functions import (
     query_prioritized_wps,
     retrieve_regex_replacements,
 )
+from horde.database.kudos_reservations import release_reservations_for_business_ids
 from horde.enums import State
 from horde.flask import SQLITE_MODE, db, get_app
 from horde.horde_redis import horde_redis as hr
@@ -228,7 +231,13 @@ def check_waiting_prompts():
             (TextWaitingPrompt, TextProcessingGeneration),
         ]:
             expired_wps = db.session.query(wp_class).filter(wp_class.expiry < cutoff_time)
-            logger.info(f"Pruned {expired_wps.count()} expired Waiting Prompts")
+            expired_wp_ids = [wp_id for (wp_id,) in expired_wps.with_entities(wp_class.id).all()]
+            logger.info(f"Pruned {len(expired_wp_ids)} expired Waiting Prompts")
+            # The bulk delete never runs WaitingPrompt.delete(), so release the
+            # 'upfront:<wp-id>' admission holds here in the same transaction.
+            # Otherwise a request that expires unserved leaves its hold active and
+            # permanently depresses the payer's available kudos.
+            release_reservations_for_business_ids(f"upfront:{wp_id}" for wp_id in expired_wp_ids)
             expired_wps.delete()
             db.session.commit()
             # Faults stale ProcGens
@@ -284,6 +293,16 @@ def check_interrogations():
         for source_image_id in all_source_image_ids:
             delete_source_image(str(source_image_id))
         logger.info(f"Pruned {expired_entries.count()} expired Interrogations")
+        expired_interrogation_ids = [i_id for (i_id,) in expired_entries.with_entities(Interrogation.id).all()]
+        leaked_form_ids = [
+            form_id
+            for (form_id,) in db.session.query(InterrogationForms.id).filter(InterrogationForms.i_id.in_(expired_interrogation_ids)).all()
+        ]
+        # Deleting the interrogation cascades to its forms at the database level,
+        # so their 'interrogation:<form-id>' admission holds must be released here
+        # before the cascade removes the rows that name them; otherwise a hold on a
+        # form still processing at expiry leaks and depresses the payer's balance.
+        release_reservations_for_business_ids(f"interrogation:{form_id}" for form_id in leaked_form_ids)
         expired_entries.delete()
         db.session.commit()
         # Restarts stale forms
@@ -365,6 +384,73 @@ def prune_compiled_stats():
             if deleted:
                 logger.info(f"Pruned {deleted} rows older than {cutoff} from {model.__tablename__}")
         db.session.commit()
+
+
+@logger.catch(reraise=True)
+def apply_kudos_ledger():
+    """Fold the unapplied kudos ledger rows into the materialized balances.
+
+    Runs on the quorum node as the single writer of the balance columns, and
+    records the applier lag (now minus the last fold time) as an observable so
+    a stalled applier surfaces as growing lag rather than silent balance freeze.
+
+    A single tick keeps folding while a cycle drains a full batch, up to
+    ``KUDOS_APPLIER_MAX_CATCHUP_CYCLES``, so a backlog clears at many batches per
+    tick rather than one. Each fold is its own bounded transaction; only the
+    health metrics are recorded, once, after the loop settles.
+    """
+    from horde.database import kudos_ledger
+    from horde.database.kudos_ledger import kudos_applier_health
+    from horde.metrics import (
+        kudos_active_reservations,
+        kudos_applier_cycles,
+        kudos_applier_lag_seconds,
+        kudos_applier_saturation,
+        kudos_oldest_pending_seconds,
+        kudos_oldest_reservation_seconds,
+        kudos_pending_rows,
+    )
+
+    with get_app().app_context():
+        cycles_used = 0
+        folded_rows = 0
+        with logfire.span("horde.kudos.applier.tick") as tick_span:
+            for _ in range(kudos_ledger.KUDOS_APPLIER_MAX_CATCHUP_CYCLES):
+                folded = kudos_ledger.apply_pending_kudos(batch_size=kudos_ledger.KUDOS_APPLIER_BATCH_SIZE)
+                cycles_used += 1
+                folded_rows += folded
+                kudos_applier_cycles.add(1)
+                if folded < kudos_ledger.KUDOS_APPLIER_BATCH_SIZE:
+                    break
+            else:
+                # The loop exhausted its catch-up bound without a short final
+                # batch, so unapplied rows likely remain: the applier is at
+                # capacity and queue lag may be building.
+                kudos_applier_saturation.add(1)
+                logger.warning(
+                    f"Kudos applier exhausted {kudos_ledger.KUDOS_APPLIER_MAX_CATCHUP_CYCLES} catch-up cycles "
+                    f"with a full final batch ({folded_rows} rows folded this tick); lag may be building",
+                )
+            tick_span.set_attribute("horde.kudos.folded_rows", folded_rows)
+            tick_span.set_attribute("horde.kudos.cycles", cycles_used)
+        health = kudos_applier_health()
+        kudos_pending_rows.record(health["pending_rows"])
+        kudos_active_reservations.record(health["active_reservations"])
+        if health["heartbeat_seconds"] is not None:
+            kudos_applier_lag_seconds.record(health["heartbeat_seconds"])
+        if health["oldest_pending_seconds"] is not None:
+            kudos_oldest_pending_seconds.record(health["oldest_pending_seconds"])
+        if health["oldest_reservation_seconds"] is not None:
+            kudos_oldest_reservation_seconds.record(health["oldest_reservation_seconds"])
+
+
+@logger.catch(reraise=True)
+def prune_kudos_ledger() -> None:
+    """Compatibility no-op retained for an older rolling-deploy scheduler."""
+    from horde.database.kudos_ledger import prune_applied_kudos_ledger
+
+    with get_app().app_context():
+        prune_applied_kudos_ledger()
 
 
 @logger.catch(reraise=True)

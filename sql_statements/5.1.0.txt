@@ -1,0 +1,144 @@
+-- Kudos ledger. db.create_all() covers fresh databases; this snippet migrates
+-- existing databases. Balances continue from their current values; the ledger
+-- records deltas from cutover onward. This table is currency-only; display
+-- kudos and non-currency counters live in kudos_stat_events.
+
+CREATE TABLE IF NOT EXISTS kudos_ledger (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    escrow BOOLEAN NOT NULL DEFAULT FALSE,
+    amount NUMERIC(20, 2) NOT NULL CHECK (amount <> 'NaN'),
+    applied BOOLEAN NOT NULL DEFAULT FALSE,
+    job_id UUID NULL,
+    wp_type VARCHAR(20) NULL,
+    detail JSONB NULL
+);
+-- Supports time-range audit and recovery queries over the permanent archive.
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_created ON kudos_ledger (created);
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_user_id ON kudos_ledger (user_id);
+-- The applier claims rows still flagged unapplied (single-consumer work queue).
+-- This partial index is exactly that hot working set, ordered for the id-ordered
+-- claim scan; it shrinks to near-empty once the applier catches up.
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_unapplied ON kudos_ledger (id) WHERE NOT applied;
+
+-- Non-currency statistics have a separate append-only archive. This prevents a
+-- worker display total or request counter from being mistaken for spendable
+-- currency by reconciliation, conservation checks, or future accounting code.
+CREATE TABLE IF NOT EXISTS kudos_stat_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    user_id INTEGER NULL,
+    worker_user_id INTEGER NULL,
+    worker_id UUID NULL,
+    team_id UUID NULL,
+    job_id UUID NULL,
+    wp_type VARCHAR(20) NULL,
+    amount NUMERIC(20, 2) NOT NULL CHECK (amount <> 'NaN'),
+    unit VARCHAR(16) NOT NULL,
+    stat_action VARCHAR(32) NULL,
+    record VARCHAR(32) NULL,
+    detail JSONB NULL,
+    applied BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT kudos_stat_event_exactly_one_target CHECK (
+        (user_id IS NOT NULL AND worker_id IS NULL)
+        OR (user_id IS NULL AND worker_id IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_unapplied
+    ON kudos_stat_events (id) WHERE NOT applied;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_event_id ON kudos_stat_events (event_id);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_user_id
+    ON kudos_stat_events (user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_worker_id
+    ON kudos_stat_events (worker_id) WHERE worker_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_team_id
+    ON kudos_stat_events (team_id) WHERE team_id IS NOT NULL;
+
+-- The applier state row is only a lag heartbeat (applied_at); exactly-once
+-- folding is enforced by kudos_ledger.applied, not by a watermark.
+CREATE TABLE IF NOT EXISTS kudos_ledger_applier_state (
+    id SMALLINT PRIMARY KEY,
+    applied_at TIMESTAMP NULL
+);
+INSERT INTO kudos_ledger_applier_state (id)
+    VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS kudos_ledger_control (
+    id SMALLINT PRIMARY KEY,
+    mode VARCHAR(16) NOT NULL DEFAULT 'shadow',
+    changed_at TIMESTAMP NOT NULL DEFAULT now(),
+    CONSTRAINT kudos_ledger_control_mode CHECK (mode IN ('shadow', 'ledger'))
+);
+INSERT INTO kudos_ledger_control (id, mode)
+    VALUES (1, 'shadow') ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS kudos_reservations (
+    id UUID PRIMARY KEY,
+    business_id VARCHAR(128) NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_id UUID NULL,
+    original_amount NUMERIC(20, 2) NOT NULL CHECK (original_amount > 0),
+    remaining_amount NUMERIC(20, 2) NOT NULL CHECK (remaining_amount >= 0),
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    released_at TIMESTAMP NULL
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_reservations_event_id ON kudos_reservations (event_id);
+CREATE INDEX IF NOT EXISTS ix_kudos_reservations_active_user
+    ON kudos_reservations (user_id)
+    WHERE released_at IS NULL AND remaining_amount > 0;
+
+CREATE TABLE IF NOT EXISTS kudos_balance_snapshots (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    snapshot_id UUID NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    balance NUMERIC(20, 2) NOT NULL,
+    escrow NUMERIC(20, 2) NOT NULL,
+    applied_balance_total NUMERIC(30, 2) NOT NULL,
+    applied_escrow_total NUMERIC(30, 2) NOT NULL,
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    CONSTRAINT uq_kudos_balance_snapshot_user UNIQUE (snapshot_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_balance_snapshots_snapshot_id ON kudos_balance_snapshots (snapshot_id);
+CREATE INDEX IF NOT EXISTS ix_kudos_balance_snapshots_user_id ON kudos_balance_snapshots (user_id);
+CREATE INDEX IF NOT EXISTS ix_kudos_balance_snapshots_created ON kudos_balance_snapshots (created);
+
+-- The projector's upserts require one row per counter dimension. Consolidate
+-- any duplicates left by the legacy read-then-insert race before enforcing it.
+WITH totals AS (
+    SELECT MIN(id) AS keep_id, user_id, action, SUM(value) AS total
+    FROM user_stats GROUP BY user_id, action HAVING COUNT(*) > 1
+)
+UPDATE user_stats AS target SET value = totals.total
+FROM totals WHERE target.id = totals.keep_id;
+DELETE FROM user_stats AS duplicate
+USING user_stats AS keeper
+WHERE duplicate.user_id = keeper.user_id
+  AND duplicate.action = keeper.action
+  AND duplicate.id > keeper.id;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_stats_user_action ON user_stats (user_id, action);
+
+WITH totals AS (
+    SELECT MIN(id) AS keep_id, worker_id, action, SUM(value) AS total
+    FROM worker_stats GROUP BY worker_id, action HAVING COUNT(*) > 1
+)
+UPDATE worker_stats AS target SET value = totals.total
+FROM totals WHERE target.id = totals.keep_id;
+DELETE FROM worker_stats AS duplicate
+USING worker_stats AS keeper
+WHERE duplicate.worker_id = keeper.worker_id
+  AND duplicate.action = keeper.action
+  AND duplicate.id > keeper.id;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_worker_stats_worker_action ON worker_stats (worker_id, action);
+
+-- Backs the applier's trusted-escrow drain scan (a trusted user's evaluation
+-- escrow drains to their spendable balance). The index holds exactly the users
+-- currently carrying escrow (bounded by the active evaluating population), not
+-- an empty set. Trusted state lives in user_roles, not on users, so it is not
+-- part of this single-table partial index; the scan's join applies the trust
+-- filter, which narrows the result to a normally-empty set.
+CREATE INDEX IF NOT EXISTS ix_users_evaluating_kudos_positive ON users (id) WHERE evaluating_kudos > 0;

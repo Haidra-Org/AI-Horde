@@ -42,6 +42,10 @@ def start_background_threads():
     PrimaryTimedFunction(3600, threads.store_patreon_members, quorum=quorum)
     PrimaryTimedFunction(1800, threads.store_stripe_members, quorum=quorum)
     PrimaryTimedFunction(3600, threads.assign_monthly_kudos, quorum=quorum)
+    # The applier is the single writer of the materialized kudos balances; it runs
+    # frequently to keep applier lag within a few seconds. Applied history is a
+    # permanent recovery archive and is never scheduled for pruning.
+    PrimaryTimedFunction(3, threads.apply_kudos_ledger, quorum=quorum)
     PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
     PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
     PrimaryTimedFunction(3600, threads.prune_compiled_stats, quorum=quorum)

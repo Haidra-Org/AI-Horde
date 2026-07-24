@@ -37,7 +37,8 @@ from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
-from horde.enums import WarningMessage
+from horde.database.kudos_reservations import reserve_kudos
+from horde.enums import KudosEntryType, WarningMessage
 from horde.flask import cache, db, get_app
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
@@ -291,8 +292,13 @@ class ImageAsyncGenerate(GenerateTemplate):
                     f"to fulfill this request ({required_kudos}).",
                     rc="SharedKeyInsufficientKudos",
                 )
-        if needs_kudos is True:
-            if required_kudos > self.user.kudos:
+        if needs_kudos is True and required_kudos > 0:
+            reservation = reserve_kudos(
+                self.user,
+                required_kudos,
+                business_id=f"upfront:{self.wp.id}",
+            )
+            if reservation is None:
                 if self.args.allow_downgrade and not disable_downgrade:
                     self.wp.downgrade(resolution)
                 else:
@@ -896,7 +902,7 @@ class Aesthetics(Resource):
             raise e.InvalidAestheticAttempt(
                 "Oops, Something went wrong when submitting the request. Please contact us.",
             )
-        wp.user.modify_kudos(self.kudos, "awarded")
+        wp.user.modify_kudos(self.kudos, "awarded", entry_type=KudosEntryType.AWARD)
         return ({"reward": self.kudos}, 200)
 
 

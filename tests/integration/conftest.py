@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 import pytest
@@ -33,8 +33,10 @@ def _seed_core_rows() -> None:
     Integration tests do not rely on cron/stored-procedure setup; they only
     need schema objects plus baseline records for anonymous user and settings.
     """
+    from horde.classes.base.kudos import KudosLedgerControl
     from horde.classes.base.settings import HordeSettings
     from horde.classes.base.user import User
+    from horde.enums import KudosLedgerMode
     from horde.flask import db
     from horde.utils import hash_api_key
 
@@ -53,6 +55,10 @@ def _seed_core_rows() -> None:
     settings = HordeSettings.query.first()
     if not settings:
         db.session.add(HordeSettings())
+
+    control = db.session.query(KudosLedgerControl).filter_by(id=1).first()
+    if control is None:
+        db.session.add(KudosLedgerControl(id=1, mode=str(KudosLedgerMode.LEDGER)))
 
     db.session.commit()
 
@@ -172,6 +178,37 @@ def _reset_redis_state() -> None:
 @pytest.fixture
 def client(app: Flask) -> FlaskClient:
     return app.test_client()
+
+
+@pytest.fixture
+def settle_kudos(app: Flask) -> Callable[[], int]:
+    """Return a helper that folds all pending kudos ledger rows immediately.
+
+    Kudos balances are applier-maintained: a movement is recorded as a ledger
+    posting and materialized into ``users.kudos``/``users.evaluating_kudos``/
+    ``workers.kudos`` by the applier. Call the returned helper before asserting a
+    balance (or before an endpoint whose upfront gate reads the balance) so the
+    assertion observes the folded result. Amounts and routing are unchanged; only
+    the observation point is. The helper pushes its own app context so it can be
+    called between the test's own ``app.app_context()`` blocks.
+
+    Folding runs to quiescence: a fold can emit follow-on postings (a trusted
+    user's escrow drains via an applier-emitted delta pair), so this iterates
+    cycles until one does no work, up to a bounded cap.
+    """
+    from horde.database.kudos_ledger import apply_pending_kudos
+
+    def _settle() -> int:
+        with app.app_context():
+            total = 0
+            for _ in range(10):
+                folded = apply_pending_kudos()
+                total += folded
+                if folded == 0:
+                    break
+            return total
+
+    return _settle
 
 
 @pytest.fixture

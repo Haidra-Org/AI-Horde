@@ -34,6 +34,7 @@ from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.detection import prompt_checker
 from horde.discord import send_problem_user_notification
+from horde.enums import KudosEntryType
 from horde.flask import cache, db, get_app
 from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
@@ -886,6 +887,13 @@ class TransferKudos(Resource):
         help="The amount of kudos to transfer.",
         location="json",
     )
+    parser.add_argument(
+        "Idempotency-Key",
+        type=str,
+        required=False,
+        location="headers",
+        help="Optional retry key; repeated successful transfers with the same key are applied once.",
+    )
 
     decorators = [
         limiter.limit("1/second", key_func=lim.get_request_api_key),
@@ -909,6 +917,7 @@ class TransferKudos(Resource):
             self.args["apikey"],
             self.args["username"],
             self.args["amount"],
+            idempotency_key=self.args["Idempotency-Key"],
         )
         kudos = ret[0]
         error = ret[1]
@@ -973,7 +982,7 @@ class AwardKudos(Resource):
         #     return([0,'Target user is rejected.'])
         if dest_user.flagged:
             return [0, "Target user is rejected."]
-        dest_user.modify_kudos(self.args.amount, "awarded")
+        dest_user.modify_kudos(self.args.amount, "awarded", entry_type=KudosEntryType.AWARD)
         return ({"awarded": self.args.amount}, 200)
 
 
@@ -1644,8 +1653,10 @@ class UserSingle(Resource):
         if self.args.kudos is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT UserSingle")
-            user.modify_kudos(self.args.kudos, "admin")
-            ret_dict["new_kudos"] = user.kudos
+            user.modify_kudos(self.args.kudos, "admin", entry_type=KudosEntryType.ADMIN_ADJUSTMENT)
+            from horde.database.kudos_reservations import effective_kudos
+
+            ret_dict["new_kudos"] = float(effective_kudos(user))
         if self.args.monthly_kudos is not None:
             if not os.getenv("ADMINS") or admin.get_unique_alias() not in json.loads(os.getenv("ADMINS")):
                 raise e.NotAdmin(admin.get_unique_alias(), "PUT UserSingle")
@@ -3029,6 +3040,11 @@ class Heartbeat(Resource):
             health = "DOWN"
         if waitress_metrics.queue > 0:
             health = "OVERLOADED"
+        from horde.database.kudos_ledger import kudos_applier_health
+
+        kudos_health = kudos_applier_health() if db_conn else {}
+        if kudos_health.get("oldest_pending_seconds", 0) and kudos_health["oldest_pending_seconds"] > 30:
+            health = "DEGRADED"
         return {
             "message": health,
             "version": HORDE_VERSION,
@@ -3036,6 +3052,7 @@ class Heartbeat(Resource):
             "threads": waitress_metrics.threads,
             "active_count": waitress_metrics.active_count,
             "db_connection": db_conn,
+            "kudos_ledger": kudos_health,
         }, 200
 
 

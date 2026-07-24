@@ -178,5 +178,12 @@ warn_unused_ignores = true
 module = [
     "horde.telemetry",
     "horde.metrics",
+    "horde.classes.base.kudos",
+    "horde.database.kudos_counters",
+    "horde.database.kudos_db",
+    "horde.database.kudos_ledger",
+    "horde.database.kudos_legacy_projection",
+    "horde.database.kudos_reconciliation",
+    "horde.database.kudos_reservations",
 ]
 strict = true

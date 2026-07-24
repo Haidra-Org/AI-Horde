@@ -385,7 +385,12 @@ def create_test_user_for_local_testing():
     if not moderator:
         user.set_trusted(trusted)
     if isinstance(kudos, int) and user.kudos != kudos:
-        user.modify_kudos(kudos - user.kudos, "admin")
+        # The materialized balance is applier-maintained, so routing this through
+        # the ledger would re-emit the same delta on every call while the applier
+        # lags (user.kudos stays stale), over-crediting the account. This local
+        # bootstrap sets an absolute target balance, so write users.kudos directly.
+        user.kudos = kudos
+        db.session.commit()
     user.refresh_cache()
 
     return (

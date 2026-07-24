@@ -2,13 +2,19 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from typing import Any
+
 from sqlalchemy import func
 
+from horde.classes.base.kudos import emit_kudos_stat_event
 from horde.classes.base.worker import (
     WorkerPerformance,
     WorkerTemplate,
     uuid_column_type,
 )
+from horde.database.kudos_legacy_projection import project_worker_fulfilment
+from horde.database.kudos_reservations import available_kudos
+from horde.enums import KudosAggregate, KudosEntryType, KudosUnit
 from horde.flask import db
 from horde.logger import logger
 
@@ -36,9 +42,9 @@ class InterrogationWorker(WorkerTemplate):
     processing_forms = db.relationship("InterrogationForms", back_populates="worker")
     wtype = "interrogation"
 
-    def check_in(self, max_tiles, **kwargs):
+    def check_in(self, max_tiles: int, **kwargs: Any) -> bool:
         if not super().check_in(**kwargs):
-            return
+            return False
         self.max_power = max_tiles
         # If's OK to provide an empty list here as we don't actually modify this var
         # We only check it in can_generate
@@ -53,6 +59,7 @@ class InterrogationWorker(WorkerTemplate):
         logger.trace(
             f"{paused_string}Interrogation Worker {self.name} checked-in, offering forms: {form_names} @ {self.max_power} max tiles",
         )
+        return True
 
     def calculate_uptime_reward(self):
         return 40
@@ -71,24 +78,33 @@ class InterrogationWorker(WorkerTemplate):
             if not interrogation_form.interrogation.safe_ip and not interrogation_form.interrogation.user.trusted:
                 return False, "untrusted"
         if self.require_upfront_kudos:
-            user_actual_kudos = interrogation_form.interrogation.user.kudos
-            # We don't want to take into account minimum kudos
-            if user_actual_kudos > 0:
-                user_actual_kudos -= interrogation_form.interrogation.user.get_min_kudos()
+            user_actual_kudos = available_kudos(interrogation_form.interrogation.user)
             if (
                 not interrogation_form.interrogation.user.trusted
                 and interrogation_form.interrogation.user.get_unique_alias() not in self.prioritized_users
-                and user_actual_kudos < interrogation_form.kudos + 1  # All forms take +1 kudos than they give to the worker
+                and user_actual_kudos < interrogation_form.kudos + (2 if interrogation_form.interrogation.slow_workers else 1)
             ):
                 return False, "kudos"
         return True, None
 
     @logger.catch(reraise=True)
-    def record_interrogation(self, kudos, seconds_taken):
+    def record_interrogation(self, kudos: float, seconds_taken: float) -> None:
         """We record the servers newest interrogation contribution"""
-        self.user.record_contributions(raw_things=0, kudos=kudos, contrib_type=self.wtype)
-        self.modify_kudos(kudos, "interrogated")
-        self.fulfilments += 1
+        self.user.record_contributions(raw_things=0, kudos=kudos, contrib_type=self.wtype, commit=False)
+        self.modify_kudos(kudos, "interrogated", commit=False, entry_type=KudosEntryType.GENERATION)
+        emit_kudos_stat_event(
+            KudosEntryType.STAT_CONTRIBUTION,
+            1,
+            worker_id=self.id,
+            worker_user_id=self.user_id,
+            unit=KudosUnit.COUNT,
+            stat_action=KudosAggregate.FULFILMENTS,
+        )
+        # workers.fulfilments is applier-maintained from the STAT_CONTRIBUTION
+        # posting above once cutover completes; shadow mode still owns the counter
+        # inline. Interrogation forms carry no team attribution and no raw things,
+        # so only the worker's own fulfilment count moves.
+        project_worker_fulfilment(self, team_id=None, raw_things=0, kudos=kudos)
         performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.asc())
         if performances.count() >= 20:
             # Keep only the 20 most recent performance records
@@ -100,7 +116,6 @@ class InterrogationWorker(WorkerTemplate):
             ).delete(synchronize_session=False)
         new_performance = WorkerPerformance(worker_id=self.id, performance=seconds_taken)
         db.session.add(new_performance)
-        db.session.commit()
         # if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
         #     self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
 
