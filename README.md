@@ -72,6 +72,9 @@ The AI Horde middleware can also be deployed privately within any enterprise env
 
 For a high-level overview of how the AI Horde operates, including diagrams of the request/job lifecycle, see the [request/job lifecycle explanation](https://github.com/Haidra-Org/haidra-assets/blob/main/docs/workers.md).
 
+Maintainers and contributors can find repository-specific architecture documentation in [the local documentation
+index](docs/README.md), including the kudos accounting explanation, reference, and operational procedure.
+
 There are also individual readmes for each specific mode supported by the AI Horde.
 
 - [Image generation Readme](README_StableHorde.md)
