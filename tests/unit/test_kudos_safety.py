@@ -286,6 +286,61 @@ def test_snapshot_replay_accounts_for_flooring_across_separate_batches(db_sessio
     assert reconcile_balances(snapshot_id) == []
 
 
+def test_snapshot_captures_user_without_ledger_rows(db_session, make_user):
+    """A user with no applied ledger movements still gets a zero-total baseline.
+
+    The snapshot is built by a set-based INSERT ... SELECT that LEFT JOINs users
+    against aggregated ledger totals; a user absent from that aggregate must
+    still receive a row with zero applied totals rather than being dropped.
+    """
+    user = make_user(kudos=100, evaluating_kudos=7)
+    db_session.commit()
+
+    snapshot_id = create_balance_snapshot()
+
+    row = db_session.query(KudosBalanceSnapshot).filter_by(snapshot_id=snapshot_id, user_id=user.id).one()
+    assert row.balance == 100
+    assert row.escrow == 7
+    assert row.applied_balance_total == 0
+    assert row.applied_escrow_total == 0
+    assert reconcile_balances(snapshot_id) == []
+
+
+def test_reconciliation_detects_and_repairs_escrow_only_drift(db_session, make_user):
+    """Escrow drift alone is detected and compensated without touching balance.
+
+    The applied-total aggregate splits escrow from spendable movements, so a
+    projection that diverges only in the escrow balance must surface as drift and
+    be repaired by a single escrow reconciliation posting.
+    """
+    user = make_user(kudos=100, evaluating_kudos=0)
+    db_session.commit()
+    snapshot_id = create_balance_snapshot()
+    emit_kudos_ledger_entry(KudosEntryType.GENERATION, 40, user_id=user.id, escrow=True)
+    _settle_all()
+    assert user.evaluating_kudos == 40
+    user.evaluating_kudos = 999
+    db_session.commit()
+
+    drifts = reconcile_balances(snapshot_id)
+    assert len(drifts) == 1
+    drift = drifts[0]
+    assert drift.user_id == user.id
+    assert drift.expected_balance == 100
+    assert drift.actual_balance == 100
+    assert drift.expected_escrow == 40
+    assert drift.actual_escrow == 999
+
+    reconcile_balances(snapshot_id, apply_repairs=True)
+    reconcile_balances(snapshot_id, apply_repairs=True)
+    assert db_session.query(KudosLedger).filter(KudosLedger.entry_type == KudosEntryType.RECONCILIATION).count() == 1
+    _settle_all()
+    db_session.refresh(user)
+    assert user.evaluating_kudos == 40
+    assert user.kudos == 100
+    assert reconcile_balances(snapshot_id) == []
+
+
 def test_released_hold_exposes_its_unapplied_debit_to_admission(db_session, make_user, fake_redis):
     """A tagged debit counts against admission once its hold has been released.
 
