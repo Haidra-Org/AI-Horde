@@ -8,17 +8,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import uuid
 from dataclasses import asdict
 
-from horde.classes.base.kudos import (
+# This operational CLI runs per-invocation inside the app container (docker exec),
+# inheriting the OTLP endpoint env var. Disabling the OTEL SDK before importing
+# horde keeps these short-lived cutover/reconciliation commands from paying
+# exporter setup and blocking on shutdown-flush retries against telemetry
+# backends. setdefault leaves OTEL_SDK_DISABLED as the operator override, so
+# exporting it =false before invoking re-enables telemetry. Must precede the
+# horde imports: horde.flask imports horde.telemetry at import time and metric
+# objects initialize when horde.metrics is imported.
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
+from horde.classes.base.kudos import (  # noqa: E402
     get_kudos_ledger_mode,
     set_kudos_ledger_mode,
 )
-from horde.database.kudos_ledger import apply_pending_kudos, kudos_applier_health
-from horde.database.kudos_reconciliation import create_balance_snapshot, reconcile_balances
-from horde.enums import KudosLedgerMode
-from horde.flask import create_app
+from horde.database.kudos_ledger import apply_pending_kudos, kudos_applier_health  # noqa: E402
+from horde.database.kudos_reconciliation import create_balance_snapshot, reconcile_balances  # noqa: E402
+from horde.enums import KudosLedgerMode  # noqa: E402
+from horde.flask import create_app  # noqa: E402
 
 
 def _parser() -> argparse.ArgumentParser:
