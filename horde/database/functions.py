@@ -34,6 +34,7 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.database.classes import FakeWPRow
+from horde.database.kudos_legacy_projection import consume_user_reservation
 from horde.database.kudos_reservations import reserve_kudos
 from horde.enums import KudosAuditDetail, KudosEntryType, State
 from horde.flask import SQLITE_MODE, db
@@ -530,8 +531,8 @@ def transfer_kudos(
     if dest_user.education:
         transfer_type = "donated"
     # The payer hold, audit row, debit, and credit are one transaction.  The
-    # reservation serializes only this payer and remains active until the
-    # applier materializes both postings.
+    # reservation serializes only this payer; it is consumed inline when the
+    # projection owns writes and at fold time when the applier does.
     scoped_retry_key = None if idempotency_key is None else f"transfer:{source_user.id}:{idempotency_key}"
     with kudos_event(idempotency_key=scoped_retry_key) as event:
         prior_postings = db.session.query(KudosLedger).filter(KudosLedger.event_id == event.event_id).all()
@@ -578,6 +579,10 @@ def transfer_kudos(
             detail={KudosAuditDetail.RESERVATION_ID: reservation.business_id},
         )
         dest_user.modify_kudos(amount, "received", commit=False, entry_type=KudosEntryType.TRANSFER)
+        # When the debit above was materialized inline its ledger row is born
+        # applied, so the applier's fold-time consumption never sees this hold;
+        # consume it here in that case (no-op while projection is async).
+        consume_user_reservation(reservation.business_id, amount)
         db.session.commit()
     hr.horde_r_setex(f"kudos_transfer_{source_user.id}-{dest_user.id}", timedelta(seconds=60), 1)
     logger.info(f"{source_user.get_unique_alias()} transfered {amount} kudos to {dest_user.get_unique_alias()}")
