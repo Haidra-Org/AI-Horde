@@ -1,0 +1,19 @@
+{
+  "tabWidth": 2,
+  "printWidth": 119,
+  "trailingComma": "all",
+  "bracketSpacing": true,
+  "semi": true,
+  "singleQuote": true,
+  "endOfLine": "lf",
+  "htmlWhitespaceSensitivity": "css",
+  "overrides": [
+    {
+      "files": "*.md",
+      "options": {
+        "tabWidth": 4,
+        "proseWrap": "always"
+      }
+    }
+  ]
+}
