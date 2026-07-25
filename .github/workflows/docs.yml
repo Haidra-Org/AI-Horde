@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: AI-Horde docs
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'zensical.toml'
+      - '.github/workflows/docs.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'zensical.toml'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Generated decision index is current
+        run: python3 docs/haidra-assets/tools/gen_adr_index.py docs/decisions --check
+
+      - name: Cited code paths exist
+        run: python3 docs/haidra-assets/tools/check_code_refs.py docs/README.md docs/explanation docs/reference docs/how-to docs/decisions
+
+      - name: Site builds strictly
+        run: uvx --from "zensical==0.0.51" zensical build -s
+
+      - name: License compliance
+        run: uvx --from "reuse[charset-normalizer]" reuse lint
+
+      - name: Internal links resolve
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress docs
+          fail: true
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: docs
+    steps:
+      - uses: actions/configure-pages@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - run: pip install zensical
+      - run: zensical build --clean 
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - uses: actions/deploy-pages@v5
+        id: deployment
