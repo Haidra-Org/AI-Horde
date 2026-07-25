@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Static documentation site over docs/, built with Zensical (https://zensical.org).
+# Navigation is implicit from the directory structure; docs/README.md is the landing
+# page. Build with `uvx zensical build`; preview with `uvx zensical serve`.
+
+[project]
+site_name = "AI Horde"
+site_description = "Implementation and operation documentation for the AI Horde service."
+copyright = "AGPL-3.0-or-later"
+
+# Top-level sections mirror the Diataxis classes. Decision records deliberately enter
+# navigation only through their generated index; the records are reached from the index,
+# cross-links, and search, so navigation does not grow with the record count.
+nav = [
+    { "Home" = "README.md" },
+    { "Explanation" = [
+        { "Kudos accounting" = "explanation/kudos_accounting.md" },
+    ] },
+    { "Reference" = [
+        { "Overview" = "reference/README.md" },
+        { "Caching and freshness" = "reference/caching_and_freshness.md" },
+        { "Worker check-in" = "reference/worker_checkin.md" },
+        { "Job pop" = "reference/job_pop.md" },
+        { "Generation lifecycle" = "reference/generation_lifecycle.md" },
+        { "Status reporting" = "reference/status_reporting.md" },
+        { "Kudos" = "reference/kudos.md" },
+        { "Kudos accounting" = "reference/kudos_accounting.md" },
+        { "Users and trust" = "reference/users_and_trust.md" },
+        { "Countermeasures" = "reference/countermeasures.md" },
+        { "Interrogation" = "reference/interrogation.md" },
+        { "Asset storage" = "reference/asset_storage.md" },
+        { "Statistics and metrics" = "reference/stats_metrics.md" },
+        { "Styles" = "reference/styles.md" },
+    ] },
+    { "How-to" = [
+        { "Kudos ledger operations" = "how-to/kudos_ledger_operations.md" },
+    ] },
+    { "Decisions" = "decisions/index.md" },
+    { "Concepts" = [
+        { "Introduction" = "haidra-assets/docs/intro.md" },
+        { "Why the Horde exists" = "haidra-assets/docs/why.md" },
+        { "Definitions" = "haidra-assets/docs/definitions.md" },
+        { "Workers" = "haidra-assets/docs/workers.md" },
+        { "Job lifecycle" = "haidra-assets/docs/job_lifecycle.md" },
+        { "Kudos" = "haidra-assets/docs/kudos.md" },
+    ] },
+    { "Standards" = [
+        { "Documentation" = "haidra-assets/docs/meta/documentation.md" },
+        { "Pull requests" = "haidra-assets/docs/meta/pull_requests.md" },
+        { "Python" = "haidra-assets/docs/meta/python.md" },
+    ] },
+]
+
+[project.theme]
+language = "en"
+logo = "haidra-assets/haidra-logo/haidra-logo-path.svg"
+favicon = "haidra-assets/haidra-logo/haidra-transparent-zoomed-in.png"
+features = [
+    "content.code.copy",
+    "content.tooltips",
+    "navigation.footer",
+    "navigation.indexes",
+    "navigation.path",
+    "navigation.tabs",
+    "navigation.tabs.sticky",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+    "toc.follow",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.footnotes]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.tables]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.magiclink]
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+    { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
