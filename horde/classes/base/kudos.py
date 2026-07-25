@@ -292,22 +292,27 @@ _MODE_CACHE_KEY = "kudos_ledger_mode"
 def get_kudos_ledger_mode() -> KudosLedgerMode:
     """Return and transaction-pin the mode, defaulting installations to shadow.
 
-    The first read in a transaction takes a key-share lock on the control row and
-    holds it until the caller commits; a mode transition takes an exclusive lock,
-    so every mutation that observed the old mode finishes before the transition
-    can become visible. Later reads in the same transaction return the value the
-    first read pinned without re-querying: a single settlement issues many mode
-    reads of one global hot row, and the transaction pin already fixes the answer
-    for the whole transaction. The cache is keyed on the transaction the pinning
-    read ran in, so a commit or rollback (which ends that transaction) forces the
-    next read to re-take the lock.
+    The first read in a transaction takes the shared mode gate (an advisory
+    lock, see :func:`horde.database.kudos_db.acquire_mode_pin`) and holds it
+    until the caller commits; a mode transition takes the same gate
+    exclusively, so every mutation that observed the old mode finishes before
+    the transition can become visible, while the gate's fair queueing keeps a
+    waiting transition from being starved by new pins. Later reads in the same
+    transaction return the value the first read pinned without re-querying: a
+    single settlement issues many mode reads, and the transaction pin already
+    fixes the answer for the whole transaction. The cache is keyed on the
+    transaction the pinning read ran in, so a commit or rollback (which ends
+    that transaction) forces the next read to re-take the gate.
     """
+    from horde.database.kudos_db import acquire_mode_pin
+
     session = db.session()
     cached: tuple[object, KudosLedgerMode] | None = session.info.get(_MODE_CACHE_KEY)
     active_transaction = session.get_transaction()
     if cached is not None and active_transaction is not None and cached[0] is active_transaction:
         return cached[1]
-    control = session.query(KudosLedgerControl).filter_by(id=1).with_for_update(read=True, key_share=True).first()
+    acquire_mode_pin()
+    control = session.query(KudosLedgerControl).filter_by(id=1).first()
     mode = KudosLedgerMode.SHADOW if control is None else control.mode
     session.info[_MODE_CACHE_KEY] = (session.get_transaction(), mode)
     return mode
@@ -328,17 +333,18 @@ def get_kudos_trust_threshold() -> Decimal | None:
 
 def set_kudos_ledger_mode(mode: KudosLedgerMode) -> None:
     """Change mutation ownership after all old-mode writers have completed."""
-    # Lock order is applier -> control everywhere. The applier can read the
-    # control row while emitting a floor/drain posting, so reversing this order
-    # here would create precisely the cross-subsystem deadlock this design is
+    # Lock order is applier -> mode gate everywhere. The applier can read the
+    # mode while emitting a floor/drain posting, so reversing this order here
+    # would create precisely the cross-subsystem deadlock this design is
     # intended to eliminate.
-    from horde.database.kudos_db import acquire_applier_lock
+    from horde.database.kudos_db import acquire_applier_lock, acquire_mode_gate_exclusive
 
     # Drop any memoized mode from an earlier read in this session so the change
     # this function commits cannot be masked by a stale per-transaction cache.
     db.session().info.pop(_MODE_CACHE_KEY, None)
     acquire_applier_lock()
-    control = db.session.query(KudosLedgerControl).filter_by(id=1).with_for_update().first()
+    acquire_mode_gate_exclusive()
+    control = db.session.query(KudosLedgerControl).filter_by(id=1).first()
     if control is None:
         control = KudosLedgerControl(id=1, mode=KudosLedgerMode.SHADOW)
         db.session.add(control)
@@ -349,7 +355,7 @@ def set_kudos_ledger_mode(mode: KudosLedgerMode) -> None:
     previous_mode = control.mode
     if mode == KudosLedgerMode.SHADOW:
         # Existing writers that observed ledger mode have finished because the
-        # exclusive control-row lock waited for their key-share locks. New
+        # exclusive mode gate waited for their shared pins. New
         # writers are now blocked, and the applier advisory lock prevents a
         # concurrent projector. Fold the final tail in this same transaction so
         # no old-mode posting can be reordered after a shadow inline mutation.

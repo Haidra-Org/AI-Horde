@@ -238,13 +238,79 @@ def test_hot_payer_reservations_never_double_spend_and_fold_exactly_once(concurr
         db.session.remove()
 
 
+# A healthy pin handoff is a couple of database round trips; this timeout only
+# unwedges a writer whose peer is queued behind an already-admitted transition.
+_HANDOFF_TIMEOUT_SECONDS = 2.0
+
+
+def test_mode_transition_is_not_starved_by_gapless_writer_pins(concurrent_app: object) -> None:
+    """A mode transition acquires its exclusive gate despite mode pins that never leave a gap.
+
+    Two writer threads hand the transaction-scoped mode pin to each other in
+    strict alternation: a writer commits only on its turn, and it passes the
+    turn only after re-acquiring a fresh pin, so at every instant at least one
+    pin is provably held. A gate with fair queueing admits a waiting transition
+    as soon as the pins held when it queued drain, because later pin requests
+    queue behind the exclusive waiter. A gate that lets new shared holders
+    bypass a queued exclusive waiter starves the transition indefinitely, which
+    the coordinator's statement timeout converts into a deterministic failure
+    rather than a hung suite.
+    """
+    app = concurrent_app
+    errors: list[BaseException] = []
+    stop_writers = threading.Event()
+    ready = threading.Semaphore(0)
+    turns = [threading.Semaphore(0), threading.Semaphore(0)]
+
+    def make_writer(index: int) -> Callable[[], None]:
+        def run() -> None:
+            get_kudos_ledger_mode()
+            ready.release()
+            while not stop_writers.is_set():
+                turns[index].acquire(timeout=_HANDOFF_TIMEOUT_SECONDS)
+                if stop_writers.is_set():
+                    break
+                db.session.commit()
+                get_kudos_ledger_mode()
+                turns[1 - index].release()
+            db.session.commit()
+
+        return run
+
+    writer_threads = [threading.Thread(target=_run_in_app_context, args=(app, make_writer(index), errors)) for index in range(2)]
+    for thread in writer_threads:
+        thread.start()
+
+    try:
+        with app.app_context():  # type: ignore[attr-defined]
+            assert ready.acquire(timeout=_JOIN_TIMEOUT_SECONDS)
+            assert ready.acquire(timeout=_JOIN_TIMEOUT_SECONDS)
+            turns[0].release()
+            db.session.execute(text(f"SET SESSION lock_timeout = '{_LOCK_TIMEOUT_MS}'"))
+            db.session.execute(text(f"SET SESSION statement_timeout = '{_STATEMENT_TIMEOUT_MS}'"))
+            db.session.commit()
+            set_kudos_ledger_mode(KudosLedgerMode.SHADOW)
+            assert get_kudos_ledger_mode() == KudosLedgerMode.SHADOW
+            db.session.commit()
+            db.session.remove()
+    finally:
+        stop_writers.set()
+        for turn in turns:
+            turn.release()
+        for thread in writer_threads:
+            thread.join(timeout=_JOIN_TIMEOUT_SECONDS)
+
+    assert not any(thread.is_alive() for thread in writer_threads)
+    assert errors == []
+
+
 def test_ledger_mode_transitions_preserve_every_concurrent_credit(concurrent_app: object) -> None:
     """Mode transitions wait out in-flight writers so every credit lands once and no writer fails.
 
     Six writer threads continuously credit their own distinct users through the
     real balance-mutation entry point while the coordinator flips ownership
     ledger -> shadow -> ledger -> shadow with the writers still running. The
-    exclusive control-row lock a transition takes must manifest to a concurrent
+    exclusive mode gate a transition takes must manifest to a concurrent
     writer as waiting, never as an error or a lost/duplicated credit. After the
     writers stop and the final mode is drained, each user's balance must reflect
     exactly the amount its writer recorded, no ledger or stat event may remain
@@ -291,21 +357,24 @@ def test_ledger_mode_transitions_preserve_every_concurrent_credit(concurrent_app
         thread.start()
 
     transitions = [KudosLedgerMode.SHADOW, KudosLedgerMode.LEDGER, KudosLedgerMode.SHADOW]
-    with app.app_context():  # type: ignore[attr-defined]
-        db.session.execute(text(f"SET SESSION lock_timeout = '{_LOCK_TIMEOUT_MS}'"))
-        db.session.execute(text(f"SET SESSION statement_timeout = '{_STATEMENT_TIMEOUT_MS}'"))
-        db.session.commit()
-        for mode in transitions:
+    # Writers must be stopped and joined even when a transition fails, or they
+    # keep writing through fixture teardown and poison the rest of the suite.
+    try:
+        with app.app_context():  # type: ignore[attr-defined]
+            db.session.execute(text(f"SET SESSION lock_timeout = '{_LOCK_TIMEOUT_MS}'"))
+            db.session.execute(text(f"SET SESSION statement_timeout = '{_STATEMENT_TIMEOUT_MS}'"))
+            db.session.commit()
+            for mode in transitions:
+                for _ in range(writes_between_transitions):
+                    assert progress.acquire(timeout=_JOIN_TIMEOUT_SECONDS)
+                set_kudos_ledger_mode(mode)
             for _ in range(writes_between_transitions):
                 assert progress.acquire(timeout=_JOIN_TIMEOUT_SECONDS)
-            set_kudos_ledger_mode(mode)
-        for _ in range(writes_between_transitions):
-            assert progress.acquire(timeout=_JOIN_TIMEOUT_SECONDS)
-        db.session.remove()
-
-    stop_writers.set()
-    for thread in writer_threads:
-        thread.join(timeout=_JOIN_TIMEOUT_SECONDS)
+            db.session.remove()
+    finally:
+        stop_writers.set()
+        for thread in writer_threads:
+            thread.join(timeout=_JOIN_TIMEOUT_SECONDS)
 
     assert not any(thread.is_alive() for thread in writer_threads)
     assert errors == []

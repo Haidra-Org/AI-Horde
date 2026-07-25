@@ -296,13 +296,13 @@ from a single database snapshot; a fold or release committing mid-read cannot hi
 | Applier advisory transaction lock | Installation | Projector and mode transition | At most one database projector; serialize final drain with projection |
 | Payer advisory transaction lock | User ID | Reservations/transfers/admission | Prevent concurrent promises from overspending one payer without locking recipients |
 | Reconciliation advisory transaction lock | Installation | Repair mode | Prevent concurrent compensation emitters |
-| Control-row key-share lock | Mutation transaction | `get_kudos_ledger_mode` | Pin mode until the writer commits |
-| Control-row exclusive lock | Installation | `set_kudos_ledger_mode` | Wait for every old-mode writer before ownership changes |
+| Mode-gate advisory transaction lock (shared) | Mutation transaction | `get_kudos_ledger_mode` | Pin mode until the writer commits |
+| Mode-gate advisory transaction lock (exclusive) | Installation | `set_kudos_ledger_mode` | Wait for every old-mode writer before ownership changes; fair queueing keeps new pins from starving a waiting transition |
 | Event-row `FOR UPDATE SKIP LOCKED` | Bounded batch | Projector | Claim exact unapplied work without a watermark |
 | Reservation-row `FOR UPDATE` | Business ID | Consume/release | Serialize hold depletion/release |
 | Repeatable-read transaction | Snapshot/reconciliation command | Reconciliation helpers | Observe balances and applied totals from one consistent database snapshot |
 
-Required accounting lock order is applier lock before exclusive control-row lock. Projection targets are visited in
+Required accounting lock order is applier lock before exclusive mode-gate lock. Projection targets are visited in
 stable ID order. Code that needs another accounting lock must document where it fits before it is merged. The legacy
 `USE_SQLITE` runtime mode short-circuits PostgreSQL advisory locks and therefore cannot validate these concurrency
 properties.

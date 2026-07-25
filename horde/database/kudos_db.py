@@ -18,6 +18,7 @@ from horde.flask import SQLITE_MODE, db
 KUDOS_APPLIER_LOCK = 0x4B55444F  # "KUDO"
 KUDOS_PAYER_LOCK_NAMESPACE = 0x4B554452  # "KUDR"
 KUDOS_RECONCILIATION_LOCK = 0x4B55445245434F  # "KUDRECO"
+KUDOS_MODE_GATE_LOCK = 0x4B55444D  # "KUDM"
 
 
 def try_acquire_applier_lock() -> bool:
@@ -39,6 +40,31 @@ def acquire_payer_lock(user_id: int) -> None:
         return
     statement = select(func.pg_advisory_xact_lock(KUDOS_PAYER_LOCK_NAMESPACE, user_id))
     db.session.execute(statement).scalar_one()
+
+
+def acquire_mode_pin() -> None:
+    """Pin the observed ledger mode for the current transaction.
+
+    The mode gate is a shared/exclusive advisory lock rather than a control-row
+    lock because heavyweight locks queue fairly: a pin requested while a
+    transition is waiting queues behind that waiter. A row-level ``FOR KEY
+    SHARE`` acquired against a queued ``FOR UPDATE`` instead takes the
+    no-conflict fast path, so gapless writer traffic starves the transition.
+    """
+    if SQLITE_MODE:
+        return
+    statement = select(func.pg_advisory_xact_lock_shared(KUDOS_MODE_GATE_LOCK))
+    db.session.execute(statement).scalar_one()
+
+
+def acquire_mode_gate_exclusive() -> None:
+    """Wait out every pinned-mode transaction and block new pins.
+
+    Shared holders present when this call queues drain normally; pin requests
+    arriving afterwards wait behind it, so acquisition is bounded by the
+    longest in-flight mutation transaction rather than by writer arrival rate.
+    """
+    _acquire_transaction_lock(KUDOS_MODE_GATE_LOCK)
 
 
 def acquire_reconciliation_lock() -> None:

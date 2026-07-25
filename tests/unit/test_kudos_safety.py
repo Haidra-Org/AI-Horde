@@ -370,7 +370,7 @@ def test_released_hold_exposes_its_unapplied_debit_to_admission(db_session, make
 def test_ledger_mode_read_is_memoized_within_a_transaction(db_session, assert_query_count):
     """Repeated mode reads in one transaction query the control row once.
 
-    The first read pins the mode under a key-share lock held until commit, so
+    The first read pins the mode under the shared mode gate held until commit, so
     later reads in the same transaction return the pinned value without re-querying
     the single global control row a settlement reads many times.
     """

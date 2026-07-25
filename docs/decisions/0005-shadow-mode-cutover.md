@@ -49,9 +49,11 @@ The mode branch is confined to `kudos_legacy_projection.py`, the control helpers
 inside the two emission primitives. Endpoints and settlement methods contain no mode check, so removing the
 cutover period is a deletion: the compatibility module, its direct calls, and the shadow transition.
 
-Every mutation transaction pins the mode it observed with a key-share lock on the control row until commit.
-`set_kudos_ledger_mode` takes the applier advisory lock, then an exclusive control-row lock that waits for
-those writers; returning to `shadow` folds the remaining ledger tail in the same transaction.
+Every mutation transaction pins the mode it observed with the shared mode gate until commit.
+`set_kudos_ledger_mode` takes the applier advisory lock, then the exclusive mode gate that waits for
+those writers; returning to `shadow` folds the remaining ledger tail in the same transaction. The gate is
+an advisory lock rather than a control-row lock so a waiting transition cannot be starved by new pins
+([ADR 10](0010-advisory-lock-mode-gate.md)).
 
 ### Consequences
 
