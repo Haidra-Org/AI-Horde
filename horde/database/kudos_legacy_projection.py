@@ -83,7 +83,7 @@ def _refresh_after_shadow_pin(obj: object) -> None:
 
     Once ``kudos_projection_is_async`` has resolved to shadow the mode pin is held,
     so the value is stable for the rest of the transaction: a transition needs the
-    exclusive control lock that this transaction's key-share pin now blocks, and the
+    exclusive mode gate that this transaction's shared pin now blocks, and the
     standalone applier folds nothing in shadow (shadow emissions are applied at
     emit; the ledger-mode tail is drained inside the transition). Flushing before
     the refresh persists any earlier in-transaction writes to the object so the

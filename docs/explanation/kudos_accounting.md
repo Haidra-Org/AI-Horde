@@ -212,14 +212,19 @@ graph. Queue age, heartbeat age, and database deadlock metrics must therefore be
 The accounting-specific lock order is:
 
 ```text
-mode transition: applier advisory lock -> control-row exclusive lock -> final fold
+mode transition: applier advisory lock -> exclusive mode-gate advisory lock -> final fold
 projector:        applier advisory lock -> event rows -> ordered projection targets -> reservations
-producer:         control-row key-share lock -> optional payer advisory lock -> appended rows
+producer:         shared mode-gate advisory lock -> optional payer advisory lock -> appended rows
 reconciliation:  repeatable-read snapshot; repair emission also takes the reconciliation advisory lock
 ```
 
-Every mutation transaction pins the observed mode by holding a key-share lock on the control row until commit. An
+Every mutation transaction pins the observed mode by holding the shared mode gate, a transaction-scoped advisory
+lock, until commit. An
 exclusive mode change therefore waits for old-mode writers to finish before the new ownership rule becomes visible.
+The gate is an advisory lock rather than a lock on the control row because heavyweight locks queue fairly: a pin
+requested while a transition is waiting queues behind it, so transition latency is bounded by the longest in-flight
+mutation. A row-level `FOR KEY SHARE` taken against a queued `FOR UPDATE` instead uses the no-conflict fast path,
+and sustained writer traffic with overlapping pins starves the transition indefinitely.
 The transition back to shadow takes the applier lock first, waits for those writers, and folds the final ledger tail in
 the same transaction. This prevents an old ledger-mode posting from appearing after inline projection resumes.
 

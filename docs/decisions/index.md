@@ -22,6 +22,7 @@ regenerate this page with `gen_adr_index.py` after adding or changing a record.
 | [Match each accounting table's foreign keys to its lifetime](0007-accounting-foreign-key-policy.md) | accepted | 2026-07-24 |
 | [Promote users to trusted inside the projector](0008-trust-promotion-in-the-projector.md) | accepted | 2026-07-24 |
 | [Balance every currency event against system accounts](0009-balanced-events-via-system-accounts.md) | proposed | 2026-07-25 |
+| [Gate mode pins and transitions on an advisory lock](0010-advisory-lock-mode-gate.md) | accepted | 2026-07-25 |
 
 ## Relationships
 
@@ -38,6 +39,7 @@ flowchart TD
     r0007["0007: Match each accounting table's foreign…"]
     r0008["0008: Promote users to trusted inside the p…"]
     r0009["0009: Balance every currency event against…"]
+    r0010["0010: Gate mode pins and transitions on an…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005
@@ -50,9 +52,11 @@ flowchart TD
     r0004 --> r0003
     r0005 --> r0003
     r0005 --> r0008
+    r0005 --> r0010
     r0006 --> r0005
     r0007 --> r0002
     r0008 --> r0003
     r0008 --> r0005
     r0008 --> r0006
+    r0010 --> r0005
 ```
