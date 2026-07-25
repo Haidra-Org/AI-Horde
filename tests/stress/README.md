@@ -233,6 +233,132 @@ own deployment with `--host`, `--port`, `--dbname`, `--user`, and `--password`.
 python tests/stress/pg_prober.py --port 15432 --duration 300 > pg_prober.jsonl
 ```
 
+## Kudos ledger operational verification
+
+Three harnesses verify the kudos applier and its ledger cutover against a running
+deployment rather than in unit isolation. They assume a multi-instance stack:
+several serving app containers behind a load balancer, plus one dedicated
+container started with `--quorum` that runs the applier and is excluded from the
+serving rotation. The applier folds unapplied ledger rows on the quorum node
+every few seconds; a Redis quorum key with a short TTL plus a Postgres advisory
+lock mean that if the quorum container dies another instance takes over folding
+within seconds, and each fold is its own bounded transaction. The harnesses drive
+the shared `locustfile.py` workload (or bracket an externally driven run with
+`--no-load`) and gate on Postgres truth and the admin CLI in
+`tools/kudos_ledger_admin.py`, run via `docker exec`. Container names are
+auto-discovered by substring (`--quorum-name-substring`, `--app-name-substring`)
+or given explicitly; `--dsn` is the Postgres URI used for the direct gate
+queries. The example ports below are placeholders for a local stack.
+
+- `chaos_kudos_applier.py` drives load while repeatedly `docker kill`ing and
+  restarting the quorum/applier container on a random interval, then, once load
+  stops, gates that the ledger folded cleanly despite the interruptions. The
+  gates are: the admin `drain` reaches quiescence (a final pass folds nothing),
+  `snapshot` then `reconcile` reports zero balance drift, no exact-content
+  duplicate currency postings exist, and no unapplied ledger rows or statistics
+  events remain. It prints a JSON summary and exits nonzero on any gate failure.
+  `--dry-run` prints the planned kill schedule and the commands it would run
+  without touching Docker or the database.
+
+  ```
+  python tests/stress/chaos_kudos_applier.py --dsn postgresql://horde@localhost:5432/horde \
+      --host http://localhost:80 --duration 600 --kill-interval-min 20 --kill-interval-max 60
+  ```
+
+  The duplicate check is deliberately not a raw duplicate-`event_id` count:
+  postings of one business event share an `event_id` by design (an escrow drain
+  and a balance transfer each emit two postings under one `event_id`), so that
+  count is nonzero in healthy operation. The gate instead counts postings that are
+  identical in their full accounting content, which is what a re-inserted event
+  from a botched retry would produce.
+
+- `check_kudos_telemetry_accuracy.py` gates the applier's `folded` OTLP counter
+  against database truth. Run `begin` to record the counter and the applied-row
+  counts, drive load, stop it, then run `end`. It discovers the metric's
+  OTLP-translated name through the Prometheus `/api/v1/series` endpoint rather
+  than assuming one spelling, sums the counter across instances per `row_type`,
+  waits for the counter to settle across two samples `--settle-seconds` apart
+  (covering the OTLP export interval), and gates that the counter delta equals the
+  applied-row delta exactly for both `currency` and `stat`. Applied ledger and
+  statistics rows are never purged, so those counts are a monotone truth baseline
+  over the window. Floor-adjustment postings are excluded from the currency
+  baseline: the applier emits them already applied while folding an overdraft,
+  so they are outside the folded counter's claim (they have their own metric). `--org-id` sets the optional `X-Scope-OrgID` tenant header and
+  is omitted when not given.
+
+  ```
+  python tests/stress/check_kudos_telemetry_accuracy.py begin \
+      --prom-url http://127.0.0.1:9009/prometheus --dsn postgresql://horde@localhost:5432/horde
+  # drive load, then stop it
+  python tests/stress/check_kudos_telemetry_accuracy.py end \
+      --prom-url http://127.0.0.1:9009/prometheus --dsn postgresql://horde@localhost:5432/horde
+  ```
+
+  The counter is cumulative per applier process, and folding ownership moves
+  between processes (quorum handoff), so the raw metric is per-process series
+  that appear, reset, and go stale. The window total is therefore computed from
+  a range query with standard counter-reset handling (per series, positive
+  increments are summed; a fresh series contributes its first value in full)
+  rather than from point-in-time samples. Folds a process never exported before
+  dying are absent from the backend and surface as a shortfall; that is a
+  genuine telemetry gap to interpret, not a harness artifact.
+
+  The whole `begin`/`end` window must be spent in ledger mode: shadow-mode rows
+  are inserted already applied without passing through the applier, so a shadow
+  interlude inflates the applied-row delta past the folded counter. Both
+  subcommands refuse to run when the control row is not in ledger mode; a
+  mid-window flip is on the operator to avoid.
+
+- `mode_flip_rehearsal.py` drives load and flips the ledger mode through a
+  sequence (`--modes`, default `shadow,ledger,shadow`), dwelling in each mode
+  first. For each flip it samples the load balancer's FRONTEND `hrsp_5xx` counter
+  before and after (from the HAProxy-style CSV stats endpoint), times the flip,
+  and checks the ledger state the target mode requires: after a flip to `shadow`
+  no unapplied ledger rows or statistics events may remain (the transition drains
+  the tail inside its own transaction), while after a flip to `ledger` unapplied
+  rows are healthy steady-state under load, so the gate is instead that the
+  oldest pending row is younger than `--max-pending-age` (default 30s, the
+  degradation threshold), proving the applier keeps up. It exits nonzero if any
+  flip errored, a mode-specific gate failed, or the 5xx delta across a flip
+  exceeds `--max-5xx-delta` (default 0). If the stats endpoint is unreachable the
+  5xx gate is skipped with a loud warning in the report rather than silently.
+
+  ```
+  python tests/stress/mode_flip_rehearsal.py --dsn postgresql://horde@localhost:5432/horde \
+      --host http://localhost:80 --haproxy-stats-url "http://127.0.0.1:8404/stats;csv" \
+      --modes shadow,ledger,shadow --dwell-seconds 60
+  ```
+
+  The reported flip duration (`cli_wall_clock_seconds`) is the wall-clock time of
+  the admin CLI call, which includes process (or `docker exec`) and app-context
+  startup, not only the underlying `set_kudos_ledger_mode` transaction. Treat it
+  as an upper bound on the control-plane write cost; the transaction itself is
+  faster.
+
+### CI regression job
+
+The `stress-kudos-ledger-job` in `.github/workflows/prtests.yml` and
+`maintests.yml` runs a time-compressed version of two of these harnesses as a
+regression guard; the full-length runs above remain the operational sign-off. It
+starts two host servers against the shared test-stack datastore (a serving
+instance and a dedicated `--quorum` applier), then runs `mode_flip_rehearsal.py`
+(`--modes shadow,ledger,shadow`, short dwells) and, after setting ledger mode,
+`chaos_kudos_applier.py` (`--duration 120`, tight kill intervals). Both address
+the admin CLI as a local host process rather than a container: pass
+`--exec-container local`, which runs `tools/kudos_ledger_admin.py` with the
+current interpreter, the repo root as cwd, and the repo root on `PYTHONPATH`
+(needed because running the CLI as a script otherwise puts `tools/` at
+`sys.path[0]` and the `horde` package is not pip-installed). The chaos harness
+kills a host process instead of a container with `--kill-pid-file PATH` plus
+`--restart-cmd '<shell>'`: it SIGKILLs the PID in the file, then runs the shell
+command, which is responsible for relaunching the applier and rewriting the pid
+file so the next kill targets the replacement.
+
+`check_kudos_telemetry_accuracy.py` is deliberately excluded from CI: it gates an
+OTLP counter against the database through a Prometheus/Mimir query API, and the CI
+runner has no such backend (telemetry is enabled but exports nowhere). Run it
+against a deployment that has one, as described above.
+
 ## Continuous integration
 
 Three entrypoints run as parallel jobs on pull requests and on pushes to `main`
@@ -245,6 +371,10 @@ Three entrypoints run as parallel jobs on pull requests and on pushes to `main`
 | `stress-smoke-job` | `locustfile.py` | `check_smoke_results.py` |
 | `stress-shaped-job` | `locustfile_shaped.py` (`smoke` profile) | `check_smoke_results.py` |
 | `stress-attribution-job` | `locustfile_attribution.py` | `check_attribution_results.py` |
+
+A fourth job, `stress-kudos-ledger-job`, does not fit this checker pattern: it
+starts a second `--quorum` server and gates inside the harnesses themselves. See
+the CI regression job note under Kudos ledger operational verification above.
 
 The attribution job runs its server with `HORDE_TEST_RATELIMIT_DISABLED=1`: the
 oracle probes pop/declare and maintenance interleavings rather than rate-limit
