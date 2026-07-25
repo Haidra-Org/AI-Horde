@@ -358,6 +358,119 @@ jobs:
           fi
           docker compose -f tests/docker-compose.yml down
 
+  stress-kudos-ledger-job:
+    name: Kudos ledger chaos + mode flips
+    runs-on: ubuntu-latest
+    # Time-compressed regression guard for the kudos applier's crash safety and
+    # mode cutover. The full-length operational runs (and the telemetry-accuracy
+    # harness, which needs a Prometheus/Mimir backend this runner lacks) are
+    # documented in tests/stress/README.md. Two host servers share the test-stack
+    # datastore: a serving instance and a dedicated --quorum applier; the harnesses
+    # reach the admin CLI locally (--exec-container local) and kill the applier by
+    # pid file rather than by container.
+    env:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      HORDE_TEST_APIKEYS: '1'
+      AI_HORDE_TELEMETRY_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - uses: ./.github/actions/start-test-stack
+
+      - name: Start serving and applier servers
+        # The serving instance (7001) runs via uv like the other jobs. The applier
+        # (7002, --quorum) is launched with the venv interpreter directly so
+        # quorum.pid names the real server process the chaos harness SIGKILLs; a
+        # uv-run wrapper PID would orphan the server on kill. Two instances against
+        # one Postgres/Redis is the quorum design: the --quorum instance force-holds
+        # the Redis quorum key and is the single writer that folds the ledger.
+        run: |
+          echo "DSN=postgresql://${PGUSER}:${PGPASSWORD}@${POSTGRES_URL}" >> "$GITHUB_ENV"
+
+          uv run python server.py -vvvvi --horde stable -p 7001 > server.log 2>&1 &
+          echo "$!" > server.pid
+          .venv/bin/python server.py -vvvvi --horde stable --quorum -p 7002 > quorum.log 2>&1 &
+          echo "$!" > quorum.pid
+
+          for port in 7001 7002; do
+            timeout=120
+            until curl -sf "http://localhost:${port}/api/v2/status/heartbeat" > /dev/null 2>&1; do
+              timeout=$((timeout - 2))
+              if [[ "$timeout" -le 0 ]]; then
+                echo "Server on ${port} failed to start within timeout"
+                cat server.log quorum.log
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Rehearse mode flips under load
+        # No HAProxy in CI: the 5xx gate degrades to a loud skip. --max-pending-age
+        # is relaxed from the production 30s because a shared runner folds slower.
+        run: |
+          uv run python tests/stress/mode_flip_rehearsal.py \
+            --exec-container local \
+            --dsn "$DSN" \
+            --host http://localhost:7001 \
+            --modes shadow,ledger,shadow \
+            --dwell-seconds 15 \
+            --post-flip-sample-delay 5 \
+            --max-pending-age 60 \
+            --users 15 --spawn-rate 5 \
+            --bootstrap-requestors 4 --bootstrap-workers 8 \
+            | tee mode_flip_report.json
+
+      - name: Set ledger mode before chaos
+        # The chaos gates are only meaningful in ledger mode: shadow-mode rows are
+        # inserted already applied, so killing the applier would fold nothing.
+        run: PYTHONPATH="$PWD" uv run python tools/kudos_ledger_admin.py mode ledger
+
+      - name: Chaos-kill the applier under load
+        # Host-process kill target: SIGKILL the PID in quorum.pid, then run the
+        # restart command, which relaunches the applier and rewrites quorum.pid so
+        # the next kill targets the replacement.
+        run: |
+          uv run python tests/stress/chaos_kudos_applier.py \
+            --kill-pid-file quorum.pid \
+            --restart-cmd '.venv/bin/python server.py -vvvvi --horde stable --quorum -p 7002 >> quorum.log 2>&1 & echo $! > quorum.pid' \
+            --exec-container local \
+            --dsn "$DSN" \
+            --host http://localhost:7001 \
+            --duration 120 --kill-interval-min 10 --kill-interval-max 25 \
+            --users 15 --spawn-rate 5 \
+            --bootstrap-requestors 4 --bootstrap-workers 8 \
+            --settle-seconds 15 \
+            | tee chaos_report.json
+
+      - name: Scan server logs for tracebacks
+        if: always()
+        run: |
+          if grep -n "Traceback (most recent call last)" server.log quorum.log; then
+            echo "::warning::A kudos ledger server log contains a Python traceback; see the uploaded artifacts."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-kudos-ledger-artifacts
+          path: |
+            server.log
+            quorum.log
+            mode_flip_report.json
+            chaos_report.json
+          if-no-files-found: ignore
+
+      - name: Stop servers and local test stack
+        if: always()
+        run: |
+          if [[ -f server.pid ]]; then kill "$(cat server.pid)" || true; fi
+          if [[ -f quorum.pid ]]; then kill "$(cat quorum.pid)" || true; fi
+          docker compose -f tests/docker-compose.yml down
+
   unit-test-job:
     name: Unit tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
