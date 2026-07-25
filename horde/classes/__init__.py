@@ -37,10 +37,24 @@ from horde.flask import db
 from horde.logger import logger
 from horde.utils import hash_api_key
 
+# Arbitrary constant identifying the schema-provisioning advisory lock.
+_INIT_DB_LOCK_KEY = 0x484F52444501
+
 
 def init_db(app):
-    """Initialize database schema, run SQL procedures, and create default records."""
-    with app.app_context():
+    """Initialize database schema, run SQL procedures, and create default records.
+
+    The entire body is serialized across concurrently booting instances with a
+    Postgres advisory lock: without it, N instances hitting a fresh database race
+    each other on non-atomic check-then-create DDL (CREATE TYPE for enums under
+    ``create_all()``, ``CREATE OR REPLACE PROCEDURE``, and the pg_cron
+    schedule upserts), producing unique-constraint violations or duplicate cron
+    jobs. The lock is transaction-scoped on a dedicated connection so it is
+    released even if provisioning raises.
+    """
+    with app.app_context(), db.engine.connect() as lock_conn:
+        lock_conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _INIT_DB_LOCK_KEY})
+
         db.create_all()
 
         sql_statement_dir = Path(__file__).parent.parent.parent / "sql_statements"
