@@ -519,8 +519,8 @@ def prune_applied_kudos_ledger(
 ) -> int:
     """Retain the permanent ledger archive (compatibility no-op).
 
-    The parameters and function remain for one compatibility release so an old
-    scheduled caller is harmless during a rolling deployment.
+    The function and its parameters exist so a scheduled caller of the former
+    pruning job stays harmless; the archive itself is never pruned.
     """
     del now, retention, batch_size
     return 0

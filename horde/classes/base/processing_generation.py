@@ -185,37 +185,35 @@ class ProcessingGeneration(db.Model):
     def record(self, things_per_sec, kudos):
         from horde.metrics import submit_worker_contrib_duration, submit_wp_record_usage_duration
 
+        cancel_txt = ""
+        if self.cancelled:
+            cancel_txt = " Cancelled"
+        if self.fake:
+            # A tricked worker's submission is never delivered and its job is
+            # fulfilled (and settled) by another worker, so a fake generation
+            # credits no contribution and debits no usage.
+            logger.info(
+                f"Fake{cancel_txt} Generation {self.id} discarded without kudos, submitted by worker: "
+                f"{self.worker.name} for wp {self.wp.id}",
+            )
+            return
         # The worker-owner credit and the requester debit are now recorded as
         # ledger postings (see kudos.py) rather than in-place `users` row UPDATEs,
         # so this settlement no longer takes any users-row lock and cannot form the
         # activate/submit deadlock cycle the old FOR NO KEY UPDATE ordering guarded
         # against. Grouping every posting of this settlement under one event id.
         with kudos_event(job_id=self.id, wp_type=self.wp.wp_type):
-            cancel_txt = ""
-            if self.cancelled:
-                cancel_txt = " Cancelled"
-            if self.fake and self.worker.user == self.wp.user:
-                # We do not record usage for paused workers, unless the requestor was the same owner as the worker
-                _t = time.monotonic()
-                self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
-                submit_worker_contrib_duration.record(time.monotonic() - _t)
-                logger.info(
-                    f"Fake{cancel_txt} Generation {self.id} worth {self.kudos} kudos, delivered by worker: "
-                    f"{self.worker.name} for wp {self.wp.id}",
-                )
-            else:
-                _t = time.monotonic()
-                self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
-                submit_worker_contrib_duration.record(time.monotonic() - _t)
-                _t = time.monotonic()
-                self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos), commit=False)
-                submit_wp_record_usage_duration.record(time.monotonic() - _t)
-                log_string = (
-                    f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, "
-                    f"delivered by worker: {self.worker.name} for wp {self.wp.id} "
-                )
-                log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
-                logger.info(log_string)
+            _t = time.monotonic()
+            self.worker.record_contribution(raw_things=self.wp.things, kudos=kudos, things_per_sec=things_per_sec)
+            submit_worker_contrib_duration.record(time.monotonic() - _t)
+            _t = time.monotonic()
+            self.wp.record_usage(raw_things=self.wp.things, kudos=self.adjust_user_kudos(kudos), commit=False)
+            submit_wp_record_usage_duration.record(time.monotonic() - _t)
+            log_string = (
+                f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
+            )
+            log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
+            logger.info(log_string)
 
     def adjust_user_kudos(self, kudos):
         if self.censored:
