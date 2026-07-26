@@ -1,3 +1,10 @@
+---
+title: "Kudos accounting reference"
+summary: "The mutation and consumption contract: accounting events, projection targets, reservations, the lock order, and the read models."
+topics: [kudos, accounting]
+order: 70
+---
+
 <!--
 SPDX-FileCopyrightText: 2026 Tazlin
 
@@ -6,8 +13,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Kudos accounting reference
 
-This page is the maintainer contract for kudos mutation and consumption. It inventories the authoritative events,
-materialized targets, producers, consumers, locks, and tests. For design rationale, read [Kudos accounting,
+<!-- BEGIN GENERATED: topics (gen_doc_index.py) -->
+Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
+<!-- END GENERATED: topics -->
+
+The maintainer contract for kudos mutation and consumption: the authoritative events, the materialized targets, the
+producers and consumers, the locks, and the tests that hold each rule. For design rationale, read [Kudos accounting,
 projection, and concurrency](../explanation/kudos_accounting.md). For deployment and incident procedures, follow
 [Kudos ledger operations](../how-to/kudos_ledger_operations.md).
 
@@ -400,5 +411,5 @@ operations guide.
 - Can a batch split the event, and does any event-wide side effect handle that case?
 - Is every non-linear adjustment represented by a posting?
 - Can the change be rolled back through the supported mode transition without running old code against new holds?
-- Do tests cover emission, fold, concurrency/retry behavior, and recovery—not merely the final number?
+- Do tests cover emission, fold, concurrency/retry behavior, and recovery, not merely the final number?
 - Have this reference, the explanation, and the operations guide been updated when the contract changed?

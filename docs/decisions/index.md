@@ -8,8 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Decisions
 
-One decision per record. Status and date come from each record's front matter;
-regenerate this page with `gen_adr_index.py` after adding or changing a record.
+One decision per record: what was chosen, what was rejected, and what it cost.
 
 | Record | Status | Date |
 | --- | --- | --- |

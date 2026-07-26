@@ -1,3 +1,10 @@
+---
+title: "Kudos ledger operations"
+summary: "Operator procedures for the kudos ledger: mode cutover, health checks, backfill, rollback, and recovery."
+topics: [kudos, accounting, operations]
+order: 10
+---
+
 <!--
 SPDX-FileCopyrightText: 2026 Tazlin
 
@@ -6,7 +13,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Kudos ledger operations
 
-This is the operator procedure for the architecture described in [Kudos accounting, projection, and
+<!-- BEGIN GENERATED: topics (gen_doc_index.py) -->
+Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos), [operations](../topics.md#operations)
+<!-- END GENERATED: topics -->
+
+Operator procedures for the architecture described in [Kudos accounting, projection, and
 concurrency](../explanation/kudos_accounting.md). Exact schemas, mutation rules, and health fields are in the
 [kudos accounting reference](../reference/kudos_accounting.md).
 

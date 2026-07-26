@@ -94,6 +94,22 @@ We use `.git-blame-ignore-revs` to ignore certain commits when using `git blame`
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+## Documentation
+
+The `docs/` tree follows the [Haidra documentation standard](docs/haidra-assets/docs/meta/documentation.md), which
+covers how a document is filed, what its front matter declares, and how each class of document is written.
+
+Every index in the tree is generated from the documents' front matter, so after adding or changing a document,
+regenerate:
+
+```bash
+python docs/haidra-assets/tools/gen_doc_index.py docs
+python docs/haidra-assets/tools/gen_adr_index.py docs/decisions
+```
+
+CI fails on a stale index. See [docs/haidra-assets/tools/README.md](docs/haidra-assets/tools/README.md) for the
+checking modes these tools accept.
+
 ## Code of Conduct
 
 We expect all contributors to follow the [Anarchist code of conduct](https://wiki.dbzer0.com/the-anarchist-code-of-conduct/). Do not drive away other contributors due to intended or unintended on bigotry.

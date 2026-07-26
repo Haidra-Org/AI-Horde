@@ -6,18 +6,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # AI Horde service documentation
 
-These pages describe the implementation and operation of this repository. General, user-facing AI Horde
-documentation remains in [`haidra-assets/docs`](haidra-assets/docs/README.md).
+How this repository's service is built and how it is run:
 
-The local documentation follows [Diataxis](https://diataxis.fr/):
+- [Explanation](explanation/README.md): why a subsystem is built the way it is.
+- [Reference](reference/README.md): contracts, schemas, gate orderings, and code maps.
+- [How-to](how-to/README.md): ordered procedures for cutover, rollback, and recovery.
+- [Decisions](decisions/index.md): dated records of what was chosen, what was rejected,
+  and what it cost.
+- [Topics](topics.md): the same documents grouped by subject.
 
-- **Explanation** builds a mental model and records why the system has its present shape.
-- **Reference** states the exact contracts, schemas, producers, consumers, and invariants.
-- **How-to** material gives operators a sequence to follow for a concrete task.
+New to the AI Horde itself? The general concepts live in
+[`haidra-assets/docs`](haidra-assets/docs/README.md): what the Horde is, workers, jobs,
+and kudos. This tree assumes them.
 
-## Kudos accounting
+Some subsystems are listed but not yet written up. Those pages describe the subsystem in
+a paragraph and point at the code that holds the behavior.
 
-- [Explanation: kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
-- [Reference: kudos mutation and consumption](reference/kudos_accounting.md)
-- [How-to: kudos ledger operations](how-to/kudos_ledger_operations.md)
-- [General concept: what kudos are](haidra-assets/docs/kudos.md)
+<!-- Writing or regenerating these pages: see CONTRIBUTING.md and
+     haidra-assets/docs/meta/documentation.md. -->
+
