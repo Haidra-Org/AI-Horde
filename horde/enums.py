@@ -10,7 +10,7 @@ class KudosEntryType(enum.StrEnum):
 
     The entry type does not imply direction: each posting carries a signed
     ``amount`` and the applier folds it into exactly one balance. The type is
-    the audit/reporting axis and the phase-2 extension point.
+    the audit and reporting axis, and new business events extend it.
 
     Members document which postings the producing event emits:
 
