@@ -20,6 +20,11 @@ on:
       - 'zensical.toml'
       - '.github/workflows/docs.yml'
 
+# Validation needs only read access. The deploy job escalates for itself, so a
+# pull_request run never holds a token that can write pages or mint an OIDC id.
+permissions:
+  contents: read
+
 jobs:
   docs:
     runs-on: ubuntu-latest
@@ -33,11 +38,47 @@ jobs:
       - name: Generated decision index is current
         run: python3 docs/haidra-assets/tools/gen_adr_index.py docs/decisions --check
 
-      - name: Cited code paths exist
-        run: python3 docs/haidra-assets/tools/check_code_refs.py docs/README.md docs/explanation docs/reference docs/how-to docs/decisions
+      - name: Documentation tooling tests pass
+        run: uvx --with pytest pytest docs/haidra-assets/tools/tests -q
 
+      - name: Front matter is valid, indexes are current, and nav matches the tree
+        run: python3 docs/haidra-assets/tools/gen_doc_index.py docs --check --nav zensical.toml
+
+      - name: No em dashes in repository documentation
+        run: |
+          if grep -rn --include='*.md' --exclude-dir=haidra-assets -e '—' docs; then
+            echo "::error::Em dash found. Use a colon, a full stop, a parenthetical, or a comma."
+            exit 1
+          fi
+
+      - name: Cited code paths exist
+        run: python3 docs/haidra-assets/tools/check_code_refs.py docs/README.md docs/topics.md docs/explanation docs/reference docs/how-to docs/decisions
+
+      # zensical's strict link check is nondeterministic: identical input can yield
+      # phantom "page does not exist" warnings (observed with 0.0.51: clean builds of the
+      # same tree reported 0, 13, 22, and 65 issues). Retry from a clean slate; a build
+      # that fails every attempt has a genuine problem, and link resolution is
+      # independently verified by the lychee step below.
       - name: Site builds strictly
-        run: uvx --from "zensical==0.0.51" zensical build -s
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf site
+            if uvx --from "zensical==0.0.51" zensical build -s; then
+              exit 0
+            fi
+            echo "Strict build attempt ${attempt} failed; retrying"
+          done
+          echo "::error::Strict build failed on every attempt."
+          exit 1
+
+      # Front matter the site's YAML parser rejects is published as page text rather than
+      # consumed as metadata, and the build itself reports no error when that happens.
+      - name: Front matter is consumed rather than rendered
+        run: |
+          if grep -rnE --include='*.html' -e '<p>(title|summary|status|topics|order):' site; then
+            echo "::error::Front matter rendered as page content. It is not valid YAML."
+            exit 1
+          fi
 
       - name: License compliance
         run: uvx --from "reuse[charset-normalizer]" reuse lint
@@ -48,19 +89,32 @@ jobs:
           args: --offline --no-progress docs
           fail: true
   deploy:
+    # Publishing happens only for pushes to main. Pull request runs stop at
+    # validation; they never reach an environment or a writable token.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
     needs: docs
     steps:
       - uses: actions/configure-pages@v6
       - uses: actions/checkout@v7
+        with:
+          submodules: true # Need submodules for haidra-assets
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
-      - run: pip install zensical
-      - run: zensical build --clean 
+      # Pinned to the version the docs job validated against.
+      - run: pip install zensical==0.0.51
+      - run: zensical build --clean
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
