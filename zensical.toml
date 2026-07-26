@@ -11,12 +11,18 @@ site_name = "AI Horde"
 site_description = "Implementation and operation documentation for the AI Horde service."
 copyright = "AGPL-3.0-or-later"
 
-# Top-level sections mirror the Diataxis classes. Decision records deliberately enter
+# Top-level sections mirror the documentation classes. Decision records deliberately enter
 # navigation only through their generated index; the records are reached from the index,
 # cross-links, and search, so navigation does not grow with the record count.
+#
+# Order and display titles here are curated. Membership is not: gen_doc_index.py --nav
+# fails if a curated document is missing from this list, listed twice, absent from disk,
+# or if a generated record is listed individually.
 nav = [
     { "Home" = "README.md" },
+    { "Topics" = "topics.md" },
     { "Explanation" = [
+        { "Overview" = "explanation/README.md" },
         { "Kudos accounting" = "explanation/kudos_accounting.md" },
     ] },
     { "Reference" = [
@@ -36,6 +42,7 @@ nav = [
         { "Styles" = "reference/styles.md" },
     ] },
     { "How-to" = [
+        { "Overview" = "how-to/README.md" },
         { "Kudos ledger operations" = "how-to/kudos_ledger_operations.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
@@ -53,6 +60,12 @@ nav = [
         { "Python" = "haidra-assets/docs/meta/python.md" },
     ] },
 ]
+
+# `status` in a document's front matter puts a marker beside its navigation entry, with
+# this text as the marker's tooltip. Only a planned document declares one, so the marker
+# means "not yet written" wherever it appears.
+[project.extra.status]
+stub = "Not yet documented in full"
 
 [project.theme]
 language = "en"

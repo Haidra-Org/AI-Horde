@@ -1,3 +1,10 @@
+---
+title: "Kudos accounting, projection, and concurrency"
+summary: "Why kudos movements are recorded as typed events, how the projector materializes them, and how spends stay safe while balances lag."
+topics: [kudos, accounting]
+order: 10
+---
+
 <!--
 SPDX-FileCopyrightText: 2026 Tazlin
 
@@ -5,6 +12,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 # Kudos accounting, projection, and concurrency
+
+<!-- BEGIN GENERATED: topics (gen_doc_index.py) -->
+Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
+<!-- END GENERATED: topics -->
 
 Today, a kudos-changing business transaction records signed, typed events instead of treating the current balance
 columns as the complete history of what happened. Currency movements go to the append-only `kudos_ledger`;
