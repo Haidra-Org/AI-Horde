@@ -24,6 +24,13 @@ The four tables also differ in what their rows are for:
 - `kudos_reservations` rows are temporary holds against one payer.
 - `kudos_balance_snapshots` rows are a per-user reconciliation baseline.
 
+## Decision Drivers
+
+- Users, workers, and teams are deleted in different ways, and worker and team deletion is a supported
+  operation that must stay unblocked.
+- The four tables hold rows with different lifetimes: authoritative currency history, display and counter
+  history, temporary holds, and a per-user reconciliation baseline.
+
 ## Considered Options
 
 - Match each accounting table's foreign keys to its lifetime

@@ -1,6 +1,6 @@
 ---
 title: "Kudos ledger operations"
-summary: "Operator procedures for the kudos ledger: mode cutover, health checks, backfill, rollback, and recovery."
+summary: "Operator procedures for the kudos ledger: mode cutover, health checks, rollback, and recovery."
 topics: [kudos, accounting, operations]
 order: 10
 ---
@@ -21,46 +21,99 @@ Operator procedures for the architecture described in [Kudos accounting, project
 concurrency](../explanation/kudos_accounting.md). Exact schemas, mutation rules, and health fields are in the
 [kudos accounting reference](../reference/kudos_accounting.md).
 
+Preconditions for every procedure below: a PostgreSQL primary, the whole fleet running kudos-ledger code, and shell
+access to a host that can run `tools/kudos_ledger_admin.py` against the production database. End state: `ledger` mode
+active with the projector draining within its lag budget, or `shadow` mode restored with the final ledger tail
+folded.
+
 The kudos ledger has two online modes:
 
-- `shadow`: legacy inline balances and counters are authoritative; matching ledger rows are retained as already-applied audit history.
-- `ledger`: request transactions append postings and the database-serialized projector materializes them asynchronously.
+- `shadow`: inline balances and counters are authoritative; matching ledger rows are retained as already-applied
+  audit history.
+- `ledger`: request transactions append postings and the database-serialized projector materializes them
+  asynchronously.
 
-New installations and the migration SQL default to `shadow`; moving to `ledger` is always an explicit operator action. Both currency postings and non-currency statistic events are permanent archives. The projector is serialized by a PostgreSQL transaction advisory lock, independent of Redis quorum selection, and claims bounded batches with `FOR UPDATE SKIP LOCKED`.
+Fresh installations and the migration SQL default to `shadow`; moving to `ledger` is always an explicit operator
+action. Both currency postings and non-currency statistic events are permanent archives. The projector is serialized
+by a PostgreSQL transaction advisory lock, independent of Redis quorum selection, and claims bounded batches with
+`FOR UPDATE SKIP LOCKED`.
 
 ## Code and schema boundaries
 
-The new accounting models use SQLAlchemy 2.x typed mappings (`Mapped` and `mapped_column`) and database-portable `Uuid`, `Enum`, and JSON types. The SQLAlchemy mypy plugin checks the model attributes and constructors. Fixed units, projector record discriminators, aggregate names, and audit-detail keys are `StrEnum` values rather than string literals.
+Accounting tables, their foreign-key lifetimes, and the typed enums are specified in the reference
+[data model](../reference/kudos_accounting.md#data-model). Two boundaries matter while operating the system:
 
-The currency ledger has one required `users.id` foreign key with `ON DELETE RESTRICT`; users are soft-deleted/wiped, and authoritative currency history must not become orphaned. `kudos_reservations.user_id` and `kudos_balance_snapshots.user_id` are ownership foreign keys with `ON DELETE CASCADE`: those operational rows only have meaning while the user exists. IDs in `kudos_stat_events` are intentionally immutable audit references rather than ownership foreign keys. Workers and teams can be hard-deleted, but counter history must survive; adding cascading foreign keys would destroy that history and restrictive foreign keys would break supported deletion. This exception is documented in the mapped model.
-
-PostgreSQL advisory locks and repeatable-read setup are confined to `horde.database.kudos_db` and are expressed through SQLAlchemy functions/connection options, not textual execution. Counter upserts are confined to `horde.database.kudos_counters`. Shadow-mode inline projection is likewise confined to `horde.database.kudos_legacy_projection`; business methods always emit the new events. A final cutover removes that compatibility module and its direct calls without rewriting the accounting flow.
+- Currency history cannot be orphaned. `kudos_ledger.user_id` is `ON DELETE RESTRICT`, so a user wipe that would
+  strand postings fails rather than deleting them. `kudos_stat_events` carries immutable audit IDs instead of
+  ownership foreign keys, so hard-deleting a worker or team leaves its counter history intact.
+- Mode-specific behavior lives in `horde/database/kudos_legacy_projection.py`; business methods emit the same events
+  in both modes. Advisory locks and repeatable-read setup are confined to `horde/database/kudos_db.py`, and counter
+  upserts to `horde/database/kudos_counters.py`. A final cutover deletes the compatibility module and its call sites
+  without rewriting the accounting flow.
 
 ## Pre-cutover proof
 
-1. Deploy the new code and schema to the full fleet in `shadow` mode. Do not mix it with code that does not write the audit rows.
-2. Run through a representative peak-load window. Exercise transfers, upfront image/text/interrogation admission, cancellations, trust promotion, monthly awards, and admin adjustments.
-3. Inspect `uv run python tools/kudos_ledger_admin.py status`. Investigate any non-zero old queue, applier heartbeat gap, or `oldest_pending_seconds` above 30 seconds.
-4. Capture a transaction-consistent baseline with `uv run python tools/kudos_ledger_admin.py snapshot`.
-5. Run `uv run python tools/kudos_ledger_admin.py reconcile <snapshot-id>`. It must report no unexplained drift.
-6. Switch with `uv run python tools/kudos_ledger_admin.py mode ledger`. Control-row locks wait for every transaction that observed shadow mode before changing ownership; no service freeze is required.
+1. Deploy the ledger code and schema to the whole fleet in `shadow` mode. Do not mix it with code that does not write
+   the audit rows. Verify: `uv run python tools/kudos_ledger_admin.py status` reports `"mode": "shadow"` and a
+   non-null `heartbeat_seconds`, which shows the projector process is running.
+2. Run through a representative peak-load window. Exercise transfers, upfront image/text/interrogation admission,
+   cancellations, trust promotion, monthly awards, and admin adjustments. Verify: `kudos_ledger` and
+   `kudos_stat_events` both gain rows for each exercised path, and every row carries `applied = true`, which is what
+   shadow mode writes.
+3. Inspect `uv run python tools/kudos_ledger_admin.py status`. Investigate any non-zero pending queue, applier
+   heartbeat gap, or `oldest_pending_seconds` above 30 seconds before continuing.
+4. Capture a transaction-consistent baseline with `uv run python tools/kudos_ledger_admin.py snapshot`. Verify: the
+   command prints `snapshot_id`; use that value as `<snapshot-id>` below.
+5. Run `uv run python tools/kudos_ledger_admin.py reconcile <snapshot-id>`. Verify: the `drifts` array is empty.
+   Investigate every drift entry before continuing.
+6. Switch with `uv run python tools/kudos_ledger_admin.py mode ledger`. The exclusive mode-gate advisory lock waits
+   for every transaction that observed shadow mode before ownership changes, so no service freeze is required.
+   Verify: `status` reports `"mode": "ledger"`, and `pending_rows` rises and then falls as the projector folds.
+   Reverse with [online rollback](#online-rollback).
 
-Monitor pending row count, oldest pending age, heartbeat age, database deadlocks, reservation age/count, transfer rejection rate, and balance-floor adjustments throughout rollout. The `/api/v2/status/heartbeat` response exposes queue health and reports `DEGRADED` once the oldest pending event exceeds 30 seconds.
+Monitor pending row count, oldest pending age, heartbeat age, database deadlocks, reservation age and count,
+transfer rejection rate, and balance-floor adjustments throughout rollout. The `/api/v2/status/heartbeat` response
+exposes queue health and reports `DEGRADED` once the oldest pending event exceeds 30 seconds.
 
 ## Online rollback
 
-Keep ledger mode active and pre-drain with `uv run python tools/kudos_ledger_admin.py drain` until `pending_rows` is near zero. Reconcile against the current baseline, then run `uv run python tools/kudos_ledger_admin.py mode shadow`.
+Keep ledger mode active and pre-drain with `uv run python tools/kudos_ledger_admin.py drain` until `pending_rows` is
+near zero. Reconcile against the latest baseline, then run `uv run python tools/kudos_ledger_admin.py mode shadow`.
+Verify: `status` reports `"mode": "shadow"` and `pending_rows` is zero, since the transition folds whatever tail the
+pre-drain left.
 
-The transition takes the database applier lock followed by an exclusive control-row lock, waits for every mutation that observed ledger mode to commit, and folds the final tail in the same transaction before changing ownership. This lock order is shared with the projector, avoiding an applier/control deadlock. Active upfront reservations can span the transition because shadow-mode debits consume the same holds inline. Never roll directly back to code that does not understand reservations and shadow audit rows.
+The transition takes the applier advisory lock followed by the exclusive mode-gate advisory lock, waits for every
+mutation that observed ledger mode to commit, and folds the final tail in the same transaction before changing
+ownership. `set_kudos_ledger_mode` uses the same lock order as the projector, so an applier/mode-gate deadlock cannot
+form. Active upfront reservations can span the transition because shadow-mode debits consume the same holds inline.
+Rolling forward again means repeating the [pre-cutover proof](#pre-cutover-proof). Never roll directly back to code
+that does not understand reservations and shadow audit rows.
 
 ## Recovery and repair
 
-`reconcile <snapshot-id>` is read-only and compares the materialized balances with the snapshot plus all subsequently applied currency postings. Minimum-balance forgiveness is recorded as an explicit `FLOOR_ADJUSTMENT`, so replay remains exact across separate batches. `reconcile <snapshot-id> --apply` never overwrites a balance or old history: it serializes repair runs and emits one deterministic `RECONCILIATION` posting per affected user. Re-running it before or after projection cannot duplicate a repair.
+`reconcile <snapshot-id>` is read-only and compares the materialized balances with the snapshot plus all subsequently
+applied currency postings. Minimum-balance forgiveness is recorded as an explicit `FLOOR_ADJUSTMENT`, so replay
+remains exact across separate batches. `reconcile <snapshot-id> --apply` never overwrites a balance or old history:
+it serializes repair runs and emits one deterministic `RECONCILIATION` posting per affected user. Re-running it
+before or after projection cannot duplicate a repair, so a repair has no reversal step and needs none. A repair that
+was itself wrong is corrected by a further compensating posting.
 
-If the projector stops, leave writers in ledger mode, restore the projector, and drain; unapplied rows are durable and the database advisory lock prevents two replicas from applying them. If projection is corrupt, take a fresh snapshot for evidence, reconcile against the last known-good baseline, review the complete drift list, apply compensating postings, drain, and reconcile again. Do not edit `applied`, delete postings, or directly overwrite balances.
+If the projector stops, leave writers in ledger mode, restore the projector, and drain; unapplied rows are durable
+and the database advisory lock prevents two replicas from applying them. Verify: `pending_rows` returns to zero and
+`heartbeat_seconds` stays within the projector interval. If projection is corrupt, take a fresh snapshot for
+evidence, reconcile against the last known-good baseline, review the complete drift list, apply compensating
+postings, drain, and reconcile again. Verify: the second `reconcile` returns an empty `drifts` array. Do not edit
+`applied`, delete postings, or directly overwrite balances; none of those can be undone, and they destroy the
+evidence a later reconciliation needs.
 
-For database disaster recovery, restore PostgreSQL to the selected PITR/WAL point, retain the permanent ledger/stat archives and balance snapshots, start in shadow mode, reconcile, then repeat the cutover proof. Ledger pruning is disabled.
+For database disaster recovery, restore PostgreSQL to the selected PITR/WAL point, retain the permanent ledger and
+stat archives and the balance snapshots, start in shadow mode, reconcile, then repeat the cutover proof. Ledger
+pruning is disabled: `prune_applied_kudos_ledger` returns zero without deleting anything.
 
 ## Automated drill coverage
 
-`tests/unit/test_kudos_safety.py` demonstrates concurrent-projector exclusion, reservation overspend prevention, transfer idempotency, final-event trust promotion, an atomic ledger-to-shadow tail drain, snapshot drift detection, idempotent compensating repair, and replay across floor adjustments. `tests/unit/test_wp_activate_deadlock.py` preserves bounded PostgreSQL deadlock retry behavior. Run those tests against PostgreSQL before every cutover or recovery exercise.
+`tests/unit/test_kudos_safety.py` covers concurrent-projector exclusion, reservation overspend prevention, transfer
+idempotency, final-event trust promotion, an atomic ledger-to-shadow tail drain, snapshot drift detection,
+idempotent compensating repair, and replay across floor adjustments. `tests/unit/test_wp_activate_deadlock.py`
+covers bounded PostgreSQL deadlock retry behavior. Run both against PostgreSQL before every cutover or recovery
+exercise.

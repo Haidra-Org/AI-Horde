@@ -57,7 +57,7 @@ per tick while each transaction stays small.
   nor the applied flags commit, and a later cycle sees the same rows.
 - Good: The accounting lock graph is one writer visiting targets in a documented order, which is what lets the mode
   transition ([ADR 5](0005-shadow-mode-cutover.md)) share that order without an applier/control deadlock.
-- Good: A stopped projector is a lag incident: rows stay durable and unapplied until it returns.
+- Good: A stopped projector only delays folding: rows stay durable and unapplied until it returns.
 
 - Bad: Projection throughput is bounded by one writer. Batch size, the three-second interval, and the catch-up
   cycle limit are the only scaling controls; going wider means a new ordering and reservation design.
@@ -69,7 +69,7 @@ per tick while each transaction stays small.
 ### Parallel appliers sharded by target
 
 - Bad: sharding needs a new ordering scheme and a reservation design that survives an event whose postings land
-  in different shards, which is more machinery than the throughput requires today.
+  in different shards, which is more machinery than the throughput requires.
 
 ### A high-water mark over `id`
 

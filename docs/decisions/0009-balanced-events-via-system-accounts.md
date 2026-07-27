@@ -20,31 +20,36 @@ not in `kudos_ledger`. Without it there is no global arithmetic identity to chec
 creates or destroys kudos on one side of an event has no cheap detector. Reconciliation against a snapshot finds
 drift between the ledger and a projection, and it does not find a ledger that is internally unbalanced.
 
+## Decision Drivers
+
+- An emission bug that creates or destroys kudos on one side of an event needs a cheap detector.
+- The detector should be internal to the ledger, so it cannot mistake a bad projection for a bad event.
+- Statistics events share the table but conserve nothing, so the invariant must scope to the currency unit.
+
 ## Considered Options
 
-- Balanced events via system accounts
+- Balance every currency event against system accounts
 - Per-entry-type conservation assertions
 - Leave events unbalanced
 
 ## Decision Outcome
 
-Chosen option: none yet; this record is a proposal.
+Chosen option: "Balance every currency event against system accounts", because it makes the ledger's internal
+consistency checkable with a single aggregate query.
 
-The proposal is to introduce virtual system accounts (a treasury the mints draw from and a burn sink the debits
-flow into) and require every mint and burn event to post its counterparty explicitly. Every `event_id` then sums
-to zero, which makes the double-entry global invariant (all `unit = 'kudos'` postings sum to zero) true by
-construction and checkable with a single aggregate query. Scoping the invariant to the currency unit keeps it
-principled once statistics events share the table, since counters denominated in things, counts, or seconds
-conserve nothing. This is standard practice in production ledgers and is the cheapest strong audit check
-available.
+Virtual system accounts (a treasury the mints draw from and a burn sink the debits flow into) are introduced,
+and every mint and burn event posts its counterparty explicitly. Every `event_id` then sums to zero, which makes
+the double-entry global invariant (all `unit = 'kudos'` postings sum to zero) true by construction. Scoping the
+invariant to the currency unit keeps it principled once statistics events share the table, since counters
+denominated in things, counts, or seconds conserve nothing.
 
 ### Consequences
 
 - Good: One query decides whether the ledger is internally consistent, independent of any projection.
 - Good: A per-event sum check localizes an emission bug to the event that broke, rather than to whichever
   balance later looked wrong.
-- Bad: Every mint and burn producer gains a second posting, roughly increasing currency row volume for those
-  event types and enlarging the archive.
+- Bad: Every mint and burn producer gains a second posting, adding one currency row per mint or burn event and
+  enlarging the archive.
 - Bad: System accounts are a new account kind that is not a user, so the account columns and every query that
   assumes a user or worker target need a defined representation for them.
 
