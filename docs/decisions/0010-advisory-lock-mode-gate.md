@@ -23,14 +23,14 @@ conflict only with current lock holders; key-share does not conflict with key-sh
 fast path without joining the wait queue behind a blocked `FOR UPDATE`. Whenever writer pins overlap without
 a gap, the transition's exclusive lock waits for the holders present at each retry, new pins arrive in the
 meantime, and acquisition never completes. Under sustained production write load, gapless overlap is the
-normal case, not a corner case. A deterministic reproduction
+normal case. A deterministic reproduction
 (`test_mode_transition_is_not_starved_by_gapless_writer_pins`) holds two lock-step writer pins with
 guaranteed overlap and starves the transition until its statement timeout on every run.
 
 ## Decision Drivers
 
 - A mode flip is an operator action on a live fleet; its latency must be bounded by the longest in-flight
-  mutation transaction, not by writer arrival rate.
+  mutation transaction rather than by writer arrival rate.
 - The pin is taken by every balance mutation, so the primitive sits on the hottest accounting path and must
   not add measurable per-transaction cost or new deadlock edges.
 
@@ -58,9 +58,9 @@ applier-before-gate lock order.
 - Good: The hot path sheds the control-row `FOR KEY SHARE`, removing per-transaction multixact membership
   churn on one global tuple and its vacuum burden; a shared advisory lock acquisition is a cheaper
   in-memory operation.
-- Good: New pin requests block only while a transition is queued or active, which is the intended brief
-  write pause of ADR 5, now with a bounded start.
-- Bad: The gate no longer locks the row it protects; the coupling between the lock key and
+- Good: New pin requests block only while a transition is queued or active, which is the brief write pause
+  ADR 5 intends, with a bounded start.
+- Bad: The gate does not lock the row it protects; the coupling between the lock key and
   `kudos_ledger_control` is by convention in `horde/database/kudos_db.py` rather than enforced by the
   database.
 - Bad: Like the other accounting advisory locks, the gate is invisible to `USE_SQLITE` runtime mode and is
