@@ -14,16 +14,9 @@ procedure for one subject sit together.
 
 ## Vocabulary
 
-- `abuse`: anti-abuse machinery, suspicion, filtering, and raid handling.
 - `accounting`: how a value movement is recorded, projected, and audited.
-- `caching`: cached state, its keys and lifetimes, and freshness consequences.
 - `kudos`: the kudos economy: what is earned, charged, and priced.
-- `observability`: statistics, metrics, and the surfaces operators watch.
 - `operations`: procedures an operator runs against a deployment.
-- `requests`: the path of a generation request from submission to delivery.
-- `storage`: durable asset storage and the URLs that reach it.
-- `users`: accounts, trust, roles, and their limits.
-- `workers`: worker identity, registration, availability, and contribution.
 
 ## By topic
 
