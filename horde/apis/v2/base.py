@@ -45,6 +45,9 @@ from horde.metrics import (
     generate_duration,
     generate_initiate_wp_duration,
     generate_validate_duration,
+    generate_validate_find_user_duration,
+    generate_validate_prompt_filter_duration,
+    generate_validate_wp_count_duration,
     pop_candidates,
     pop_check_in_duration,
     pop_duration,
@@ -59,6 +62,7 @@ from horde.metrics import (
     submit_get_progen_duration,
     submit_kudos,
     submit_outcomes,
+    submit_record_fulfilment_stat_duration,
     submit_set_gen_duration,
     waitress_metrics,
 )
@@ -262,6 +266,7 @@ class GenerateTemplate(Resource):
         if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
         with get_app().app_context():
+            find_user_t0 = time.monotonic()
             # If this is set, it means we've already found an active shared key through an applied style.
             if self.sharedkey:
                 self.user = self.sharedkey.user
@@ -289,6 +294,7 @@ class GenerateTemplate(Resource):
             # logger.warning(datetime.utcnow())
             if not self.user:
                 raise e.InvalidAPIKey("generation")
+            generate_validate_find_user_duration.record(time.monotonic() - find_user_t0, {"horde.gentype": self.gentype})
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
             if self.user.deleted:
@@ -308,6 +314,7 @@ class GenerateTemplate(Resource):
             # logger.warning(datetime.utcnow())
             if self.args["prompt"] == "":
                 raise e.MissingPrompt(self.username)
+            wp_count_t0 = time.monotonic()
             if self.user.is_anon():
                 wp_count = database.count_waiting_requests(
                     user=self.user,
@@ -321,6 +328,7 @@ class GenerateTemplate(Resource):
                     request_type=self.gentype,
                 )
                 # logger.warning(datetime.utcnow())
+            generate_validate_wp_count_duration.record(time.monotonic() - wp_count_t0, {"horde.gentype": self.gentype})
             if len(self.workers):
                 missing_workers = database.workers_exist(self.workers)
                 if missing_workers:
@@ -352,7 +360,9 @@ class GenerateTemplate(Resource):
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
             # logger.warning(datetime.utcnow())
+            prompt_filter_t0 = time.monotonic()
             prompt_suspicion, _ = prompt_checker(self.prompt)
+            generate_validate_prompt_filter_duration.record(time.monotonic() - prompt_filter_t0, {"horde.gentype": self.gentype})
             # logger.warning(datetime.utcnow())
             prompt_replaced = False
             if prompt_suspicion >= 2 and self.gentype != "text":
@@ -532,6 +542,7 @@ class SyncGenerate(GenerateTemplate):
 class JobPopTemplate(Resource):
     worker_class = Worker
     args: ParseResult
+    gentype = "template"
 
     def post(self):
         t0 = time.monotonic()
@@ -539,7 +550,7 @@ class JobPopTemplate(Resource):
             try:
                 return self._post_inner()
             finally:
-                pop_duration.record(time.monotonic() - t0)
+                pop_duration.record(time.monotonic() - t0, {"horde.gentype": self.gentype})
 
     def _post_inner(self):
         pre_eval_t0 = time.monotonic()
@@ -560,11 +571,11 @@ class JobPopTemplate(Resource):
         validate_t0 = time.monotonic()
         with logfire.span("horde.pop.validate"):
             self.validate()
-        pop_validate_duration.record(time.monotonic() - validate_t0)
+        pop_validate_duration.record(time.monotonic() - validate_t0, {"horde.gentype": self.gentype})
         check_in_t0 = time.monotonic()
         with logfire.span("horde.pop.check_in", worker_name=getattr(self.worker, "name", None)):
             self.check_in()
-        pop_check_in_duration.record(time.monotonic() - check_in_t0)
+        pop_check_in_duration.record(time.monotonic() - check_in_t0, {"horde.gentype": self.gentype})
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
         # self.priority_users = [self.user]
@@ -597,7 +608,7 @@ class JobPopTemplate(Resource):
                     self.prioritized_wp.append(wp)
         # logger.warning(datetime.utcnow())
         candidates_evaluated = 0
-        pop_pre_eval_duration.record(time.monotonic() - pre_eval_t0)
+        pop_pre_eval_duration.record(time.monotonic() - pre_eval_t0, {"horde.gentype": self.gentype})
         eval_t0 = time.monotonic()
         with logfire.span("horde.pop.evaluate_candidates") as eval_span:
             while len(self.prioritized_wp) > 0:
@@ -615,9 +626,9 @@ class JobPopTemplate(Resource):
                             # only attach the label when there is one; the
                             # counter still increments either way.
                             if skipped_reason is None:
-                                pop_skipped.add(1)
+                                pop_skipped.add(1, {"horde.gentype": self.gentype})
                             else:
-                                pop_skipped.add(1, {"horde.skip_reason": skipped_reason})
+                                pop_skipped.add(1, {"horde.skip_reason": skipped_reason, "horde.gentype": self.gentype})
                         continue
                     # There is a chance that by the time we finished all the checks, another worker picked up the WP.
                     # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
@@ -627,18 +638,18 @@ class JobPopTemplate(Resource):
                     sg_t0 = time.monotonic()
                     with logfire.span("horde.pop.start_generation", wp_id=str(wp.id)):
                         worker_ret = self.start_worker(wp)
-                    pop_start_gen_duration.record(time.monotonic() - sg_t0)
-                    pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match"})
+                    pop_start_gen_duration.record(time.monotonic() - sg_t0, {"horde.gentype": self.gentype})
+                    pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match", "horde.gentype": self.gentype})
                     worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
                     # logger.debug(worker_ret)
                     if worker_ret is None:
                         continue
                     # logger.debug(worker_ret)
                     eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
-                    pop_candidates.record(candidates_evaluated)
+                    pop_candidates.record(candidates_evaluated, {"horde.gentype": self.gentype})
                     pop_returned_jobs.record(
                         len(worker_ret.get("ids", []) or [worker_ret.get("id")]) if isinstance(worker_ret, dict) else 0,
-                        {"horde.outcome": "match"},
+                        {"horde.outcome": "match", "horde.gentype": self.gentype},
                     )
                     return worker_ret, 200
                 db.session.commit()  # Unlock all locked wp rows before picking up new ones
@@ -647,9 +658,9 @@ class JobPopTemplate(Resource):
                     self.prioritized_wp = self.get_sorted_wp()
                 logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
             eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
-            pop_candidates.record(candidates_evaluated)
-            pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "no_match"})
-            pop_returned_jobs.record(0, {"horde.outcome": "no_match"})
+            pop_candidates.record(candidates_evaluated, {"horde.gentype": self.gentype})
+            pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "no_match", "horde.gentype": self.gentype})
+            pop_returned_jobs.record(0, {"horde.outcome": "no_match", "horde.gentype": self.gentype})
         # We report maintenance exception only if we couldn't find any jobs
         if self.worker.maintenance:
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
@@ -776,6 +787,8 @@ class JobPopTemplate(Resource):
 
 
 class JobSubmitTemplate(Resource):
+    gentype = "template"
+
     def post(self):
         t0 = time.monotonic()
         outcome = "accepted"
@@ -792,13 +805,13 @@ class JobSubmitTemplate(Resource):
                 outcome = "error"
                 raise
             finally:
-                submit_duration.record(time.monotonic() - t0, {"horde.outcome": outcome})
+                submit_duration.record(time.monotonic() - t0, {"horde.outcome": outcome, "horde.gentype": self.gentype})
             if getattr(self.args, "state", None) == "censored":
                 outcome = "censored"
             elif getattr(self.args, "state", None) == "faulted":
                 outcome = "faulted"
-            submit_kudos.record(self.kudos, {"horde.outcome": outcome})
-            submit_outcomes.add(1, {"horde.outcome": outcome})
+            submit_kudos.record(self.kudos, {"horde.outcome": outcome, "horde.gentype": self.gentype})
+            submit_outcomes.add(1, {"horde.outcome": outcome, "horde.gentype": self.gentype})
             logfire.info(
                 "horde.job_submit.done",
                 procgen_id=str(self.procgen.id),
@@ -813,7 +826,9 @@ class JobSubmitTemplate(Resource):
 
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
+        record_fulfilment_t0 = time.monotonic()
         things_per_sec = stats.record_fulfilment(self.procgen, self.procgen.get_things_count(self.args["generation"]))
+        submit_record_fulfilment_stat_duration.record(time.monotonic() - record_fulfilment_t0, {"horde.gentype": self.gentype})
         gen_metadata = getattr(self.args, "gen_metadata", None)
         kwargs: dict[str, object] = {
             "generation": self.args["generation"],
@@ -829,12 +844,12 @@ class JobSubmitTemplate(Resource):
         t = time.monotonic()
         with logfire.span("horde.submit.get_progen"):
             self.procgen = self.get_progen()
-        submit_get_progen_duration.record(time.monotonic() - t)
+        submit_get_progen_duration.record(time.monotonic() - t, {"horde.gentype": self.gentype})
         if not self.procgen:
             raise e.InvalidJobID(self.args["id"])
         t = time.monotonic()
         self.user = database.find_user_by_api_key(self.args["apikey"])
-        submit_find_user_duration.record(time.monotonic() - t)
+        submit_find_user_duration.record(time.monotonic() - t, {"horde.gentype": self.gentype})
         if not self.user:
             raise e.InvalidAPIKey("worker submit:" + self.args["name"])
         if self.user != self.procgen.worker.user:
@@ -842,7 +857,7 @@ class JobSubmitTemplate(Resource):
         t = time.monotonic()
         with logfire.span("horde.submit.set_generation", procgen_id=str(self.procgen.id)):
             self.set_generation()
-        submit_set_gen_duration.record(time.monotonic() - t)
+        submit_set_gen_duration.record(time.monotonic() - t, {"horde.gentype": self.gentype})
         if self.kudos == 0 and not self.procgen.worker.maintenance:
             raise e.DuplicateGen(self.procgen.worker.name, self.args["id"])
         if self.kudos == -1:

@@ -48,6 +48,7 @@ from horde.metrics import (
     generate_init_wp_build_duration,
     generate_init_wp_kudos_check_duration,
     status_duration,
+    submit_record_fulfilment_stat_duration,
 )
 from horde.model_reference import model_reference
 from horde.patreon import patrons
@@ -639,6 +640,7 @@ class ImageAsyncCheck(Resource):
 
 class ImageJobPop(JobPopTemplate):
     worker_class = ImageWorker
+    gentype = "image"
 
     decorators = [limiter.limit("60/second")]
 
@@ -714,6 +716,7 @@ class ImageJobPop(JobPopTemplate):
 
 
 class ImageJobSubmit(JobSubmitTemplate):
+    gentype = "image"
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
@@ -736,7 +739,9 @@ class ImageJobSubmit(JobSubmitTemplate):
 
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
+        record_fulfilment_t0 = time.monotonic()
         things_per_sec = stats.record_fulfilment(self.procgen)
+        submit_record_fulfilment_stat_duration.record(time.monotonic() - record_fulfilment_t0, {"horde.gentype": self.gentype})
         self.kudos = self.procgen.set_generation(
             generation=self.args["generation"],
             things_per_sec=things_per_sec,
@@ -1107,6 +1112,7 @@ class InterrogationStatus(Resource):
 
 
 class InterrogatePop(JobPopTemplate):
+    gentype = "interrogation"
     worker_class = InterrogationWorker
     # The parser for RequestPop
     post_parser = reqparse.RequestParser()

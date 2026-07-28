@@ -4,6 +4,7 @@
 
 import math
 import os
+import time
 
 from horde import vars as hv
 from horde.bridge_reference import (
@@ -13,6 +14,7 @@ from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.logger import logger
+from horde.metrics import submit_genstats_record_duration
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
 
@@ -108,7 +110,9 @@ class TextProcessingGeneration(ProcessingGeneration):
             db.session.commit()
 
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        genstats_t0 = time.monotonic()
         record_text_statistic(self)
+        submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "text"})
         return kudos
 
     def get_things_count(self, generation=None):

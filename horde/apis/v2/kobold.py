@@ -313,6 +313,7 @@ class TextAsyncStatus(Resource):
 
 class TextJobPop(JobPopTemplate):
     worker_class = TextWorker
+    gentype = "text"
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
@@ -358,6 +359,7 @@ class TextJobPop(JobPopTemplate):
 
 
 class TextJobSubmit(JobSubmitTemplate):
+    gentype = "text"
     decorators = [limiter.limit("60/second")]
 
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)

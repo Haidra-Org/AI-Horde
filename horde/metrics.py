@@ -155,6 +155,18 @@ generate_init_wp_kudos_check_duration = _seconds_histogram(
     "horde.generate.init_wp.kudos_check.duration",
     "Duration of upfront-kudos/active-workers check within initiate_waiting_prompt",
 )
+generate_validate_find_user_duration = _seconds_histogram(
+    "horde.generate.validate.find_user.duration",
+    "Duration of the shared-key/api-key user resolution within generate validate",
+)
+generate_validate_wp_count_duration = _seconds_histogram(
+    "horde.generate.validate.wp_count.duration",
+    "Duration of count_waiting_requests within generate validate",
+)
+generate_validate_prompt_filter_duration = _seconds_histogram(
+    "horde.generate.validate.prompt_filter.duration",
+    "Duration of the prompt regex suspicion check within generate validate",
+)
 
 # --- waiting-prompt activation / kudos ---------------------------------------
 wp_calculate_kudos_duration = _seconds_histogram(
@@ -269,6 +281,18 @@ submit_wp_record_usage_duration = _seconds_histogram(
 submit_webhook_call_duration = _seconds_histogram(
     "horde.submit.webhook_call.duration",
     "Duration of procgen.send_webhook in submit",
+)
+submit_record_fulfilment_stat_duration = _seconds_histogram(
+    "horde.submit.record_fulfilment_stat.duration",
+    "Duration of stats.record_fulfilment (gen-stats archive insert) during submit",
+)
+submit_server_upload_duration = _seconds_histogram(
+    "horde.submit.server_upload.duration",
+    "Duration of server-side object-storage uploads during submit (b64 fallback image, shared metadata)",
+)
+submit_genstats_record_duration = _seconds_histogram(
+    "horde.submit.genstats_record.duration",
+    "Duration of the inline gen-stats archive insert during procgen.set_generation",
 )
 submit_commit_duration = _seconds_histogram(
     "horde.submit.commit.duration",

@@ -4,6 +4,7 @@
 
 import json
 import os
+import time
 
 import logfire
 
@@ -12,6 +13,7 @@ from horde.classes.stable.genstats import record_image_statistic
 from horde.flask import db
 from horde.image import convert_b64_to_pil, convert_pil_to_b64
 from horde.logger import logger
+from horde.metrics import submit_genstats_record_duration, submit_server_upload_duration
 from horde.model_reference import model_reference
 from horde.r2 import (
     check_shared_image,
@@ -130,13 +132,25 @@ class ImageProcessingGeneration(ProcessingGeneration):
             if not image:
                 logger.error("Could not convert b64 image from the worker to PIL to upload!")
             else:
+                upload_t0 = time.monotonic()
                 upload_method(image, filename)
+                submit_server_upload_duration.record(
+                    time.monotonic() - upload_t0,
+                    {"horde.gentype": "image", "horde.upload": "image"},
+                )
                 # This signifies to send the download URL
                 generation = "R2"
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        genstats_t0 = time.monotonic()
         record_image_statistic(self)
+        submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "image"})
         if self.wp.shared and not self.fake and generation == "R2":
+            metadata_t0 = time.monotonic()
             self.upload_generation_metadata()
+            submit_server_upload_duration.record(
+                time.monotonic() - metadata_t0,
+                {"horde.gentype": "image", "horde.upload": "metadata"},
+            )
         if censored == "csam":
             self.wp.user.record_problem_job(
                 procgen=self,
