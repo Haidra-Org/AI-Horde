@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import logfire
-from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
 
 from horde import vars as hv
@@ -54,11 +53,10 @@ class WorkerStats(db.Model):
 class WorkerPerformance(db.Model):
     __tablename__ = "worker_performances"
     id = db.Column(db.Integer, primary_key=True)
-    # Indexed because ``Worker.record_performance`` filters this table by ``worker_id``
-    # twice per completed job (once to prune older samples, once to recompute the
-    # average that maintains ``Worker.speed``). PostgreSQL does not index foreign key
-    # columns automatically, so without this both are sequential scans of the full
-    # sample table on every job completion.
+    # Indexed because the speed refresh partitions and aggregates this table by
+    # ``worker_id`` (see ``horde.database.threads.refresh_worker_speeds``). PostgreSQL
+    # does not index foreign key columns automatically, so without this the per-worker
+    # prune and average degrade into repeated scans of the full sample table.
     worker_id = db.Column(
         uuid_column_type(),
         db.ForeignKey("workers.id", ondelete="CASCADE"),
@@ -189,9 +187,12 @@ class WorkerTemplate(db.Model):
     # hybrid_property whose SQL form embedded a correlated
     # ``avg(worker_performances.performance)`` subquery, re-evaluated for every candidate
     # worker in every pop candidate filter: the single largest cumulative-time query on
-    # the database. It is now maintained at the one write site (``record_performance``)
-    # and seeded on construction (``__init__``), so every reader becomes a plain column
-    # access.
+    # the database. It is now seeded on construction (``__init__``) and maintained by a
+    # single set-based writer on the quorum node
+    # (``horde.database.threads.refresh_worker_speeds``), so every reader becomes a
+    # plain column access and no request-path transaction writes the column. The stored
+    # value therefore trails the newest samples by up to one refresh interval, which is
+    # within the intent of a rolling average over the retained samples.
     #
     # A worker with no samples stores the per-type baseline (see ``_baseline_speed``),
     # reproducing the historical CASE expression that substituted that baseline whenever
@@ -213,7 +214,7 @@ class WorkerTemplate(db.Model):
     def __init__(self, **kwargs: Any) -> None:
         """Seed the materialized ``speed`` to the per-type baseline on construction.
 
-        ``speed`` is NOT NULL and is maintained thereafter by ``record_performance``.
+        ``speed`` is NOT NULL and is maintained thereafter by the periodic refresh.
         Seeding in ``__init__`` (the single construction chokepoint shared by every
         worker subclass) rather than in ``create`` guarantees the column is populated on
         every path that persists a worker, including callers that build and commit a
@@ -461,9 +462,9 @@ class WorkerTemplate(db.Model):
         )
         project_worker_fulfilment(self, team_id=team_id, raw_things=raw_things, kudos=kudos)
         # Note: deferred commit; caller (procgen.set_generation) commits once at the end.
-        # The worker_performances prune+insert is intentionally NOT done here; it is
-        # persisted separately via record_performance() after the main commit so it
-        # does not lengthen the hot `users` row lock hold. See record_performance().
+        # The worker_performances insert is intentionally NOT done here; it is persisted
+        # separately via record_performance() after the main commit so it does not
+        # lengthen the hot `users` row lock hold. See record_performance().
         if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
             self.report_suspicion(
                 reason=Suspicions.UNREASONABLY_FAST,
@@ -471,34 +472,22 @@ class WorkerTemplate(db.Model):
             )
 
     def record_performance(self, things_per_sec: float, commit: bool = True) -> None:
-        """Persist a worker performance sample, pruning to the 20 most recent.
+        """Append a worker performance sample.
 
         Split out of _record_contribution so it runs in its own transaction after
-        the submission's main commit, keeping the worker_performances count/prune/
-        insert out of the window where the hot `users` rows are locked. Performance
-        samples are telemetry, so persisting them separately (and losing at most one
-        sample on a crash between commits) is safe.
+        the submission's main commit, keeping the worker_performances insert out of
+        the window where the hot `users` rows are locked. Performance samples are
+        telemetry, so persisting them separately (and losing at most one sample on a
+        crash between commits) is safe.
+
+        This is an append only: retaining the most recent samples and refreshing the
+        materialized ``Worker.speed`` average from them belong to
+        ``horde.database.threads.refresh_worker_speeds`` on the quorum node. Doing
+        that maintenance here made every submit take a count, a prune DELETE and an
+        aggregate against the sample table plus a write of the hot ``workers`` row,
+        all serialized against the pops and submits touching the same row.
         """
-        performances = db.session.query(WorkerPerformance).filter_by(worker_id=self.id)
-        if performances.count() >= 20:
-            # Keep only the 20 most recent performance records
-            keep_ids = (
-                db.session.query(WorkerPerformance.id).filter_by(worker_id=self.id).order_by(WorkerPerformance.created.desc()).limit(20)
-            )
-            db.session.query(WorkerPerformance).filter_by(worker_id=self.id).filter(
-                WorkerPerformance.id.not_in(keep_ids),
-            ).delete(synchronize_session=False)
-        new_performance = WorkerPerformance(worker_id=self.id, performance=things_per_sec)
-        db.session.add(new_performance)
-        # Refresh the materialized rolling average from the retained samples. The
-        # aggregate autoflushes the pending insert and the prune above, so it reflects
-        # exactly the rows a read-time subquery would have seen; recomputing from the
-        # samples (rather than incrementally) also makes this write self-healing if an
-        # earlier sample write was lost.
-        retained_average = db.session.query(func.avg(WorkerPerformance.performance)).filter_by(worker_id=self.id).scalar()
-        # A zero average falls back to the baseline alongside a NULL one; see the
-        # ``speed`` column comment for why a stored zero is not a permissible value.
-        self.speed = retained_average if retained_average else self._baseline_speed()
+        db.session.add(WorkerPerformance(worker_id=self.id, performance=things_per_sec))
         if commit:
             db.session.commit()
 

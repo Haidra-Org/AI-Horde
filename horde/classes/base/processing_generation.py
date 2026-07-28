@@ -161,10 +161,11 @@ class ProcessingGeneration(db.Model):
         _t = time.monotonic()
         db.session.commit()
         submit_commit_duration.record(time.monotonic() - _t)
-        # Persist the worker performance sample AFTER the main commit so its
-        # writes (a count + prune DELETE + INSERT on worker_performances) do not
-        # extend the time the hot `users` row locks are held above. Performance
-        # samples are telemetry, so a separate follow-up transaction is safe.
+        # Persist the worker performance sample AFTER the main commit so its INSERT
+        # on worker_performances does not extend the time the hot `users` row locks
+        # are held above. Performance samples are telemetry, so a separate follow-up
+        # transaction is safe. Retention and the workers.speed average are folded
+        # off the request path by threads.refresh_worker_speeds.
         _t = time.monotonic()
         self.worker.record_performance(things_per_sec)
         submit_record_performance_duration.record(time.monotonic() - _t, gentype_label)

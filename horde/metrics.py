@@ -284,7 +284,7 @@ submit_record_duration = _seconds_histogram(
 )
 submit_record_performance_duration = _seconds_histogram(
     "horde.submit.record_performance.duration",
-    "Duration of worker.record_performance (worker_performances prune/insert plus speed refresh) after the submit commit",
+    "Duration of worker.record_performance (the worker_performances sample insert) after the submit commit",
 )
 submit_wp_completion_duration = _seconds_histogram(
     "horde.submit.wp_completion.duration",

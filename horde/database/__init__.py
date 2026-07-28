@@ -46,6 +46,10 @@ def start_background_threads():
     # frequently to keep applier lag within a few seconds. Applied history is a
     # permanent recovery archive and is never scheduled for pruning.
     PrimaryTimedFunction(3, threads.apply_kudos_ledger, quorum=quorum)
+    # The quorum node is the only writer of workers.speed: submits merely append a
+    # performance sample, and this folds the samples into the materialized rolling
+    # average. The interval bounds how stale a pop-side speed reading can be.
+    PrimaryTimedFunction(30, threads.refresh_worker_speeds, quorum=quorum)
     PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
     PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
     PrimaryTimedFunction(3600, threads.prune_compiled_stats, quorum=quorum)

@@ -18,11 +18,12 @@ try:
 except ImportError:
     stripe = None
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_, update
 
 from horde import vars as hv
 from horde.argparser import args
 from horde.classes.base.user import User
+from horde.classes.base.worker import SPEED_BASELINE_THINGS_PER_SEC, WorkerPerformance, WorkerTemplate
 from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -444,6 +445,97 @@ def apply_kudos_ledger():
                 )
             tick_span.set_attribute("horde.kudos.folded_rows", folded_rows)
             tick_span.set_attribute("horde.kudos.cycles", cycles_used)
+
+
+# How many performance samples per worker back the materialized ``workers.speed``
+# average. Submits append without bound; the refresh below trims the surplus.
+WORKER_SPEED_SAMPLE_LIMIT = 20
+# How far back the refresh looks for newly appended samples. Deliberately several
+# times the 30 second scheduling interval so a skipped or slow tick, or clock skew
+# between the appending web nodes and the quorum node, still leaves every new sample
+# inside the following tick's window. Overlap only costs recomputing an average that
+# lands on the same value.
+WORKER_SPEED_SAMPLE_WINDOW = timedelta(seconds=180)
+# Reproduces the per-worker-type baseline of the 5.0.4 speed migration: image worker
+# types are credited one megapixelstep per second, everything else one thing per
+# second, before any sample exists to average.
+WORKER_SPEED_IMAGE_TYPES = ("stable_worker", "worker", "worker_template")
+
+
+@logger.catch(reraise=True)
+def refresh_worker_speeds() -> None:
+    """Retain the newest performance samples and rematerialize ``workers.speed``.
+
+    ``workers.speed`` is the rolling average throughput of a worker's most recent
+    ``WORKER_SPEED_SAMPLE_LIMIT`` samples, stored on the row so pop candidate
+    filters read a plain column. Submits only append a sample; both the retention
+    and the average belong here, on the quorum node, as a handful of set-based
+    statements rather than a count, a prune and an aggregate inside every submit
+    transaction.
+
+    The stored average therefore trails the newest sample by up to one scheduling
+    interval. ``speed`` feeds pop-side scheduling heuristics off an average of the
+    last twenty jobs, so an average of that window computed seconds ago carries the
+    same information as one computed now.
+
+    Only workers with a sample inside ``WORKER_SPEED_SAMPLE_WINDOW`` are touched.
+    A worker's sample set changes only when it submits, so a quiet worker's stored
+    speed is already correct and rewriting it would put every workers row under an
+    exclusive lock on every tick.
+    """
+    with get_app().app_context():
+        cutoff = datetime.utcnow() - WORKER_SPEED_SAMPLE_WINDOW
+        recent_worker_ids = (
+            db.session.query(WorkerPerformance.worker_id).filter(WorkerPerformance.created >= cutoff).distinct().scalar_subquery()
+        )
+        # Rank within each worker rather than per worker in Python: one pass over the
+        # sample rows of the recently active workers yields every surplus id.
+        # ``id`` breaks ties on ``created`` so two samples stamped in the same instant
+        # cannot make the retained set depend on scan order.
+        ranked = (
+            db.session.query(
+                WorkerPerformance.id.label("id"),
+                func.row_number()
+                .over(
+                    partition_by=WorkerPerformance.worker_id,
+                    order_by=(WorkerPerformance.created.desc(), WorkerPerformance.id.desc()),
+                )
+                .label("recency"),
+            )
+            .filter(WorkerPerformance.worker_id.in_(recent_worker_ids))
+            .subquery()
+        )
+        surplus_ids = db.session.query(ranked.c.id).filter(ranked.c.recency > WORKER_SPEED_SAMPLE_LIMIT).scalar_subquery()
+        pruned = db.session.query(WorkerPerformance).filter(WorkerPerformance.id.in_(surplus_ids)).delete(synchronize_session=False)
+        workers_table = WorkerTemplate.__table__
+        retained_average = (
+            db.session.query(func.avg(WorkerPerformance.performance))
+            .filter(WorkerPerformance.worker_id == workers_table.c.id)
+            .correlate(workers_table)
+            .scalar_subquery()
+        )
+        # NULLIF folds a zero average into the no-samples case: speed is a divisor in
+        # ProcessingGeneration.get_seconds_needed, so a stored zero raises there.
+        refreshed = db.session.execute(
+            update(workers_table)
+            .where(workers_table.c.id.in_(recent_worker_ids))
+            .values(
+                speed=func.coalesce(
+                    func.nullif(retained_average, 0),
+                    case(
+                        (
+                            workers_table.c.worker_type.in_(WORKER_SPEED_IMAGE_TYPES),
+                            SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["image"],
+                        ),
+                        else_=SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["text"],
+                    ),
+                ),
+            )
+            .execution_options(synchronize_session=False),
+        ).rowcount
+        db.session.commit()
+        if pruned or refreshed:
+            logger.debug(f"Refreshed speed on {refreshed} workers and pruned {pruned} surplus performance samples")
 
 
 @logger.catch(reraise=True)
