@@ -395,6 +395,34 @@ class TestPromotionScanGating:
         assert promoted_role is not None and promoted_role.value is True
 
 
+class TestApplierStatementBatching:
+    """Fold writes are batched: one statement per materialized table per cycle.
+
+    The fold transaction holds every touched row's lock until commit, and hot
+    rows (workers especially) are concurrently written by request-path
+    check-in and performance writers. The write-statement count, and with it
+    the lock-hold window those writers queue behind, must therefore not scale
+    with the number of accounts in a claimed batch.
+    """
+
+    def _fold_update_count(self, db_session, make_user, assert_query_count, account_count):
+        users = [make_user(kudos=100) for _ in range(account_count)]
+        for user in users:
+            emit_kudos_ledger_entry(KudosEntryType.AWARD, 10, user_id=user.id)
+        db_session.commit()
+        with assert_query_count() as queries:
+            apply_pending_kudos()
+        for user in users:
+            db_session.refresh(user)
+            assert user.kudos == 110
+        return len(queries.of_kind("UPDATE"))
+
+    def test_update_statement_count_is_independent_of_batch_width(self, db_session, make_user, assert_query_count):
+        single = self._fold_update_count(db_session, make_user, assert_query_count, 1)
+        wide = self._fold_update_count(db_session, make_user, assert_query_count, 5)
+        assert wide == single
+
+
 class TestAppliedMarking:
     def test_folded_rows_are_marked_applied(self, db_session, make_user):
         user = make_user(kudos=100)

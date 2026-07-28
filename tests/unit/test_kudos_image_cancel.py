@@ -40,6 +40,10 @@ REQUEST_BURN: int = 1
 # not scaled by the multiplier.
 BRIDGE_MULTIPLIER: float = 0.75
 WORKER_REWARD: float = GEN_KUDOS * BRIDGE_MULTIPLIER
+# The credit is exact in the ledger postings (37.5), but the materialized
+# balance columns are integer-typed, so the stored worker/owner balances
+# quantize when the applier folds the posting.
+MATERIALIZED_WORKER_REWARD: int = 38
 
 
 @pytest.fixture(autouse=True)
@@ -90,9 +94,9 @@ class TestInFlightCancelSettles:
         returned = procgen.cancel()
         settle_kudos()
 
-        assert procgen.worker.kudos == WORKER_REWARD
-        assert owner.kudos == 1000 + WORKER_REWARD
-        # cancel returns the bridge-adjusted worker reward.
+        assert procgen.worker.kudos == MATERIALIZED_WORKER_REWARD
+        assert owner.kudos == 1000 + MATERIALIZED_WORKER_REWARD
+        # cancel returns the bridge-adjusted worker reward, exact and unquantized.
         assert returned == WORKER_REWARD
 
     def test_requester_is_debited_gen_kudos_plus_burn(

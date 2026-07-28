@@ -25,7 +25,8 @@ from decimal import Decimal
 from typing import cast
 
 from loguru import logger
-from sqlalchemy import func
+from sqlalchemy import DateTime, Integer, Numeric, case, column, func, update, values
+from sqlalchemy import cast as sql_cast
 
 from horde.classes.base.kudos import (
     KudosLedger,
@@ -40,7 +41,7 @@ from horde.classes.base.kudos import (
 from horde.classes.base.team import Team
 from horde.classes.base.user import User, UserRecords, UserRole, UserStats, UserSuspicions
 from horde.classes.base.worker import WorkerStats, WorkerTemplate
-from horde.database.kudos_counters import increment_counter
+from horde.database.kudos_counters import increment_counters
 from horde.database.kudos_db import try_acquire_applier_lock
 from horde.database.kudos_reservations import consume_reservation, release_event_reservations
 from horde.enums import (
@@ -246,6 +247,16 @@ def apply_pending_kudos(
             )
         }
         release_event_reservations(candidate_event_ids - incomplete_event_ids)
+        # The balance folds above write through single bulk statements that
+        # bypass the identity map, and the session keeps attributes across
+        # commits (expire_on_commit=False), so any instance the session holds
+        # still shows pre-fold values. Expire everything once per cycle, after
+        # the last read of the claimed row instances, so subsequent reads
+        # observe the folded values. The flush first persists pending instance
+        # state (the floor corrections' applied flag), which expiry would
+        # otherwise discard.
+        db.session.flush()
+        db.session.expire_all()
 
     # A trusted user's escrow always drains to their spendable balance; the
     # applier owns that movement so promotion timing cannot strand an escrow
@@ -435,11 +446,19 @@ def _apply_user_deltas(
     users = db.session.query(User).filter(User.id.in_(user_ids)).order_by(User.id.asc()).all()
     floor_adjustment_count = 0
     floor_adjustment_total = Decimal("0")
+    # The applier's advisory lock makes it the only writer of these columns, so
+    # absolute values computed from the rows read in this same transaction
+    # cannot lose a concurrent update. All of them are then written back with a
+    # single statement: the fold transaction holds every touched row's lock
+    # until commit, so the write count, and with it the lock-hold window other
+    # writers queue behind, must not scale with the batch's account count.
+    update_rows: list[tuple[int, object, object, datetime | None]] = []
     for user in users:
+        new_balance: object = user.kudos
         if user.id in balance_deltas:
             requested_balance = round(user.kudos + balance_deltas[user.id], 2)
             floor = user.get_min_kudos()
-            user.kudos = floor if requested_balance < floor else requested_balance
+            new_balance = floor if requested_balance < floor else requested_balance
             if requested_balance < floor:
                 # Flooring is intentionally retained for compatibility, but it
                 # creates currency. Record that creation explicitly so snapshot
@@ -461,10 +480,30 @@ def _apply_user_deltas(
                 floor_adjustment_total += created
                 kudos_floor_adjustments.add(1)
                 kudos_floor_adjustments_created.add(float(created))
+        new_escrow: object = user.evaluating_kudos
         if user.id in escrow_deltas:
-            user.evaluating_kudos = round(user.evaluating_kudos + escrow_deltas[user.id], 2)
+            new_escrow = round(user.evaluating_kudos + escrow_deltas[user.id], 2)
+        new_last_active = user.last_active
         if user.id in activity and (user.last_active is None or activity[user.id] > user.last_active):
-            user.last_active = activity[user.id]
+            new_last_active = activity[user.id]
+        update_rows.append((user.id, new_balance, new_escrow, new_last_active))
+    written = values(
+        column("id", Integer),
+        column("kudos", Numeric),
+        column("evaluating_kudos", Numeric),
+        column("last_active", DateTime),
+        name="user_balance_updates",
+    ).data(update_rows)
+    users_table = User.__table__
+    db.session.execute(
+        update(users_table)
+        .where(users_table.c.id == written.c.id)
+        .values(
+            kudos=written.c.kudos,
+            evaluating_kudos=written.c.evaluating_kudos,
+            last_active=written.c.last_active,
+        ),
+    )
     if floor_adjustment_count:
         logger.info(
             f"Kudos floor adjustments created {floor_adjustment_total} kudos across {floor_adjustment_count} users this batch",
@@ -474,46 +513,52 @@ def _apply_user_deltas(
 def _apply_worker_deltas(worker_deltas: dict[object, Decimal]) -> None:
     if not worker_deltas:
         return
-    workers = db.session.query(WorkerTemplate).filter(WorkerTemplate.id.in_(worker_deltas)).order_by(WorkerTemplate.id.asc()).all()
-    for worker in workers:
-        worker.kudos = round(worker.kudos + worker_deltas[worker.id], 2)
-
-
-def _increment_or_insert(
-    model: type,
-    filters: dict[str, object],
-    delta: Decimal,
-    extra: dict[str, object] | None = None,
-) -> None:
-    """Fold ``delta`` into ``model``'s ``value`` for ``filters``, inserting if absent.
-
-    Reproduces the historical update-then-insert the request path used for the
-    stats and record rows: a round-then-sum increment on the existing row, or a
-    rounded insert when none exists. Single-writer applier ownership removes the
-    first-insert race the request path had to guard against, so no uniqueness or
-    ON CONFLICT is needed here.
-    """
-    increment_counter(model, filters | (extra or {}), delta)
+    # A pure relative increment needs no read at all: one statement adjusts
+    # every touched worker row. Worker rows are concurrently written by
+    # check-in and performance writers, so keeping the fold's lock-hold window
+    # to a single statement matters more here than anywhere else.
+    workers_table = WorkerTemplate.__table__
+    deltas = values(
+        column("id", workers_table.c.id.type),
+        column("kudos_delta", Numeric),
+        name="worker_kudos_deltas",
+    ).data(sorted(worker_deltas.items(), key=lambda item: str(item[0])))
+    db.session.execute(
+        update(workers_table)
+        .where(workers_table.c.id == deltas.c.id)
+        .values(kudos=func.round(sql_cast(workers_table.c.kudos + deltas.c.kudos_delta, Numeric), 2)),
+    )
 
 
 def _apply_user_stats_deltas(deltas: dict[tuple[int, str], Decimal]) -> None:
-    for (user_id, action), delta in sorted(deltas.items()):
-        _increment_or_insert(UserStats, {"user_id": user_id, "action": action}, delta)
+    # One upsert statement folds every dimension: a round-then-sum increment on
+    # the existing row, or a rounded insert when none exists, matching the
+    # historical request-path semantics. Single-writer applier ownership removes
+    # the first-insert race the request path had to guard against.
+    increment_counters(
+        UserStats,
+        [({"user_id": user_id, "action": action}, delta) for (user_id, action), delta in sorted(deltas.items())],
+    )
 
 
 def _apply_worker_stats_deltas(deltas: dict[tuple[object, str], Decimal]) -> None:
-    for (worker_id, action), delta in sorted(deltas.items(), key=lambda item: (str(item[0][0]), item[0][1])):
-        _increment_or_insert(WorkerStats, {"worker_id": worker_id, "action": action}, delta)
+    increment_counters(
+        WorkerStats,
+        [
+            ({"worker_id": worker_id, "action": action}, delta)
+            for (worker_id, action), delta in sorted(deltas.items(), key=lambda item: (str(item[0][0]), item[0][1]))
+        ],
+    )
 
 
 def _apply_user_record_deltas(deltas: dict[tuple[int, str, str], Decimal]) -> None:
-    for (user_id, record_type_name, record), delta in sorted(deltas.items()):
-        record_type = UserRecordTypes[record_type_name]
-        _increment_or_insert(
-            UserRecords,
-            {"user_id": user_id, "record_type": record_type, "record": record},
-            delta,
-        )
+    increment_counters(
+        UserRecords,
+        [
+            ({"user_id": user_id, "record_type": UserRecordTypes[record_type_name], "record": record}, delta)
+            for (user_id, record_type_name, record), delta in sorted(deltas.items())
+        ],
+    )
 
 
 def _apply_worker_contribution_deltas(
@@ -523,12 +568,35 @@ def _apply_worker_contribution_deltas(
     worker_ids = set(contribution_deltas) | set(fulfilment_deltas)
     if not worker_ids:
         return
-    workers = db.session.query(WorkerTemplate).filter(WorkerTemplate.id.in_(worker_ids)).order_by(WorkerTemplate.id.asc()).all()
-    for worker in workers:
-        if worker.id in contribution_deltas:
-            worker.contributions = round(worker.contributions + contribution_deltas[worker.id], 2)
-        if worker.id in fulfilment_deltas:
-            worker.fulfilments = worker.fulfilments + int(fulfilment_deltas[worker.id])
+    workers_table = WorkerTemplate.__table__
+    deltas = values(
+        column("id", workers_table.c.id.type),
+        column("contributions_delta", Numeric),
+        column("fulfilments_delta", Integer),
+        name="worker_aggregate_deltas",
+    ).data(
+        [
+            (
+                worker_id,
+                contribution_deltas.get(worker_id, Decimal("0")),
+                int(fulfilment_deltas.get(worker_id, Decimal("0"))),
+            )
+            for worker_id in sorted(worker_ids, key=str)
+        ],
+    )
+    db.session.execute(
+        update(workers_table)
+        .where(workers_table.c.id == deltas.c.id)
+        .values(
+            # A zero delta leaves the stored value bit-for-bit untouched, as the
+            # per-column skip it replaces did, instead of re-quantizing it.
+            contributions=case(
+                (deltas.c.contributions_delta == 0, workers_table.c.contributions),
+                else_=func.round(sql_cast(workers_table.c.contributions + deltas.c.contributions_delta, Numeric), 2),
+            ),
+            fulfilments=workers_table.c.fulfilments + deltas.c.fulfilments_delta,
+        ),
+    )
 
 
 def _apply_team_deltas(
@@ -539,14 +607,41 @@ def _apply_team_deltas(
     team_ids = set(contribution_deltas) | set(fulfilment_deltas) | set(kudos_deltas)
     if not team_ids:
         return
-    teams = db.session.query(Team).filter(Team.id.in_(team_ids)).order_by(Team.id.asc()).all()
-    for team in teams:
-        if team.id in contribution_deltas:
-            team.contributions = round(team.contributions + contribution_deltas[team.id], 2)
-        if team.id in fulfilment_deltas:
-            team.fulfilments = team.fulfilments + int(fulfilment_deltas[team.id])
-        if team.id in kudos_deltas:
-            team.kudos = round(team.kudos + kudos_deltas[team.id], 2)
+    teams_table = Team.__table__
+    deltas = values(
+        column("id", teams_table.c.id.type),
+        column("contributions_delta", Numeric),
+        column("fulfilments_delta", Integer),
+        column("kudos_delta", Numeric),
+        name="team_aggregate_deltas",
+    ).data(
+        [
+            (
+                team_id,
+                contribution_deltas.get(team_id, Decimal("0")),
+                int(fulfilment_deltas.get(team_id, Decimal("0"))),
+                kudos_deltas.get(team_id, Decimal("0")),
+            )
+            for team_id in sorted(team_ids, key=str)
+        ],
+    )
+    db.session.execute(
+        update(teams_table)
+        .where(teams_table.c.id == deltas.c.id)
+        .values(
+            # A zero delta leaves the stored value bit-for-bit untouched, as the
+            # per-column skip it replaces did, instead of re-quantizing it.
+            contributions=case(
+                (deltas.c.contributions_delta == 0, teams_table.c.contributions),
+                else_=func.round(sql_cast(teams_table.c.contributions + deltas.c.contributions_delta, Numeric), 2),
+            ),
+            fulfilments=teams_table.c.fulfilments + deltas.c.fulfilments_delta,
+            kudos=case(
+                (deltas.c.kudos_delta == 0, teams_table.c.kudos),
+                else_=func.round(sql_cast(teams_table.c.kudos + deltas.c.kudos_delta, Numeric), 2),
+            ),
+        ),
+    )
 
 
 def prune_applied_kudos_ledger(
