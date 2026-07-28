@@ -478,8 +478,13 @@ def _apply_user_deltas(
                 logger.debug(f"Kudos floor adjustment created {created} kudos for user {user.id}")
                 floor_adjustment_count += 1
                 floor_adjustment_total += created
-                kudos_floor_adjustments.add(1)
-                kudos_floor_adjustments_created.add(float(created))
+                # Anon rides its floor continuously by design (unlimited
+                # anonymous consumption against a fixed overdraft), so the
+                # account class is exported to let alerting watch registered
+                # accounts without that structural baseline drowning them out.
+                account_class = "anon" if user.is_anon() else ("pseudonymous" if user.is_pseudonymous() else "registered")
+                kudos_floor_adjustments.add(1, {"horde.account_class": account_class})
+                kudos_floor_adjustments_created.add(float(created), {"horde.account_class": account_class})
         new_escrow: object = user.evaluating_kudos
         if user.id in escrow_deltas:
             new_escrow = round(user.evaluating_kudos + escrow_deltas[user.id], 2)
