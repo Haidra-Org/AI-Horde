@@ -363,6 +363,38 @@ class TestApplierCatchUp:
         assert _applied_count(db_session, applied=False) == 3
 
 
+class TestPromotionScanGating:
+    """Population scans (trust promotion, escrow drain) run on settling cycles only.
+
+    The scans examine population state rather than the claimed batch, so a
+    catch-up burst repeating them per full-batch cycle multiplies the burst's
+    duration without changing the outcome. A cycle whose claims come back full
+    defers them; the burst's settling cycle runs them, so a drained queue always
+    promotes eligible users in the same tick.
+    """
+
+    def test_full_batch_cycle_defers_promotion_to_the_settling_cycle(self, db_session, make_user, monkeypatch):
+        from horde.classes.base.user import UserRole
+
+        monkeypatch.setenv("KUDOS_TRUST_THRESHOLD", "100")
+        owner = make_user(kudos=1000, created=datetime.utcnow() - timedelta(days=8))
+        owner.evaluating_kudos = 250
+        for _ in range(2):
+            emit_kudos_ledger_entry(KudosEntryType.AWARD, 1, user_id=owner.id)
+        db_session.commit()
+
+        # Both claims full: the backlog has not drained, so the promotion scan
+        # is deferred instead of repeated on every cycle of the burst.
+        apply_pending_kudos(batch_size=2)
+        deferred_role = db_session.query(UserRole).filter_by(user_id=owner.id, user_role=UserRoleTypes.TRUSTED).first()
+        assert deferred_role is None
+
+        # The settling cycle claims a short batch and runs the scan.
+        apply_pending_kudos(batch_size=2)
+        promoted_role = db_session.query(UserRole).filter_by(user_id=owner.id, user_role=UserRoleTypes.TRUSTED).first()
+        assert promoted_role is not None and promoted_role.value is True
+
+
 class TestAppliedMarking:
     def test_folded_rows_are_marked_applied(self, db_session, make_user):
         user = make_user(kudos=100)

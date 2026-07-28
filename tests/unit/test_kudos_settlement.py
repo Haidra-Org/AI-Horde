@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from horde.classes.base.kudos import KudosLedger
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.classes.base.user import User, UserRole
+from horde.classes.base.user import User, UserRole, UserSuspicions
 from horde.classes.base.worker import WorkerModel, WorkerTemplate
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
@@ -232,6 +232,29 @@ class TestTrustPromotion:
         assert owner.evaluating_kudos == 50
         assert owner.kudos == 1000
         assert owner.trusted is False
+
+    def test_suspicious_account_is_not_promoted(
+        self,
+        db_session: Session,
+        make_user: MakeUser,
+        monkeypatch: pytest.MonkeyPatch,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """An account at the suspicion threshold keeps its escrow and gains no trust."""
+        monkeypatch.setenv("KUDOS_TRUST_THRESHOLD", "100")
+        owner = make_user(kudos=1000, created=datetime.utcnow() - timedelta(days=8))
+        owner.evaluating_kudos = 250
+        for suspicion_id in range(User.SUSPICION_THRESHOLD):
+            db_session.add(UserSuspicions(user_id=owner.id, suspicion_id=suspicion_id))
+        db_session.flush()
+
+        owner.check_for_trust()
+        settle_kudos()
+
+        db_session.refresh(owner)
+        assert owner.trusted is False
+        assert owner.evaluating_kudos == 250
+        assert owner.kudos == 1000
 
     def test_young_account_is_not_promoted(
         self,

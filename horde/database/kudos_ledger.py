@@ -38,7 +38,7 @@ from horde.classes.base.kudos import (
     kudos_event,
 )
 from horde.classes.base.team import Team
-from horde.classes.base.user import User, UserRecords, UserRole, UserStats
+from horde.classes.base.user import User, UserRecords, UserRole, UserStats, UserSuspicions
 from horde.classes.base.worker import WorkerStats, WorkerTemplate
 from horde.database.kudos_counters import increment_counter
 from horde.database.kudos_db import try_acquire_applier_lock
@@ -255,11 +255,21 @@ def apply_pending_kudos(
     # them, so both are gated on the mode pinned in this applier transaction. The
     # heartbeat is stamped every cycle regardless (even folding nothing) so the lag
     # metric tracks applier staleness rather than a quiet period.
-    if get_kudos_ledger_mode() == KudosLedgerMode.LEDGER:
+    #
+    # The scans run only on a settling cycle (one whose claims came back short,
+    # meaning the queue drained this cycle). They examine population state, not
+    # the claimed batch, so repeating them on every full-batch cycle of a
+    # catch-up burst does identical work while multiplying the burst's duration
+    # by their cost. At steady state every cycle settles, so scan cadence there
+    # is unchanged; under sustained saturation the scans wait for the backlog to
+    # clear, which only defers promotion/drain, never loses it.
+    # A zero-size claim folds nothing by construction and settles trivially,
+    # which keeps scan-only invocations working.
+    claims_settled = batch_size == 0 or (len(rows) < batch_size and len(stat_rows) < batch_size)
+    drained = 0
+    if claims_settled and get_kudos_ledger_mode() == KudosLedgerMode.LEDGER:
         _promote_eligible_users(now)
         drained = _drain_trusted_escrow()
-    else:
-        drained = 0
     state.applied_at = now
     if commit:
         db.session.commit()
@@ -366,20 +376,27 @@ def _promote_eligible_users(now: datetime) -> None:
         )
         .exists()
     )
+    # Ineligibility is filtered in SQL rather than per instance. An anon or
+    # suspicious account above the threshold never promotes, so a Python-side
+    # skip would refetch it on every scan forever, and the instance-level
+    # ``is_suspicious`` check lazy-loads each candidate's suspicions
+    # individually. The count comparison reproduces ``User.is_suspicious`` for
+    # a non-trusted account (the candidate filter already excludes trusted).
+    suspicion_count = db.session.query(func.count(UserSuspicions.id)).filter(UserSuspicions.user_id == User.id).scalar_subquery()
     candidates = (
         db.session.query(User)
         .filter(
             ~trusted_role_exists,
             User.evaluating_kudos > threshold,
             User.created <= now - timedelta(days=7),
+            User.oauth_id != "anon",
+            suspicion_count < User.SUSPICION_THRESHOLD,
         )
         .order_by(User.id.asc())
         .all()
     )
     promoted_user_ids: list[int] = []
     for user in candidates:
-        if user.is_anon() or user.is_suspicious():
-            continue
         role = db.session.query(UserRole).filter_by(user_id=user.id, user_role=UserRoleTypes.TRUSTED).first()
         if role is None:
             role = UserRole(user_id=user.id, user_role=UserRoleTypes.TRUSTED, value=True)
