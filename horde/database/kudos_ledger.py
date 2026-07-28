@@ -376,6 +376,7 @@ def _promote_eligible_users(now: datetime) -> None:
         .order_by(User.id.asc())
         .all()
     )
+    promoted_user_ids: list[int] = []
     for user in candidates:
         if user.is_anon() or user.is_suspicious():
             continue
@@ -387,7 +388,14 @@ def _promote_eligible_users(now: datetime) -> None:
             role.value = True
         for worker in cast(list[WorkerTemplate], user.workers):
             worker.paused = False
-        logger.info(f"Kudos applier promoted user {user.id} to trusted")
+        # Per-user detail stays at debug: a promotion is durably auditable via
+        # the EVALUATION_PROMOTION ledger pair the drain emits, and a promotion
+        # wave (hundreds of users in one tick at cutover) must not stretch the
+        # fold tick with per-row log writes.
+        logger.debug(f"Kudos applier promoted user {user.id} to trusted")
+        promoted_user_ids.append(user.id)
+    if promoted_user_ids:
+        logger.info(f"Kudos applier promoted {len(promoted_user_ids)} users to trusted this tick")
     # Make the new roles visible to the SQL hybrid used by the drain query.
     db.session.flush()
     # record_contributions commonly loaded ``user.roles`` earlier in this same
@@ -408,6 +416,8 @@ def _apply_user_deltas(
     if not user_ids:
         return
     users = db.session.query(User).filter(User.id.in_(user_ids)).order_by(User.id.asc()).all()
+    floor_adjustment_count = 0
+    floor_adjustment_total = Decimal("0")
     for user in users:
         if user.id in balance_deltas:
             requested_balance = round(user.kudos + balance_deltas[user.id], 2)
@@ -425,13 +435,23 @@ def _apply_user_deltas(
                     detail={KudosAuditDetail.REASON: "minimum_balance_floor"},
                 )
                 correction.applied = True
-                logger.info(f"Kudos floor adjustment created {created} kudos for user {user.id}")
+                # Per-user detail stays at debug: the FLOOR_ADJUSTMENT posting is
+                # the durable audit record, and a batch can floor hundreds of
+                # users in one fold transaction, which per-row log writes would
+                # stretch.
+                logger.debug(f"Kudos floor adjustment created {created} kudos for user {user.id}")
+                floor_adjustment_count += 1
+                floor_adjustment_total += created
                 kudos_floor_adjustments.add(1)
                 kudos_floor_adjustments_created.add(float(created))
         if user.id in escrow_deltas:
             user.evaluating_kudos = round(user.evaluating_kudos + escrow_deltas[user.id], 2)
         if user.id in activity and (user.last_active is None or activity[user.id] > user.last_active):
             user.last_active = activity[user.id]
+    if floor_adjustment_count:
+        logger.info(
+            f"Kudos floor adjustments created {floor_adjustment_total} kudos across {floor_adjustment_count} users this batch",
+        )
 
 
 def _apply_worker_deltas(worker_deltas: dict[object, Decimal]) -> None:
