@@ -137,7 +137,9 @@ class PromptChecker:
                     continue
                 # We only need 1 of the filters in the group to match to increase suspicion
                 # Suspicion does not increase further for more filters in the same group
-                existing_emojis = emoji.emoji_list(prompt)
+                # emoji_list() walks the whole prompt in Python and is the most expensive part of
+                # this loop on long prompts, so it is only paid for by the filter that reads it.
+                existing_emojis = emoji.emoji_list(prompt) if filter_id == "filter_10" else []
                 if filter_id == "filter_10" and len(existing_emojis):
                     found_sus = False
                     emj_list = [emj["emoji"] for emj in existing_emojis]

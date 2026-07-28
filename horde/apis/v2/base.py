@@ -292,9 +292,10 @@ class GenerateTemplate(Resource):
                 if not self.user:
                     self.user = database.find_user_by_api_key(self.apikey)
             # logger.warning(datetime.utcnow())
+            # Recorded before the rejection so requests with an unusable key are attributed too.
+            generate_validate_find_user_duration.record(time.monotonic() - find_user_t0, {"horde.gentype": self.gentype})
             if not self.user:
                 raise e.InvalidAPIKey("generation")
-            generate_validate_find_user_duration.record(time.monotonic() - find_user_t0, {"horde.gentype": self.gentype})
             if not self.user.service and self.args["proxied_account"]:
                 raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
             if self.user.deleted:
@@ -360,9 +361,14 @@ class GenerateTemplate(Resource):
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
             # logger.warning(datetime.utcnow())
-            prompt_filter_t0 = time.monotonic()
-            prompt_suspicion, _ = prompt_checker(self.prompt)
-            generate_validate_prompt_filter_duration.record(time.monotonic() - prompt_filter_t0, {"horde.gentype": self.gentype})
+            prompt_suspicion = 0
+            # The suspicion score is only read by the corrupt-prompt branch below, which excludes the
+            # text gentype, so text requests would pay for a full regex sweep of a multi-kilobyte
+            # prompt without any moderation decision depending on it.
+            if self.gentype != "text":
+                prompt_filter_t0 = time.monotonic()
+                prompt_suspicion, _ = prompt_checker(self.prompt)
+                generate_validate_prompt_filter_duration.record(time.monotonic() - prompt_filter_t0, {"horde.gentype": self.gentype})
             # logger.warning(datetime.utcnow())
             prompt_replaced = False
             if prompt_suspicion >= 2 and self.gentype != "text":
