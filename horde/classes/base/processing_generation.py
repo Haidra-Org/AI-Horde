@@ -98,15 +98,24 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
 
     def set_generation(self, generation: str, things_per_sec: float, **kwargs: object) -> float | int:
-        from horde.metrics import submit_commit_duration, submit_record_duration, submit_webhook_call_duration
+        from horde.metrics import (
+            submit_claim_duration,
+            submit_commit_duration,
+            submit_gen_kudos_duration,
+            submit_record_duration,
+            submit_record_performance_duration,
+            submit_webhook_call_duration,
+            submit_wp_completion_duration,
+        )
 
+        gentype_label = {"horde.gentype": self.procgen_type}
         # Use an atomic compare-and-set update so exactly one concurrent submit
         # can transition this procgen from pending -> completed.
         sanitized_generation = generation.replace("\x00", "\ufffd")
         seed = kwargs.get("seed", self.seed)
         gen_metadata = kwargs.get("gen_metadata", self.gen_metadata)
-        kudos = self.get_gen_kudos()
 
+        _t = time.monotonic()
         updated_rows = (
             db.session.query(type(self))
             .filter(
@@ -124,6 +133,7 @@ class ProcessingGeneration(db.Model):
                 synchronize_session=False,
             )
         )
+        submit_claim_duration.record(time.monotonic() - _t, gentype_label)
         if updated_rows == 0:
             current_procgen = db.session.query(type(self)).filter(type(self).id == self.id).populate_existing().first()
             if current_procgen is None:
@@ -138,7 +148,12 @@ class ProcessingGeneration(db.Model):
         # Support for two typical properties
         self.seed = kwargs.get("seed", None)
         self.gen_metadata = kwargs.get("gen_metadata", None)
+        # The reward is derived from what the worker returned (text kudos scale
+        # with the delivered token count), so it is computed once the generation
+        # fields above are populated.
+        _t = time.monotonic()
         kudos = self.get_gen_kudos()
+        submit_gen_kudos_duration.record(time.monotonic() - _t, gentype_label)
         self.cancelled = False
         _t = time.monotonic()
         self.record(things_per_sec, kudos)
@@ -150,12 +165,16 @@ class ProcessingGeneration(db.Model):
         # writes (a count + prune DELETE + INSERT on worker_performances) do not
         # extend the time the hot `users` row locks are held above. Performance
         # samples are telemetry, so a separate follow-up transaction is safe.
+        _t = time.monotonic()
         self.worker.record_performance(things_per_sec)
+        submit_record_performance_duration.record(time.monotonic() - _t, gentype_label)
+        _t = time.monotonic()
         if self.wp.is_completed():
             from horde.database.kudos_reservations import release_reservation
 
             release_reservation(f"upfront:{self.wp.id}")
             db.session.commit()
+        submit_wp_completion_duration.record(time.monotonic() - _t, gentype_label)
         # Send webhook after commit so external I/O does not hold DB locks.
         _t = time.monotonic()
         self.send_webhook(kudos)

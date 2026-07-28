@@ -13,7 +13,11 @@ from horde.classes.stable.genstats import record_image_statistic
 from horde.flask import db
 from horde.image import convert_b64_to_pil, convert_pil_to_b64
 from horde.logger import logger
-from horde.metrics import submit_genstats_record_duration, submit_server_upload_duration
+from horde.metrics import (
+    submit_genstats_record_duration,
+    submit_server_upload_duration,
+    submit_state_handling_duration,
+)
 from horde.model_reference import model_reference
 from horde.r2 import (
     check_shared_image,
@@ -88,6 +92,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             return self._set_generation_inner(generation, things_per_sec, **kwargs)
 
     def _set_generation_inner(self, generation, things_per_sec, **kwargs):
+        state_t0 = time.monotonic()
         state = kwargs.get("state", "ok")
         censored = False
         gen_metadata = kwargs.get("gen_metadata") if kwargs.get("gen_metadata") is not None else []
@@ -114,6 +119,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             if self.wp.count_finished_jobs() < self.wp.jobs:
                 self.wp.n += 1
             self.abort()
+        submit_state_handling_duration.record(time.monotonic() - state_t0, {"horde.gentype": "image"})
         if self.is_completed():
             return 0
         # We return -1 to know to send a different error

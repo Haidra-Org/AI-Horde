@@ -14,7 +14,7 @@ from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.logger import logger
-from horde.metrics import submit_genstats_record_duration
+from horde.metrics import submit_genstats_record_duration, submit_state_handling_duration
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
 
@@ -89,6 +89,7 @@ class TextProcessingGeneration(ProcessingGeneration):
     def set_generation(self, generation, things_per_sec, **kwargs):
         # We don't check the state in the super() function as image gen sets it early here
         # as well, so it can abort before doing R2 operations
+        state_t0 = time.monotonic()
         state = kwargs.get("state", "ok")
         if state == "faulted":
             self.wp.n += 1
@@ -108,6 +109,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         elif has_csam_meta:
             self.censored = True
             db.session.commit()
+        submit_state_handling_duration.record(time.monotonic() - state_t0, {"horde.gentype": "text"})
 
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         genstats_t0 = time.monotonic()

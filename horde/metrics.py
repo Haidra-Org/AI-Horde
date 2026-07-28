@@ -266,9 +266,29 @@ submit_set_gen_duration = _seconds_histogram(
     "horde.submit.set_generation.duration",
     "Duration of procgen.set_generation",
 )
+submit_state_handling_duration = _seconds_histogram(
+    "horde.submit.state_handling.duration",
+    "Duration of the gentype-specific censorship/faulted handling preceding base set_generation",
+)
+submit_claim_duration = _seconds_histogram(
+    "horde.submit.claim.duration",
+    "Duration of the compare-and-set UPDATE claiming a procgen for this submission",
+)
+submit_gen_kudos_duration = _seconds_histogram(
+    "horde.submit.get_gen_kudos.duration",
+    "Duration of procgen.get_gen_kudos within set_generation",
+)
 submit_record_duration = _seconds_histogram(
     "horde.submit.record.duration",
     "Duration of procgen.record",
+)
+submit_record_performance_duration = _seconds_histogram(
+    "horde.submit.record_performance.duration",
+    "Duration of worker.record_performance (worker_performances prune/insert plus speed refresh) after the submit commit",
+)
+submit_wp_completion_duration = _seconds_histogram(
+    "horde.submit.wp_completion.duration",
+    "Duration of the wp completion check and upfront reservation release after the submit commit",
 )
 submit_worker_contrib_duration = _seconds_histogram(
     "horde.submit.worker_contribution.duration",
