@@ -1,0 +1,12 @@
+-- Foreign-key indexes for the suspicion tables. db.create_all() covers fresh
+-- databases; this snippet migrates existing ones. Every suspicion lookup
+-- (User.is_suspicious, Worker.is_suspicious, and the kudos applier's
+-- promotion-eligibility scan) filters these tables by their owner column, and
+-- without an index each check is a sequential scan of the whole table.
+
+-- CONCURRENTLY so a live apply never blocks writers. It cannot run inside a
+-- transaction block (psql autocommit applies each statement on its own), and a
+-- failed build leaves an INVALID index: DROP INDEX it and rerun.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_user_suspicions_user_id ON user_suspicions (user_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_worker_suspicions_worker_id ON worker_suspicions (worker_id);

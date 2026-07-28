@@ -92,6 +92,7 @@ class WorkerSuspicions(db.Model):
         uuid_column_type(),
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     worker = db.relationship("Worker", back_populates="suspicions")
     suspicion_id = db.Column(db.Integer, primary_key=False)
