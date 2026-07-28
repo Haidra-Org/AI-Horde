@@ -72,8 +72,10 @@ Accounting tables, their foreign-key lifetimes, and the typed enums are specifie
    Reverse with [online rollback](#online-rollback).
 
 Monitor pending row count, oldest pending age, heartbeat age, database deadlocks, reservation age and count,
-transfer rejection rate, and balance-floor adjustments throughout rollout. The `/api/v2/status/heartbeat` response
-exposes queue health and reports `DEGRADED` once the oldest pending event exceeds 30 seconds.
+transfer rejection rate, and balance-floor adjustments throughout rollout, using the quorum node's applier
+telemetry (`horde.kudos.*` metrics) or `tools/kudos_ledger_admin.py status`. The per-node
+`/api/v2/status/heartbeat` response reports only node-local health; it deliberately carries no applier-queue
+signal, since load balancer health checks consume it and a shared-database signal would fail every node at once.
 
 ## Online rollback
 

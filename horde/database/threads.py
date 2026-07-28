@@ -396,8 +396,10 @@ def apply_kudos_ledger():
 
     A single tick keeps folding while a cycle drains a full batch, up to
     ``KUDOS_APPLIER_MAX_CATCHUP_CYCLES``, so a backlog clears at many batches per
-    tick rather than one. Each fold is its own bounded transaction; only the
-    health metrics are recorded, once, after the loop settles.
+    tick rather than one. Each fold is its own bounded transaction. Health is
+    sampled once per tick, before the fold loop, so the recorded backlog and
+    queue age describe the live inflow the applier is facing; sampling after the
+    drain would report a near-empty queue regardless of load.
     """
     from horde.database import kudos_ledger
     from horde.database.kudos_ledger import kudos_applier_health
@@ -412,6 +414,15 @@ def apply_kudos_ledger():
     )
 
     with get_app().app_context():
+        health = kudos_applier_health()
+        kudos_pending_rows.record(health["pending_rows"])
+        kudos_active_reservations.record(health["active_reservations"])
+        if health["heartbeat_seconds"] is not None:
+            kudos_applier_lag_seconds.record(health["heartbeat_seconds"])
+        if health["oldest_pending_seconds"] is not None:
+            kudos_oldest_pending_seconds.record(health["oldest_pending_seconds"])
+        if health["oldest_reservation_seconds"] is not None:
+            kudos_oldest_reservation_seconds.record(health["oldest_reservation_seconds"])
         cycles_used = 0
         folded_rows = 0
         with logfire.span("horde.kudos.applier.tick") as tick_span:
@@ -433,15 +444,6 @@ def apply_kudos_ledger():
                 )
             tick_span.set_attribute("horde.kudos.folded_rows", folded_rows)
             tick_span.set_attribute("horde.kudos.cycles", cycles_used)
-        health = kudos_applier_health()
-        kudos_pending_rows.record(health["pending_rows"])
-        kudos_active_reservations.record(health["active_reservations"])
-        if health["heartbeat_seconds"] is not None:
-            kudos_applier_lag_seconds.record(health["heartbeat_seconds"])
-        if health["oldest_pending_seconds"] is not None:
-            kudos_oldest_pending_seconds.record(health["oldest_pending_seconds"])
-        if health["oldest_reservation_seconds"] is not None:
-            kudos_oldest_reservation_seconds.record(health["oldest_reservation_seconds"])
 
 
 @logger.catch(reraise=True)

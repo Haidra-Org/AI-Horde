@@ -3031,6 +3031,12 @@ class Heartbeat(Resource):
     def get(self):
         """If this loads, this node is available
         Includes some other metrics to gauge the health of this node"""
+        # This endpoint backs the load balancer's per-node health checks, so it
+        # must report only node-local state (own DB connectivity, own thread
+        # pool). Any signal derived from shared database state flips on every
+        # node at once and takes the whole fleet out of rotation together;
+        # fleet-wide accounting health (e.g. kudos applier lag) is recorded on
+        # the quorum node's telemetry instead.
         health = "OK"
         db_conn = True
         try:
@@ -3040,11 +3046,6 @@ class Heartbeat(Resource):
             health = "DOWN"
         if waitress_metrics.queue > 0:
             health = "OVERLOADED"
-        from horde.database.kudos_ledger import kudos_applier_health
-
-        kudos_health = kudos_applier_health() if db_conn else {}
-        if kudos_health.get("oldest_pending_seconds", 0) and kudos_health["oldest_pending_seconds"] > 30:
-            health = "DEGRADED"
         return {
             "message": health,
             "version": HORDE_VERSION,
@@ -3052,7 +3053,6 @@ class Heartbeat(Resource):
             "threads": waitress_metrics.threads,
             "active_count": waitress_metrics.active_count,
             "db_connection": db_conn,
-            "kudos_ledger": kudos_health,
         }, 200
 
 

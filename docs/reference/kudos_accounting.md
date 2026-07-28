@@ -350,9 +350,13 @@ for the executable procedure.
 | `oldest_reservation_seconds` | Age of the oldest active hold |
 
 The background task runs every three seconds and keeps folding within a tick while full batches drain, up to a bounded
-number of catch-up cycles, so a backlog clears at many batches per tick while each fold stays a small transaction. The
-heartbeat endpoint reports `DEGRADED` when the oldest pending event exceeds 30 seconds. Operators should alert on queue age and reservation age, not only row count: a steady queue can be
-healthy under load, while one old row or hold can indicate a poisoned path.
+number of catch-up cycles, so a backlog clears at many batches per tick while each fold stays a small transaction.
+Health is sampled once per tick, before the fold loop, so the recorded metrics describe the live inflow rather than
+the near-empty post-drain queue. These metrics are recorded on the quorum node only; the per-node
+`/api/v2/status/heartbeat` endpoint deliberately excludes them, because a load balancer health check fed a
+shared-database signal would remove every node from rotation at once. Operators should alert on queue age and
+reservation age from the quorum telemetry, not only row count: a steady queue can be healthy under load, while one
+old row or hold can indicate a poisoned path.
 
 ## Code map
 

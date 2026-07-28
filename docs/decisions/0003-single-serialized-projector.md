@@ -61,8 +61,9 @@ per tick while each transaction stays small.
 
 - Bad: Projection throughput is bounded by one writer. Batch size, the three-second interval, and the catch-up
   cycle limit are the only scaling controls; going wider means a new ordering and reservation design.
-- Bad: Queue age, heartbeat age, and reservation age need alerting; `/api/v2/status/heartbeat` reports `DEGRADED`
-  once the oldest pending event exceeds 30 seconds.
+- Bad: Queue age, heartbeat age, and reservation age need alerting. These are recorded as quorum-node telemetry
+  only: they are shared-database signals, so surfacing them in the per-node `/api/v2/status/heartbeat` (which load
+  balancer health checks consume) would take every node out of rotation simultaneously when the queue ages.
 
 ## Pros and Cons of the Options
 
