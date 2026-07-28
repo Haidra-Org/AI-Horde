@@ -915,7 +915,7 @@ class User(db.Model):
             return True
         return False
 
-    def is_pseudonymous(self):
+    def is_pseudonymous(self) -> bool:
         try:
             uuid.UUID(str(self.oauth_id))
             return True
