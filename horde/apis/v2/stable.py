@@ -1226,6 +1226,9 @@ class InterrogatePop(JobPopTemplate):
         self.worker_ip = request.remote_addr
         self.validate()
         self.check_in()
+        # See JobPopTemplate._post_inner: release the worker-row lock before
+        # form evaluation instead of holding it for the rest of the pop.
+        db.session.commit()
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_forms = []
         # self.priority_users = [self.user]

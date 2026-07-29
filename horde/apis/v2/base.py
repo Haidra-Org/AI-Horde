@@ -589,6 +589,14 @@ class JobPopTemplate(Resource):
         check_in_t0 = time.monotonic()
         with logfire.span("horde.pop.check_in", worker_name=getattr(self.worker, "name", None)):
             self.check_in()
+            # Commit the check-in bookkeeping now rather than with the rest of
+            # the pop: the worker-row UPDATE would otherwise stay uncommitted
+            # through queue evaluation and job assignment, and the kudos
+            # applier's worker fold (which locks the same rows) queues behind
+            # it, in turn queueing every later check_in behind the fold.
+            # set_models already commits inside check_in when the model list
+            # changes, so worker state has never been atomic with assignment.
+            db.session.commit()
         pop_check_in_duration.record(time.monotonic() - check_in_t0, {"horde.gentype": self.gentype})
         # This ensures that the priority requested by the bridge is respected
         self.prioritized_wp = []
