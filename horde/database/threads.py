@@ -460,6 +460,14 @@ WORKER_SPEED_SAMPLE_WINDOW = timedelta(seconds=180)
 # types are credited one megapixelstep per second, everything else one thing per
 # second, before any sample exists to average.
 WORKER_SPEED_IMAGE_TYPES = ("stable_worker", "worker", "worker_template")
+# Upper bound on how many workers rows a single speed-refresh UPDATE locks. The
+# refresh rewrites every recently active worker, which at fleet scale is close to
+# every worker row a pop check-in or the kudos applier fold also updates. One
+# fleet-wide UPDATE stalls mid-statement whenever it collides with either of
+# those writers, and while stalled it already holds exclusive locks on the rows
+# it has reached, so every check-in queues behind it for the full stall. Small
+# chunks committed individually keep each hold window to a few milliseconds.
+WORKER_SPEED_REFRESH_CHUNK = 100
 
 
 @logger.catch(reraise=True)
@@ -482,9 +490,26 @@ def refresh_worker_speeds() -> None:
     A worker's sample set changes only when it submits, so a quiet worker's stored
     speed is already correct and rewriting it would put every workers row under an
     exclusive lock on every tick.
+
+    The rewrite runs as chunked UPDATEs of ``WORKER_SPEED_REFRESH_CHUNK`` workers,
+    each committed before the next, so the row locks it takes never cover the whole
+    active fleet at once; pop check-ins and the kudos applier fold update the same
+    rows concurrently and must only ever wait out one chunk. The prune commits
+    first on its own: retention and the average need no shared atomicity, since a
+    sample appended between the two only moves the average toward a value a later
+    tick would store anyway.
     """
     with get_app().app_context():
         cutoff = datetime.utcnow() - WORKER_SPEED_SAMPLE_WINDOW
+        recent_worker_id_list = [
+            row[0]
+            for row in db.session.query(WorkerPerformance.worker_id)
+            .filter(WorkerPerformance.created >= cutoff)
+            .distinct()
+            .all()
+        ]
+        if not recent_worker_id_list:
+            return
         recent_worker_ids = (
             db.session.query(WorkerPerformance.worker_id).filter(WorkerPerformance.created >= cutoff).distinct().scalar_subquery()
         )
@@ -507,6 +532,7 @@ def refresh_worker_speeds() -> None:
         )
         surplus_ids = db.session.query(ranked.c.id).filter(ranked.c.recency > WORKER_SPEED_SAMPLE_LIMIT).scalar_subquery()
         pruned = db.session.query(WorkerPerformance).filter(WorkerPerformance.id.in_(surplus_ids)).delete(synchronize_session=False)
+        db.session.commit()
         workers_table = WorkerTemplate.__table__
         retained_average = (
             db.session.query(func.avg(WorkerPerformance.performance))
@@ -516,24 +542,26 @@ def refresh_worker_speeds() -> None:
         )
         # NULLIF folds a zero average into the no-samples case: speed is a divisor in
         # ProcessingGeneration.get_seconds_needed, so a stored zero raises there.
-        refreshed = db.session.execute(
-            update(workers_table)
-            .where(workers_table.c.id.in_(recent_worker_ids))
-            .values(
-                speed=func.coalesce(
-                    func.nullif(retained_average, 0),
-                    case(
-                        (
-                            workers_table.c.worker_type.in_(WORKER_SPEED_IMAGE_TYPES),
-                            SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["image"],
-                        ),
-                        else_=SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["text"],
-                    ),
+        refreshed_speed = func.coalesce(
+            func.nullif(retained_average, 0),
+            case(
+                (
+                    workers_table.c.worker_type.in_(WORKER_SPEED_IMAGE_TYPES),
+                    SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["image"],
                 ),
-            )
-            .execution_options(synchronize_session=False),
-        ).rowcount
-        db.session.commit()
+                else_=SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["text"],
+            ),
+        )
+        refreshed = 0
+        for start in range(0, len(recent_worker_id_list), WORKER_SPEED_REFRESH_CHUNK):
+            chunk = recent_worker_id_list[start : start + WORKER_SPEED_REFRESH_CHUNK]
+            refreshed += db.session.execute(
+                update(workers_table)
+                .where(workers_table.c.id.in_(chunk))
+                .values(speed=refreshed_speed)
+                .execution_options(synchronize_session=False),
+            ).rowcount
+            db.session.commit()
         if pruned or refreshed:
             logger.debug(f"Refreshed speed on {refreshed} workers and pruned {pruned} surplus performance samples")
 
