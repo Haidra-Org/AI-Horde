@@ -60,10 +60,19 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
         .exists()
     )
     wp_names_any_model = db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id).exists()
+    # Worker targeting is evaluated per WP, never per targeting row: joining
+    # wp_allowed_workers admits a blacklisted worker whenever the blacklist
+    # names anyone else, because the other rows satisfy a row-level
+    # ``worker_id != x`` predicate.
+    wp_targets_this_worker = (
+        db.session.query(WPAllowedWorkers.id)
+        .filter(WPAllowedWorkers.wp_id == TextWaitingPrompt.id, WPAllowedWorkers.worker_id == worker.id)
+        .exists()
+    )
+    wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == TextWaitingPrompt.id).exists()
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(noload(TextWaitingPrompt.processing_gens))
-        .outerjoin(WPAllowedWorkers, TextWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.max_length <= worker.max_length,
@@ -84,14 +93,14 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
                 ~wp_names_any_model,
             ),
             or_(
-                WPAllowedWorkers.id.is_(None),
+                ~wp_has_worker_targets,
                 and_(
                     TextWaitingPrompt.worker_blacklist.is_(False),
-                    WPAllowedWorkers.worker_id == worker.id,
+                    wp_targets_this_worker,
                 ),
                 and_(
                     TextWaitingPrompt.worker_blacklist.is_(True),
-                    WPAllowedWorkers.worker_id != worker.id,
+                    ~wp_targets_this_worker,
                 ),
             ),
             or_(

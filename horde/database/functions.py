@@ -1152,22 +1152,30 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     # models: WP specifies models that worker doesn't serve
     count_exprs["models"] = count_distinct_wp(and_(WPModels.model.not_in(models_list), WPModels.id != None))  # noqa E712
 
-    # worker_id: WP targets specific workers (allowlist/blocklist) in a way that excludes this worker
-    count_exprs["worker_id"] = count_distinct_wp(
-        and_(
-            wp_has_worker_targets,
-            or_(
-                and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(False),
-                    ~wp_targets_this_worker,
-                ),
-                and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(True),
-                    wp_targets_this_worker,
-                ),
+    # worker_id: WP targets specific workers (allowlist/blocklist) in a way that
+    # excludes this worker. Under HORDE_REQUIRE_MATCHED_TARGETING the general
+    # pass serves no allowlist WP at all (they are only picked up through
+    # priority matching), so every allowlist WP counts as skipped there.
+    if priority_user_ids or os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") != "1":
+        excluded_by_targeting = or_(
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(False),
+                ~wp_targets_this_worker,
             ),
-        ),
-    )
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(True),
+                wp_targets_this_worker,
+            ),
+        )
+    else:
+        excluded_by_targeting = or_(
+            ImageWaitingPrompt.worker_blacklist.is_(False),
+            and_(
+                ImageWaitingPrompt.worker_blacklist.is_(True),
+                wp_targets_this_worker,
+            ),
+        )
+    count_exprs["worker_id"] = count_distinct_wp(and_(wp_has_worker_targets, excluded_by_targeting))
 
     # max_pixels
     count_exprs["max_pixels"] = count_distinct_wp(ImageWaitingPrompt.width * ImageWaitingPrompt.height >= worker.max_pixels)
