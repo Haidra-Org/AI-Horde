@@ -1627,6 +1627,18 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
             worker_class = InterrogationWorker
         models_list = wp.get_model_names()
         worker_ids = wp.get_worker_ids()
+        # The model constraint is a semi-join rather than an outer join: joining
+        # worker_models returns one full worker+user row per matching model, so
+        # a request allowing N models multiplies every candidate row N-fold
+        # before the DISTINCT-free scan below iterates them.
+        serves_requested_model = (
+            db.session.query(WorkerModel.id)
+            .filter(
+                WorkerModel.worker_id == worker_class.id,
+                WorkerModel.model.in_(models_list),
+            )
+            .exists()
+        )
         final_worker_list = (
             db.session.query(worker_class)
             .options(
@@ -1636,9 +1648,6 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
                 # Eagerly load relationships accessed by can_generate() to avoid N+1 queries
                 selectinload(worker_class.blacklist),
                 contains_eager(worker_class.user),
-            )
-            .outerjoin(
-                WorkerModel,
             )
             .join(
                 User,
@@ -1658,7 +1667,7 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
                 ),
                 or_(
                     len(models_list) == 0,
-                    WorkerModel.model.in_(models_list),
+                    serves_requested_model,
                 ),
                 or_(
                     wp.trusted_workers == False,  # noqa E712
