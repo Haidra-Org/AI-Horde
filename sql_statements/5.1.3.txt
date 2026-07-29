@@ -1,0 +1,23 @@
+-- Watermark columns for the daily per-model stats compile jobs.
+--
+-- image_gen_stats and text_gen_stats are append-only and never pruned, so the
+-- all-time per-model COUNT that compile_imagegen_stats_models and
+-- compile_textgen_stats_models used to run grouped the entire table (55 GB and
+-- 78 GB respectively) once a day. The rewritten procedures carry the per-model
+-- all-time counts forward from the previous snapshot and extend them with only
+-- the rows appended past `last_stat_id`; the day and month figures cover sliding
+-- windows and are still recomputed from `finished` on every run.
+--
+-- Every row of a snapshot carries the same watermark, matching the single
+-- `created` timestamp the snapshot's rows already share.
+--
+-- Existing snapshot rows have a NULL watermark, so the first run of each
+-- rewritten procedure pays for one full-table pass to establish the baseline
+-- and every run after that reads only the recent tail.
+--
+
+ALTER TABLE compiled_image_gen_stats_models ADD COLUMN IF NOT EXISTS last_stat_id BIGINT;
+ALTER TABLE compiled_text_gen_stats_models ADD COLUMN IF NOT EXISTS last_stat_id BIGINT;
+
+-- Reapply both procedures from sql_statements/stored_procedures/ after the
+-- statements above; the new bodies reference last_stat_id.

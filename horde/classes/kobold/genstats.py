@@ -103,6 +103,10 @@ class CompiledTextGenStatsModels(db.Model):
     day_requests = db.Column(db.Integer, nullable=False)
     month_requests = db.Column(db.Integer, nullable=False)
     total_requests = db.Column(db.Integer, nullable=False)
+    # Highest text_gen_stats.id folded into the per-model all-time counts above.
+    # The compile procedure extends those counts from this watermark instead of
+    # rescanning the whole table. Every row of a snapshot carries the same value.
+    last_stat_id = db.Column(db.BigInteger, nullable=True)
 
 
 def get_compiled_textgen_stats_models() -> dict[str, dict[str, int]]:

@@ -224,6 +224,10 @@ class CompiledImageGenStatsModels(db.Model):
     day_images = db.Column(db.Integer, nullable=False)
     month_images = db.Column(db.Integer, nullable=False)
     total_images = db.Column(db.Integer, nullable=False)
+    # Highest image_gen_stats.id folded into the per-model all-time counts above.
+    # The compile procedure extends those counts from this watermark instead of
+    # rescanning the whole table. Every row of a snapshot carries the same value.
+    last_stat_id = db.Column(db.BigInteger, nullable=True)
 
 
 def get_compiled_imagegen_stats_models(model_state: str = "all") -> dict[str, dict[str, dict[str, int]]]:
