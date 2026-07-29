@@ -925,11 +925,29 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
     PER_PAGE = 10  # how many requests we're picking up to filter further
+    # The model constraint is a semi-join: joining wp_models returns one row per
+    # matching model, and the page LIMIT below counts joined rows, so a WP
+    # naming several of the worker's models would consume several page slots as
+    # duplicates of itself.
+    wp_serves_model = (
+        db.session.query(WPModels.id)
+        .filter(WPModels.wp_id == ImageWaitingPrompt.id, WPModels.model.in_(models_list))
+        .exists()
+    )
+    wp_names_any_model = db.session.query(WPModels.id).filter(WPModels.wp_id == ImageWaitingPrompt.id).exists()
+    # Worker targeting is evaluated per WP, never per targeting row: joining
+    # wp_allowed_workers admits a blacklisted worker whenever the blacklist
+    # names anyone else, because the other rows satisfy a row-level
+    # ``worker_id != x`` predicate.
+    wp_targets_this_worker = (
+        db.session.query(WPAllowedWorkers.id)
+        .filter(WPAllowedWorkers.wp_id == ImageWaitingPrompt.id, WPAllowedWorkers.worker_id == worker.id)
+        .exists()
+    )
+    wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == ImageWaitingPrompt.id).exists()
     final_wp_list = (
         db.session.query(ImageWaitingPrompt)
         .options(noload(ImageWaitingPrompt.processing_gens))
-        .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
-        .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.active == True,  # noqa E712
@@ -937,9 +955,9 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
             ImageWaitingPrompt.expiry > datetime.utcnow(),
             ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
             or_(
-                WPModels.model.in_(models_list),
+                wp_serves_model,
                 and_(
-                    WPModels.id.is_(None),
+                    ~wp_names_any_model,
                     not any("horde_special" in mname for mname in models_list),
                     "SDXL_beta::stability.ai#6901" not in models_list,
                 ),
@@ -1024,14 +1042,14 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ImageWaitingPrompt.user_id.in_(priority_user_ids),
             ),
             or_(
-                WPAllowedWorkers.id.is_(None),
+                ~wp_has_worker_targets,
                 and_(
                     ImageWaitingPrompt.worker_blacklist.is_(False),
-                    WPAllowedWorkers.worker_id == worker.id,
+                    wp_targets_this_worker,
                 ),
                 and_(
                     ImageWaitingPrompt.worker_blacklist.is_(True),
-                    WPAllowedWorkers.worker_id != worker.id,
+                    ~wp_targets_this_worker,
                 ),
             ),
         )
@@ -1048,24 +1066,24 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
         if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1":
             final_wp_list = final_wp_list.filter(
                 or_(
-                    WPAllowedWorkers.id.is_(None),
+                    ~wp_has_worker_targets,
                     and_(
                         ImageWaitingPrompt.worker_blacklist.is_(True),
-                        WPAllowedWorkers.worker_id != worker.id,
+                        ~wp_targets_this_worker,
                     ),
                 ),
             )
         else:
             final_wp_list = final_wp_list.filter(
                 or_(
-                    WPAllowedWorkers.id.is_(None),
+                    ~wp_has_worker_targets,
                     and_(
                         ImageWaitingPrompt.worker_blacklist.is_(False),
-                        WPAllowedWorkers.worker_id == worker.id,
+                        wp_targets_this_worker,
                     ),
                     and_(
                         ImageWaitingPrompt.worker_blacklist.is_(True),
-                        WPAllowedWorkers.worker_id != worker.id,
+                        ~wp_targets_this_worker,
                     ),
                 ),
             )
@@ -1119,23 +1137,34 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     count_exprs = {}
 
     def count_distinct_wp(condition):
-        # Distinct-by-WP avoids overcounting from WPModels/WPAllowedWorkers join fan-out.
+        # Distinct-by-WP avoids overcounting from WPModels join fan-out.
         return func.count(func.distinct(case((condition, ImageWaitingPrompt.id), else_=None)))
+
+    # Worker targeting is evaluated per WP through EXISTS rather than through a
+    # wp_allowed_workers join, matching the pop candidate selection semantics.
+    wp_targets_this_worker = (
+        db.session.query(WPAllowedWorkers.id)
+        .filter(WPAllowedWorkers.wp_id == ImageWaitingPrompt.id, WPAllowedWorkers.worker_id == worker.id)
+        .exists()
+    )
+    wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == ImageWaitingPrompt.id).exists()
 
     # models: WP specifies models that worker doesn't serve
     count_exprs["models"] = count_distinct_wp(and_(WPModels.model.not_in(models_list), WPModels.id != None))  # noqa E712
 
-    # worker_id: WP targets specific workers (allowlist/blocklist)
+    # worker_id: WP targets specific workers (allowlist/blocklist) in a way that excludes this worker
     count_exprs["worker_id"] = count_distinct_wp(
-        or_(
-            WPAllowedWorkers.id != None,  # noqa E712
-            and_(
-                ImageWaitingPrompt.worker_blacklist.is_(False),
-                WPAllowedWorkers.worker_id != worker.id,
-            ),
-            and_(
-                ImageWaitingPrompt.worker_blacklist.is_(True),
-                WPAllowedWorkers.worker_id == worker.id,
+        and_(
+            wp_has_worker_targets,
+            or_(
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(False),
+                    ~wp_targets_this_worker,
+                ),
+                and_(
+                    ImageWaitingPrompt.worker_blacklist.is_(True),
+                    wp_targets_this_worker,
+                ),
             ),
         ),
     )
@@ -1217,7 +1246,6 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
         db.session.query(*count_exprs.values())
         .select_from(ImageWaitingPrompt)
         .outerjoin(WPModels, ImageWaitingPrompt.id == WPModels.wp_id)
-        .outerjoin(WPAllowedWorkers, ImageWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(*base_filters)
     )
 
@@ -1229,17 +1257,6 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
                 worker.maintenance == False,  # noqa E712
                 ImageWaitingPrompt.user_id.in_(priority_user_ids),
             ),
-            or_(
-                WPAllowedWorkers.id.is_(None),
-                and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(False),
-                    WPAllowedWorkers.worker_id == worker.id,
-                ),
-                and_(
-                    ImageWaitingPrompt.worker_blacklist.is_(True),
-                    WPAllowedWorkers.worker_id != worker.id,
-                ),
-            ),
         )
     else:
         query = query.filter(
@@ -1248,30 +1265,6 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
                 ImageWaitingPrompt.user_id == worker.user_id,
             ),
         )
-        if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1":
-            query = query.filter(
-                or_(
-                    WPAllowedWorkers.id.is_(None),
-                    and_(
-                        ImageWaitingPrompt.worker_blacklist.is_(True),
-                        WPAllowedWorkers.worker_id != worker.id,
-                    ),
-                ),
-            )
-        else:
-            query = query.filter(
-                or_(
-                    WPAllowedWorkers.id.is_(None),
-                    and_(
-                        ImageWaitingPrompt.worker_blacklist.is_(False),
-                        WPAllowedWorkers.worker_id == worker.id,
-                    ),
-                    and_(
-                        ImageWaitingPrompt.worker_blacklist.is_(True),
-                        WPAllowedWorkers.worker_id != worker.id,
-                    ),
-                ),
-            )
 
     row = query.one()
     raw = dict(zip(count_exprs.keys(), row))

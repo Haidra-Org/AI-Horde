@@ -50,10 +50,19 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             slow_speed = 5
     else:
         slow_speed = 3
+    # The model constraint is a semi-join: joining wp_models returns one row per
+    # matching model, and the page LIMIT below counts joined rows, so a WP
+    # naming several of the worker's models would consume several page slots as
+    # duplicates of itself.
+    wp_serves_model = (
+        db.session.query(WPModels.id)
+        .filter(WPModels.wp_id == TextWaitingPrompt.id, WPModels.model.in_(models_list))
+        .exists()
+    )
+    wp_names_any_model = db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id).exists()
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(noload(TextWaitingPrompt.processing_gens))
-        .outerjoin(WPModels, TextWaitingPrompt.id == WPModels.wp_id)
         .outerjoin(WPAllowedWorkers, TextWaitingPrompt.id == WPAllowedWorkers.wp_id)
         .filter(
             TextWaitingPrompt.n > 0,
@@ -71,8 +80,8 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
                 worker.nsfw == True,  # noqa E712
             ),
             or_(
-                WPModels.model.in_(models_list),
-                WPModels.id.is_(None),
+                wp_serves_model,
+                ~wp_names_any_model,
             ),
             or_(
                 WPAllowedWorkers.id.is_(None),
