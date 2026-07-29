@@ -98,6 +98,10 @@ class WorkerSuspicions(db.Model):
 
 class WorkerModel(db.Model):
     __tablename__ = "worker_models"
+    # wp_has_valid_workers probes this table per worker through an EXISTS
+    # subquery; the composite index makes the probe index-only and keeps the
+    # planner's cost estimate below the JIT threshold.
+    __table_args__ = (db.Index("ix_worker_models_worker_id_model", "worker_id", "model"),)
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(
         uuid_column_type(),

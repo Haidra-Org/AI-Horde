@@ -47,6 +47,10 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
+    # The pop candidate query and the skipped-count query probe this table with
+    # per-WP EXISTS subqueries; the composite index makes those probes
+    # index-only and keeps the planner's cost estimate below the JIT threshold.
+    __table_args__ = (db.Index("ix_wp_allowed_workers_wp_id_worker_id", "wp_id", "worker_id"),)
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     worker = db.relationship("Worker")
@@ -73,6 +77,9 @@ class WPTrickedWorkers(db.Model):
 
 class WPModels(db.Model):
     __tablename__ = "wp_models"
+    # See WPAllowedWorkers: the pop candidate query and wp_has_valid_workers
+    # probe wp_models per WP through EXISTS subqueries.
+    __table_args__ = (db.Index("ix_wp_models_wp_id_model", "wp_id", "model"),)
     id = db.Column(db.Integer, primary_key=True)
     wp_id = db.Column(
         uuid_column_type(),
@@ -87,6 +94,20 @@ class WaitingPrompt(db.Model):
     """For storing waiting prompts in the DB"""
 
     __tablename__ = "waiting_prompts"
+    # The pop candidate queries filter to the active unfilled queue and read it
+    # in priority order; without this partial index they walk the full
+    # extra_priority index and discard the expired majority row by row. The
+    # index orders match the queries' ORDER BY exactly so the scan streams
+    # presorted. The predicate is PostgreSQL-only and ignored on SQLite.
+    __table_args__ = (
+        db.Index(
+            "ix_waiting_prompts_active_queue",
+            "wp_type",
+            db.text("extra_priority DESC"),
+            db.text("created ASC"),
+            postgresql_where=db.text("active AND NOT faulted AND n > 0"),
+        ),
+    )
     __mapper_args__ = {
         "polymorphic_identity": "template",
         "polymorphic_on": "wp_type",

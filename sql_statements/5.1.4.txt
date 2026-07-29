@@ -1,0 +1,21 @@
+-- Supporting indexes for the per-WP / per-worker EXISTS probes in the pop
+-- candidate query (get_sorted_wp_filtered_to_worker and the text variant),
+-- count_skipped_image_wp, and wp_has_valid_workers. Without them each probe
+-- plans against a full scan of the probed table, which both re-reads the table
+-- per query and inflates the planner's cost estimate past the JIT threshold,
+-- adding JIT compilation to every pop.
+--
+-- CONCURRENTLY so a live apply never blocks writers. It cannot run inside a
+-- transaction block (psql autocommit applies each statement on its own), and a
+-- failed build leaves an INVALID index: DROP INDEX it and rerun.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_wp_models_wp_id_model ON wp_models (wp_id, model);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_wp_allowed_workers_wp_id_worker_id ON wp_allowed_workers (wp_id, worker_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_worker_models_worker_id_model ON worker_models (worker_id, model);
+
+-- The pop candidate queries read the active unfilled queue in priority order.
+-- The full extra_priority index walks every waiting_prompts row (the expired
+-- majority included) discarding them one by one; this partial index contains
+-- only the live queue and streams it presorted per wp_type.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_active_queue ON waiting_prompts (wp_type, extra_priority DESC, created ASC) WHERE active AND NOT faulted AND n > 0;
