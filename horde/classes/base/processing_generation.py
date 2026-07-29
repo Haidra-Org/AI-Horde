@@ -2,9 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import queue
 import random
+import threading
 import time
 from datetime import datetime
+from typing import Any
 
 import logfire
 import requests
@@ -19,6 +22,82 @@ from horde.utils import get_db_uuid
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
+
+# Generation webhooks deliver through this bounded queue instead of on the
+# submit request path: a slow subscriber endpoint (up to three 3-second
+# attempts) would otherwise hold the worker's submit response open for
+# seconds. Delivery is best-effort either way (a failed delivery only logs
+# after the final attempt), so a subscriber observes the same guarantees.
+# The bound keeps one unreachable endpoint from accumulating deliveries
+# without limit; overflow drops the delivery and counts it as an outcome.
+WEBHOOK_QUEUE_MAXSIZE = 256
+_webhook_queue: queue.Queue[tuple[str, dict[str, Any], str, str]] = queue.Queue(maxsize=WEBHOOK_QUEUE_MAXSIZE)
+_webhook_sender_lock = threading.Lock()
+_webhook_sender: threading.Thread | None = None
+
+
+def _ensure_webhook_sender() -> None:
+    # Started lazily on first use so every serving process owns a live thread;
+    # a thread started at import time would not survive a post-import fork.
+    global _webhook_sender
+    if _webhook_sender is not None and _webhook_sender.is_alive():
+        return
+    with _webhook_sender_lock:
+        if _webhook_sender is None or not _webhook_sender.is_alive():
+            _webhook_sender = threading.Thread(target=_webhook_sender_loop, name="webhook-sender", daemon=True)
+            _webhook_sender.start()
+
+
+def _webhook_sender_loop() -> None:
+    while True:
+        url, data, wp_id, procgen_id = _webhook_queue.get()
+        try:
+            _deliver_webhook(url, data, wp_id, procgen_id)
+        except Exception as err:
+            logger.warning(f"Unexpected error delivering generation webhook for procgen {procgen_id}: {err}")
+
+
+def _deliver_webhook(url: str, data: dict[str, Any], wp_id: str, procgen_id: str) -> None:
+    with logfire.span("horde.webhook.send", wp_id=wp_id, procgen_id=procgen_id) as span:
+        from horde.metrics import webhook_duration, webhook_outcomes
+
+        outcome = "giveup"
+        attempts = 0
+        for riter in range(3):
+            attempts += 1
+            t0 = time.monotonic()
+            status_code = None
+            attempt_outcome = "exception"
+            try:
+                req = requests.post(url, json=data, timeout=3)
+                status_code = req.status_code
+                if not req.ok:
+                    attempt_outcome = "http_error"
+                    webhook_duration.record(
+                        time.monotonic() - t0,
+                        {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
+                    )
+                    logger.debug(
+                        f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
+                        f"Will retry {3 - riter - 1} more times...",
+                    )
+                    continue
+                attempt_outcome = "ok"
+                outcome = "ok"
+                webhook_duration.record(
+                    time.monotonic() - t0,
+                    {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
+                )
+                break
+            except Exception as err:
+                webhook_duration.record(
+                    time.monotonic() - t0,
+                    {"attempt": riter, "outcome": attempt_outcome},
+                )
+                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3 - riter - 1} more times...")
+        webhook_outcomes.add(1, {"outcome": outcome})
+        span.set_attribute("horde.webhook.outcome", outcome)
+        span.set_attribute("horde.webhook.attempts", attempts)
 
 
 class ProcessingGeneration(db.Model):
@@ -176,7 +255,8 @@ class ProcessingGeneration(db.Model):
             release_reservation(f"upfront:{self.wp.id}")
             db.session.commit()
         submit_wp_completion_duration.record(time.monotonic() - _t, gentype_label)
-        # Send webhook after commit so external I/O does not hold DB locks.
+        # Queue the webhook after commit; delivery runs on the background
+        # sender thread, so this only measures payload build and enqueue.
         _t = time.monotonic()
         self.send_webhook(kudos)
         submit_webhook_call_duration.record(time.monotonic() - _t)
@@ -306,56 +386,27 @@ class ProcessingGeneration(db.Model):
     def get_things_count(self, generation):
         return self.wp.things
 
-    def send_webhook(self, kudos):
+    def send_webhook(self, kudos: float) -> None:
+        """Hand the generation webhook to the background sender.
+
+        The payload is materialized here because it reads session-bound ORM
+        state; the sender thread performs only HTTP I/O on plain data.
+        """
         if not self.wp.webhook:
             return
-        with logfire.span("horde.webhook.send", wp_id=str(self.wp.id), procgen_id=str(self.id)) as span:
-            from horde.metrics import webhook_duration, webhook_outcomes
+        from horde.metrics import webhook_outcomes
 
-            data = self.get_details()
-            data["request"] = str(self.wp.id)
-            data["id"] = str(self.id)
-            data["kudos"] = kudos
-            data["worker_id"] = str(data["worker_id"])
-            outcome = "giveup"
-            attempts = 0
-            import time as _time
-
-            for riter in range(3):
-                attempts += 1
-                t0 = _time.monotonic()
-                status_code = None
-                attempt_outcome = "exception"
-                try:
-                    req = requests.post(self.wp.webhook, json=data, timeout=3)
-                    status_code = req.status_code
-                    if not req.ok:
-                        attempt_outcome = "http_error"
-                        webhook_duration.record(
-                            _time.monotonic() - t0,
-                            {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
-                        )
-                        logger.debug(
-                            f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
-                            f"Will retry {3 - riter - 1} more times...",
-                        )
-                        continue
-                    attempt_outcome = "ok"
-                    outcome = "ok"
-                    webhook_duration.record(
-                        _time.monotonic() - t0,
-                        {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
-                    )
-                    break
-                except Exception as err:
-                    webhook_duration.record(
-                        _time.monotonic() - t0,
-                        {"attempt": riter, "outcome": attempt_outcome},
-                    )
-                    logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3 - riter - 1} more times...")
-            webhook_outcomes.add(1, {"outcome": outcome})
-            span.set_attribute("horde.webhook.outcome", outcome)
-            span.set_attribute("horde.webhook.attempts", attempts)
+        data = self.get_details()
+        data["request"] = str(self.wp.id)
+        data["id"] = str(self.id)
+        data["kudos"] = kudos
+        data["worker_id"] = str(data["worker_id"])
+        _ensure_webhook_sender()
+        try:
+            _webhook_queue.put_nowait((self.wp.webhook, data, str(self.wp.id), str(self.id)))
+        except queue.Full:
+            webhook_outcomes.add(1, {"outcome": "dropped"})
+            logger.warning(f"Webhook queue full; dropping delivery for procgen {self.id}")
 
     def set_job_ttl(self):
         """Returns how many seconds each job request should stay waiting before considering it stale and cancelling it
