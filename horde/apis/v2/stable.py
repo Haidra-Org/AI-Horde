@@ -47,6 +47,7 @@ from horde.metrics import (
     check_outcomes,
     generate_init_wp_build_duration,
     generate_init_wp_kudos_check_duration,
+    generate_source_upload_duration,
     status_duration,
     submit_record_fulfilment_stat_duration,
 )
@@ -357,36 +358,48 @@ class ImageAsyncGenerate(GenerateTemplate):
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 
+    def get_generate_metric_attributes(self):
+        # An image request carrying a source image is img2img, which pays for the source upload
+        # on the request path. Splitting the series keeps that cost out of the txt2img picture.
+        attributes = super().get_generate_metric_attributes()
+        attributes["horde.img2img"] = "true" if getattr(self.args, "source_image", None) else "false"
+        return attributes
+
     def activate_waiting_prompt(self):
         self.source_image = None
         self.source_mask = None
-        if self.args.source_image:
-            (
-                self.source_image,
-                img,
-                self.source_image_r2stored,
-            ) = ensure_source_image_uploaded(self.args.source_image, f"{self.wp.id}_src", force_r2=True)
-            if self.args.source_mask:
+        upload_t0 = time.monotonic()
+        try:
+            if self.args.source_image:
                 (
-                    self.source_mask,
+                    self.source_image,
                     img,
-                    self.source_mask_r2stored,
-                ) = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2=True)
-            elif self.args.source_processing == "inpainting":
-                try:
-                    _red, _green, _blue, _alpha = img.split()
-                except ValueError:
-                    raise e.ImageValidationFailed(
-                        "Inpainting requests must either include a mask, or an alpha channel.",
-                        rc="InpaintingMissingMask",
-                    )
-        if self.args.extra_source_images:
-            for iiter, eimg in enumerate(self.args.extra_source_images):
-                (
-                    eimg["image"],
-                    _,
-                    _,
-                ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
+                    self.source_image_r2stored,
+                ) = ensure_source_image_uploaded(self.args.source_image, f"{self.wp.id}_src", force_r2=True)
+                if self.args.source_mask:
+                    (
+                        self.source_mask,
+                        img,
+                        self.source_mask_r2stored,
+                    ) = ensure_source_image_uploaded(self.args.source_mask, f"{self.wp.id}_msk", force_r2=True)
+                elif self.args.source_processing == "inpainting":
+                    try:
+                        _red, _green, _blue, _alpha = img.split()
+                    except ValueError:
+                        raise e.ImageValidationFailed(
+                            "Inpainting requests must either include a mask, or an alpha channel.",
+                            rc="InpaintingMissingMask",
+                        )
+            if self.args.extra_source_images:
+                for iiter, eimg in enumerate(self.args.extra_source_images):
+                    (
+                        eimg["image"],
+                        _,
+                        _,
+                    ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
+        finally:
+            if self.args.source_image or self.args.extra_source_images:
+                generate_source_upload_duration.record(time.monotonic() - upload_t0)
         self.wp.activate(
             downgrade_wp_priority=self.downgrade_wp_priority,
             source_image=self.source_image,

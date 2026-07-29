@@ -179,7 +179,15 @@ class GenerateTemplate(Resource):
             try:
                 self._post_inner()
             finally:
-                generate_duration.record(time.monotonic() - t0, {"horde.gentype": self.gentype})
+                generate_duration.record(time.monotonic() - t0, self.get_generate_metric_attributes())
+
+    def get_generate_metric_attributes(self):
+        """Return the attributes recorded on the end-to-end generate duration.
+
+        Subclasses extend this with gentype-specific dimensions. Any addition must stay
+        low-cardinality: the returned values become metric series labels.
+        """
+        return {"horde.gentype": self.gentype}
 
     def _post_inner(self):
         # I have to extract and store them this way, because if I use the defaults

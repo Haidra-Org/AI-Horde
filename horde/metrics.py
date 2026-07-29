@@ -167,6 +167,10 @@ generate_validate_prompt_filter_duration = _seconds_histogram(
     "horde.generate.validate.prompt_filter.duration",
     "Duration of the prompt regex suspicion check within generate validate",
 )
+generate_source_upload_duration = _seconds_histogram(
+    "horde.generate.source_upload.duration",
+    "Duration of the source image/mask object-storage uploads within image activate_waiting_prompt",
+)
 
 # --- waiting-prompt activation / kudos ---------------------------------------
 wp_calculate_kudos_duration = _seconds_histogram(
