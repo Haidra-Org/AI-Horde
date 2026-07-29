@@ -286,7 +286,7 @@ class User(db.Model):
     client_id = db.Column(db.String(50), unique=True, default=generate_client_id, nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     last_active = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    contact = db.Column(db.String(50), default=None)
+    contact = db.Column(db.String(50), default=None, index=True)
     admin_comment = db.Column(db.Text, default=None)
     proxy_passkey = db.Column(db.String(100), default=None)
 

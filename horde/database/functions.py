@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import logfire
 from sqlalchemy import Boolean, and_, case, func, not_, or_
-from sqlalchemy.orm import contains_eager, noload, selectinload
+from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload
 
 import horde.classes.base.stats as stats
 from horde import vars as hv
@@ -216,9 +216,13 @@ def find_user_by_id(user_id):
 
 
 def find_user_by_contact(contact):
-    user_query = db.session.query(User).filter_by(contact=contact).filter(User.oauth_id != "<wiped>")
-    selected_user = user_query.first()
-    if user_query.count() > 1:
+    # Counting the same query separately doubles the work for a lookup that only
+    # needs to know whether more than one row matched, so fetch two rows instead.
+    matched_users = db.session.query(User).filter_by(contact=contact).filter(User.oauth_id != "<wiped>").limit(2).all()
+    if len(matched_users) == 0:
+        return None
+    selected_user = matched_users[0]
+    if len(matched_users) > 1:
         logger.warning(f"Multiple users found with the same contact {contact}! Returning first found {selected_user.id}")
     return selected_user
 
@@ -1484,7 +1488,18 @@ def get_progen_by_id(procgen_id):
         return None
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
-    return db.session.query(ImageProcessingGeneration).filter_by(id=procgen_uuid).first()
+    # The submit settlement always walks procgen -> wp -> requesting user and
+    # procgen -> worker -> owning user, so loading them here folds four lazy
+    # SELECT round trips into the lookup itself.
+    return (
+        db.session.query(ImageProcessingGeneration)
+        .options(
+            joinedload(ImageProcessingGeneration.wp).joinedload(ImageWaitingPrompt.user),
+            joinedload(ImageProcessingGeneration.worker).joinedload(ImageWorker.user),
+        )
+        .filter_by(id=procgen_uuid)
+        .first()
+    )
 
 
 def get_interrogation_by_id(i_id):

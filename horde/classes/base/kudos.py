@@ -405,7 +405,10 @@ def emit_kudos_ledger_entry(
         commit: Commit the session after adding the row.
 
     Returns:
-        The persisted (flushed) ledger row.
+        The pending ledger row, inserted at the session's next flush. Deferring
+        the flush lets one flush write every posting of a business event as a
+        bulk INSERT instead of one round trip per posting; autoflush still makes
+        the row visible to any same-session query issued before that point.
     """
     event = _current_kudos_event.get()
     if event is None:
@@ -426,8 +429,6 @@ def emit_kudos_ledger_entry(
     db.session.add(entry)
     if commit:
         db.session.commit()
-    else:
-        db.session.flush()
     return entry
 
 
@@ -458,10 +459,11 @@ def emit_kudos_stat_event(
         stat_action: Counter bucket or record-type dimension.
         record: Reserved projector discriminator or record dimension.
         detail: Optional audit metadata.
-        commit: Commit instead of flushing the session.
+        commit: Commit the session after adding the row.
 
     Returns:
-        The persisted (flushed) statistics event.
+        The pending statistics event, inserted at the session's next flush (see
+        :func:`emit_kudos_ledger_entry` for why the flush is deferred).
     """
     event = _current_kudos_event.get() or _KudosEvent(event_id=uuid.uuid4())
     entry = KudosStatEvent(
@@ -483,6 +485,4 @@ def emit_kudos_stat_event(
     db.session.add(entry)
     if commit:
         db.session.commit()
-    else:
-        db.session.flush()
     return entry

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import joinedload, noload
 
 import horde.classes.base.stats as stats
 from horde.bridge_reference import (
@@ -19,6 +19,7 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.worker import TextWorker
 from horde.database.functions import query_prioritized_wps
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
@@ -134,7 +135,18 @@ def get_text_progen_by_id(procgen_id):
         return None
     if SQLITE_MODE:
         procgen_uuid = str(procgen_uuid)
-    return db.session.query(TextProcessingGeneration).filter_by(id=procgen_uuid).first()
+    # The submit settlement always walks procgen -> wp -> requesting user and
+    # procgen -> worker -> owning user, so loading them here folds four lazy
+    # SELECT round trips into the lookup itself.
+    return (
+        db.session.query(TextProcessingGeneration)
+        .options(
+            joinedload(TextProcessingGeneration.wp).joinedload(TextWaitingPrompt.user),
+            joinedload(TextProcessingGeneration.worker).joinedload(TextWorker.user),
+        )
+        .filter_by(id=procgen_uuid)
+        .first()
+    )
 
 
 def get_all_text_wps():
