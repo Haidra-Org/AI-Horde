@@ -49,6 +49,7 @@ from horde.metrics import (
     generate_init_wp_kudos_check_duration,
     generate_source_upload_duration,
     status_duration,
+    submit_duration,
     submit_record_fulfilment_stat_duration,
 )
 from horde.model_reference import model_reference
@@ -1204,8 +1205,14 @@ class InterrogatePop(JobPopTemplate):
         """Check if there are interrogation requests queued for fulfillment.
         This endpoint is used by registered workers only
         """
-        # logger.warning(datetime.utcnow())
         self.args = self.post_parser.parse_args()
+        # The inherited template post wraps _post_inner with the pop duration
+        # metric and profiling span, labelling the series with this class's
+        # interrogation gentype.
+        return super().post()
+
+    def _post_inner(self):
+        # logger.warning(datetime.utcnow())
         self.priority_usernames = []
         if self.args.priority_usernames:
             self.priority_usernames = self.args.priority_usernames
@@ -1349,6 +1356,14 @@ class InterrogateSubmit(Resource):
         """Submit the results of an interrogated image.
         This endpoint is used by registered workers only
         """
+        t0 = time.monotonic()
+        with pyroscope_tag(endpoint="job_submit"), logfire.span("horde.job_submit"):
+            try:
+                return self._post_inner()
+            finally:
+                submit_duration.record(time.monotonic() - t0, {"horde.gentype": "interrogation"})
+
+    def _post_inner(self):
         self.args = self.post_parser.parse_args()
         self.validate()
         self.kudos = self.form.deliver(
