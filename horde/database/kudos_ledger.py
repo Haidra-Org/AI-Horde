@@ -393,7 +393,20 @@ def _promote_eligible_users(now: datetime) -> None:
     # ``is_suspicious`` check lazy-loads each candidate's suspicions
     # individually. The count comparison reproduces ``User.is_suspicious`` for
     # a non-trusted account (the candidate filter already excludes trusted).
-    suspicion_count = db.session.query(func.count(UserSuspicions.id)).filter(UserSuspicions.user_id == User.id).scalar_subquery()
+    # The comparison only distinguishes "fewer than SUSPICION_THRESHOLD" from
+    # "at least that many", so the inner scan stops at the threshold. Counting a
+    # heavily suspicious account's full history instead inflates the subquery's
+    # estimated cost enough to push the whole candidate scan over the JIT
+    # threshold and to turn the trusted-role anti-join into a materialized nested
+    # loop over every trusted role.
+    bounded_suspicions = (
+        db.session.query(UserSuspicions.id)
+        .filter(UserSuspicions.user_id == User.id)
+        .correlate(User)
+        .limit(User.SUSPICION_THRESHOLD)
+        .subquery()
+    )
+    suspicion_count = db.session.query(func.count()).select_from(bounded_suspicions).scalar_subquery()
     candidates = (
         db.session.query(User)
         .filter(
