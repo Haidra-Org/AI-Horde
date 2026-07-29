@@ -19,6 +19,7 @@ claimed batch.
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -56,6 +57,7 @@ from horde.enums import (
 from horde.flask import db
 from horde.metrics import (
     kudos_applier_folded,
+    kudos_applier_phase_duration,
     kudos_floor_adjustments,
     kudos_floor_adjustments_created,
 )
@@ -133,6 +135,7 @@ def apply_pending_kudos(
         db.session.rollback()
         return 0
     state = get_applier_state()
+    phase_t = time.monotonic()
     rows = (
         db.session.query(KudosLedger)
         .filter(KudosLedger.applied.is_(False))
@@ -149,12 +152,25 @@ def apply_pending_kudos(
         .with_for_update(skip_locked=True)
         .all()
     )
+    kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "claim"})
+
+    # Worker and team folds are executed at the end of the cycle (see below), so
+    # their delta maps live at cycle scope.
+    worker_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    worker_contribution_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    worker_fulfilment_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    # Team aggregates are derived from the worker's own postings stamped with a
+    # team_id: kudos from the balance-credit posting, contributions/fulfilments
+    # from the worker STAT_CONTRIBUTION postings. team_id is read independently
+    # of the balance target, so a stamped worker posting feeds both.
+    team_kudos_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    team_contribution_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    team_fulfilment_deltas: dict[object, Decimal] = defaultdict(Decimal)
 
     if rows or stat_rows:
         user_balance_deltas: dict[int, Decimal] = defaultdict(Decimal)
         user_escrow_deltas: dict[int, Decimal] = defaultdict(Decimal)
         user_last_active: dict[int, datetime] = {}
-        worker_deltas: dict[object, Decimal] = defaultdict(Decimal)
         # Counter folds ride the same claimed batch and the same transaction as the
         # balance fold, so one cycle materializes balances and every derived counter
         # atomically. Each counter reconstructs its row by grouping the batch on the
@@ -162,15 +178,6 @@ def apply_pending_kudos(
         user_stats_deltas: dict[tuple[int, str], Decimal] = defaultdict(Decimal)
         worker_stats_deltas: dict[tuple[object, str], Decimal] = defaultdict(Decimal)
         user_record_deltas: dict[tuple[int, str, str], Decimal] = defaultdict(Decimal)
-        worker_contribution_deltas: dict[object, Decimal] = defaultdict(Decimal)
-        worker_fulfilment_deltas: dict[object, Decimal] = defaultdict(Decimal)
-        # Team aggregates are derived from the worker's own postings stamped with a
-        # team_id: kudos from the balance-credit posting, contributions/fulfilments
-        # from the worker STAT_CONTRIBUTION postings. team_id is read independently
-        # of the balance target, so a stamped worker posting feeds both.
-        team_kudos_deltas: dict[object, Decimal] = defaultdict(Decimal)
-        team_contribution_deltas: dict[object, Decimal] = defaultdict(Decimal)
-        team_fulfilment_deltas: dict[object, Decimal] = defaultdict(Decimal)
         reservation_consumptions: dict[str, Decimal] = defaultdict(Decimal)
         folded_ids = [row.id for row in rows]
         folded_stat_ids = [row.id for row in stat_rows]
@@ -217,17 +224,26 @@ def apply_pending_kudos(
                     if row.team_id is not None:
                         team_fulfilment_deltas[row.team_id] += row.amount
 
+        # The workers and teams row folds do not happen here: worker check_in
+        # updates the same rows on the pop hot path, and a row lock taken this
+        # early would be held across everything below plus the settling scans,
+        # queueing pops behind the fold transaction. They run at the end of the
+        # cycle instead.
+        phase_t = time.monotonic()
         _apply_user_deltas(user_balance_deltas, user_escrow_deltas, user_last_active)
-        _apply_worker_deltas(worker_deltas)
+        kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "user_fold"})
+        phase_t = time.monotonic()
         _apply_user_stats_deltas(user_stats_deltas)
         _apply_worker_stats_deltas(worker_stats_deltas)
         _apply_user_record_deltas(user_record_deltas)
-        _apply_worker_contribution_deltas(worker_contribution_deltas, worker_fulfilment_deltas)
-        _apply_team_deltas(team_contribution_deltas, team_fulfilment_deltas, team_kudos_deltas)
+        kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "counter_fold"})
+        phase_t = time.monotonic()
         if folded_ids:
             _mark_applied(folded_ids)
         if folded_stat_ids:
             _mark_stat_events_applied(folded_stat_ids)
+        kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "mark_applied"})
+        phase_t = time.monotonic()
         for business_id, amount in sorted(reservation_consumptions.items()):
             consume_reservation(business_id, amount)
         # Transfer holds remain active until the entire event has materialized.
@@ -247,6 +263,7 @@ def apply_pending_kudos(
             )
         }
         release_event_reservations(candidate_event_ids - incomplete_event_ids)
+        kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "reservations"})
         # The balance folds above write through single bulk statements that
         # bypass the identity map, and the session keeps attributes across
         # commits (expire_on_commit=False), so any instance the session holds
@@ -255,8 +272,10 @@ def apply_pending_kudos(
         # observe the folded values. The flush first persists pending instance
         # state (the floor corrections' applied flag), which expiry would
         # otherwise discard.
+        phase_t = time.monotonic()
         db.session.flush()
         db.session.expire_all()
+        kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "flush_expire"})
 
     # A trusted user's escrow always drains to their spendable balance; the
     # applier owns that movement so promotion timing cannot strand an escrow
@@ -279,8 +298,21 @@ def apply_pending_kudos(
     claims_settled = batch_size == 0 or (len(rows) < batch_size and len(stat_rows) < batch_size)
     drained = 0
     if claims_settled and get_kudos_ledger_mode() == KudosLedgerMode.LEDGER:
+        phase_t = time.monotonic()
         _promote_eligible_users(now)
         drained = _drain_trusted_escrow()
+        kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "settle_scans"})
+    # Folding workers and teams last minimizes the wall time this transaction
+    # holds their row locks: worker check_in updates the same rows on the pop
+    # hot path and queues behind the fold until it commits. The delta folds are
+    # relative DB-side increments and nothing between the delta computation and
+    # this point reads the folded aggregates, so the deferral does not change
+    # what this cycle observes. Empty maps make each call a no-op.
+    phase_t = time.monotonic()
+    _apply_worker_deltas(worker_deltas)
+    _apply_worker_contribution_deltas(worker_contribution_deltas, worker_fulfilment_deltas)
+    _apply_team_deltas(team_contribution_deltas, team_fulfilment_deltas, team_kudos_deltas)
+    kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "worker_team_fold"})
     state.applied_at = now
     if commit:
         db.session.commit()

@@ -409,6 +409,10 @@ kudos_applier_cycles = logfire.metric_counter(
     unit="1",
     description="Applier fold cycles run",
 )
+kudos_applier_phase_duration = _seconds_histogram(
+    "horde.kudos.applier.phase.duration",
+    "Duration of one applier cycle phase, by horde.kudos.phase",
+)
 kudos_applier_saturation = logfire.metric_counter(
     "horde.kudos.applier.saturation",
     unit="1",
