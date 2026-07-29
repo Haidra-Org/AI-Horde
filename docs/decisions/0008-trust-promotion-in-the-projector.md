@@ -43,7 +43,8 @@ transaction. `_promote_eligible_users` selects users who are not already trusted
 and suspicious accounts. It grants the `TRUSTED` role and unpauses the user's workers.
 
 `_drain_trusted_escrow` then scans for trusted users still carrying positive escrow and emits an
-`EVALUATION_PROMOTION` pair for the full amount under one event ID. A later cycle folds that pair, the escrow
+`EVALUATION_PROMOTION` pair for the full amount under one event ID, together with the user's `accumulated`
+statistic event for the released amount, matching the inline promotion path's statistic behaviour. A later cycle folds that pair, the escrow
 reaches zero, and the scan stops finding the user. It reads trust state and the drain amount from committed
 columns rather than ORM instances, because the role write does not refresh a loaded role collection. A user
 with an unapplied `EVALUATION_PROMOTION` posting is skipped: without that guard, a cycle that emitted a pair

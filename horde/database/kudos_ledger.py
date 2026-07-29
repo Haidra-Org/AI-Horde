@@ -35,6 +35,7 @@ from horde.classes.base.kudos import (
     KudosReservation,
     KudosStatEvent,
     emit_kudos_ledger_entry,
+    emit_kudos_stat_event,
     get_kudos_ledger_mode,
     get_kudos_trust_threshold,
     kudos_event,
@@ -51,6 +52,7 @@ from horde.enums import (
     KudosEntryType,
     KudosLedgerMode,
     KudosStatRecord,
+    KudosUnit,
     UserRecordTypes,
     UserRoleTypes,
 )
@@ -395,6 +397,20 @@ def _drain_trusted_escrow() -> int:
                 amount,
                 user_id=user_id,
                 force_projection=True,
+            )
+            # The inline promotion path routed the released escrow through
+            # modify_kudos(amount, "accumulated"), so the user's per-action
+            # "accumulated" statistic includes promoted escrow. Emit the same
+            # statistic movement here so a ledger-mode promotion keeps that
+            # meaning; the currency pair alone would leave user_stats
+            # understating the balance's provenance by the drained amount.
+            emit_kudos_stat_event(
+                KudosEntryType.EVALUATION_PROMOTION,
+                amount,
+                user_id=user_id,
+                unit=KudosUnit.KUDOS,
+                stat_action="accumulated",
+                record=KudosStatRecord.USER_KUDOS,
             )
         emitted += 2
     return emitted

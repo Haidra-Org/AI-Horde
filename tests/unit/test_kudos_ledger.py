@@ -37,7 +37,7 @@ from horde.classes.base.kudos import (
     emit_kudos_stat_event,
     kudos_event,
 )
-from horde.classes.base.user import User
+from horde.classes.base.user import User, UserStats
 from horde.classes.base.worker import WorkerTemplate
 from horde.database.kudos_ledger import (
     apply_pending_kudos,
@@ -571,6 +571,40 @@ class TestEscrowAndPromotion:
         credit = next(r for r in promo_rows if r.amount == 250)
         assert debit.escrow is True
         assert credit.escrow is False
+
+    def test_promotion_drain_counts_released_escrow_in_accumulated_stat(self, db_session, make_user, monkeypatch):
+        """The drained escrow lands in the user's "accumulated" statistic.
+
+        The inline promotion path routed the released escrow through
+        ``modify_kudos(amount, "accumulated")``, so the per-action statistic
+        includes promoted escrow. The applier-emitted drain must carry the same
+        statistic movement under the promotion pair's event id; otherwise
+        ``user_stats`` understates the balance's provenance by the drained
+        amount.
+        """
+        monkeypatch.setenv("KUDOS_TRUST_THRESHOLD", "100")
+        owner = make_user(kudos=1000, created=datetime.utcnow() - timedelta(days=8))
+        owner.evaluating_kudos = 250
+        db_session.flush()
+        owner.check_for_trust()
+        db_session.commit()
+
+        _settle_all(db_session)
+
+        assert owner.kudos == 1250
+        promo_rows = _ledger_rows(db_session, entry_type=KudosEntryType.EVALUATION_PROMOTION)
+        stat_events = db_session.query(KudosStatEvent).filter(KudosStatEvent.entry_type == KudosEntryType.EVALUATION_PROMOTION).all()
+        assert len(stat_events) == 1
+        stat = stat_events[0]
+        assert stat.event_id == promo_rows[0].event_id
+        assert stat.user_id == owner.id
+        assert stat.amount == 250
+        assert stat.unit == KudosUnit.KUDOS
+        assert stat.stat_action == "accumulated"
+        assert stat.record == KudosStatRecord.USER_KUDOS
+        assert stat.applied is True
+        accumulated = db_session.query(UserStats).filter_by(user_id=owner.id, action="accumulated").one()
+        assert accumulated.value == 250
 
     def test_untrusted_users_escrow_is_not_drained(self, db_session, make_user):
         owner = make_user(kudos=1000)

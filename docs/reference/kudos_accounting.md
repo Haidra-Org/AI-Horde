@@ -122,7 +122,7 @@ An entry type answers “why did this posting exist?” The sign and target answ
 | --- | --- |
 | `GENERATION` | Image/text/interrogation settlement: requester debit, worker-owner spendable/escrow credit, and worker display event as applicable |
 | `UPTIME_REWARD` | Periodic worker display credit and owner spendable/escrow credit |
-| `EVALUATION_PROMOTION` | Paired escrow debit and spendable credit after trust promotion |
+| `EVALUATION_PROMOTION` | Paired escrow debit and spendable credit after trust promotion, plus the user's matching `accumulated` statistic movement |
 | `TRANSFER` | Paired source debit and destination credit for a user gift |
 | `ADMIN_ADJUSTMENT` | Signed administrator adjustment |
 | `AWARD` | Monthly, rating/aesthetic, and other application award credits |
@@ -181,7 +181,7 @@ This is the current inventory of paths that create user currency or kudos-derive
 | Image/text generation settlement or cancellation settlement | Requester `GENERATION` debit; owner spendable/escrow credit; worker kudos/contribution/fulfilment; user records; team aggregates | `ProcessingGeneration.record`, `WorkerTemplate.record_contribution`, `User.record_usage`, `User.record_contributions` |
 | Interrogation form settlement/cancellation | Same currency pattern for requester/worker owner plus interrogation worker counters | `InterrogationForms.record`, `InterrogationWorker.record_contribution` |
 | Worker uptime interval | Owner `UPTIME_REWARD` spendable/escrow credit and worker display/stat credit | `WorkerTemplate.record_uptime`, `User.record_uptime` |
-| Trust threshold crossing | `EVALUATION_PROMOTION` escrow debit and spendable credit | Projector promotion/drain helpers; shadow compatibility projector |
+| Trust threshold crossing | `EVALUATION_PROMOTION` escrow debit and spendable credit, plus the user `accumulated` statistic event | Projector promotion/drain helpers; shadow compatibility projector |
 | User transfer | Paired `TRANSFER` source debit/destination credit, transfer log, payer reservation | `transfer_kudos` and username/API-key wrappers |
 | Monthly/recurring grant | `AWARD` user credit | `User.modify_monthly_kudos`, `User.receive_monthly_kudos` |
 | Rating/aesthetic reward | `AWARD` user credit | Stable API rating/aesthetic endpoints |
@@ -378,7 +378,7 @@ old row or hold can indicate a poisoned path.
 | `horde/database/threads.py` | Periodic projector invocation and health metric recording |
 | `horde/enums.py` | Stable accounting discriminators and metadata keys |
 | `sql_statements/5.1.0.txt` | Idempotent production schema migration and counter uniqueness preparation |
-| `tools/kudos_ledger_admin.py` | Status, drain, snapshot, reconcile/repair, and mode commands |
+| `tools/kudos_ledger_admin.py` | Status, drain, snapshot, reconcile/repair, promotion-statistic backfill, and mode commands |
 | `docs/how-to/kudos_ledger_operations.md` | Cutover, rollback, disaster-recovery, and rehearsal how-to |
 
 ## Regression-test map
