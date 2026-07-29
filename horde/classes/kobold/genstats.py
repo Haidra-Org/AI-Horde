@@ -54,15 +54,22 @@ class CompiledTextGensStatsTotals(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
     minute_requests = db.Column(db.Integer, nullable=False)
-    minute_tokens = db.Column(db.Integer, nullable=False)
+    # Token sums have no inherent ceiling and the wider windows already exceed
+    # the range of a 32-bit integer at production volumes, as does the all-time
+    # request count.
+    minute_tokens = db.Column(db.BigInteger, nullable=False)
     hour_requests = db.Column(db.Integer, nullable=False)
-    hour_tokens = db.Column(db.Integer, nullable=False)
+    hour_tokens = db.Column(db.BigInteger, nullable=False)
     day_requests = db.Column(db.Integer, nullable=False)
-    day_tokens = db.Column(db.Integer, nullable=False)
+    day_tokens = db.Column(db.BigInteger, nullable=False)
     month_requests = db.Column(db.Integer, nullable=False)
-    month_tokens = db.Column(db.Integer, nullable=False)
-    total_requests = db.Column(db.Integer, nullable=False)
+    month_tokens = db.Column(db.BigInteger, nullable=False)
+    total_requests = db.Column(db.BigInteger, nullable=False)
     total_tokens = db.Column(db.BigInteger, nullable=False)
+    # Highest text_gen_stats.id folded into the all-time figures above. The
+    # compile procedure extends those figures from this watermark instead of
+    # rescanning the whole table.
+    last_stat_id = db.Column(db.BigInteger, nullable=True)
 
 
 def get_compiled_textgen_stats_totals() -> dict[str, dict[str, int]]:

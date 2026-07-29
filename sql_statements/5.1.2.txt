@@ -1,0 +1,50 @@
+-- Apply this file BEFORE deploying the release that carries it. Everything under
+-- sql_statements/stored_procedures/ is applied automatically on startup, and the
+-- rewritten compile_imagegen_stats_totals/compile_textgen_stats_totals bodies
+-- reference the columns added below; a deploy that lands first leaves both cron
+-- jobs erroring until these statements run.
+
+-- Watermark columns for the per-minute stats compile jobs.
+--
+-- image_gen_stats and text_gen_stats are append-only and never pruned, so the
+-- all-time COUNT/SUM that compile_imagegen_stats_totals and
+-- compile_textgen_stats_totals used to run read the entire table (55 GB and
+-- 78 GB respectively) once a minute. The rewritten procedures carry the
+-- all-time figures forward from the previous snapshot and extend them with only
+-- the rows appended past `last_stat_id`.
+--
+-- Existing snapshot rows have a NULL watermark, so the first run of each
+-- rewritten procedure pays for one full-table pass to establish the baseline
+-- and every run after that reads only the recent tail.
+
+ALTER TABLE compiled_image_gen_stats_totals ADD COLUMN IF NOT EXISTS last_stat_id BIGINT;
+ALTER TABLE compiled_text_gen_stats_totals ADD COLUMN IF NOT EXISTS last_stat_id BIGINT;
+
+-- The 30 day token sum passed the 32-bit integer ceiling, which aborted every
+-- compile_textgen_stats_totals run on the INSERT and froze the text generation
+-- totals endpoints on their last successful snapshot. Token sums have no
+-- inherent ceiling, so every one of them is widened rather than only the column
+-- that overflowed first; the all-time request count is on the same trajectory.
+
+ALTER TABLE compiled_text_gen_stats_totals ALTER COLUMN minute_tokens TYPE BIGINT;
+ALTER TABLE compiled_text_gen_stats_totals ALTER COLUMN hour_tokens TYPE BIGINT;
+ALTER TABLE compiled_text_gen_stats_totals ALTER COLUMN day_tokens TYPE BIGINT;
+ALTER TABLE compiled_text_gen_stats_totals ALTER COLUMN month_tokens TYPE BIGINT;
+ALTER TABLE compiled_text_gen_stats_totals ALTER COLUMN total_requests TYPE BIGINT;
+
+-- Reapply both procedures from sql_statements/stored_procedures/ after the
+-- statements above; the new bodies reference last_stat_id.
+
+-- find_user_by_contact() had no supporting index, so each stripe membership
+-- refresh drove one parallel sequential scan of users per member looked up.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_users_contact ON users (contact);
+
+-- Recorded for completeness; already applied out of band. The proxy passkey
+-- sweep filters on this predicate and otherwise scans every user row.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_users_proxy_passkey_present ON users (id) WHERE proxy_passkey IS NOT NULL;
+
+-- CONCURRENTLY so a live apply never blocks writers. It cannot run inside a
+-- transaction block (psql autocommit applies each statement on its own), and a
+-- failed build leaves an INVALID index: DROP INDEX it and rerun.

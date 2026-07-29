@@ -181,6 +181,10 @@ class CompiledImageGenStatsTotals(db.Model):
     month_pixels = db.Column(db.BigInteger, nullable=False)
     total_images = db.Column(db.BigInteger, nullable=False)
     total_pixels = db.Column(db.BigInteger, nullable=False)
+    # Highest image_gen_stats.id folded into the all-time figures above. The
+    # compile procedure extends those figures from this watermark instead of
+    # rescanning the whole table.
+    last_stat_id = db.Column(db.BigInteger, nullable=True)
 
 
 def get_compiled_imagegen_stats_totals() -> dict[str, dict[str, int]]:
