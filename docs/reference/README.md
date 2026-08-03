@@ -18,4 +18,5 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | Document | Summary |
 | --- | --- |
 | [Kudos accounting reference](kudos_accounting.md) | The mutation and consumption contract: accounting events, projection targets, reservations, the lock order, and the read models. |
+| [Samplers and schedulers reference](samplers_and_schedulers.md) | What sampler_name and scheduler select, why deterministic samplers agree once converged, measured steps-to-converge and cost, and the combinations known to fail. |
 <!-- END GENERATED: documents -->

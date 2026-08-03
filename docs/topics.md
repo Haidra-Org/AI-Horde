@@ -15,6 +15,7 @@ procedure for one subject sit together.
 ## Vocabulary
 
 - `accounting`: how a value movement is recorded, projected, and audited.
+- `generation`: what a generation request asks for, and how those choices shape the result.
 - `kudos`: the kudos economy: what is earned, charged, and priced.
 - `operations`: procedures an operator runs against a deployment.
 
@@ -26,6 +27,10 @@ procedure for one subject sit together.
 - Explanation: [Kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
+
+### generation
+
+- Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
 
 ### kudos
 
