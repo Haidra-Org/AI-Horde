@@ -7,7 +7,14 @@ import copy
 from flask_restx import fields
 
 from horde.apis.models import v2
-from horde.consts import IMAGE_CONTROL_TYPES, KNOWN_CONTROL_TYPES, KNOWN_POST_PROCESSORS, KNOWN_SAMPLERS, KNOWN_WORKFLOWS
+from horde.consts import (
+    IMAGE_CONTROL_TYPES,
+    KNOWN_CONTROL_TYPES,
+    KNOWN_POST_PROCESSORS,
+    KNOWN_SAMPLERS,
+    KNOWN_SCHEDULERS,
+    KNOWN_WORKFLOWS,
+)
 from horde.vars import horde_title
 
 
@@ -363,7 +370,22 @@ class ImageModels(v2.Models):
                 ),
                 "karras": fields.Boolean(
                     default=False,
-                    description="Set to True to enable karras noise scheduling tweaks.",
+                    description=(
+                        "Set to True to enable karras noise scheduling tweaks. Superseded by 'scheduler', "
+                        "which can name every supported schedule; this flag selects only 'karras' or 'normal' "
+                        "and is ignored when 'scheduler' is supplied."
+                    ),
+                ),
+                "scheduler": fields.String(
+                    required=False,
+                    default=None,
+                    enum=sorted(KNOWN_SCHEDULERS),
+                    description=(
+                        "The sigma schedule to sample on. Decides where in the noise range the sampler spends "
+                        "its steps, which changes output character at no change in cost, and matters most at "
+                        "low step counts. Takes precedence over 'karras'. Schedules outside "
+                        "'karras'/'normal' are only dispatched to workers new enough to accept them."
+                    ),
                 ),
                 "tiling": fields.Boolean(
                     default=False,

@@ -8,6 +8,8 @@ import sys
 import numpy as np
 from loguru import logger
 
+from horde.consts import scheduler_for_request
+
 # The kudos model is a frozen artifact whose control_type one-hot slots are the classic types only.
 # New unified control types are collapsed onto their closest classic cost-class before the one-hot
 # lookup, so the input vector keeps its trained length. This mirrors hordelib's checkpoint-reuse map:
@@ -57,6 +59,13 @@ CANONICAL_KUDOS_CONTROL_TYPES = {
 # multistep solvers reuse prior evaluations and cost one call per step like `k_dpmpp_2m`, first-order
 # solvers cost one like `k_euler`, and Heun++2 takes several like `k_heun`. Samplers with their own
 # trained slot are absent from this map and pass through unchanged.
+# The trained vector has a single karras on/off float and no slot for a schedule, so every schedule has
+# to land on one side of that float. `karras` is the only one the model ever saw as "on"; measured, the
+# feature is worth under 4% of a job's price and its sign is not even consistent across samplers, which
+# fits the physics (a schedule changes sigma spacing, not step count, so it has no runtime to predict).
+# An unlisted schedule therefore takes the 0.0 side, matching how the model was trained on `karras: false`.
+KARRAS_FEATURE_SCHEDULES = {"karras": 1.0}
+
 CANONICAL_KUDOS_SAMPLERS = {
     # `DDIM` is the spelling the API accepts, `ddim` the spelling the model was trained on. Without
     # this entry the uppercase name misses its own trained slot and is priced as `k_euler`.
@@ -276,7 +285,10 @@ class KudosModel:
                 payload["cfg_scale"] / 30,
                 denoising_strength,
                 control_strength,
-                1.0 if payload["karras"] else 0.0,
+                KARRAS_FEATURE_SCHEDULES.get(
+                    scheduler_for_request(payload.get("scheduler"), payload["karras"]),
+                    0.0,
+                ),
                 1.0 if payload.get("hires_fix", False) else 0.0,
                 1.0 if payload.get("source_image", False) else 0.0,
                 1.0 if payload.get("source_mask", False) else 0.0,

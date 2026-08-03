@@ -6,7 +6,7 @@ from loguru import logger
 
 from horde import exceptions as e
 from horde.classes.base.user import User
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS
+from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS, scheduler_for_request
 from horde.enums import WarningMessage
 from horde.model_reference import model_reference
 
@@ -64,10 +64,7 @@ class ParamValidator:
                 self.warnings.add(WarningMessage.CfgScaleTooLarge)
             if "samplers" in model_req_dict and self.params.get("sampler_name", "k_euler_a") not in model_req_dict["samplers"]:
                 self.warnings.add(WarningMessage.SamplerMismatch)
-            # FIXME: Scheduler workaround until we support multiple schedulers
-            scheduler = "karras"
-            if not self.params.get("karras", True):
-                scheduler = "simple"
+            scheduler = scheduler_for_request(self.params.get("scheduler"), self.params.get("karras", True))
             if "schedulers" in model_req_dict and scheduler not in model_req_dict["schedulers"]:
                 self.warnings.add(WarningMessage.SchedulerMismatch)
         if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.models):

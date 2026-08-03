@@ -11,7 +11,7 @@ from horde.bridge_reference import (
     is_official_bridge_version,
 )
 from horde.classes.base.worker import Worker
-from horde.consts import KNOWN_POST_PROCESSORS, LEGACY_IMAGE_CONTROL_TYPES
+from horde.consts import EXTENDED_SCHEDULERS, KNOWN_POST_PROCESSORS, LEGACY_IMAGE_CONTROL_TYPES
 from horde.flask import db
 from horde.logger import logger
 from horde.model_reference import model_reference
@@ -97,6 +97,13 @@ class ImageWorker(Worker):
             waiting_prompt.gen_payload.get("sampler_name", "k_euler_a"),
             self.bridge_agent,
             waiting_prompt.gen_payload.get("karras", False),
+        ):
+            return [False, "bridge_version"]
+        # A bridge that cannot read the `scheduler` field silently renders the flag's schedule instead of
+        # the one requested, so a schedule the flag cannot express must not be dispatched to it.
+        if waiting_prompt.gen_payload.get("scheduler") in EXTENDED_SCHEDULERS and not check_bridge_capability(
+            "scheduler",
+            self.bridge_agent,
         ):
             return [False, "bridge_version"]
         # logger.warning(datetime.utcnow())

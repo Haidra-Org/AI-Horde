@@ -240,6 +240,47 @@ EXTENDED_SAMPLERS = {
 
 KNOWN_SAMPLERS = LEGACY_SAMPLERS | EXTENDED_SAMPLERS
 
+# The sigma schedules a request may name. A schedule decides where in the noise range a sampler spends
+# its steps rather than how many it takes, so it changes output character at no change in cost: karras
+# concentrates steps at low sigmas (fine detail), exponential front-loads high-sigma removal
+# (composition), and the effect is largest at low step counts where the spacing decides what resolves.
+#
+# `karras` and `normal` are the only two the legacy `karras` boolean can name, so they are the only two
+# an old bridge can be asked for. The rest require a bridge that accepts the `scheduler` field.
+LEGACY_SCHEDULERS = {
+    "normal",
+    "karras",
+}
+
+EXTENDED_SCHEDULERS = {
+    "simple",
+    "sgm_uniform",
+    "exponential",
+    "ddim_uniform",
+    "beta",
+    "linear_quadratic",
+    "kl_optimal",
+}
+
+KNOWN_SCHEDULERS = LEGACY_SCHEDULERS | EXTENDED_SCHEDULERS
+
+# What `karras: true` and `karras: false` mean once a request can name a schedule outright. Ruling: the
+# boolean keeps its existing meaning exactly, so no request already in flight changes its output. The
+# field wins when both are supplied, because naming a schedule is the more specific instruction.
+KARRAS_FLAG_SCHEDULERS = {True: "karras", False: "normal"}
+
+
+def scheduler_for_request(scheduler, karras=True):
+    """Return the schedule a request resolves to, preferring the field over the legacy flag.
+
+    An unrecognised schedule falls back to the flag rather than raising: request-time validation is
+    what rejects a bad value, and this is also read for already-stored payloads.
+    """
+    if scheduler in KNOWN_SCHEDULERS:
+        return scheduler
+    return KARRAS_FLAG_SCHEDULERS[bool(karras)]
+
+
 KNOWN_WORKFLOWS = {"qr_code"}
 
 # These samplers perform double the steps per image

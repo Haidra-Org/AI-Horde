@@ -33,7 +33,7 @@ from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
-from horde.consts import LEGACY_IMAGE_CONTROL_TYPES
+from horde.consts import EXTENDED_SCHEDULERS, LEGACY_IMAGE_CONTROL_TYPES
 from horde.database.classes import FakeWPRow
 from horde.database.kudos_legacy_projection import consume_user_reservation
 from horde.database.kudos_reservations import reserve_kudos
@@ -1019,6 +1019,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                     ),
                 ),
             ),
+            # A schedule the legacy karras flag cannot express only reaches a bridge that reads the field;
+            # anything older would silently sample on a different schedule than the one requested.
+            or_(
+                ImageWaitingPrompt.params["scheduler"].astext.notin_(EXTENDED_SCHEDULERS),
+                ImageWaitingPrompt.params["scheduler"].is_(None),
+                check_bridge_capability("scheduler", worker.bridge_agent),
+            ),
             or_(
                 worker.speed >= 500000,  # 0.5 MPS/s
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
@@ -1130,6 +1137,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     can_return_ctrl = check_bridge_capability("return_control_map", bridge_agent)
     can_tiling = check_bridge_capability("tiling", bridge_agent)
     can_layer_diffuse = check_bridge_capability("layer_diffuse", bridge_agent)
+    can_scheduler_field = check_bridge_capability("scheduler", bridge_agent)
 
     available_samplers = get_supported_samplers(bridge_agent, karras=False)
     available_karras_samplers = get_supported_samplers(bridge_agent, karras=True)
@@ -1271,6 +1279,10 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
         bv_conditions.append(ImageWaitingPrompt.params["tiling"].astext.cast(Boolean).is_(True))
     if not can_layer_diffuse:
         bv_conditions.append(ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(True))
+    if not can_scheduler_field:
+        # Attributed to bridge_version rather than a worker choice: there is no operator flag for this,
+        # the bridge simply predates the field.
+        bv_conditions.append(ImageWaitingPrompt.params["scheduler"].astext.in_(EXTENDED_SCHEDULERS))
 
     count_exprs["_bv_sampler"] = count_distinct_wp(or_(*bv_conditions))
 

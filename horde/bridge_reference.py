@@ -20,9 +20,19 @@ EXTENDED_CONTROLNET_REGEN_VERSION = 17
 # same value) so the two can move independently.
 EXTENDED_SAMPLERS_REGEN_VERSION = 17
 
+# Bridge version of "AI Horde Worker reGen" that reads the `scheduler` field. Below it a bridge derives
+# the schedule from the `karras` flag and ignores the field entirely, so an extended schedule sent to one
+# renders on `karras` or `normal` instead: a wrong image rather than an error, which is why dispatch of
+# the extended schedules is gated rather than merely advertised.
+SCHEDULER_FIELD_REGEN_VERSION = 17
+
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
-        EXTENDED_CONTROLNET_REGEN_VERSION: {"extended_controlnet"},
+        # One entry per version, because a dict literal with a repeated key silently keeps only the last
+        # value. These capabilities ship in the same reGen release, so they share it. The per-capability
+        # tests in tests/unit/test_bridge_reference.py assert each constant still resolves here, which is
+        # what catches a constant moving without its entry moving with it.
+        17: {"extended_controlnet", "scheduler"},
         13: {
             "4xNomos8kSC",
             "4xLSDIRplus",
