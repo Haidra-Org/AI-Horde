@@ -363,3 +363,40 @@ class TestSamplerCanonicalMapping:
         for sampler in KNOWN_SAMPLERS:
             priced = kudos_model.calculate_kudos(dict(basis_payload, sampler_name=sampler))
             assert priced > 0, sampler
+
+
+class TestSchedulerPricing:
+    """The trained vector has one karras on/off float and no schedule slot.
+
+    The requirement is continuity: introducing the field must not reprice any request that was already
+    being served. Every schedule therefore lands on whichever side of that float its legacy equivalent
+    did, which also means the field is not a pricing lever a requester can pull.
+    """
+
+    def test_karras_schedule_prices_as_the_legacy_flag_did(self, kudos_model, basis_payload):
+        assert kudos_model.calculate_kudos(dict(basis_payload, scheduler="karras")) == kudos_model.calculate_kudos(
+            dict(basis_payload, karras=True),
+        )
+
+    def test_normal_schedule_prices_as_karras_false_did(self, kudos_model, basis_payload):
+        assert kudos_model.calculate_kudos(dict(basis_payload, scheduler="normal")) == kudos_model.calculate_kudos(
+            dict(basis_payload, karras=False),
+        )
+
+    def test_extended_schedules_price_on_the_non_karras_side(self, kudos_model, basis_payload):
+        # The model only ever saw `karras` as the feature being on, so everything else takes the off side
+        # rather than being guessed onto it.
+        reference = kudos_model.calculate_kudos(dict(basis_payload, karras=False))
+        for schedule in ("simple", "sgm_uniform", "exponential", "ddim_uniform", "beta", "linear_quadratic", "kl_optimal"):
+            assert kudos_model.calculate_kudos(dict(basis_payload, scheduler=schedule)) == reference, schedule
+
+    def test_field_overrides_the_flag_for_pricing_too(self, kudos_model, basis_payload):
+        # Otherwise a request could be priced on one schedule and rendered on another.
+        priced = kudos_model.calculate_kudos(dict(basis_payload, scheduler="karras", karras=False))
+        assert priced == kudos_model.calculate_kudos(dict(basis_payload, karras=True))
+
+    def test_every_known_schedule_prices_without_crashing(self, kudos_model, basis_payload):
+        from horde.consts import KNOWN_SCHEDULERS
+
+        for schedule in KNOWN_SCHEDULERS:
+            assert kudos_model.calculate_kudos(dict(basis_payload, scheduler=schedule)) > 0, schedule

@@ -20,6 +20,7 @@ import pytest
 from horde.bridge_reference import (
     EXTENDED_CONTROLNET_REGEN_VERSION,
     EXTENDED_SAMPLERS_REGEN_VERSION,
+    SCHEDULER_FIELD_REGEN_VERSION,
     check_bridge_capability,
     check_sampler_capability,
     get_supported_samplers,
@@ -88,6 +89,32 @@ class TestExtendedSamplers:
         offered = get_supported_samplers("AI Horde Worker:99:https://x", karras=False)
         assert not (offered & EXTENDED_SAMPLERS)
 
+
+class TestSchedulerFieldCapability:
+    """Guards the shared version entry: two capabilities live under one key in BRIDGE_CAPABILITIES."""
+
+    def test_absent_below_threshold(self):
+        agent = _regen_agent(SCHEDULER_FIELD_REGEN_VERSION - 1)
+        assert check_bridge_capability("scheduler", agent) is False
+
+    def test_present_at_threshold(self):
+        agent = _regen_agent(SCHEDULER_FIELD_REGEN_VERSION)
+        assert check_bridge_capability("scheduler", agent) is True
+
+    def test_present_above_threshold(self):
+        assert check_bridge_capability("scheduler", _regen_agent(SCHEDULER_FIELD_REGEN_VERSION + 5)) is True
+
+    def test_sharing_a_version_entry_did_not_drop_the_other_capability(self):
+        # A dict literal with a repeated key keeps only the last value, which would silently delete
+        # whichever capability was declared first. Both must resolve at their own constant.
+        assert check_bridge_capability("scheduler", _regen_agent(SCHEDULER_FIELD_REGEN_VERSION)) is True
+        assert check_bridge_capability("extended_controlnet", _regen_agent(EXTENDED_CONTROLNET_REGEN_VERSION)) is True
+
+    def test_legacy_cpp_worker_never_reads_the_field(self):
+        assert check_bridge_capability("scheduler", "AI Horde Worker:99:https://x") is False
+
+
+class TestOfferedSamplerSanity:
     def test_every_offered_sampler_is_an_accepted_sampler(self):
         # A bridge offered a sampler the API rejects can never be matched to a request.
         agent = _regen_agent(EXTENDED_SAMPLERS_REGEN_VERSION)

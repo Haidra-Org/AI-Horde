@@ -9,15 +9,20 @@ from horde.consts import (
     ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
     ANNOTATION_KUDOS_DEFAULT_BUCKET,
     EXTENDED_SAMPLERS,
+    EXTENDED_SCHEDULERS,
     IMAGE_CONTROL_TYPES,
+    KARRAS_FLAG_SCHEDULERS,
     KNOWN_CONTROL_TYPES,
     KNOWN_POST_PROCESSORS,
     KNOWN_SAMPLERS,
+    KNOWN_SCHEDULERS,
     KNOWN_UPSCALERS,
     LEGACY_IMAGE_CONTROL_TYPES,
     LEGACY_SAMPLERS,
+    LEGACY_SCHEDULERS,
     SECOND_ORDER_SAMPLERS,
     annotation_detector_kudos_bucket,
+    scheduler_for_request,
 )
 
 
@@ -61,6 +66,44 @@ class TestKnownSamplers:
         # denotes k-diffusion lineage. uni_pc* predate the ruling and are already unprefixed.
         for sampler in EXTENDED_SAMPLERS:
             assert not sampler.startswith("k_"), f"Extended sampler '{sampler}' should not carry the k_ prefix"
+
+
+class TestKnownSchedulers:
+    def test_known_schedulers_is_the_union_of_both_tiers(self):
+        assert KNOWN_SCHEDULERS == LEGACY_SCHEDULERS | EXTENDED_SCHEDULERS
+
+    def test_tiers_do_not_overlap(self):
+        assert not (LEGACY_SCHEDULERS & EXTENDED_SCHEDULERS)
+
+    def test_legacy_tier_is_exactly_what_the_karras_flag_can_express(self):
+        # The flag is a boolean, so it can name two schedules and no more. Anything else needs the field,
+        # which is what makes the extended tier the gated one.
+        assert LEGACY_SCHEDULERS == set(KARRAS_FLAG_SCHEDULERS.values())
+
+    def test_flag_mapping_is_unchanged(self):
+        # Ruled: the boolean keeps its existing meaning so no in-flight request changes output.
+        assert KARRAS_FLAG_SCHEDULERS[True] == "karras"
+        assert KARRAS_FLAG_SCHEDULERS[False] == "normal"
+
+
+class TestSchedulerForRequest:
+    def test_field_wins_over_the_flag(self):
+        assert scheduler_for_request("beta", karras=True) == "beta"
+        assert scheduler_for_request("sgm_uniform", karras=False) == "sgm_uniform"
+
+    def test_absent_field_falls_back_to_the_flag(self):
+        assert scheduler_for_request(None, karras=True) == "karras"
+        assert scheduler_for_request(None, karras=False) == "normal"
+
+    def test_unknown_field_falls_back_to_the_flag(self):
+        # Request-time validation rejects a bad value; this is also read for already-stored payloads,
+        # so it must degrade rather than raise.
+        assert scheduler_for_request("not_a_schedule", karras=True) == "karras"
+        assert scheduler_for_request("not_a_schedule", karras=False) == "normal"
+
+    def test_every_known_schedule_survives_resolution(self):
+        for schedule in KNOWN_SCHEDULERS:
+            assert scheduler_for_request(schedule, karras=False) == schedule, schedule
 
 
 class TestKnownUpscalers:

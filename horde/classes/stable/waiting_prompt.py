@@ -22,6 +22,7 @@ from horde.consts import (
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_POST_PROCESSORS,
     SECOND_ORDER_SAMPLERS,
+    scheduler_for_request,
 )
 from horde.flask import db
 from horde.image import convert_pil_to_b64
@@ -103,6 +104,11 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.params["cfg_scale"] = 5.0
         if "karras" not in self.params:
             self.params["karras"] = True
+        # Resolve the schedule once, here, so the dispatched payload states it outright instead of every
+        # consumer re-deriving it from the flag. `karras` is left in place untouched: a bridge too old to
+        # read this field ignores it and renders from the flag, which is the same schedule it always got.
+        if not self.params.get("scheduler"):
+            self.params["scheduler"] = scheduler_for_request(None, self.params["karras"])
         self.width = self.params["width"]
         self.height = self.params["height"]
         # Silent change
