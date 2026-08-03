@@ -276,3 +276,90 @@ class TestControlTypeCanonicalMapping:
     def test_new_type_prices_without_crashing(self, kudos_model, basis_payload):
         priced = kudos_model.calculate_kudos(dict(basis_payload, control_type="teed"))
         assert priced > 0
+
+
+class TestSamplerCanonicalMapping:
+    """The same frozen one-hot problem applies to ``sampler_name``.
+
+    Extended solvers are collapsed onto the trained slot with the same cost per
+    step. These tests lock the vector width and the slot each name lands on, and
+    guard the two samplers that already own trained slots against being remapped.
+    """
+
+    def test_extended_sampler_preserves_vector_length(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        classic = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_euler"))
+        extended = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="deis"))
+        assert extended.shape == classic.shape
+
+    def test_multistep_solvers_land_on_dpmpp_2m_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        reference = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_dpmpp_2m"))
+        for sampler in ("deis", "ipndm", "res_multistep", "sa_solver", "dpmpp_2m_sde", "dpmpp_3m_sde"):
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=sampler))
+            assert bool((mapped == reference).all()), sampler
+
+    def test_first_order_solvers_land_on_euler_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        reference = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_euler"))
+        for sampler in ("ddpm", "gradient_estimation", "er_sde"):
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=sampler))
+            assert bool((mapped == reference).all()), sampler
+
+    def test_heunpp2_lands_on_heun_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="heunpp2"))
+        heun = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_heun"))
+        assert bool((mapped == heun).all())
+
+    def test_unipc_keeps_its_own_trained_slots(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        # These are in the trained vocabulary already, so they must not be collapsed onto anything.
+        euler = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_euler"))
+        for sampler in ("uni_pc", "uni_pc_bh2"):
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=sampler))
+            assert not bool((mapped == euler).all()), sampler
+
+    def test_unipc_variants_are_distinct_from_each_other(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        first = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="uni_pc"))
+        second = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="uni_pc_bh2"))
+        assert not bool((first == second).all())
+
+    def test_uppercase_ddim_reaches_its_trained_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        # The API accepts `DDIM`; the model was trained on `ddim`. Before the canonical map the
+        # uppercase spelling missed its own slot and was priced as the euler fallback.
+        upper = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="DDIM"))
+        lower = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="ddim"))
+        euler = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_euler"))
+        assert bool((upper == lower).all())
+        assert not bool((upper == euler).all())
+
+    def test_dpmsolver_prices_as_what_the_backend_runs(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="dpmsolver"))
+        reference = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_dpmpp_2m"))
+        assert bool((mapped == reference).all())
+
+    def test_unknown_sampler_falls_back_to_euler(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        unknown = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="not_a_real_sampler_xyz"))
+        euler = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_euler"))
+        assert bool((unknown == euler).all())
+
+    def test_every_accepted_sampler_prices_without_crashing(self, kudos_model, basis_payload):
+        from horde.consts import KNOWN_SAMPLERS
+
+        for sampler in KNOWN_SAMPLERS:
+            priced = kudos_model.calculate_kudos(dict(basis_payload, sampler_name=sampler))
+            assert priced > 0, sampler

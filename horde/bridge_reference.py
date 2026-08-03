@@ -6,12 +6,19 @@ import functools
 
 import semver
 
-from horde.consts import KNOWN_POST_PROCESSORS
+from horde.consts import EXTENDED_SAMPLERS, KNOWN_POST_PROCESSORS
 from horde.logger import logger
 
 # Bridge version of "AI Horde Worker reGen" from which the image-utilities backend can annotate the
 # extended controlnet control types (everything outside LEGACY_IMAGE_CONTROL_TYPES).
 EXTENDED_CONTROLNET_REGEN_VERSION = 17
+
+# Bridge version of "AI Horde Worker reGen" whose pinned backend maps EXTENDED_SAMPLERS. This is a
+# claim about that release's backend, not about the bridge code: a reGen that reports this version
+# while pinning a backend without those sampler entries would silently render the default sampler
+# instead. It is tracked separately from EXTENDED_CONTROLNET_REGEN_VERSION (which currently holds the
+# same value) so the two can move independently.
+EXTENDED_SAMPLERS_REGEN_VERSION = 17
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
@@ -99,6 +106,9 @@ BRIDGE_CAPABILITIES = {
 
 BRIDGE_SAMPLERS = {  # TODO: Refactor along with schedulers
     "AI Horde Worker reGen": {
+        # The backend applies the karras sigma schedule independently of which solver runs, so every
+        # extended sampler is offered under both karras settings.
+        EXTENDED_SAMPLERS_REGEN_VERSION: {"karras": EXTENDED_SAMPLERS, "no karras": {}},
         3: {"karras": {"lcm"}, "no karras": {}},
         2: {
             "karras": {
