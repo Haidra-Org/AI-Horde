@@ -28,6 +28,7 @@ nav = [
     { "Reference" = [
         { "Overview" = "reference/README.md" },
         { "Kudos accounting" = "reference/kudos_accounting.md" },
+        { "Samplers and schedulers" = "reference/samplers_and_schedulers.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
