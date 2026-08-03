@@ -194,7 +194,10 @@ BASELINE_BATCHING_MULTIPLIERS = {
 }
 
 
-KNOWN_SAMPLERS = {
+# The samplers the `sampler_name` field accepts. Acceptance is not availability: a sampler is only
+# dispatchable to bridge agents whose version advertises it (see BRIDGE_SAMPLERS), so an entry here
+# that no online worker can render leaves the request queued rather than rejected.
+LEGACY_SAMPLERS = {
     "k_lms",
     "k_heun",
     "k_euler",
@@ -211,6 +214,32 @@ KNOWN_SAMPLERS = {
     "lcm",
 }
 
+# Solvers the image backend exposes beyond the classic set. These carry their backend's own spelling
+# rather than the `k_` prefix of the k-diffusion block above, because they are backend-native solvers
+# and the prefix would assert a k-diffusion lineage they do not have. `uni_pc`/`uni_pc_bh2` are not
+# new to the backend at all: it has rendered them (and the kudos model has priced them) all along,
+# and only their absence from the accepted set kept them unreachable.
+#
+# `dpmpp_3m_sde` carries a caveat worth knowing when reading pricing or support reports: it needs a
+# low-noise sigma schedule, so it converges under `karras: true` and diverges to colour noise under
+# `karras: false`. The constraint is the solver's own and is enforced backend-side.
+EXTENDED_SAMPLERS = {
+    "uni_pc",
+    "uni_pc_bh2",
+    "dpmpp_2m_sde",
+    "dpmpp_3m_sde",
+    "ddpm",
+    "deis",
+    "ipndm",
+    "res_multistep",
+    "gradient_estimation",
+    "heunpp2",
+    "er_sde",
+    "sa_solver",
+}
+
+KNOWN_SAMPLERS = LEGACY_SAMPLERS | EXTENDED_SAMPLERS
+
 KNOWN_WORKFLOWS = {"qr_code"}
 
 # These samplers perform double the steps per image
@@ -221,6 +250,10 @@ SECOND_ORDER_SAMPLERS = [
     "k_dpm_2_a",
     "k_dpmpp_2s_a",
     "k_dpmpp_sde",
+    # Heun++2 takes up to three model evaluations per step, so it is at least as expensive per step
+    # as the second-order samplers above. The remaining extended solvers are multistep: they reuse
+    # previous evaluations and so spend one model call per step, like k_dpmpp_2m.
+    "heunpp2",
 ]
 
 KNOWN_LCM_LORA_VERSIONS = {

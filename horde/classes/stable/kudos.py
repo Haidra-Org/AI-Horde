@@ -51,6 +51,31 @@ CANONICAL_KUDOS_CONTROL_TYPES = {
     "hough": "hough",
 }
 
+# The sampler one-hot slots are frozen by the same trained artifact, so a sampler the model was never
+# trained on is collapsed onto the trained slot with the same per-step cost before the lookup. The
+# grouping is by model evaluations per step, which is what the runtime the model predicts responds to:
+# multistep solvers reuse prior evaluations and cost one call per step like `k_dpmpp_2m`, first-order
+# solvers cost one like `k_euler`, and Heun++2 takes several like `k_heun`. Samplers with their own
+# trained slot are absent from this map and pass through unchanged.
+CANONICAL_KUDOS_SAMPLERS = {
+    # `DDIM` is the spelling the API accepts, `ddim` the spelling the model was trained on. Without
+    # this entry the uppercase name misses its own trained slot and is priced as `k_euler`.
+    "DDIM": "ddim",
+    # `dpmsolver` renders as DPM-Solver++ 2M on the current backend, so it is priced as one.
+    "dpmsolver": "k_dpmpp_2m",
+    "lcm": "k_euler",
+    "dpmpp_2m_sde": "k_dpmpp_2m",
+    "dpmpp_3m_sde": "k_dpmpp_2m",
+    "deis": "k_dpmpp_2m",
+    "ipndm": "k_dpmpp_2m",
+    "res_multistep": "k_dpmpp_2m",
+    "sa_solver": "k_dpmpp_2m",
+    "ddpm": "k_euler",
+    "gradient_estimation": "k_euler",
+    "er_sde": "k_euler",
+    "heunpp2": "k_heun",
+}
+
 
 class KudosModel:
     """Calculate kudos for a given horde job payload. Tiny, lightweight cpu model.
@@ -258,9 +283,11 @@ class KudosModel:
             ],
         )
 
-        data_samplers.append(
-            payload["sampler_name"] if payload["sampler_name"] in KudosModel.KNOWN_SAMPLERS else "k_euler",
-        )
+        sampler_name = payload["sampler_name"]
+        mapped_sampler = CANONICAL_KUDOS_SAMPLERS.get(sampler_name, sampler_name)
+        if mapped_sampler not in KudosModel.KNOWN_SAMPLERS:
+            mapped_sampler = "k_euler"
+        data_samplers.append(mapped_sampler)
         control_type = payload.get("control_type", "None")
         mapped_control_type = CANONICAL_KUDOS_CONTROL_TYPES.get(control_type, control_type)
         if mapped_control_type not in KudosModel.KNOWN_CONTROL_TYPES:

@@ -8,12 +8,14 @@ from horde.consts import (
     ANNOTATION_KUDOS_BUCKET_WEIGHTED,
     ANNOTATION_KUDOS_BUCKET_WEIGHTLESS,
     ANNOTATION_KUDOS_DEFAULT_BUCKET,
+    EXTENDED_SAMPLERS,
     IMAGE_CONTROL_TYPES,
     KNOWN_CONTROL_TYPES,
     KNOWN_POST_PROCESSORS,
     KNOWN_SAMPLERS,
     KNOWN_UPSCALERS,
     LEGACY_IMAGE_CONTROL_TYPES,
+    LEGACY_SAMPLERS,
     SECOND_ORDER_SAMPLERS,
     annotation_detector_kudos_bucket,
 )
@@ -35,6 +37,30 @@ class TestKnownSamplers:
     def test_second_order_is_subset(self):
         for sampler in SECOND_ORDER_SAMPLERS:
             assert sampler in KNOWN_SAMPLERS, f"Second-order sampler '{sampler}' not in KNOWN_SAMPLERS"
+
+    def test_known_samplers_is_the_union_of_both_tiers(self):
+        assert KNOWN_SAMPLERS == LEGACY_SAMPLERS | EXTENDED_SAMPLERS
+
+    def test_tiers_do_not_overlap(self):
+        # An extended sampler that is also legacy would be gated for workers that already render it.
+        assert not (LEGACY_SAMPLERS & EXTENDED_SAMPLERS)
+
+    def test_classic_samplers_stay_legacy(self):
+        # These must never move tiers: old bridges render them and gating them would strand requests.
+        for sampler in ("k_euler", "k_euler_a", "k_dpmpp_2m", "DDIM", "lcm"):
+            assert sampler in LEGACY_SAMPLERS
+
+    def test_unipc_is_extended_despite_backend_support(self):
+        # The backend has always rendered these; only the accepted set kept them unreachable, so they
+        # gate as extended rather than legacy because old bridges were never told about them.
+        assert "uni_pc" in EXTENDED_SAMPLERS
+        assert "uni_pc_bh2" in EXTENDED_SAMPLERS
+
+    def test_extended_samplers_carry_backend_spelling(self):
+        # Ruling: backend-native solvers keep their own names rather than taking the k_ prefix, which
+        # denotes k-diffusion lineage. uni_pc* predate the ruling and are already unprefixed.
+        for sampler in EXTENDED_SAMPLERS:
+            assert not sampler.startswith("k_"), f"Extended sampler '{sampler}' should not carry the k_ prefix"
 
 
 class TestKnownUpscalers:
