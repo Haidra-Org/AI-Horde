@@ -44,6 +44,12 @@ dependencies = [
     "semver>=3.0.2",
     # Used by the tiny kudos pricing model and resolved deterministically by uv.lock.
     "numpy",
+    # The single source of truth for image sampler capabilities: which solver knobs each sampler
+    # accepts and over what range, how many model evaluations a step of it costs, and which
+    # sampler/scheduler/baseline combinations cannot produce an image. Request validation, pricing and
+    # the published constraints endpoint all read it, so the vocabulary cannot drift between this API,
+    # the workers, and the clients that share this package.
+    "horde_sdk>=0.28.0,<1.0.0",
     "markdownify",
     "stripe<15",
     "environs",

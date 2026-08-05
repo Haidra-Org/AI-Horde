@@ -83,6 +83,34 @@ CANONICAL_KUDOS_SAMPLERS = {
     "gradient_estimation": "k_euler",
     "er_sde": "k_euler",
     "heunpp2": "k_heun",
+    # The solver-knob tier is slotted the same way: first by how many model evaluations a step costs,
+    # taken from horde_sdk's per-sampler table, and then by whether the solver is deterministic or
+    # stochastic, since the trained slots differ on that as well.
+    #
+    # One evaluation per step. The multistep solvers reuse their previous evaluation, and a CFG++ variant
+    # adds a correction to an existing solver rather than another model call, so both land where their
+    # uncorrected counterparts already sit.
+    "euler_cfg_pp": "k_euler",
+    "euler_ancestral_cfg_pp": "k_euler_a",
+    "dpmpp_2m_cfg_pp": "k_dpmpp_2m",
+    "dpmpp_2m_sde_heun": "k_dpmpp_2m",
+    "ipndm_v": "k_dpmpp_2m",
+    "res_multistep_cfg_pp": "k_dpmpp_2m",
+    "res_multistep_ancestral": "k_dpmpp_2m",
+    "res_multistep_ancestral_cfg_pp": "k_dpmpp_2m",
+    "gradient_estimation_cfg_pp": "k_euler",
+    # Two evaluations per step. `dpmpp_2s_ancestral_cfg_pp` is that trained solver itself plus the CFG++
+    # correction, so it keeps its own slot. The rest split on stochasticity: the deterministic
+    # exponential Heun takes `k_heun`, the SDE solvers take `k_dpmpp_sde`. `sa_solver_pece` is `sa_solver`
+    # run in predict-evaluate-correct-evaluate mode, where the corrector is the second evaluation, so it
+    # does not stay in the one-evaluation slot its plain form occupies.
+    "exp_heun_2_x0": "k_heun",
+    "exp_heun_2_x0_sde": "k_dpmpp_sde",
+    "dpmpp_2s_ancestral_cfg_pp": "k_dpmpp_2s_a",
+    "seeds_2": "k_dpmpp_sde",
+    "sa_solver_pece": "k_dpmpp_sde",
+    # Three evaluations per step, which is the `k_heun` slot for the same reason Heun++2 uses it.
+    "seeds_3": "k_heun",
 }
 
 

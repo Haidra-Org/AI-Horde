@@ -2,13 +2,49 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from horde_sdk.generation_parameters.image.constraints import (
+    CFG_PP_SAMPLERS,
+    CONSTRAINT_VIOLATION_KIND,
+    SAMPLER_SOLVER_KNOB,
+    list_constraint_violations,
+)
 from loguru import logger
 
 from horde import exceptions as e
 from horde.classes.base.user import User
-from horde.consts import KNOWN_POST_PROCESSORS, KNOWN_UPSCALERS, scheduler_for_request
+from horde.consts import (
+    KNOWN_POST_PROCESSORS,
+    KNOWN_UPSCALERS,
+    baseline_for_constraints,
+    scheduler_for_request,
+)
 from horde.enums import WarningMessage
 from horde.model_reference import model_reference
+
+# The request field carrying each solver knob, keyed by the knob the shared constraints table names. The
+# field names carry a `sampler_` prefix the backend's own keyword names do not.
+SOLVER_KNOB_REQUEST_FIELDS = {
+    SAMPLER_SOLVER_KNOB.eta: "sampler_eta",
+    SAMPLER_SOLVER_KNOB.s_noise: "sampler_s_noise",
+    SAMPLER_SOLVER_KNOB.s_churn: "sampler_s_churn",
+    SAMPLER_SOLVER_KNOB.s_tmin: "sampler_s_tmin",
+    SAMPLER_SOLVER_KNOB.s_tmax: "sampler_s_tmax",
+    SAMPLER_SOLVER_KNOB.order: "sampler_order",
+}
+
+# One return code per violation class, so a client can tell "this sampler has no such setting" from
+# "that value is out of range" without parsing the message.
+CONSTRAINT_VIOLATION_RETURN_CODES = {
+    CONSTRAINT_VIOLATION_KIND.knob_inapplicable: "SamplerKnobInapplicable",
+    CONSTRAINT_VIOLATION_KIND.knob_out_of_range: "SamplerKnobOutOfRange",
+    CONSTRAINT_VIOLATION_KIND.solver_type_unsupported: "SamplerSolverTypeUnsupported",
+    CONSTRAINT_VIOLATION_KIND.sampler_scheduler_rejected: "SamplerSchedulerMismatch",
+    CONSTRAINT_VIOLATION_KIND.scheduler_baseline_unsupported: "SchedulerBaselineMismatch",
+}
+
+# Above this, the CFG++ correction the `*_cfg_pp` solvers apply oversaturates rather than improving
+# adherence. Advisory rather than enforced: it is a quality expectation, and the image still renders.
+CFG_PP_ADVISED_MAX_CFG_SCALE = 2.0
 
 
 class ParamValidator:
@@ -47,6 +83,50 @@ class ParamValidator:
             if total_stop_seq_len > 2000:
                 raise e.BadRequest("Your total stop sequence length exceeds the allowed limit (2000 chars).", rc="ExcessiveStopSequence")
 
+    def get_set_solver_knobs(self):
+        """Returns the solver knobs this request set, keyed as the shared constraints table names them.
+
+        A knob left unset is absent rather than present-and-None, because leaving a knob out means the
+        solver's own default applies, which is never a constraint violation.
+        """
+        return {
+            knob: self.params[field_name]
+            for knob, field_name in SOLVER_KNOB_REQUEST_FIELDS.items()
+            if self.params.get(field_name) is not None
+        }
+
+    def validate_sampler_constraints(self):
+        """Rejects requests the image backend cannot render as asked, and warns about the rest.
+
+        The rules come from horde_sdk, which reads them from the backend's own solver implementations.
+        They are refused rather than adjusted because every one of them is a case where the backend
+        would otherwise produce something the request did not ask for: a knob a solver does not declare
+        is dropped in silence, a schedule with no sigmas for the model cannot be built, and one
+        sampler/schedule pairing returns colour noise at every step count.
+        """
+        sampler_name = self.params.get("sampler_name", "k_euler_a")
+        scheduler = scheduler_for_request(self.params.get("scheduler"), self.params.get("karras", True))
+        solver_type = self.params.get("sampler_solver_type")
+        set_knobs = self.get_set_solver_knobs()
+
+        # A request naming several models is checked against each of their baselines: the schedule has to
+        # be renderable on whichever one the job is eventually dispatched for.
+        baselines = {baseline_for_constraints(model_reference.get_model_baseline(model_name)) for model_name in self.models}
+        for baseline in baselines or {None}:
+            violations = list_constraint_violations(
+                sampler=sampler_name,
+                scheduler=scheduler,
+                baseline=baseline,
+                numeric_knobs=set_knobs,
+                solver_type=solver_type,
+            )
+            if violations:
+                violation = violations[0]
+                raise e.BadRequest(violation.detail, rc=CONSTRAINT_VIOLATION_RETURN_CODES[violation.kind])
+
+        if sampler_name in CFG_PP_SAMPLERS and self.params.get("cfg_scale", 7.5) > CFG_PP_ADVISED_MAX_CFG_SCALE:
+            self.warnings.add(WarningMessage.CfgPPScaleTooLarge)
+
     def validate_image_params(self):
         self.validate_base_params()
         for model_req_dict in [model_reference.get_model_requirements(m) for m in self.models]:
@@ -67,6 +147,7 @@ class ParamValidator:
             scheduler = scheduler_for_request(self.params.get("scheduler"), self.params.get("karras", True))
             if "schedulers" in model_req_dict and scheduler not in model_req_dict["schedulers"]:
                 self.warnings.add(WarningMessage.SchedulerMismatch)
+        self.validate_sampler_constraints()
         if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.models):
             if self.params.get("hires_fix", False) is True:
                 raise e.BadRequest("HiRes Fix does not work with Flux currently.", rc="HiResMismatch")

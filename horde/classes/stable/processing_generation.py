@@ -190,7 +190,10 @@ class ImageProcessingGeneration(ProcessingGeneration):
         # This number then increases lineary based on the resolution requested.
         # Using this formula, a 1536x768x40 request is expected to take ~50s on a 1mps/s worker, but we will only time out after 390s.
         ttl_multiplier = (self.wp.width * self.wp.height) / (512 * 512)
-        self.job_ttl = 30 + (self.wp.get_accurate_steps() * 2 * ttl_multiplier)
+        # Budgeted in model evaluations rather than denoising steps: the wall time a worker needs scales
+        # with how many times it runs the model, so a solver that evaluates twice per step needs about
+        # twice as long at the same step count.
+        self.job_ttl = 30 + (self.wp.get_evaluation_steps() * 2 * ttl_multiplier)
         # CN is 3 times slower
         if self.wp.gen_payload.get("control_type"):
             self.job_ttl = self.job_ttl * 2

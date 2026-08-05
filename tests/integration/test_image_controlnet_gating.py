@@ -17,7 +17,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from horde.bridge_reference import EXTENDED_CONTROLNET_REGEN_VERSION
+from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
 
 TEST_MODELS = ["stable_diffusion"]
 SDXL_MODELS = ["AlbedoBase XL (SDXL)"]
@@ -25,7 +25,7 @@ SDXL_MODELS = ["AlbedoBase XL (SDXL)"]
 # A pre-extended reGen agent: has classic controlnet, lacks extended controlnet.
 OLD_BRIDGE_AGENT = "AI Horde Worker reGen:13:https://github.com/Haidra-Org/horde-worker-reGen"
 # A reGen agent at the extended controlnet threshold.
-NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{EXTENDED_CONTROLNET_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
+NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
 
 pytestmark = [
     pytest.mark.object_storage,

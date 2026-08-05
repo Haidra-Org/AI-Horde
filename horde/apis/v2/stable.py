@@ -55,6 +55,7 @@ from horde.metrics import (
 )
 from horde.model_reference import model_reference
 from horde.patreon import patrons
+from horde.sampler_constraints import compile_sampler_constraints
 from horde.telemetry import (
     get_traceparent,
     pyroscope_tag,
@@ -135,7 +136,10 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.apikey = self.args.apikey
         self.apply_style()
         super().validate()
-        param_validator = ParamValidator(prompt=self.prompt, models=self.args.models, params=self.params, user=self.user)
+        # Validated against the models the job will actually run on, which is what ImageWaitingPrompt is
+        # built with below. A style replaces both the params and the model list, so reading the request's
+        # own list here would check the style's settings against models it is not going to use.
+        param_validator = ParamValidator(prompt=self.prompt, models=self.models, params=self.params, user=self.user)
         self.warnings = param_validator.validate_image_params()
         param_validator.check_for_special()
         # During raids, we prevent VPNs
@@ -1489,3 +1493,34 @@ class ImageHordeStatsModels(Resource):
         if self.args.model_state not in ["known", "custom", "all"]:
             raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
         return get_compiled_imagegen_stats_models(self.args.model_state), 200
+
+
+class ImageSamplerConstraints(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+
+    decorators = [limiter.exempt]
+
+    @logger.catch(reraise=True)
+    @cache.cached(timeout=3600)
+    @api.expect(get_parser)
+    @api.response(200, "Constraints Published", models.response_model_sampler_constraints)
+    def get(self):
+        """Which solver settings each sampler accepts, what a step of it costs, and what cannot be combined
+
+        Everything this validates a request against, published so a client can offer only the settings a
+        sampler actually has and can price a request before sending it. The hard sections mirror the
+        rejections exactly: a request breaking one of them is refused rather than adjusted.
+        Recommendations are advisory and each carries the provenance of the claim, because they range
+        from statements by the image backend's own author to third-party folklore.
+        """
+        # The document is typed all the way up, and is rendered to plain JSON types only here, at the
+        # boundary, so nothing downstream of the compiler works in anonymous dicts.
+        return compile_sampler_constraints().model_dump(mode="json"), 200

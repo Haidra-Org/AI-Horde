@@ -157,3 +157,8 @@ The errors returned by the AI horde are always in this json format
 | SharedKeyInsufficientKudos | This Shared key has insufficient kudos for this request |
 | OnlyServiceAccountProxy | This request requires a Service Account |
 | RequiresTrust | This request requires the user to be trusted or a patreon |
+| SamplerKnobInapplicable | The requested sampler has no such solver setting |
+| SamplerKnobOutOfRange | A solver setting is outside the range this sampler accepts |
+| SamplerSolverTypeUnsupported | This sampler does not accept the requested solver type |
+| SamplerSchedulerMismatch | This sampler and scheduler combination does not converge |
+| SchedulerBaselineMismatch | The requested scheduler is not defined for this model's baseline |

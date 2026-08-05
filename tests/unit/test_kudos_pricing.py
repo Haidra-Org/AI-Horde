@@ -400,3 +400,139 @@ class TestSchedulerPricing:
 
         for schedule in KNOWN_SCHEDULERS:
             assert kudos_model.calculate_kudos(dict(basis_payload, scheduler=schedule)) > 0, schedule
+
+
+class TestSolverKnobSamplerSlotting:
+    """The solver-knob tier has no trained slots, so each name is collapsed onto one that has.
+
+    The grouping is by model evaluations per step, read from horde_sdk, and then by whether the solver is
+    deterministic or stochastic. A sampler landing on the wrong slot is priced as the wrong workload, and
+    nothing else in the system would notice.
+    """
+
+    def test_one_evaluation_solvers_land_on_their_uncorrected_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        expected_slots = {
+            "euler_cfg_pp": "k_euler",
+            "euler_ancestral_cfg_pp": "k_euler_a",
+            "dpmpp_2m_cfg_pp": "k_dpmpp_2m",
+            "dpmpp_2m_sde_heun": "k_dpmpp_2m",
+            "ipndm_v": "k_dpmpp_2m",
+            "res_multistep_cfg_pp": "k_dpmpp_2m",
+            "res_multistep_ancestral": "k_dpmpp_2m",
+            "res_multistep_ancestral_cfg_pp": "k_dpmpp_2m",
+            "gradient_estimation_cfg_pp": "k_euler",
+        }
+        for sampler, slot in expected_slots.items():
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=sampler))
+            reference = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=slot))
+            assert bool((mapped == reference).all()), sampler
+
+    def test_two_evaluation_solvers_land_on_a_second_order_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        expected_slots = {
+            "exp_heun_2_x0": "k_heun",
+            "exp_heun_2_x0_sde": "k_dpmpp_sde",
+            "dpmpp_2s_ancestral_cfg_pp": "k_dpmpp_2s_a",
+            "seeds_2": "k_dpmpp_sde",
+            "sa_solver_pece": "k_dpmpp_sde",
+        }
+        for sampler, slot in expected_slots.items():
+            mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=slot))
+            reference = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name=sampler))
+            assert bool((mapped == reference).all()), sampler
+
+    def test_three_evaluation_solver_lands_on_the_heun_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import KudosModel
+
+        mapped = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="seeds_3"))
+        heun = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="k_heun"))
+        assert bool((mapped == heun).all())
+
+    def test_pece_costs_more_than_the_plain_sa_solver(self, kudos_model, basis_payload):
+        # The corrector is a second model evaluation, so the two must not share a slot.
+        from horde.classes.stable.kudos import KudosModel
+
+        plain = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="sa_solver"))
+        pece = KudosModel.payload_to_tensor(dict(basis_payload, sampler_name="sa_solver_pece"))
+        assert not bool((plain == pece).all())
+
+    def test_every_solver_knob_sampler_has_a_slot(self, kudos_model, basis_payload):
+        from horde.classes.stable.kudos import CANONICAL_KUDOS_SAMPLERS, KudosModel
+        from horde.consts import SOLVER_KNOB_SAMPLERS
+
+        for sampler in SOLVER_KNOB_SAMPLERS:
+            assert sampler in CANONICAL_KUDOS_SAMPLERS, f"'{sampler}' would silently price as the euler fallback"
+            assert CANONICAL_KUDOS_SAMPLERS[sampler] in KudosModel.KNOWN_SAMPLERS, sampler
+
+    def test_slotting_matches_the_shared_evaluation_counts_where_a_slot_exists(self, kudos_model, basis_payload):
+        # The slot a sampler takes has to cost what the sampler costs, or the grouping is decorative.
+        # The exception is the three-evaluation solvers: the trained vocabulary tops out at two
+        # evaluations per step, so they take the most expensive slot available and are under-priced by
+        # roughly a third. That predates this tier (heunpp2 has always sat there) and cannot be fixed
+        # without retraining, which is why it is asserted rather than left to be discovered.
+        from horde.classes.stable.kudos import CANONICAL_KUDOS_SAMPLERS, KudosModel
+        from horde.consts import SOLVER_KNOB_SAMPLERS, sampler_evaluations_per_step
+
+        most_expensive_trained_slot = max(sampler_evaluations_per_step(slot) for slot in KudosModel.KNOWN_SAMPLERS)
+
+        for sampler in SOLVER_KNOB_SAMPLERS:
+            slot = CANONICAL_KUDOS_SAMPLERS[sampler]
+            sampler_cost = sampler_evaluations_per_step(sampler)
+            slot_cost = sampler_evaluations_per_step(slot)
+            expected_cost = min(sampler_cost, most_expensive_trained_slot)
+            assert slot_cost == expected_cost, (
+                f"'{sampler}' costs {sampler_cost} evaluations per step but is priced as '{slot}', which costs {slot_cost}"
+            )
+
+    def test_the_trained_vocabulary_cannot_express_a_three_evaluation_step(self, kudos_model, basis_payload):
+        # Stated outright so the under-pricing above is a known quantity rather than an accident: if a
+        # retrained checkpoint ever adds a costlier slot, this fails and the slotting should be revisited.
+        from horde.classes.stable.kudos import KudosModel
+        from horde.consts import sampler_evaluations_per_step
+
+        assert max(sampler_evaluations_per_step(slot) for slot in KudosModel.KNOWN_SAMPLERS) == 2
+
+
+class TestExistingRequestsAreNotRepriced:
+    """Adding the new tier must leave every price that was already being charged exactly where it was.
+
+    The samplers below all own trained slots or were already canonically mapped, so none of them touches
+    the new entries. A change here means the wave repriced requests it was not supposed to touch.
+    """
+
+    def test_pre_existing_samplers_keep_their_exact_prices(self, kudos_model, basis_payload):
+        # Measured from the pricing path with the solver-knob tier absent, then re-measured with it
+        # present; every value below was identical across the two.
+        expected_kudos = {
+            "k_euler": 11.0,
+            "k_euler_a": 10.98,
+            "k_heun": 19.02,
+            "k_dpm_2": 16.82,
+            "k_dpm_2_a": 17.55,
+            "k_dpm_fast": 11.48,
+            "k_dpm_adaptive": 16.2,
+            "k_dpmpp_2s_a": 16.41,
+            "k_dpmpp_2m": 10.64,
+            "k_dpmpp_sde": 19.53,
+            "k_lms": 11.19,
+            "dpmsolver": 10.64,
+            "DDIM": 15.02,
+            "lcm": 11.0,
+            "uni_pc": 15.04,
+            "uni_pc_bh2": 14.5,
+            "dpmpp_2m_sde": 10.64,
+            "dpmpp_3m_sde": 10.64,
+            "ddpm": 11.0,
+            "deis": 10.64,
+            "ipndm": 10.64,
+            "res_multistep": 10.64,
+            "gradient_estimation": 11.0,
+            "heunpp2": 19.02,
+            "er_sde": 11.0,
+            "sa_solver": 10.64,
+        }
+        for sampler, expected in expected_kudos.items():
+            assert kudos_model.calculate_kudos(dict(basis_payload, sampler_name=sampler)) == expected, sampler

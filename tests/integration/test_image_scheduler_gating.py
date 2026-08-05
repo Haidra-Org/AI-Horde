@@ -12,12 +12,12 @@ request reaching the same population of workers it always did.
 
 import pytest
 
-from horde.bridge_reference import SCHEDULER_FIELD_REGEN_VERSION
+from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
 
 TEST_MODELS = ["stable_diffusion"]
 
 OLD_BRIDGE_AGENT = "AI Horde Worker reGen:13:https://github.com/Haidra-Org/horde-worker-reGen"
-NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{SCHEDULER_FIELD_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
+NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
 
 pytestmark = [
     pytest.mark.object_storage,
