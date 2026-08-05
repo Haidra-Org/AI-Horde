@@ -22,6 +22,8 @@ garage_secret_key="${AI_HORDE_TEST_GARAGE_SECRET_KEY}"
 garage_capacity="${AI_HORDE_TEST_GARAGE_CAPACITY:-1G}"
 garage_admin_port="${AI_HORDE_TEST_GARAGE_ADMIN_PORT:-3903}"
 garage_s3_port="${AI_HORDE_TEST_GARAGE_S3_PORT:-3900}"
+postgres_port="${AI_HORDE_TEST_POSTGRES_PORT:-5432}"
+redis_port="${AI_HORDE_TEST_REDIS_PORT:-6379}"
 
 transient_bucket="${AI_HORDE_TEST_R2_TRANSIENT_BUCKET:-stable-horde}"
 permanent_bucket="${AI_HORDE_TEST_R2_PERMANENT_BUCKET:-stable-horde}"
@@ -34,13 +36,14 @@ compose() {
 
 usage() {
   cat <<EOF
-Usage: bash tests/bootstrap_garage.sh [--shell]
+Usage: bash tests/bootstrap_garage.sh [--shell|--powershell]
 
 Bootstraps the local Garage instance used by the image integration tests.
 
 Options:
-  --shell    Print only export statements so the caller can eval/source them.
-  -h, --help Show this help message.
+  --shell      Print POSIX export statements so the caller can eval/source them.
+  --powershell Print PowerShell environment assignments for Invoke-Expression.
+  -h, --help   Show this help message.
 EOF
 }
 
@@ -49,6 +52,9 @@ parse_args() {
     case "$1" in
       --shell)
         output_mode="shell"
+        ;;
+      --powershell)
+        output_mode="powershell"
         ;;
       -h|--help)
         usage
@@ -108,6 +114,37 @@ ensure_garage_running() {
     echo "Garage is not running. Start the test stack first: docker compose -f tests/docker-compose.yml up -d" >&2
     return 1
   fi
+}
+
+published_port() {
+  local service="$1"
+  local container_port="$2"
+  local fallback_port="$3"
+  local mapping
+  local resolved_port
+
+  # Read the live container mapping instead of trusting the current shell's
+  # environment. This matters when Docker Compose was started from PowerShell
+  # and this script is subsequently run through WSL: arbitrary PowerShell
+  # environment variables do not cross that boundary unless WSLENV names them.
+  mapping="$(compose port "$service" "$container_port" 2>/dev/null || true)"
+  mapping="${mapping%%$'\n'*}"
+  resolved_port="${mapping##*:}"
+  if [[ "$resolved_port" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$resolved_port"
+    return 0
+  fi
+
+  # Preserve the old behavior for partially started or externally managed
+  # stacks where Compose has no live published-port record to inspect.
+  printf '%s\n' "$fallback_port"
+}
+
+resolve_runtime_ports() {
+  garage_admin_port="$(published_port garage 3903 "$garage_admin_port")"
+  garage_s3_port="$(published_port garage 3900 "$garage_s3_port")"
+  postgres_port="$(published_port postgres 5432 "$postgres_port")"
+  redis_port="$(published_port redis 6379 "$redis_port")"
 }
 
 parse_node_id() {
@@ -189,15 +226,45 @@ export R2_PERMANENT_ACCOUNT="http://127.0.0.1:${garage_s3_port}"
 export R2_TRANSIENT_BUCKET="$transient_bucket"
 export R2_PERMANENT_BUCKET="$permanent_bucket"
 export R2_SOURCE_IMAGE_BUCKET="$source_image_bucket"
-export POSTGRES_URL="localhost:${AI_HORDE_TEST_POSTGRES_PORT:-5432}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
+export POSTGRES_URL="localhost:${postgres_port}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
 export REDIS_IP="127.0.0.1"
-export REDIS_PORT="${AI_HORDE_TEST_REDIS_PORT:-6379}"
+export REDIS_PORT="${redis_port}"
 EOF
+}
+
+emit_powershell_assignment() {
+  local name="$1"
+  local value="$2"
+
+  # A single quote is escaped by doubling it inside PowerShell single-quoted
+  # strings. Current generated values are URL/alphanumeric, but keeping this
+  # correct makes custom bucket/database names safe too.
+  value="${value//\'/\'\'}"
+  printf '$env:%s='"'"'%s'"'"'\n' "$name" "$value"
+}
+
+emit_powershell_exports() {
+  emit_powershell_assignment AWS_ACCESS_KEY_ID "$garage_access_key_id"
+  emit_powershell_assignment AWS_SECRET_ACCESS_KEY "$garage_secret_key"
+  emit_powershell_assignment SHARED_AWS_ACCESS_ID "$garage_access_key_id"
+  emit_powershell_assignment SHARED_AWS_ACCESS_KEY "$garage_secret_key"
+  emit_powershell_assignment R2_TRANSIENT_ACCOUNT "http://127.0.0.1:${garage_s3_port}"
+  emit_powershell_assignment R2_PERMANENT_ACCOUNT "http://127.0.0.1:${garage_s3_port}"
+  emit_powershell_assignment R2_TRANSIENT_BUCKET "$transient_bucket"
+  emit_powershell_assignment R2_PERMANENT_BUCKET "$permanent_bucket"
+  emit_powershell_assignment R2_SOURCE_IMAGE_BUCKET "$source_image_bucket"
+  emit_powershell_assignment POSTGRES_URL "localhost:${postgres_port}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
+  emit_powershell_assignment REDIS_IP "127.0.0.1"
+  emit_powershell_assignment REDIS_PORT "$redis_port"
 }
 
 print_exports() {
   if [[ "$output_mode" == "shell" ]]; then
     emit_exports
+    return 0
+  fi
+  if [[ "$output_mode" == "powershell" ]]; then
+    emit_powershell_exports
     return 0
   fi
 
@@ -218,6 +285,7 @@ main() {
   parse_args "$@"
   cd "$repo_root"
   ensure_garage_running
+  resolve_runtime_ports
   wait_for_cli
   ensure_layout
   ensure_key
