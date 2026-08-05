@@ -139,9 +139,7 @@ def reconcile_balances(snapshot_id: uuid.UUID, *, apply_repairs: bool = False) -
         - KudosBalanceSnapshot.applied_balance_total
     )
     expected_escrow = (
-        KudosBalanceSnapshot.escrow
-        + func.coalesce(applied_totals.c.escrow_total, Decimal("0"))
-        - KudosBalanceSnapshot.applied_escrow_total
+        KudosBalanceSnapshot.escrow + func.coalesce(applied_totals.c.escrow_total, Decimal("0")) - KudosBalanceSnapshot.applied_escrow_total
     )
     drift_rows = db.session.execute(
         select(

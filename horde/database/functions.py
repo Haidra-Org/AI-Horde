@@ -931,9 +931,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     # naming several of the worker's models would consume several page slots as
     # duplicates of itself.
     wp_serves_model = (
-        db.session.query(WPModels.id)
-        .filter(WPModels.wp_id == ImageWaitingPrompt.id, WPModels.model.in_(models_list))
-        .exists()
+        db.session.query(WPModels.id).filter(WPModels.wp_id == ImageWaitingPrompt.id, WPModels.model.in_(models_list)).exists()
     )
     wp_names_any_model = db.session.query(WPModels.id).filter(WPModels.wp_id == ImageWaitingPrompt.id).exists()
     # Worker targeting is evaluated per WP, never per targeting row: joining
