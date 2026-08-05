@@ -502,11 +502,7 @@ def refresh_worker_speeds() -> None:
     with get_app().app_context():
         cutoff = datetime.utcnow() - WORKER_SPEED_SAMPLE_WINDOW
         recent_worker_id_list = [
-            row[0]
-            for row in db.session.query(WorkerPerformance.worker_id)
-            .filter(WorkerPerformance.created >= cutoff)
-            .distinct()
-            .all()
+            row[0] for row in db.session.query(WorkerPerformance.worker_id).filter(WorkerPerformance.created >= cutoff).distinct().all()
         ]
         if not recent_worker_id_list:
             return

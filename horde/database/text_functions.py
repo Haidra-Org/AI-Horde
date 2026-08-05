@@ -54,11 +54,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
     # matching model, and the page LIMIT below counts joined rows, so a WP
     # naming several of the worker's models would consume several page slots as
     # duplicates of itself.
-    wp_serves_model = (
-        db.session.query(WPModels.id)
-        .filter(WPModels.wp_id == TextWaitingPrompt.id, WPModels.model.in_(models_list))
-        .exists()
-    )
+    wp_serves_model = db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id, WPModels.model.in_(models_list)).exists()
     wp_names_any_model = db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id).exists()
     # Worker targeting is evaluated per WP, never per targeting row: joining
     # wp_allowed_workers admits a blacklisted worker whenever the blacklist
