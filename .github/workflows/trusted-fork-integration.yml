@@ -210,6 +210,7 @@ jobs:
             --run-time 90s \
             --bootstrap-requestors 4 \
             --bootstrap-workers 8 \
+            --sampler-feature-requestors 1 \
             --preflight-fail-hard \
             --bootstrap-fail-hard \
             --csv smoke \

@@ -54,6 +54,16 @@ class MetaBrowser(HttpUser):
         # /status/models is @cache.cached, this is the canonical hot path.
         self.client.get("/api/v2/status/models?type=image", name="/api/v2/status/models [hot]")
 
+    @tag("meta", "image", "sampler-features")
+    @task(2)
+    def sampler_constraints(self):
+        """Published client contract for sampler settings and pricing."""
+        self.client.get(
+            "/api/v2/status/sampler_constraints",
+            headers=_headers(self.api_key),
+            name="/api/v2/status/sampler_constraints [hot]",
+        )
+
     @tag("meta")
     @task(1)
     def models_cold(self):

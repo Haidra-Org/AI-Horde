@@ -5,11 +5,27 @@
 """Validation and defensive-path Locust users."""
 
 import uuid
+from itertools import cycle
 
 from locust import HttpUser, between, tag, task
 
 from ..config import _config
 from ..helpers import _headers, _pick_requestor_key, _pick_worker_key, _random_prompt, _record_expected
+
+_invalid_sampler_constraint_cases = cycle(
+    (
+        {"params": {"sampler_name": "k_euler", "scheduler": "karras", "sampler_eta": 1.0}},
+        {"params": {"sampler_name": "deis", "scheduler": "karras", "sampler_order": 1}},
+        {
+            "params": {"sampler_name": "dpmpp_2m_sde", "scheduler": "karras", "sampler_solver_type": "phi_1"},
+        },
+        {"params": {"sampler_name": "dpmpp_3m_sde", "scheduler": "normal"}},
+        {
+            "params": {"sampler_name": "k_euler", "scheduler": "align_your_steps"},
+            "models": ["Flux.1-Schnell fp8 (Compact)"],
+        },
+    ),
+)
 
 
 class MisuseUser(HttpUser):
@@ -99,6 +115,31 @@ class MisuseUser(HttpUser):
             name="/api/v2/generate/async [misuse-oversized]",
         ) as resp:
             self._expect_4xx(resp, "/api/v2/generate/async [misuse-oversized]")
+
+    @tag("misuse", "image", "sampler-features")
+    @task(2)
+    def invalid_sampler_constraints(self):
+        """Exercise each new hard-constraint rejection family without creating work."""
+        case = next(_invalid_sampler_constraint_cases)
+        payload = {
+            "prompt": _random_prompt(),
+            "params": {
+                "width": 512,
+                "height": 512,
+                "steps": 20,
+                "cfg_scale": 7.0,
+                **case["params"],
+            },
+            "models": case.get("models", ["stable_diffusion"]),
+        }
+        with self.client.post(
+            "/api/v2/generate/async",
+            json=payload,
+            headers=_headers(_pick_requestor_key()),
+            catch_response=True,
+            name="/api/v2/generate/async [misuse-sampler-constraint]",
+        ) as resp:
+            self._expect_4xx(resp, "/api/v2/generate/async [misuse-sampler-constraint]")
 
     @tag("misuse", "image")
     @task(2)

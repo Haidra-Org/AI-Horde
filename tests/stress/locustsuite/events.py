@@ -49,7 +49,7 @@ def add_ai_horde_arguments(parser):
         "--horde-models",
         type=str,
         env_var="HORDE_MODELS",
-        default="Fustercluck,AlbedoBase XL (SDXL),stable_diffusion,waifu_diffusion",
+        default="Fustercluck,AlbedoBase XL (SDXL),stable_diffusion,waifu_diffusion,Flux.1-Schnell fp8 (Compact)",
         help="Comma-separated list of model names to request/serve",
     )
     group.add_argument(
@@ -125,7 +125,7 @@ def add_ai_horde_arguments(parser):
         "--worker-bridge-agent",
         type=str,
         env_var="HORDE_WORKER_BRIDGE_AGENT",
-        default="AI Horde Worker reGen:9.0.1-stress:https://github.com/Haidra-Org/horde-worker-reGen",
+        default="AI Horde Worker reGen:17.0.0:https://github.com/Haidra-Org/horde-worker-reGen",
         help="Bridge agent string for simulated workers",
     )
     group.add_argument(
@@ -213,6 +213,11 @@ def add_ai_horde_arguments(parser):
             "--hot-path-requestors",
             "HORDE_HOT_PATH_REQUESTORS",
             "Concurrent HotPathRequester users (identical-payload image POST /async)",
+        ),
+        (
+            "--sampler-feature-requestors",
+            "HORDE_SAMPLER_FEATURE_REQUESTORS",
+            "Concurrent SamplerFeatureRequester users (new samplers, schedulers, and solver settings)",
         ),
         ("--meta-browsers", "HORDE_META_BROWSERS", "Concurrent MetaBrowser users (read-only meta endpoints)"),
         ("--misuse-users", "HORDE_MISUSE_USERS", "Concurrent MisuseUser users (4xx validation paths)"),
@@ -429,6 +434,7 @@ def on_test_start(environment, **kw):
         MetaBrowser,
         MisuseUser,
         RequestGenerator,
+        SamplerFeatureRequester,
         StatusPoller,
         TextRequester,
         TextWorkerSimulator,
@@ -444,6 +450,7 @@ def on_test_start(environment, **kw):
         (InterrogationRequester, "interrogate_requestors"),
         (InterrogationWorkerSimulator, "interrogate_workers"),
         (HotPathRequester, "hot_path_requestors"),
+        (SamplerFeatureRequester, "sampler_feature_requestors"),
         (MetaBrowser, "meta_browsers"),
         (MisuseUser, "misuse_users"),
     )
