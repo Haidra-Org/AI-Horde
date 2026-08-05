@@ -21,7 +21,7 @@ from horde.consts import (
     KNOWN_LCM_LORA_IDS,
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_POST_PROCESSORS,
-    SECOND_ORDER_SAMPLERS,
+    sampler_evaluations_per_step,
     scheduler_for_request,
 )
 from horde.flask import db
@@ -132,7 +132,9 @@ class ImageWaitingPrompt(WaitingPrompt):
                 self.seed = self.seed_to_int(self.seed)
         # logger.debug(self.params)
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
-        self.things = self.width * self.height * self.get_accurate_steps()
+        # Usage is counted in model evaluations rather than denoising steps, so a solver that evaluates
+        # the model more than once per step is recorded at what it actually consumed.
+        self.things = self.width * self.height * self.get_evaluation_steps()
         self.total_usage = round(self.things * self.n / hv.thing_divisors["image"], 2)
         # Education accounts get some settings hardcoded regardless of the request
         if self.user.education:
@@ -529,17 +531,33 @@ class ImageWaitingPrompt(WaitingPrompt):
                 return True
 
     def get_accurate_steps(self):
+        """Returns the denoising steps this request performs, disregarding what each one costs.
+
+        This is trajectory length, not cost. It answers "how far along the denoising path does this go",
+        which is what a model's own step requirements are expressed in: a model asking for at most 30
+        steps is describing where its output stops improving, and that limit does not move because a
+        solver evaluates the model more than once per step. Anything measuring cost or time wants
+        get_evaluation_steps() instead.
+        """
         if self.params.get("sampler_name", "k_euler_a") in ["k_dpm_adaptive"]:
             # This sampler chooses the steps amount automatically
             # and disregards the steps value from the user
             # so we just calculate it as an average 40 steps
             return 40
-        steps = self.params["steps"]
-        if self.params.get("sampler_name", "k_euler_a") in SECOND_ORDER_SAMPLERS:
-            # These samplerS do double steps per iteration, so they're at half the speed
-            # So we adjust the things to take that into account
-            steps *= 2
-        return steps
+        return self.params["steps"]
+
+    def get_evaluation_steps(self):
+        """Returns the model evaluations this request performs, which is what its cost scales with.
+
+        A second-order solver evaluates the model twice per denoising step and takes about twice as long
+        for the same step count, so a time budget or a usage total that counted steps alone would
+        under-count it. Per-sampler evaluation counts come from horde_sdk, which reads them from the
+        image backend's own solver implementations.
+
+        This deliberately differs from get_accurate_steps(): see its docstring for why a model's step
+        requirements are not scaled this way.
+        """
+        return self.get_accurate_steps() * sampler_evaluations_per_step(self.params.get("sampler_name", "k_euler_a"))
 
     def log_faulted_prompt(self):
         source_processing = "txt2img"

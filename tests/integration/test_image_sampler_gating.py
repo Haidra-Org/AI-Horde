@@ -16,14 +16,14 @@ decides, and it decides fail-closed for every bridge below the threshold.
 
 import pytest
 
-from horde.bridge_reference import EXTENDED_SAMPLERS_REGEN_VERSION
+from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
 
 TEST_MODELS = ["stable_diffusion"]
 
 # A pre-extended reGen agent: renders the classic samplers only.
 OLD_BRIDGE_AGENT = "AI Horde Worker reGen:13:https://github.com/Haidra-Org/horde-worker-reGen"
 # A reGen agent at the extended sampler threshold.
-NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{EXTENDED_SAMPLERS_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
+NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
 
 pytestmark = [
     pytest.mark.object_storage,

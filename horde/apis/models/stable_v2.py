@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import copy
+from typing import Any
 
 from flask_restx import fields
+from horde_sdk.generation_parameters.image.constraints_document import SamplerConstraintsDocument
 
 from horde.apis.models import v2
 from horde.consts import (
@@ -13,6 +15,7 @@ from horde.consts import (
     KNOWN_POST_PROCESSORS,
     KNOWN_SAMPLERS,
     KNOWN_SCHEDULERS,
+    KNOWN_SOLVER_TYPES,
     KNOWN_WORKFLOWS,
 )
 from horde.vars import horde_title
@@ -194,9 +197,57 @@ class ImageParsers(v2.Parsers):
         )
 
 
+def inline_json_schema_definitions(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON schema with every internal `$ref` replaced by the definition it points at.
+
+    Swagger 2.0, which flask-restx speaks, has no `$defs` section, and flask-restx only emits the
+    definitions it was handed as models of its own. A pydantic schema's nested `$ref`s would therefore
+    dangle. Inlining them keeps the registered schema self-contained and keeps it derived from the model
+    rather than restated by hand.
+
+    Args:
+        schema: A JSON schema as pydantic emits it, whose `$defs` are referenced as `#/$defs/<name>`.
+
+    Returns:
+        The same schema with no `$defs` section and no remaining internal references.
+
+    Raises:
+        ValueError: If a definition is missing, or if the references form a cycle, neither of which can
+            be expressed without a reference surviving.
+    """
+    definitions = schema.get("$defs", {})
+
+    def expand(node: Any, expanding: frozenset[str]) -> Any:
+        if isinstance(node, list):
+            return [expand(element, expanding) for element in node]
+
+        if not isinstance(node, dict):
+            return node
+
+        reference = node.get("$ref")
+        if reference is None:
+            return {key: expand(value, expanding) for key, value in node.items() if key != "$defs"}
+
+        definition_name = reference.removeprefix("#/$defs/")
+        if definition_name not in definitions:
+            raise ValueError(f"Cannot inline unknown JSON schema reference {reference}.")
+        if definition_name in expanding:
+            raise ValueError(f"Cannot inline the recursive JSON schema reference {reference}.")
+
+        return expand(definitions[definition_name], expanding | {definition_name})
+
+    return expand(schema, frozenset())
+
+
 class ImageModels(v2.Models):
     def __init__(self, api):
         super().__init__(api)
+        # Derived mechanically from the horde_sdk model the sampler constraints endpoint returns, so the
+        # documented shape cannot drift from the served one.
+        self.response_model_sampler_constraints = api.schema_model(
+            "SamplerConstraintsDocument",
+            inline_json_schema_definitions(SamplerConstraintsDocument.model_json_schema()),
+        )
         self.model_job_metadata = api.model(
             "GenerationMetadataStable",
             {
@@ -385,6 +436,74 @@ class ImageModels(v2.Models):
                         "its steps, which changes output character at no change in cost, and matters most at "
                         "low step counts. Takes precedence over 'karras'. Schedules outside "
                         "'karras'/'normal' are only dispatched to workers new enough to accept them."
+                    ),
+                ),
+                "sampler_eta": fields.Float(
+                    required=False,
+                    default=None,
+                    min=0.0,
+                    description=(
+                        "The stochastic strength of the solver. At 0 a stochastic solver reduces to its "
+                        "deterministic equivalent. Only some samplers accept this and the accepted range "
+                        "differs between them; see the sampler constraints endpoint. Requires a worker new "
+                        "enough to apply solver options."
+                    ),
+                ),
+                "sampler_s_noise": fields.Float(
+                    required=False,
+                    default=None,
+                    min=0.0,
+                    description=(
+                        "The multiplier on the noise the solver adds per step. Only some samplers accept "
+                        "this; see the sampler constraints endpoint."
+                    ),
+                ),
+                "sampler_s_churn": fields.Float(
+                    required=False,
+                    default=None,
+                    min=0.0,
+                    description=(
+                        "The extra noise injected across the run, spread over the steps inside the churn "
+                        "window. Only the solvers that take a churn window accept this."
+                    ),
+                ),
+                "sampler_s_tmin": fields.Float(
+                    required=False,
+                    default=None,
+                    min=0.0,
+                    description="The lower sigma bound of the churn window. Only meaningful alongside 'sampler_s_churn'.",
+                ),
+                "sampler_s_tmax": fields.Float(
+                    required=False,
+                    default=None,
+                    min=0.0,
+                    description="The upper sigma bound of the churn window. Only meaningful alongside 'sampler_s_churn'.",
+                ),
+                "sampler_solver_type": fields.String(
+                    required=False,
+                    default=None,
+                    enum=sorted(KNOWN_SOLVER_TYPES),
+                    description=(
+                        "Which correction the solver applies. No sampler accepts every value: the accepted "
+                        "vocabulary is per sampler and is published by the sampler constraints endpoint."
+                    ),
+                ),
+                "sampler_order": fields.Integer(
+                    required=False,
+                    default=None,
+                    min=1,
+                    description=(
+                        "The order of the solver. The accepted range is per sampler and much narrower than "
+                        "this bound; see the sampler constraints endpoint."
+                    ),
+                ),
+                "flow_shift": fields.Float(
+                    required=False,
+                    default=None,
+                    min=0.0,
+                    description=(
+                        "The timestep shift applied to a flow-matching model. Only the flow-matching "
+                        "baselines have anything to shift. Requires a worker new enough to apply it."
                     ),
                 ),
                 "tiling": fields.Boolean(

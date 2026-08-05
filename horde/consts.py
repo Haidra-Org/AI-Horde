@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
+from horde_sdk.generation_parameters.image.constraints import (
+    KNOWN_SAMPLER_SOLVER_TYPES,
+    SAMPLER_CONSTRAINTS,
+)
+
 HORDE_VERSION = "5.1.6"
 HORDE_API_VERSION = "2.5"
 
@@ -238,7 +244,37 @@ EXTENDED_SAMPLERS = {
     "sa_solver",
 }
 
-KNOWN_SAMPLERS = LEGACY_SAMPLERS | EXTENDED_SAMPLERS
+# The remainder of the image backend's non-`_gpu` solver list. Grouped apart from EXTENDED_SAMPLERS
+# because they need a newer bridge: the release that maps EXTENDED_SAMPLERS does not name these, and a
+# bridge that cannot name a solver falls back to its default one, returning an image from a sampler
+# nobody asked for.
+#
+# The `_gpu` spellings the backend also offers are deliberately absent from every tier. They differ
+# from their counterparts only in which device draws the sampling noise, which is the worker's own
+# concern rather than something a request decides.
+#
+# The `*_cfg_pp` members apply the CFG++ correction and expect a far lower `cfg_scale` than the usual
+# range. That is a quality expectation rather than a constraint, so it is warned about at validation
+# rather than refused.
+SOLVER_KNOB_SAMPLERS = {
+    "euler_cfg_pp",
+    "euler_ancestral_cfg_pp",
+    "exp_heun_2_x0",
+    "exp_heun_2_x0_sde",
+    "dpmpp_2s_ancestral_cfg_pp",
+    "dpmpp_2m_cfg_pp",
+    "dpmpp_2m_sde_heun",
+    "ipndm_v",
+    "res_multistep_cfg_pp",
+    "res_multistep_ancestral",
+    "res_multistep_ancestral_cfg_pp",
+    "gradient_estimation_cfg_pp",
+    "seeds_2",
+    "seeds_3",
+    "sa_solver_pece",
+}
+
+KNOWN_SAMPLERS = LEGACY_SAMPLERS | EXTENDED_SAMPLERS | SOLVER_KNOB_SAMPLERS
 
 # The sigma schedules a request may name. A schedule decides where in the noise range a sampler spends
 # its steps rather than how many it takes, so it changes output character at no change in cost: karras
@@ -262,7 +298,85 @@ EXTENDED_SCHEDULERS = {
     "kl_optimal",
 }
 
-KNOWN_SCHEDULERS = LEGACY_SCHEDULERS | EXTENDED_SCHEDULERS
+# Schedules the backend builds from a fixed table of sigmas rather than from the model, supplied by
+# dedicated nodes rather than by its scheduler list. Two consequences follow, and both are enforced
+# rather than advertised: they need a bridge that can drive those nodes, and each is only defined for
+# the model families its table was built for, so requesting one against another family has no sigmas to
+# sample on. The per-baseline restriction is read from horde_sdk rather than restated here.
+SIGMA_GENERATOR_SCHEDULERS = {
+    "align_your_steps",
+    "gits",
+}
+
+KNOWN_SCHEDULERS = LEGACY_SCHEDULERS | EXTENDED_SCHEDULERS | SIGMA_GENERATOR_SCHEDULERS
+
+# The per-request solver knobs, named as the image backend's solver functions name them. Which of these
+# a given sampler actually accepts is not a fixed list: it is read per sampler from horde_sdk, because a
+# knob a solver function does not declare is silently dropped by the backend rather than refused, and a
+# request that quietly loses a setting it asked for has produced the wrong image.
+SOLVER_KNOB_PARAMS = {
+    "sampler_eta",
+    "sampler_s_noise",
+    "sampler_s_churn",
+    "sampler_s_tmin",
+    "sampler_s_tmax",
+    "sampler_solver_type",
+    "sampler_order",
+}
+
+# The timestep shift of a flow-matching model. Grouped apart from the solver knobs because it is a
+# property of the model rather than of the solver, and only the flow-matching baselines have anything
+# to shift.
+FLOW_SHIFT_PARAM = "flow_shift"
+
+# Every `sampler_solver_type` value any sampler accepts, which is what the field can be validated
+# against on its own. No sampler accepts all of them: the per-sampler vocabulary is the real constraint
+# and is checked against horde_sdk at validation.
+KNOWN_SOLVER_TYPES = {solver_type.value for solver_type in KNOWN_SAMPLER_SOLVER_TYPES}
+
+
+def baseline_for_constraints(baseline_name):
+    """Return the shared baseline vocabulary's name for a model reference baseline, or None.
+
+    The model reference spells some baselines with spaces where the shared vocabulary uses underscores,
+    so a plain lookup would miss exactly the two families the sigma-generator schedules are defined for.
+    None means the baseline is not one the shared vocabulary knows, which leaves any per-baseline
+    constraint unenforced rather than rejecting a model over a spelling.
+    """
+    if not baseline_name:
+        return None
+    for candidate in (baseline_name, baseline_name.replace(" ", "_")):
+        try:
+            return KNOWN_IMAGE_GENERATION_BASELINE(candidate)
+        except ValueError:
+            continue
+    return None
+
+
+SOLVER_OPTION_PARAMS = SOLVER_KNOB_PARAMS | {FLOW_SHIFT_PARAM}
+
+# The number of model evaluations a step performs for a sampler nothing has told us about. First-order
+# is both the common case and the conservative one: it never inflates a cost for a name we cannot place.
+DEFAULT_EVALUATIONS_PER_STEP = 1
+
+
+def sampler_evaluations_per_step(sampler_name):
+    """Return how many model evaluations one denoising step of this sampler performs.
+
+    This is the difference between how long a request takes and how long its denoising trajectory is. A
+    second-order solver evaluates the model twice per step, so twenty of its steps cost about what forty
+    steps of a first-order solver cost, while still being twenty steps of denoising. Cost-shaped
+    quantities (time budgets, usage accounting) scale by this number; trajectory-shaped ones (how many
+    steps a model wants) do not.
+
+    An unrecognised name yields DEFAULT_EVALUATIONS_PER_STEP rather than raising, because this is also
+    read for payloads already stored, whose sampler was validated when the request was made.
+    """
+    constraints = SAMPLER_CONSTRAINTS.get(sampler_name)
+    if constraints is None:
+        return DEFAULT_EVALUATIONS_PER_STEP
+    return constraints.evaluations_per_step
+
 
 # What `karras: true` and `karras: false` mean once a request can name a schedule outright. Ruling: the
 # boolean keeps its existing meaning exactly, so no request already in flight changes its output. The
@@ -282,20 +396,6 @@ def scheduler_for_request(scheduler, karras=True):
 
 
 KNOWN_WORKFLOWS = {"qr_code"}
-
-# These samplers perform double the steps per image
-# As such we need to take it into account for the upfront kudos requirements
-SECOND_ORDER_SAMPLERS = [
-    "k_heun",
-    "k_dpm_2",
-    "k_dpm_2_a",
-    "k_dpmpp_2s_a",
-    "k_dpmpp_sde",
-    # Heun++2 takes up to three model evaluations per step, so it is at least as expensive per step
-    # as the second-order samplers above. The remaining extended solvers are multistep: they reuse
-    # previous evaluations and so spend one model call per step, like k_dpmpp_2m.
-    "heunpp2",
-]
 
 KNOWN_LCM_LORA_VERSIONS = {
     "246747",

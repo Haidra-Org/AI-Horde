@@ -6,33 +6,32 @@ import functools
 
 import semver
 
-from horde.consts import EXTENDED_SAMPLERS, KNOWN_POST_PROCESSORS
+from horde.consts import EXTENDED_SAMPLERS, KNOWN_POST_PROCESSORS, SOLVER_KNOB_SAMPLERS
 from horde.logger import logger
 
-# Bridge version of "AI Horde Worker reGen" from which the image-utilities backend can annotate the
-# extended controlnet control types (everything outside LEGACY_IMAGE_CONTROL_TYPES).
-EXTENDED_CONTROLNET_REGEN_VERSION = 17
+CAPABILITY_EXPANDED_REGEN_VERSION = 17
+"""The reGen bridge version that expanded controlnet and sampler/scheduler capabilities
 
-# Bridge version of "AI Horde Worker reGen" whose pinned backend maps EXTENDED_SAMPLERS. This is a
-# claim about that release's backend, not about the bridge code: a reGen that reports this version
-# while pinning a backend without those sampler entries would silently render the default sampler
-# instead. It is tracked separately from EXTENDED_CONTROLNET_REGEN_VERSION (which currently holds the
-# same value) so the two can move independently.
-EXTENDED_SAMPLERS_REGEN_VERSION = 17
+- `extended_controlnet`: the extended controlnet control types, rather than deriving them from the `controlnet` flag
+- `scheduler`: the `scheduler` field, rather than deriving it from the `karras` flag
+- `extended_samplers`: the extended samplers, rather than deriving them from the `karras` flag
+- `solver_options`, `sigma_generators`, `flow_shift`, and `solver_knob_samplers` are advertised to
+    clients that can read them, and gated at dispatch to bridges that understand them. A bridge that does
+    not understand any one of them ignores it and renders something other than what was asked for rather
+    than reporting an error, which is why each is gated at dispatch rather than merely advertised.
+"""
 
-# Bridge version of "AI Horde Worker reGen" that reads the `scheduler` field. Below it a bridge derives
-# the schedule from the `karras` flag and ignores the field entirely, so an extended schedule sent to one
-# renders on `karras` or `normal` instead: a wrong image rather than an error, which is why dispatch of
-# the extended schedules is gated rather than merely advertised.
-SCHEDULER_FIELD_REGEN_VERSION = 17
 
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
-        # One entry per version, because a dict literal with a repeated key silently keeps only the last
-        # value. These capabilities ship in the same reGen release, so they share it. The per-capability
-        # tests in tests/unit/test_bridge_reference.py assert each constant still resolves here, which is
-        # what catches a constant moving without its entry moving with it.
-        17: {"extended_controlnet", "scheduler"},
+        CAPABILITY_EXPANDED_REGEN_VERSION: {
+            "extended_controlnet",
+            "scheduler",
+            "solver_options",
+            "sigma_generators",
+            "flow_shift",
+            "solver_knob_samplers",
+        },
         13: {
             "4xNomos8kSC",
             "4xLSDIRplus",
@@ -118,7 +117,7 @@ BRIDGE_SAMPLERS = {  # TODO: Refactor along with schedulers
     "AI Horde Worker reGen": {
         # The backend applies the karras sigma schedule independently of which solver runs, so every
         # extended sampler is offered under both karras settings.
-        EXTENDED_SAMPLERS_REGEN_VERSION: {"karras": EXTENDED_SAMPLERS, "no karras": {}},
+        CAPABILITY_EXPANDED_REGEN_VERSION: {"karras": SOLVER_KNOB_SAMPLERS | EXTENDED_SAMPLERS, "no karras": {}},
         3: {"karras": {"lcm"}, "no karras": {}},
         2: {
             "karras": {

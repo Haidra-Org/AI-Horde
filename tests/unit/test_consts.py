@@ -20,7 +20,8 @@ from horde.consts import (
     LEGACY_IMAGE_CONTROL_TYPES,
     LEGACY_SAMPLERS,
     LEGACY_SCHEDULERS,
-    SECOND_ORDER_SAMPLERS,
+    SIGMA_GENERATOR_SCHEDULERS,
+    SOLVER_KNOB_SAMPLERS,
     annotation_detector_kudos_bucket,
     scheduler_for_request,
 )
@@ -39,16 +40,20 @@ class TestKnownSamplers:
     def test_not_empty(self):
         assert len(KNOWN_SAMPLERS) > 0
 
-    def test_second_order_is_subset(self):
-        for sampler in SECOND_ORDER_SAMPLERS:
-            assert sampler in KNOWN_SAMPLERS, f"Second-order sampler '{sampler}' not in KNOWN_SAMPLERS"
-
-    def test_known_samplers_is_the_union_of_both_tiers(self):
-        assert KNOWN_SAMPLERS == LEGACY_SAMPLERS | EXTENDED_SAMPLERS
+    def test_known_samplers_is_the_union_of_every_tier(self):
+        assert KNOWN_SAMPLERS == LEGACY_SAMPLERS | EXTENDED_SAMPLERS | SOLVER_KNOB_SAMPLERS
 
     def test_tiers_do_not_overlap(self):
-        # An extended sampler that is also legacy would be gated for workers that already render it.
+        # A sampler in two tiers would be gated at the wrong bridge version: either stranded from
+        # workers that already render it, or dispatched to workers that cannot.
         assert not (LEGACY_SAMPLERS & EXTENDED_SAMPLERS)
+        assert not (LEGACY_SAMPLERS & SOLVER_KNOB_SAMPLERS)
+        assert not (EXTENDED_SAMPLERS & SOLVER_KNOB_SAMPLERS)
+
+    def test_no_device_variants_are_accepted(self):
+        # The `_gpu` spellings differ only in which device draws the noise, which is the worker's choice.
+        for sampler in KNOWN_SAMPLERS:
+            assert not sampler.endswith("_gpu"), f"'{sampler}' is a device variant and should not be requestable"
 
     def test_classic_samplers_stay_legacy(self):
         # These must never move tiers: old bridges render them and gating them would strand requests.
@@ -64,16 +69,18 @@ class TestKnownSamplers:
     def test_extended_samplers_carry_backend_spelling(self):
         # Ruling: backend-native solvers keep their own names rather than taking the k_ prefix, which
         # denotes k-diffusion lineage. uni_pc* predate the ruling and are already unprefixed.
-        for sampler in EXTENDED_SAMPLERS:
-            assert not sampler.startswith("k_"), f"Extended sampler '{sampler}' should not carry the k_ prefix"
+        for sampler in EXTENDED_SAMPLERS | SOLVER_KNOB_SAMPLERS:
+            assert not sampler.startswith("k_"), f"Backend-native sampler '{sampler}' should not carry the k_ prefix"
 
 
 class TestKnownSchedulers:
-    def test_known_schedulers_is_the_union_of_both_tiers(self):
-        assert KNOWN_SCHEDULERS == LEGACY_SCHEDULERS | EXTENDED_SCHEDULERS
+    def test_known_schedulers_is_the_union_of_every_tier(self):
+        assert KNOWN_SCHEDULERS == LEGACY_SCHEDULERS | EXTENDED_SCHEDULERS | SIGMA_GENERATOR_SCHEDULERS
 
     def test_tiers_do_not_overlap(self):
         assert not (LEGACY_SCHEDULERS & EXTENDED_SCHEDULERS)
+        assert not (LEGACY_SCHEDULERS & SIGMA_GENERATOR_SCHEDULERS)
+        assert not (EXTENDED_SCHEDULERS & SIGMA_GENERATOR_SCHEDULERS)
 
     def test_legacy_tier_is_exactly_what_the_karras_flag_can_express(self):
         # The flag is a boolean, so it can name two schedules and no more. Anything else needs the field,

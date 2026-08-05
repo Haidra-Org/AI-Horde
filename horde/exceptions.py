@@ -168,6 +168,11 @@ KNOWN_RC = [
     "CannotWipeActiveUser",
     "NonServiceForbidden",
     "NulByteInPayload",
+    "SamplerKnobInapplicable",
+    "SamplerKnobOutOfRange",
+    "SamplerSolverTypeUnsupported",
+    "SamplerSchedulerMismatch",
+    "SchedulerBaselineMismatch",
 ]
 
 

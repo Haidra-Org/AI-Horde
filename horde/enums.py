@@ -148,3 +148,7 @@ class WarningMessage(ReturnedEnum):
     CfgScaleTooLarge = "The cfg_scale specified for this generation is too large for this model."
     SamplerMismatch = "The requested sampler does not match the requirements for one of the requested models."
     SchedulerMismatch = "The requested scheduler does not match the requirements for one of the requested models."
+    CfgPPScaleTooLarge = (
+        "The requested sampler applies the CFG++ correction, which expects a cfg_scale of roughly 1 to 2. "
+        "The image still renders at the cfg_scale given, but is likely to be oversaturated."
+    )

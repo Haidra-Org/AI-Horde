@@ -28,7 +28,7 @@ import pytest
 from PIL import Image
 from werkzeug.serving import make_server
 
-from horde.bridge_reference import EXTENDED_CONTROLNET_REGEN_VERSION
+from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
 
 # The SDK-side interpreter is host-specific: point HORDE_SDK_WIRE_PYTHON at a python whose
 # environment has the horde_sdk under test installed; the suite skips when it is not set.
@@ -36,7 +36,7 @@ SDK_PYTHON = Path(os.environ["HORDE_SDK_WIRE_PYTHON"]) if os.environ.get("HORDE_
 SDK_CLIENT_SCRIPT = Path(__file__).resolve().parent / "_sdk_wire_client.py"
 
 TEST_MODELS = ["stable_diffusion"]
-NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{EXTENDED_CONTROLNET_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
+NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
 
 pytestmark = [
     pytest.mark.object_storage,
