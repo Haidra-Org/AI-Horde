@@ -7,11 +7,13 @@
 import random
 import string
 import time
+from collections import deque
+from itertools import cycle
 
 from locust import HttpUser, between, tag, task
 from locust.exception import RescheduleTask
 
-from ..config import _EXPECTED_RC_RECOVER, _HOT_PROMPT, _config
+from ..config import _EXPECTED_RC_RECOVER, _HOT_PROMPT, _IMAGE_SAMPLER_FEATURE_CASES, _config
 from ..helpers import (
     _handle_async_generate,
     _headers,
@@ -23,6 +25,8 @@ from ..helpers import (
     _record_expected,
     _safe_json,
 )
+
+_image_sampler_feature_cases = cycle(_IMAGE_SAMPLER_FEATURE_CASES)
 
 
 class StatusPoller(HttpUser):
@@ -529,6 +533,91 @@ class WorkerSimulator(HttpUser):
                 time.sleep(random.uniform(2.0, 6.0))
                 return
             resp.failure(f"Submit failed: {resp.status_code}: {resp.text[:200]}")
+
+
+class SamplerFeatureRequester(HttpUser):
+    """Continuously cover the current sampler, scheduler, and solver-control API.
+
+    CI pins one instance of this user so a smoke run walks the cases in a
+    deterministic cycle. Only a small number of requests remain queued at once;
+    older ones are cancelled so the coverage sweep does not overwhelm the fake
+    workers or consume an unbounded amount of requestor kudos.
+    """
+
+    weight = 1
+    fixed_count = 0  # set via --sampler-feature-requestors in on_test_start
+    wait_time = between(1, 2)
+    max_pending = 8
+
+    def on_start(self):
+        self.api_key = _pick_requestor_key()
+        self.pending_ids = deque()
+
+    def _cancel_oldest(self):
+        if not self.pending_ids:
+            return
+        req_id = self.pending_ids.popleft()
+        with self.client.delete(
+            f"/api/v2/generate/status/{req_id}",
+            headers=_headers(self.api_key),
+            catch_response=True,
+            name="/api/v2/generate/status/[id] [sampler-feature-cancel]",
+        ) as resp:
+            if resp.ok or resp.status_code in (404, 410):
+                resp.success()
+            else:
+                resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
+
+    def on_stop(self):
+        while self.pending_ids:
+            self._cancel_oldest()
+
+    @tag("image", "cold", "requestor", "sampler-features")
+    @task
+    def generate_sampler_feature(self):
+        if len(self.pending_ids) >= self.max_pending:
+            self._cancel_oldest()
+
+        opts = self.environment.parsed_options
+        configured_models = _config.get("models", [])
+        default_feature_models = ["stable_diffusion"] if "stable_diffusion" in configured_models else configured_models[:1]
+
+        # Cases with baseline-specific settings only run when their known model
+        # is in the configured worker pool. Custom deployments can therefore
+        # replace --horde-models without receiving predictable validation 4xxs.
+        case = next(_image_sampler_feature_cases)
+        for _ in range(len(_IMAGE_SAMPLER_FEATURE_CASES)):
+            preferred_models = list(case.get("models", ()))
+            if not preferred_models or all(model in configured_models for model in preferred_models):
+                break
+            case = next(_image_sampler_feature_cases)
+        else:
+            preferred_models = []
+
+        payload = {
+            "prompt": _random_prompt(),
+            "nsfw": False,
+            "r2": True,
+            "trusted_workers": False,
+            "params": {
+                "width": opts.gen_width,
+                "height": opts.gen_height,
+                "steps": opts.gen_steps,
+                "cfg_scale": 1.5 if case["params"]["sampler_name"].endswith("cfg_pp") else opts.gen_cfg_scale,
+                **case["params"],
+            },
+            "models": preferred_models or default_feature_models,
+        }
+        with self.client.post(
+            "/api/v2/generate/async",
+            json=payload,
+            headers=_headers(self.api_key),
+            catch_response=True,
+            name=f"/api/v2/generate/async [sampler-feature/{case['name']}]",
+        ) as resp:
+            req_id = _handle_async_generate(resp, self.environment)
+            if req_id:
+                self.pending_ids.append(req_id)
 
 
 # ---------------------------------------------------------------------------

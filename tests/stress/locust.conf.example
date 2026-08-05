@@ -71,7 +71,9 @@ spawn-rate = 5
 #
 # Models:
 #   --horde-models / HORDE_MODELS
-#       Comma-separated model names (default: Fustercluck,AlbedoBase XL (SDXL),stable_diffusion,waifu_diffusion).
+#       Comma-separated model names (default also includes stable_diffusion and
+#       Flux.1-Schnell fp8 (Compact), which cover baseline-specific scheduler
+#       and flow-shift cases).
 #
 # Identity:
 #   --client-agent / HORDE_CLIENT_AGENT
@@ -90,9 +92,14 @@ spawn-rate = 5
 #
 # Worker simulation:
 #   --worker-max-pixels / HORDE_WORKER_MAX_PIXELS         (default: 4194304)
-#   --worker-bridge-agent / HORDE_WORKER_BRIDGE_AGENT     (default: AI Horde Worker reGen:9.0.1-stress:...)
+#   --worker-bridge-agent / HORDE_WORKER_BRIDGE_AGENT     (default: AI Horde Worker reGen:17.0.0:...)
 #   --sim-gen-time-min / HORDE_SIM_GEN_TIME_MIN           (default: 4.0 seconds)
 #   --sim-gen-time-max / HORDE_SIM_GEN_TIME_MAX           (default: 120.0 seconds)
+#
+# Targeted feature coverage:
+#   --sampler-feature-requestors / HORDE_SAMPLER_FEATURE_REQUESTORS (default: 0)
+#       Fixed SamplerFeatureRequester users. CI sets this to 1 so every new
+#       sampler, scheduler, solver setting, and flow_shift is exercised.
 #
 # User behavior:
 #   --anon-chance-poller / HORDE_ANON_CHANCE_POLLER       (default: 0.75)
@@ -103,4 +110,5 @@ spawn-rate = 5
 #   --stress-shape-scale / HORDE_STRESS_SHAPE_SCALE       (default: 1.0)
 #
 # Task tags:
-#   image, text, interrogation, meta, misuse, hot, cold, status, worker, requestor
+#   image, text, interrogation, meta, misuse, hot, cold, status, worker,
+#   requestor, sampler-features

@@ -70,6 +70,20 @@ that re-export the User classes Locust should discover:
   | `AI_HORDE_TEST_GARAGE_ADMIN_PORT` | `3903` |
   | `AI_HORDE_TEST_GARAGE_RPC_PORT` | `3901` |
 
+  `bootstrap_garage.sh` discovers these mappings from the running Compose
+  containers, so bootstrap remains correct when Compose is started in
+  PowerShell and the bootstrap script runs through WSL. To load the resulting
+  service environment into PowerShell, run:
+
+  ```powershell
+  & bash tests/bootstrap_garage.sh --powershell |
+      Out-String |
+      Invoke-Expression
+  ```
+
+  POSIX shells can continue to use
+  `eval "$(bash tests/bootstrap_garage.sh --shell)"`.
+
 - For load runs where the built-in rate limiter would otherwise dominate the
   results, start the server with `HORDE_TEST_RATELIMIT_DISABLED=1`. The limiter
   logs that it is disabled at init so the state is visible in the server output.
@@ -96,6 +110,17 @@ cd tests/stress && locust
 # or, from the repo root:
 locust -f tests/stress/locustfile.py --host http://localhost:7001
 ```
+
+The mixed workload includes a `SamplerFeatureRequester`. With
+`--sampler-feature-requestors 1`, it deterministically rotates through every
+new sampler plus all explicit schedulers, solver-control fields, and
+`flow_shift`. It keeps at most eight requests queued and cancels older ones, so
+the sweep exercises request validation, waiting-prompt creation, worker
+matching, and cancellation without creating an unbounded backlog. Meta users
+also fetch `/api/v2/status/sampler_constraints`, while misuse users exercise
+the new hard-constraint rejection paths. The default model pool includes the
+SD1 and Flux models needed by the baseline-specific cases, and simulated image
+workers advertise reGen bridge 17 capabilities by default.
 
 Staged load profile:
 
@@ -381,8 +406,11 @@ oracle probes pop/declare and maintenance interleavings rather than rate-limit
 behaviour, and a throttled run could reach zero violations without ever reaching
 the interleavings the gate is meant to protect. It passes `--stats` to the
 checker for the same reason, so a run that drove no requests fails instead of
-reporting a vacuous pass. The two smoke jobs leave the limiter in force, since
-the suite counts 429s as successes and the gate is crash-class only.
+reporting a vacuous pass. The classic smoke job leaves the limiter in force,
+since the suite counts 429s as successes and the gate is crash-class only. The
+staged-shape smoke disables it so the pinned sampler-feature user can complete
+its deterministic catalog; rate-limit behavior remains covered by the classic
+job.
 
 The hot-user convoy and queue-pressure scenarios are not in CI. Their verdicts
 come from `analyze_hot_user_convoy.py` and `analyze_queue_pressure.py`, which are

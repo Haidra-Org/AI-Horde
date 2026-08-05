@@ -150,6 +150,7 @@ jobs:
             --run-time 90s \
             --bootstrap-requestors 4 \
             --bootstrap-workers 8 \
+            --sampler-feature-requestors 1 \
             --preflight-fail-hard \
             --bootstrap-fail-hard \
             --csv smoke \
@@ -193,6 +194,9 @@ jobs:
       PGPASSWORD: postgres
       HORDE_TEST_APIKEYS: '1'
       AI_HORDE_TELEMETRY_ENABLED: '1'
+      # Let the deterministic sampler-feature user complete its full catalog;
+      # the classic smoke job above retains production rate-limit coverage.
+      HORDE_TEST_RATELIMIT_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-test-python
@@ -228,6 +232,7 @@ jobs:
             --stress-shape-profile smoke \
             --bootstrap-requestors 4 \
             --bootstrap-workers 8 \
+            --sampler-feature-requestors 1 \
             --preflight-fail-hard \
             --bootstrap-fail-hard \
             --csv shaped \

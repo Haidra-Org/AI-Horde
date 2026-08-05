@@ -4,7 +4,7 @@
 
 """User classes exported for Locust discovery."""
 
-from .image import HotPathRequester, RequestGenerator, StatusPoller, WorkerSimulator
+from .image import HotPathRequester, RequestGenerator, SamplerFeatureRequester, StatusPoller, WorkerSimulator
 from .interrogation import InterrogationRequester, InterrogationWorkerSimulator
 from .meta import MetaBrowser
 from .misuse import MisuseUser
@@ -17,6 +17,7 @@ __all__ = [
     "MetaBrowser",
     "MisuseUser",
     "RequestGenerator",
+    "SamplerFeatureRequester",
     "StatusPoller",
     "TextRequester",
     "TextWorkerSimulator",
