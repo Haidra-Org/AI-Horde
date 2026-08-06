@@ -80,7 +80,7 @@ class WPModels(db.Model):
     # See WPAllowedWorkers: the pop candidate query and wp_has_valid_workers
     # probe wp_models per WP through EXISTS subqueries.
     __table_args__ = (db.Index("ix_wp_models_wp_id_model", "wp_id", "model"),)
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.BigInteger, primary_key=True)
     wp_id = db.Column(
         uuid_column_type(),
         db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),

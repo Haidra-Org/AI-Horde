@@ -1,0 +1,2 @@
+ALTER TABLE wp_models ALTER COLUMN id TYPE BIGINT;
+ALTER SEQUENCE wp_models_id_seq AS BIGINT;
