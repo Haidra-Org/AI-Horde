@@ -10,6 +10,8 @@ survives Flask's JSON encoder, which is stricter than the shape checks: an unbou
 infinity, and infinity has no JSON representation.
 """
 
+import json
+
 import pytest
 
 from horde.consts import KNOWN_SAMPLERS
@@ -53,6 +55,22 @@ def test_an_unbounded_maximum_is_served_as_null(client):
 
     assert tmax["maximum"] is None
     assert tmax["default"] is None
+
+
+def test_the_published_swagger_uses_swagger_2_schema_keywords(client):
+    response = client.get("/api/swagger.json")
+    assert response.status_code == 200
+
+    swagger = response.get_json()
+    schema = swagger["definitions"]["SamplerConstraintsDocument"]
+    rendered = json.dumps(schema)
+
+    assert swagger["swagger"] == "2.0"
+    assert '"anyOf"' not in rendered
+    assert '"const"' not in rendered
+    assert '"propertyNames"' not in rendered
+    assert '"$defs"' not in rendered
+    assert rendered.count('"x-nullable"') == 4
 
 
 def test_the_hard_constraints_are_served(client):

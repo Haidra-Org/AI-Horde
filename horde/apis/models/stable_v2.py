@@ -200,12 +200,14 @@ class ImageParsers(v2.Parsers):
 
 
 def inline_json_schema_definitions(schema: dict[str, Any]) -> dict[str, Any]:
-    """Return a JSON schema with every internal `$ref` replaced by the definition it points at.
+    """Return a self-contained Swagger 2 schema derived from a Pydantic JSON schema.
 
     Swagger 2.0, which flask-restx speaks, has no `$defs` section, and flask-restx only emits the
     definitions it was handed as models of its own. A pydantic schema's nested `$ref`s would therefore
-    dangle. Inlining them keeps the registered schema self-contained and keeps it derived from the model
-    rather than restated by hand.
+    dangle. It also cannot express JSON Schema's nullable ``anyOf``, ``const`` or ``propertyNames``
+    keywords. References are inlined, nullable unions use the established ``x-nullable`` vendor
+    extension, constants become single-value enums, and map-key constraints are omitted because Swagger
+    2 has no equivalent. The runtime model remains authoritative for those keys.
 
     Args:
         schema: A JSON schema as pydantic emits it, whose `$defs` are referenced as `#/$defs/<name>`.
@@ -214,8 +216,8 @@ def inline_json_schema_definitions(schema: dict[str, Any]) -> dict[str, Any]:
         The same schema with no `$defs` section and no remaining internal references.
 
     Raises:
-        ValueError: If a definition is missing, or if the references form a cycle, neither of which can
-            be expressed without a reference surviving.
+        ValueError: If a definition is missing, the references form a cycle, or an ``anyOf`` cannot be
+            represented as a nullable Swagger 2 value.
     """
     definitions = schema.get("$defs", {})
 
@@ -228,7 +230,24 @@ def inline_json_schema_definitions(schema: dict[str, Any]) -> dict[str, Any]:
 
         reference = node.get("$ref")
         if reference is None:
-            return {key: expand(value, expanding) for key, value in node.items() if key != "$defs"}
+            expanded = {key: expand(value, expanding) for key, value in node.items() if key != "$defs"}
+
+            missing = object()
+            constant = expanded.pop("const", missing)
+            if constant is not missing:
+                expanded["enum"] = [constant]
+
+            expanded.pop("propertyNames", None)
+
+            alternatives = expanded.pop("anyOf", None)
+            if alternatives is not None:
+                null_options = [option for option in alternatives if option == {"type": "null"}]
+                value_options = [option for option in alternatives if option != {"type": "null"}]
+                if len(null_options) != 1 or len(value_options) != 1:
+                    raise ValueError("Cannot represent a non-nullable or multi-type anyOf in Swagger 2.0.")
+                expanded = {**value_options[0], **expanded, "x-nullable": True}
+
+            return expanded
 
         definition_name = reference.removeprefix("#/$defs/")
         if definition_name not in definitions:

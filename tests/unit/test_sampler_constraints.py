@@ -430,6 +430,17 @@ class TestTheDocumentAndItsPublishedTypeStayInLockstep:
         assert "$ref" not in rendered
         assert "$defs" not in rendered
 
+    def test_the_swagger_schema_uses_only_swagger_2_equivalents(self, swagger_schema):
+        rendered = json.dumps(swagger_schema)
+
+        assert '"anyOf"' not in rendered
+        assert '"const"' not in rendered
+        assert '"propertyNames"' not in rendered
+        assert rendered.count('"x-nullable"') == 4
+        assert swagger_schema["properties"]["cost_basis"]["properties"]["authoritative_field"]["enum"] == [
+            "evaluations_per_step",
+        ]
+
     def test_the_swagger_schema_describes_the_served_top_level(self, swagger_schema, document):
         assert set(swagger_schema["properties"]) == set(document)
 
