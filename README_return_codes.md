@@ -162,3 +162,5 @@ The errors returned by the AI horde are always in this json format
 | SamplerSolverTypeUnsupported | This sampler does not accept the requested solver type |
 | SamplerSchedulerMismatch | This sampler and scheduler combination does not converge |
 | SchedulerBaselineMismatch | The requested scheduler is not defined for this model's baseline |
+| FlowShiftInapplicable | Flow shift is not applied by the selected model baseline's backend graph |
+| FlowShiftOutOfRange | Flow shift is outside the backend's accepted range |

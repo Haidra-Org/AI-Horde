@@ -173,6 +173,8 @@ KNOWN_RC = [
     "SamplerSolverTypeUnsupported",
     "SamplerSchedulerMismatch",
     "SchedulerBaselineMismatch",
+    "FlowShiftInapplicable",
+    "FlowShiftOutOfRange",
 ]
 
 

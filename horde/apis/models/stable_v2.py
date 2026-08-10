@@ -10,6 +10,8 @@ from horde_sdk.generation_parameters.image.constraints_document import SamplerCo
 
 from horde.apis.models import v2
 from horde.consts import (
+    FLOW_SHIFT_MAX,
+    FLOW_SHIFT_MIN,
     IMAGE_CONTROL_TYPES,
     KNOWN_CONTROL_TYPES,
     KNOWN_POST_PROCESSORS,
@@ -500,7 +502,8 @@ class ImageModels(v2.Models):
                 "flow_shift": fields.Float(
                     required=False,
                     default=None,
-                    min=0.0,
+                    min=FLOW_SHIFT_MIN,
+                    max=FLOW_SHIFT_MAX,
                     description=(
                         "The timestep shift applied to a flow-matching model. Only the flow-matching "
                         "baselines have anything to shift. Requires a worker new enough to apply it."

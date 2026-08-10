@@ -178,6 +178,25 @@ class TestSchedulerBaselineApplicability:
         assert baseline_for_constraints("something the reference has never heard of") is None
 
 
+class TestFlowShift:
+    @pytest.mark.parametrize("value", [0.0, 1.1, 100.0])
+    def test_flow_shift_is_accepted_on_a_supported_baseline(self, value: float):
+        assert rejection_code({"flow_shift": value}, models=[FLUX_MODEL]) is None
+
+    @pytest.mark.parametrize("value", [-0.01, 100.01])
+    def test_flow_shift_outside_the_backend_range_is_rejected(self, value: float):
+        assert rejection_code({"flow_shift": value}, models=[FLUX_MODEL]) == "FlowShiftOutOfRange"
+
+    def test_flow_shift_is_rejected_when_the_backend_graph_would_ignore_it(self):
+        assert rejection_code({"flow_shift": 1.1}, models=[SD1_MODEL]) == "FlowShiftInapplicable"
+
+    def test_every_model_in_a_multi_model_request_must_support_flow_shift(self):
+        assert rejection_code({"flow_shift": 1.1}, models=[FLUX_MODEL, SD1_MODEL]) == "FlowShiftInapplicable"
+
+    def test_an_unknown_baseline_fails_closed(self):
+        assert rejection_code({"flow_shift": 1.1}, models=["unrecognized custom model"]) == "FlowShiftInapplicable"
+
+
 class TestCfgPPAdvisory:
     def test_a_high_cfg_scale_warns_rather_than_rejecting(self):
         from horde.enums import WarningMessage
