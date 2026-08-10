@@ -13,6 +13,10 @@ from loguru import logger
 from horde import exceptions as e
 from horde.classes.base.user import User
 from horde.consts import (
+    FLOW_SHIFT_BASELINES,
+    FLOW_SHIFT_MAX,
+    FLOW_SHIFT_MIN,
+    FLOW_SHIFT_PARAM,
     KNOWN_POST_PROCESSORS,
     KNOWN_UPSCALERS,
     baseline_for_constraints,
@@ -112,6 +116,18 @@ class ParamValidator:
         # A request naming several models is checked against each of their baselines: the schedule has to
         # be renderable on whichever one the job is eventually dispatched for.
         baselines = {baseline_for_constraints(model_reference.get_model_baseline(model_name)) for model_name in self.models}
+        flow_shift = self.params.get(FLOW_SHIFT_PARAM)
+        if flow_shift is not None:
+            if not FLOW_SHIFT_MIN <= flow_shift <= FLOW_SHIFT_MAX:
+                raise e.BadRequest(
+                    f"flow_shift must be between {FLOW_SHIFT_MIN:g} and {FLOW_SHIFT_MAX:g}, inclusive.",
+                    rc="FlowShiftOutOfRange",
+                )
+            if baselines - FLOW_SHIFT_BASELINES:
+                raise e.BadRequest(
+                    "flow_shift is only supported by model baselines whose backend graph applies it.",
+                    rc="FlowShiftInapplicable",
+                )
         for baseline in baselines or {None}:
             violations = list_constraint_violations(
                 sampler=sampler_name,

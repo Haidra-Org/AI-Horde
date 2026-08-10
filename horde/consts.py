@@ -329,6 +329,21 @@ SOLVER_KNOB_PARAMS = {
 # to shift.
 FLOW_SHIFT_PARAM = "flow_shift"
 
+# These bounds are the horde-engine 7.0.1 payload contract used by the reGen 17 beta.
+FLOW_SHIFT_MIN = 0.0
+FLOW_SHIFT_MAX = 100.0
+
+# horde-engine 7.0.1 applies the shift to Flux-family graphs and to Qwen's existing AuraFlow node.
+# Other graphs, including Z-Image, log a warning and ignore the value, so fail closed for those models.
+FLOW_SHIFT_BASELINES = frozenset(
+    {
+        KNOWN_IMAGE_GENERATION_BASELINE.flux_1,
+        KNOWN_IMAGE_GENERATION_BASELINE.flux_schnell,
+        KNOWN_IMAGE_GENERATION_BASELINE.flux_dev,
+        KNOWN_IMAGE_GENERATION_BASELINE.qwen_image,
+    },
+)
+
 # Every `sampler_solver_type` value any sampler accepts, which is what the field can be validated
 # against on its own. No sampler accepts all of them: the per-sampler vocabulary is the real constraint
 # and is checked against horde_sdk at validation.

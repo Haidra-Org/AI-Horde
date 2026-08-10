@@ -15,6 +15,7 @@ import pytest
 from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
 
 TEST_MODELS = ["stable_diffusion"]
+FLOW_MODELS = ["Flux.1-Schnell fp8 (Compact)"]
 
 OLD_BRIDGE_AGENT = "AI Horde Worker reGen:13:https://github.com/Haidra-Org/horde-worker-reGen"
 NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
@@ -204,6 +205,34 @@ def test_solver_option_skips_old_bridge_but_matches_new(
         new_results = new_pop.get_json()
         assert new_results["id"] is not None, new_results
         assert new_results["payload"][field] == value, new_results
+    finally:
+        client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
+
+
+def test_flow_shift_skips_old_bridge_but_matches_new(client, request_headers: dict[str, str], settle_kudos) -> None:
+    settle_kudos()
+    request_body = _async_dict({"flow_shift": 1.1})
+    request_body["models"] = FLOW_MODELS
+    async_req = client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+
+    try:
+        old_pop_body = _pop_dict(OLD_BRIDGE_AGENT)
+        old_pop_body["models"] = FLOW_MODELS
+        old_pop = client.post("/api/v2/generate/pop", json=old_pop_body, headers=request_headers)
+        assert old_pop.status_code < 400, old_pop.get_data(as_text=True)
+        old_results = old_pop.get_json()
+        assert old_results["id"] is None, old_results
+        assert old_results["skipped"].get("bridge_version", 0) >= 1, old_results
+
+        new_pop_body = _pop_dict(NEW_BRIDGE_AGENT)
+        new_pop_body["models"] = FLOW_MODELS
+        new_pop = client.post("/api/v2/generate/pop", json=new_pop_body, headers=request_headers)
+        assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
+        new_results = new_pop.get_json()
+        assert new_results["id"] is not None, new_results
+        assert new_results["payload"]["flow_shift"] == 1.1, new_results
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
