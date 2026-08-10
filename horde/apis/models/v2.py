@@ -1840,7 +1840,7 @@ class Models:
             "FilterPromptSuspicion",
             {
                 "suspicion": fields.String(
-                    default=0,
+                    default="0",
                     required=True,
                     description="Rates how suspicious the provided prompt is. A suspicion over 2 means it would be blocked.",
                 ),
