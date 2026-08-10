@@ -11,7 +11,14 @@ from horde.bridge_reference import (
     is_official_bridge_version,
 )
 from horde.classes.base.worker import Worker
-from horde.consts import EXTENDED_SCHEDULERS, KNOWN_POST_PROCESSORS, LEGACY_IMAGE_CONTROL_TYPES
+from horde.consts import (
+    EXTENDED_SCHEDULERS,
+    FLOW_SHIFT_PARAM,
+    KNOWN_POST_PROCESSORS,
+    LEGACY_IMAGE_CONTROL_TYPES,
+    SIGMA_GENERATOR_SCHEDULERS,
+    SOLVER_KNOB_PARAMS,
+)
 from horde.flask import db
 from horde.logger import logger
 from horde.model_reference import model_reference
@@ -103,6 +110,21 @@ class ImageWorker(Worker):
         # the one requested, so a schedule the flag cannot express must not be dispatched to it.
         if waiting_prompt.gen_payload.get("scheduler") in EXTENDED_SCHEDULERS and not check_bridge_capability(
             "scheduler",
+            self.bridge_agent,
+        ):
+            return [False, "bridge_version"]
+        if waiting_prompt.gen_payload.get("scheduler") in SIGMA_GENERATOR_SCHEDULERS and not check_bridge_capability(
+            "sigma_generators",
+            self.bridge_agent,
+        ):
+            return [False, "bridge_version"]
+        if any(waiting_prompt.gen_payload.get(field) is not None for field in SOLVER_KNOB_PARAMS) and not check_bridge_capability(
+            "solver_options",
+            self.bridge_agent,
+        ):
+            return [False, "bridge_version"]
+        if waiting_prompt.gen_payload.get(FLOW_SHIFT_PARAM) is not None and not check_bridge_capability(
+            "flow_shift",
             self.bridge_agent,
         ):
             return [False, "bridge_version"]

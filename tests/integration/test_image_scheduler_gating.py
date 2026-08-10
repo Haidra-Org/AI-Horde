@@ -61,7 +61,10 @@ def _pop_dict(bridge_agent: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("schedule", ["sgm_uniform", "beta", "kl_optimal", "linear_quadratic"])
+@pytest.mark.parametrize(
+    "schedule",
+    ["sgm_uniform", "beta", "kl_optimal", "linear_quadratic", "align_your_steps", "gits"],
+)
 def test_extended_schedule_skips_old_bridge_but_matches_new(
     client,
     request_headers: dict[str, str],
@@ -112,9 +115,23 @@ def test_karras_flag_still_reaches_old_bridges_with_its_original_meaning(
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
 
-def test_explicit_legacy_schedule_is_not_gated(client, request_headers: dict[str, str]) -> None:
-    # `karras` names this schedule, so asking for it by name must not narrow the worker population.
-    async_req = client.post("/api/v2/generate/async", json=_async_dict({"scheduler": "karras"}), headers=request_headers)
+@pytest.mark.parametrize(
+    ("schedule", "contradictory_karras"),
+    [("karras", False), ("normal", True)],
+)
+def test_explicit_legacy_schedule_synchronizes_flag_for_old_bridges(
+    client,
+    request_headers: dict[str, str],
+    schedule: str,
+    contradictory_karras: bool,
+) -> None:
+    # A legacy schedule remains available to old bridges even when the caller also supplied the
+    # opposite flag: scheduler takes precedence, and the persisted flag is made safe for old clients.
+    async_req = client.post(
+        "/api/v2/generate/async",
+        json=_async_dict({"scheduler": schedule, "karras": contradictory_karras}),
+        headers=request_headers,
+    )
     assert async_req.status_code < 400, async_req.get_data(as_text=True)
     req_id = async_req.get_json()["id"]
 
@@ -123,7 +140,8 @@ def test_explicit_legacy_schedule_is_not_gated(client, request_headers: dict[str
         assert pop.status_code < 400, pop.get_data(as_text=True)
         results = pop.get_json()
         assert results["id"] is not None, results
-        assert results["payload"]["scheduler"] == "karras", results
+        assert results["payload"]["scheduler"] == schedule, results
+        assert results["payload"]["karras"] is (schedule == "karras"), results
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
@@ -143,6 +161,49 @@ def test_field_overrides_the_flag_on_dispatch(client, request_headers: dict[str,
         results = pop.get_json()
         assert results["id"] is not None, results
         assert results["payload"]["scheduler"] == "beta", results
+    finally:
+        client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
+
+
+@pytest.mark.parametrize(
+    ("sampler_name", "field", "value"),
+    [
+        ("k_euler_a", "sampler_eta", 0.5),
+        ("k_euler", "sampler_s_noise", 1.0),
+        ("k_euler", "sampler_s_churn", 0.1),
+        ("k_euler", "sampler_s_tmin", 0.0),
+        ("k_euler", "sampler_s_tmax", 1.0),
+        ("k_lms", "sampler_order", 3),
+        ("dpmpp_2m_sde", "sampler_solver_type", "heun"),
+    ],
+)
+def test_solver_option_skips_old_bridge_but_matches_new(
+    client,
+    request_headers: dict[str, str],
+    sampler_name: str,
+    field: str,
+    value: float | int | str,
+) -> None:
+    async_req = client.post(
+        "/api/v2/generate/async",
+        json=_async_dict({"sampler_name": sampler_name, field: value}),
+        headers=request_headers,
+    )
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+
+    try:
+        old_pop = client.post("/api/v2/generate/pop", json=_pop_dict(OLD_BRIDGE_AGENT), headers=request_headers)
+        assert old_pop.status_code < 400, old_pop.get_data(as_text=True)
+        old_results = old_pop.get_json()
+        assert old_results["id"] is None, old_results
+        assert old_results["skipped"].get("bridge_version", 0) >= 1, old_results
+
+        new_pop = client.post("/api/v2/generate/pop", json=_pop_dict(NEW_BRIDGE_AGENT), headers=request_headers)
+        assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
+        new_results = new_pop.get_json()
+        assert new_results["id"] is not None, new_results
+        assert new_results["payload"][field] == value, new_results
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 

@@ -33,7 +33,13 @@ from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
-from horde.consts import EXTENDED_SCHEDULERS, LEGACY_IMAGE_CONTROL_TYPES
+from horde.consts import (
+    EXTENDED_SCHEDULERS,
+    FLOW_SHIFT_PARAM,
+    LEGACY_IMAGE_CONTROL_TYPES,
+    SIGMA_GENERATOR_SCHEDULERS,
+    SOLVER_KNOB_PARAMS,
+)
 from horde.database.classes import FakeWPRow
 from horde.database.kudos_legacy_projection import consume_user_reservation
 from horde.database.kudos_reservations import reserve_kudos
@@ -1025,6 +1031,19 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 check_bridge_capability("scheduler", worker.bridge_agent),
             ),
             or_(
+                ImageWaitingPrompt.params["scheduler"].astext.notin_(SIGMA_GENERATOR_SCHEDULERS),
+                ImageWaitingPrompt.params["scheduler"].is_(None),
+                check_bridge_capability("sigma_generators", worker.bridge_agent),
+            ),
+            or_(
+                and_(*[ImageWaitingPrompt.params[field].astext.is_(None) for field in SOLVER_KNOB_PARAMS]),
+                check_bridge_capability("solver_options", worker.bridge_agent),
+            ),
+            or_(
+                ImageWaitingPrompt.params[FLOW_SHIFT_PARAM].astext.is_(None),
+                check_bridge_capability("flow_shift", worker.bridge_agent),
+            ),
+            or_(
                 worker.speed >= 500000,  # 0.5 MPS/s
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
             ),
@@ -1136,6 +1155,9 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     can_tiling = check_bridge_capability("tiling", bridge_agent)
     can_layer_diffuse = check_bridge_capability("layer_diffuse", bridge_agent)
     can_scheduler_field = check_bridge_capability("scheduler", bridge_agent)
+    can_sigma_generators = check_bridge_capability("sigma_generators", bridge_agent)
+    can_solver_options = check_bridge_capability("solver_options", bridge_agent)
+    can_flow_shift = check_bridge_capability("flow_shift", bridge_agent)
 
     available_samplers = get_supported_samplers(bridge_agent, karras=False)
     available_karras_samplers = get_supported_samplers(bridge_agent, karras=True)
@@ -1281,6 +1303,12 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
         # Attributed to bridge_version rather than a worker choice: there is no operator flag for this,
         # the bridge simply predates the field.
         bv_conditions.append(ImageWaitingPrompt.params["scheduler"].astext.in_(EXTENDED_SCHEDULERS))
+    if not can_sigma_generators:
+        bv_conditions.append(ImageWaitingPrompt.params["scheduler"].astext.in_(SIGMA_GENERATOR_SCHEDULERS))
+    if not can_solver_options:
+        bv_conditions.extend(ImageWaitingPrompt.params[field].astext.is_not(None) for field in SOLVER_KNOB_PARAMS)
+    if not can_flow_shift:
+        bv_conditions.append(ImageWaitingPrompt.params[FLOW_SHIFT_PARAM].astext.is_not(None))
 
     count_exprs["_bv_sampler"] = count_distinct_wp(or_(*bv_conditions))
 

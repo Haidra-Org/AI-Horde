@@ -21,6 +21,7 @@ from horde.consts import (
     KNOWN_LCM_LORA_IDS,
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_POST_PROCESSORS,
+    LEGACY_SCHEDULERS,
     sampler_evaluations_per_step,
     scheduler_for_request,
 )
@@ -105,9 +106,12 @@ class ImageWaitingPrompt(WaitingPrompt):
         if "karras" not in self.params:
             self.params["karras"] = True
         # Resolve the schedule once, here, so the dispatched payload states it outright instead of every
-        # consumer re-deriving it from the flag. `karras` is left in place untouched: a bridge too old to
-        # read this field ignores it and renders from the flag, which is the same schedule it always got.
-        if not self.params.get("scheduler"):
+        # consumer re-deriving it from the flag. Keep the legacy flag synchronized when the explicitly
+        # selected schedule is one it can express: bridges too old to read `scheduler` render from this
+        # flag, so a contradictory pair would otherwise silently produce the wrong image.
+        if self.params.get("scheduler") in LEGACY_SCHEDULERS:
+            self.params["karras"] = self.params["scheduler"] == "karras"
+        elif not self.params.get("scheduler"):
             self.params["scheduler"] = scheduler_for_request(None, self.params["karras"])
         self.width = self.params["width"]
         self.height = self.params["height"]
