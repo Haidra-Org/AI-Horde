@@ -1,8 +1,9 @@
 -- Run with psql in its default autocommit mode. Do NOT pass --single-transaction: this
 -- file contains CREATE INDEX CONCURRENTLY, which cannot run inside a transaction block.
--- Pass -v ON_ERROR_STOP=1 so a failure halts rather than continuing. Every statement is
--- idempotent, so a halted run can be repeated once the cause is addressed; a failed
--- concurrent index build leaves an INVALID index that must be dropped before the rerun.
+-- Pass -v ON_ERROR_STOP=1 so a failure halts rather than continuing. The schema and data
+-- changes are rerunnable, so a halted run can normally be repeated once the cause is
+-- addressed. A failed concurrent index build is the exception: it leaves an INVALID index
+-- that must be dropped before the rerun.
 --
 -- Safe to apply ahead of the deploy. An instance that predates this migration neither
 -- selects allow_extended_controlnet nor reads the annotation-type table, and the column
@@ -25,5 +26,18 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workers_allow_extended_controlnet
 CREATE TABLE IF NOT EXISTS interrogation_worker_annotation_types (
     id SERIAL PRIMARY KEY,
     worker_id UUID NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
-    annotation_type VARCHAR(64)
+    annotation_type VARCHAR(64) NOT NULL
 );
+
+-- Existing installations may have run an earlier draft of this migration. Normalize those
+-- rows before adding database-level uniqueness. With worker_id first, this index also serves
+-- the lookup and replacement query performed at every Alchemist check-in.
+DELETE FROM interrogation_worker_annotation_types WHERE annotation_type IS NULL;
+ALTER TABLE interrogation_worker_annotation_types ALTER COLUMN annotation_type SET NOT NULL;
+DELETE FROM interrogation_worker_annotation_types AS duplicate
+USING interrogation_worker_annotation_types AS canonical
+WHERE duplicate.worker_id = canonical.worker_id
+  AND duplicate.annotation_type = canonical.annotation_type
+  AND duplicate.id > canonical.id;
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_interrogation_worker_annotation_types_worker_type
+  ON public.interrogation_worker_annotation_types USING btree (worker_id, annotation_type);

@@ -35,6 +35,14 @@ class WorkerInterrogationForm(db.Model):
 
 class WorkerAnnotationType(db.Model):
     __tablename__ = "interrogation_worker_annotation_types"
+    __table_args__ = (
+        db.Index(
+            "idx_interrogation_worker_annotation_types_worker_type",
+            "worker_id",
+            "annotation_type",
+            unique=True,
+        ),
+    )
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(
         uuid_column_type(),
@@ -42,7 +50,7 @@ class WorkerAnnotationType(db.Model):
         nullable=False,
     )
     worker = db.relationship("InterrogationWorker", back_populates="annotation_types")
-    annotation_type = db.Column(db.String(64))
+    annotation_type = db.Column(db.String(64), nullable=False)
 
 
 class InterrogationWorker(WorkerTemplate):
@@ -168,7 +176,7 @@ class InterrogationWorker(WorkerTemplate):
         if not annotation_types:
             annotation_types = []
         # We don't allow workers to claim they can serve more than 100 annotation types (to prevent abuse)
-        annotation_types = list(annotation_types)[:100]
+        annotation_types = list(dict.fromkeys(annotation_types))[:100]
         existing_annotation_types = db.session.query(WorkerAnnotationType).filter_by(worker_id=self.id)
         existing_annotation_type_names = set([a.annotation_type for a in existing_annotation_types.all()])
         if existing_annotation_type_names == set(annotation_types):
