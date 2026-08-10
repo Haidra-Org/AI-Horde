@@ -4,12 +4,11 @@
 
 """Cross-repo wire-contract proof: live HTTP server parsed by the local horde_sdk.
 
-The unit/integration suites exercise the server in isolation. This module proves
-the wire contract between the AI-Horde server tree and the horde_sdk tree: the
-server's real HTTP pop responses parse into the local horde_sdk response models
-with the new annotation/extended-controlnet fields intact, and the SDK's request
-models re-serialize those same fields. The SDK runs in its own venv as a
-subprocess so the two trees never share an interpreter.
+The unit/integration suites exercise the server in isolation. This module proves the wire contract
+between the AI-Horde server tree and the horde_sdk tree: real HTTP pop responses parse with the new
+annotation, ControlNet, sampler, scheduler, solver and flow-shift fields intact, and SDK request models
+re-serialize the same fields. The SDK runs as a subprocess so the server and client never share an
+interpreter.
 """
 
 from __future__ import annotations
@@ -36,6 +35,8 @@ SDK_PYTHON = Path(os.environ["HORDE_SDK_WIRE_PYTHON"]) if os.environ.get("HORDE_
 SDK_CLIENT_SCRIPT = Path(__file__).resolve().parent / "_sdk_wire_client.py"
 
 TEST_MODELS = ["stable_diffusion"]
+SDXL_MODELS = ["AlbedoBase XL (SDXL)"]
+FLOW_MODELS = ["Flux.1-Schnell fp8 (Compact)"]
 NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
 
 pytestmark = [
@@ -77,7 +78,9 @@ def test_sdk_parses_live_pop_responses(
     live_server: str,
     api_key: str,
     request_headers: dict[str, str],
+    settle_kudos,
 ) -> None:
+    settle_kudos()
     annotation_async = {
         "forms": [{"name": "annotation", "payload": {"control_type": "canny"}}],
         "source_image": "https://github.com/Haidra-Org/AI-Horde/blob/main/icon.png?raw=true",
@@ -98,7 +101,12 @@ def test_sdk_parses_live_pop_responses(
             "height": 512,
             "steps": 20,
             "cfg_scale": 7.5,
-            "sampler_name": "k_euler_a",
+            "sampler_name": "k_euler",
+            "scheduler": "exponential",
+            "sampler_s_noise": 1.0,
+            "sampler_s_churn": 0.1,
+            "sampler_s_tmin": 0.0,
+            "sampler_s_tmax": 1.0,
             "control_type": "lineart",
         },
         "models": TEST_MODELS,
@@ -107,7 +115,49 @@ def test_sdk_parses_live_pop_responses(
     }
     image_req = client.post("/api/v2/generate/async", json=image_async, headers=request_headers)
     assert image_req.status_code < 400, image_req.get_data(as_text=True)
-    image_id = image_req.get_json()["id"]
+    image_ids = [image_req.get_json()["id"]]
+
+    order_req = client.post(
+        "/api/v2/generate/async",
+        json={
+            "prompt": "an SDK order-field wire probe",
+            "params": {
+                "width": 512,
+                "height": 512,
+                "steps": 20,
+                "sampler_name": "k_lms",
+                "scheduler": "normal",
+                "sampler_order": 4,
+            },
+            "models": SDXL_MODELS,
+        },
+        headers=request_headers,
+    )
+    assert order_req.status_code < 400, order_req.get_data(as_text=True)
+    image_ids.append(order_req.get_json()["id"])
+
+    flow_req = client.post(
+        "/api/v2/generate/async",
+        json={
+            "prompt": "an SDK flow-field wire probe",
+            "params": {
+                "width": 512,
+                "height": 512,
+                "steps": 20,
+                "cfg_scale": 1,
+                "sampler_name": "exp_heun_2_x0_sde",
+                "scheduler": "normal",
+                "sampler_eta": 1.0,
+                "sampler_s_noise": 1.0,
+                "sampler_solver_type": "phi_1",
+                "flow_shift": 1.1,
+            },
+            "models": FLOW_MODELS,
+        },
+        headers=request_headers,
+    )
+    assert flow_req.status_code < 400, flow_req.get_data(as_text=True)
+    image_ids.append(flow_req.get_json()["id"])
 
     cfg = {
         "base_url": live_server,
@@ -120,23 +170,67 @@ def test_sdk_parses_live_pop_responses(
             "bridge_agent": request_headers["Client-Agent"],
             "max_tiles": 96,
         },
-        "image_pop_body": {
-            "name": "CICD Fake Dreamer",
-            "models": TEST_MODELS,
-            "bridge_agent": NEW_BRIDGE_AGENT,
-            "nsfw": True,
-            "amount": 10,
-            "max_pixels": 4194304,
-            "allow_img2img": True,
-            "allow_painting": True,
-            "allow_unsafe_ipaddr": True,
-            "allow_post_processing": True,
-            "allow_controlnet": True,
-            "allow_extended_controlnet": True,
-            "allow_sdxl_controlnet": True,
-            "allow_lora": True,
+        "image_request_params": {
+            "sampler_name": "exp_heun_2_x0_sde",
+            "scheduler": "normal",
+            "sampler_eta": 1.0,
+            "sampler_s_noise": 1.0,
+            "sampler_s_churn": 0.1,
+            "sampler_s_tmin": 0.0,
+            "sampler_s_tmax": 1.0,
+            "sampler_solver_type": "phi_1",
+            "sampler_order": 4,
+            "flow_shift": 1.1,
         },
+        "image_pop_cases": [],
     }
+    for models, expected_payload in [
+        (
+            TEST_MODELS,
+            {
+                "sampler_name": "k_euler",
+                "scheduler": "exponential",
+                "sampler_s_noise": 1.0,
+                "sampler_s_churn": 0.1,
+                "sampler_s_tmin": 0.0,
+                "sampler_s_tmax": 1.0,
+                "control_type": "lineart",
+            },
+        ),
+        (SDXL_MODELS, {"sampler_name": "k_lms", "scheduler": "normal", "sampler_order": 4}),
+        (
+            FLOW_MODELS,
+            {
+                "sampler_name": "exp_heun_2_x0_sde",
+                "scheduler": "normal",
+                "sampler_eta": 1.0,
+                "sampler_s_noise": 1.0,
+                "sampler_solver_type": "phi_1",
+                "flow_shift": 1.1,
+            },
+        ),
+    ]:
+        cfg["image_pop_cases"].append(
+            {
+                "body": {
+                    "name": "CICD Fake Dreamer",
+                    "models": models,
+                    "bridge_agent": NEW_BRIDGE_AGENT,
+                    "nsfw": True,
+                    "amount": 10,
+                    "max_pixels": 4194304,
+                    "allow_img2img": True,
+                    "allow_painting": True,
+                    "allow_unsafe_ipaddr": True,
+                    "allow_post_processing": True,
+                    "allow_controlnet": True,
+                    "allow_extended_controlnet": True,
+                    "allow_sdxl_controlnet": True,
+                    "allow_lora": True,
+                },
+                "expected_payload": expected_payload,
+            },
+        )
 
     try:
         completed = subprocess.run(
@@ -155,8 +249,10 @@ def test_sdk_parses_live_pop_responses(
         assert verdict["alchemy"]["control_type"] == "canny", verdict
         assert verdict["alchemy"]["has_r2_upload"] is True, verdict
         assert verdict["alchemy"]["request_roundtrip_annotation_types"] == ["canny"], verdict
-        assert verdict["image"]["control_type"] == "lineart", verdict
+        assert verdict["image"]["payloads"] == [case["expected_payload"] for case in cfg["image_pop_cases"]], verdict
         assert verdict["image"]["request_roundtrip_allow_extended_controlnet"] is True, verdict
+        assert verdict["image_request"] == cfg["image_request_params"], verdict
     finally:
         client.delete(f"/api/v2/interrogate/status/{annotation_id}", headers=request_headers)
-        client.delete(f"/api/v2/generate/status/{image_id}", headers=request_headers)
+        for image_id in image_ids:
+            client.delete(f"/api/v2/generate/status/{image_id}", headers=request_headers)

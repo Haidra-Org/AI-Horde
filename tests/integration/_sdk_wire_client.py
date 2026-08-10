@@ -17,6 +17,7 @@ import sys
 
 import requests
 from horde_sdk.ai_horde_api.apimodels.alchemy.pop import AlchemyJobPopResponse, AlchemyPopRequest
+from horde_sdk.ai_horde_api.apimodels.generate.async_ import ImageGenerateAsyncRequest, ImageGenerationInputPayload
 from horde_sdk.ai_horde_api.apimodels.generate.pop import (
     ImageGenerateJobPopRequest,
     ImageGenerateJobPopResponse,
@@ -70,38 +71,59 @@ def _check_alchemy(cfg: dict) -> dict:
     }
 
 
-def _check_image(cfg: dict) -> dict:
-    body = cfg["image_pop_body"]
-
-    request_model = ImageGenerateJobPopRequest(
+def _check_image_request(cfg: dict) -> dict:
+    params = ImageGenerationInputPayload(**cfg["image_request_params"])
+    request_model = ImageGenerateAsyncRequest(
         apikey=cfg["apikey"],
-        name=body["name"],
-        priority_usernames=[],
-        models=body["models"],
-        bridge_agent=body["bridge_agent"],
-        amount=body["amount"],
-        max_pixels=body["max_pixels"],
-        allow_controlnet=True,
-        allow_extended_controlnet=body["allow_extended_controlnet"],
+        prompt="SDK sampler request round trip",
+        params=params,
+        models=["stable_diffusion"],
     )
-    reserialized = request_model.model_dump(by_alias=True, exclude_none=True, mode="json")
-    if reserialized.get("allow_extended_controlnet") is not True:
-        raise AssertionError(f"SDK ImageGenerateJobPopRequest dropped allow_extended_controlnet: {reserialized!r}")
+    reserialized = request_model.model_dump(by_alias=True, exclude_none=True, mode="json")["params"]
+    for field, expected in cfg["image_request_params"].items():
+        if reserialized.get(field) != expected:
+            raise AssertionError(f"SDK ImageGenerateAsyncRequest changed {field}: {reserialized!r}")
+    return {field: reserialized[field] for field in cfg["image_request_params"]}
 
-    response = requests.post(cfg["base_url"] + "/api/v2/generate/pop", json=body, headers=_headers(cfg), timeout=30)
-    response.raise_for_status()
-    raw = response.json()
 
-    parsed = ImageGenerateJobPopResponse.model_validate(raw)
-    if parsed.id_ is None:
-        raise AssertionError(f"image pop matched no job: {raw!r}")
-    if parsed.payload is None or parsed.payload.control_type is None:
-        raise AssertionError(f"SDK did not parse control_type from image payload: {raw!r}")
+def _check_image_pops(cfg: dict) -> dict:
+    popped_payloads = []
+    extended_controlnet_roundtrip = False
+
+    for case in cfg["image_pop_cases"]:
+        body = case["body"]
+        request_model = ImageGenerateJobPopRequest(
+            apikey=cfg["apikey"],
+            name=body["name"],
+            priority_usernames=[],
+            models=body["models"],
+            bridge_agent=body["bridge_agent"],
+            amount=body["amount"],
+            max_pixels=body["max_pixels"],
+            allow_controlnet=body.get("allow_controlnet", False),
+            allow_extended_controlnet=body["allow_extended_controlnet"],
+        )
+        reserialized = request_model.model_dump(by_alias=True, exclude_none=True, mode="json")
+        if reserialized.get("allow_extended_controlnet") is not True:
+            raise AssertionError(f"SDK ImageGenerateJobPopRequest dropped allow_extended_controlnet: {reserialized!r}")
+        extended_controlnet_roundtrip = True
+
+        response = requests.post(cfg["base_url"] + "/api/v2/generate/pop", json=body, headers=_headers(cfg), timeout=30)
+        response.raise_for_status()
+        raw = response.json()
+        parsed = ImageGenerateJobPopResponse.model_validate(raw)
+        if parsed.id_ is None:
+            raise AssertionError(f"image pop matched no job: {raw!r}")
+
+        payload = parsed.payload.model_dump(by_alias=True, exclude_none=True, mode="json")
+        for field, expected in case["expected_payload"].items():
+            if payload.get(field) != expected:
+                raise AssertionError(f"SDK image pop changed {field}: {payload!r}")
+        popped_payloads.append({field: payload[field] for field in case["expected_payload"]})
 
     return {
-        "id_present": parsed.id_ is not None,
-        "control_type": str(parsed.payload.control_type),
-        "request_roundtrip_allow_extended_controlnet": reserialized.get("allow_extended_controlnet"),
+        "payloads": popped_payloads,
+        "request_roundtrip_allow_extended_controlnet": extended_controlnet_roundtrip,
     }
 
 
@@ -109,7 +131,8 @@ def main() -> int:
     cfg = json.load(sys.stdin)
     verdict = {
         "alchemy": _check_alchemy(cfg),
-        "image": _check_image(cfg),
+        "image_request": _check_image_request(cfg),
+        "image": _check_image_pops(cfg),
         "ok": True,
     }
     sys.stdout.write(json.dumps(verdict))
