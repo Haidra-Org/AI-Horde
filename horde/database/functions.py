@@ -1440,16 +1440,27 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     return ret_dict
 
 
-def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_ids=None, excluded_forms=None):
-    # Currently the worker is not being used, but I leave it being sent in case we need it later for filtering
+def get_sorted_forms_filtered_to_worker(
+    worker,
+    forms_list=None,
+    priority_user_ids=None,
+    excluded_forms=None,
+    annotation_types=None,
+):
     if forms_list is None:
         forms_list = []
+    if annotation_types is None:
+        annotation_types = []
     final_interrogation_query = (
         db.session.query(InterrogationForms)
         .join(Interrogation)
         .filter(
             InterrogationForms.state == State.WAITING,
             InterrogationForms.name.in_(forms_list),
+            or_(
+                InterrogationForms.name != "annotation",
+                InterrogationForms.payload["control_type"].astext.in_(annotation_types),
+            ),
             InterrogationForms.expiry == None,  # noqa E712
             Interrogation.source_image != None,  # noqa E712
             Interrogation.image_tiles <= worker.max_power,
@@ -1469,7 +1480,7 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_i
         .order_by(Interrogation.extra_priority.desc(), Interrogation.created.asc())
     )
     if priority_user_ids is not None:
-        final_interrogation_query.filter(Interrogation.user_id.in_(priority_user_ids))
+        final_interrogation_query = final_interrogation_query.filter(Interrogation.user_id.in_(priority_user_ids))
     # We use this to not retrieve already retrieved with priority_users
     retrieve_limit = 100
     if excluded_forms is not None:
@@ -1478,8 +1489,8 @@ def get_sorted_forms_filtered_to_worker(worker, forms_list=None, priority_user_i
         # requests by the prioritized requests.
         retrieve_limit -= len(excluded_form_ids)
         if retrieve_limit <= 0:
-            retrieve_limit = 1
-        final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
+            return []
+        final_interrogation_query = final_interrogation_query.filter(InterrogationForms.id.not_in(excluded_form_ids))
     return final_interrogation_query.limit(retrieve_limit).all()
 
 
