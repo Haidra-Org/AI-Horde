@@ -124,6 +124,27 @@ class TestAnnotationTypePersistence:
 
         assert len(names) == 100
 
+    def test_duplicate_advertised_types_are_persisted_once(self, app, client, api_key):
+        worker_name = "AnnotationDuplicateWorker"
+        resp = _alchemy_pop(
+            client,
+            api_key,
+            {"name": worker_name, "forms": ["caption"], "bridge_agent": AGENT, "max_tiles": 96},
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+
+        from horde.classes.stable.interrogation_worker import InterrogationWorker, WorkerAnnotationType
+        from horde.flask import db
+
+        with app.app_context():
+            worker = db.session.query(InterrogationWorker).filter_by(name=worker_name).first()
+            assert worker is not None
+            worker.set_annotation_types(["canny", "canny", "depth"])
+            rows = db.session.query(WorkerAnnotationType).filter_by(worker_id=worker.id).all()
+
+        assert {row.annotation_type for row in rows} == {"canny", "depth"}
+        assert len(rows) == 2
+
 
 class TestLegacyAlchemistBackwardsCompatibility:
     def test_legacy_alchemist_pops_a_queued_form_and_raises_nothing(self, client, api_key):
