@@ -123,6 +123,7 @@ def test_classic_sampler_still_matches_old_bridge(client, request_headers: dict[
         results = pop.get_json()
         assert results["id"] is not None, results
         assert results["payload"]["sampler_name"] == "k_euler_a", results
+        assert "scheduler" not in results["payload"], results
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 

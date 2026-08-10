@@ -215,6 +215,11 @@ class ImageWaitingPrompt(WaitingPrompt):
         if payload:
             # They're all the same, so we pick up the first to extract some var
             procgen = procgen_list[0]
+            # Keep the legacy worker response shape unchanged. Requests carrying a schedule that cannot
+            # be represented by `karras` never reach these bridges, and extract_params synchronizes the
+            # flag for explicit legacy schedules, so removing this unknown field loses no instruction.
+            if not check_bridge_capability("scheduler", procgen.worker.bridge_agent):
+                payload.pop("scheduler", None)
             payload["n_iter"] = len(procgen_list)
             prompt_payload = {
                 "payload": payload,

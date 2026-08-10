@@ -91,12 +91,11 @@ def test_extended_schedule_skips_old_bridge_but_matches_new(
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
 
-@pytest.mark.parametrize(("params", "expected"), [({"karras": True}, "karras"), ({"karras": False}, "normal")])
+@pytest.mark.parametrize("params", [{"karras": True}, {"karras": False}])
 def test_karras_flag_still_reaches_old_bridges_with_its_original_meaning(
     client,
     request_headers: dict[str, str],
     params: dict,
-    expected: str,
 ) -> None:
     # The compatibility guarantee: a request that names no schedule keeps the schedule it always got and
     # keeps reaching bridges that predate the field.
@@ -109,7 +108,7 @@ def test_karras_flag_still_reaches_old_bridges_with_its_original_meaning(
         assert pop.status_code < 400, pop.get_data(as_text=True)
         results = pop.get_json()
         assert results["id"] is not None, results
-        assert results["payload"]["scheduler"] == expected, results
+        assert "scheduler" not in results["payload"], results
         # The flag travels alongside the resolved schedule so an old bridge renders from it unchanged.
         assert results["payload"]["karras"] is params["karras"], results
     finally:
@@ -141,7 +140,7 @@ def test_explicit_legacy_schedule_synchronizes_flag_for_old_bridges(
         assert pop.status_code < 400, pop.get_data(as_text=True)
         results = pop.get_json()
         assert results["id"] is not None, results
-        assert results["payload"]["scheduler"] == schedule, results
+        assert "scheduler" not in results["payload"], results
         assert results["payload"]["karras"] is (schedule == "karras"), results
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
