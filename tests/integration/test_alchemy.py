@@ -272,6 +272,165 @@ def test_alchemy_annotation_absent_types_does_not_pop(client, request_headers: d
     assert not pop_results.get("forms"), pop_results
 
 
+def test_annotation_matching_happens_before_the_candidate_limit(app, client, request_headers: dict[str, str]) -> None:
+    """One compatible job remains discoverable behind 100 older incompatible annotation jobs."""
+    from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+    from horde.database import functions as database
+    from horde.flask import db
+
+    worker_name = "AnnotationStarvationWorker"
+    initial_pop = client.post(
+        "/api/v2/interrogate/pop",
+        json={
+            "name": worker_name,
+            "forms": ["annotation"],
+            "annotation_types": ["canny"],
+            "bridge_agent": request_headers["Client-Agent"],
+            "max_tiles": 96,
+        },
+        headers=request_headers,
+    )
+    assert initial_pop.status_code == 200, initial_pop.get_data(as_text=True)
+
+    queued_ids = []
+    with app.app_context():
+        user = database.find_user_by_api_key(request_headers["apikey"])
+        assert user is not None
+        for index, control_type in enumerate(["depth"] * 100 + ["canny"]):
+            interrogation = Interrogation(
+                user=user,
+                source_image=f"https://example.invalid/starvation-{index}.webp",
+                safe_ip=True,
+                image_tiles=1,
+            )
+            db.session.add(
+                InterrogationForms(
+                    interrogation=interrogation,
+                    name="annotation",
+                    payload={"control_type": control_type},
+                ),
+            )
+            queued_ids.append(interrogation.id)
+        db.session.commit()
+
+    try:
+        pop_req = client.post(
+            "/api/v2/interrogate/pop",
+            json={
+                "name": worker_name,
+                "forms": ["annotation"],
+                "annotation_types": ["canny"],
+                "bridge_agent": request_headers["Client-Agent"],
+                "max_tiles": 96,
+                "amount": 1,
+            },
+            headers=request_headers,
+        )
+        assert pop_req.status_code == 200, pop_req.get_data(as_text=True)
+        forms = pop_req.get_json().get("forms", [])
+        assert len(forms) == 1, pop_req.get_json()
+        assert forms[0]["payload"]["control_type"] == "canny"
+    finally:
+        with app.app_context():
+            db.session.query(Interrogation).filter(Interrogation.id.in_(queued_ids)).delete(synchronize_session=False)
+            db.session.commit()
+
+
+def test_form_query_applies_priority_and_exclusion_filters(app, client, request_headers: dict[str, str], make_api_user) -> None:
+    """The priority pass is user-scoped and the general pass cannot repeat its rows."""
+    from horde.classes.stable.interrogation import Interrogation, InterrogationForms
+    from horde.classes.stable.interrogation_worker import InterrogationWorker
+    from horde.database import functions as database
+    from horde.flask import db
+
+    worker_name = "AlchemyQueryFilterWorker"
+    check_in = client.post(
+        "/api/v2/interrogate/pop",
+        json={
+            "name": worker_name,
+            "forms": ["caption"],
+            "bridge_agent": request_headers["Client-Agent"],
+            "max_tiles": 96,
+        },
+        headers=request_headers,
+    )
+    assert check_in.status_code == 200, check_in.get_data(as_text=True)
+    other_user = make_api_user(trusted=True, kudos=1000)
+
+    queued_ids = []
+    with app.app_context():
+        owner = database.find_user_by_api_key(request_headers["apikey"])
+        worker = db.session.query(InterrogationWorker).filter_by(name=worker_name).one()
+        assert owner is not None
+        for index, user_id in enumerate((owner.id, other_user.id)):
+            interrogation = Interrogation(
+                user_id=user_id,
+                source_image=f"https://example.invalid/query-filter-{index}.webp",
+                safe_ip=True,
+                image_tiles=1,
+            )
+            form = InterrogationForms(interrogation=interrogation, name="caption")
+            db.session.add(form)
+            db.session.flush()
+            queued_ids.append(interrogation.id)
+        db.session.commit()
+
+        priority_forms = database.get_sorted_forms_filtered_to_worker(
+            worker=worker,
+            forms_list=["caption"],
+            priority_user_ids=[owner.id],
+        )
+        assert priority_forms
+        assert {form.interrogation.user_id for form in priority_forms} == {owner.id}
+
+        general_forms = database.get_sorted_forms_filtered_to_worker(
+            worker=worker,
+            forms_list=["caption"],
+            excluded_forms=priority_forms,
+        )
+        assert not ({form.id for form in priority_forms} & {form.id for form in general_forms})
+        assert any(form.interrogation.user_id == other_user.id for form in general_forms)
+
+        db.session.query(Interrogation).filter(Interrogation.id.in_(queued_ids)).delete(synchronize_session=False)
+        db.session.commit()
+
+
+def test_annotation_filter_preserves_legacy_forms(client, request_headers: dict[str, str]) -> None:
+    """Type filtering excludes only incompatible annotations, not legacy alchemy forms."""
+    async_req = client.post(
+        "/api/v2/interrogate/async",
+        json={
+            "forms": [
+                {"name": "caption"},
+                {"name": "annotation", "payload": {"control_type": "depth"}},
+            ],
+            "source_image": "https://github.com/Haidra-Org/AI-Horde/blob/main/icon.png?raw=true",
+        },
+        headers=request_headers,
+    )
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+
+    try:
+        pop_req = client.post(
+            "/api/v2/interrogate/pop",
+            json={
+                "name": "MixedAlchemyWorker",
+                "forms": ["caption", "annotation"],
+                "annotation_types": ["canny"],
+                "bridge_agent": request_headers["Client-Agent"],
+                "max_tiles": 96,
+                "amount": 10,
+            },
+            headers=request_headers,
+        )
+        assert pop_req.status_code == 200, pop_req.get_data(as_text=True)
+        forms = pop_req.get_json().get("forms", [])
+        assert [form["form"] for form in forms] == ["caption"], pop_req.get_json()
+    finally:
+        client.delete(f"/api/v2/interrogate/status/{req_id}", headers=request_headers)
+
+
 def test_alchemy_annotation_rejects_unknown_control_type(client, request_headers: dict[str, str]) -> None:
     """The server validates control_type against its closed set and rejects anything outside it."""
     async_dict = {

@@ -1269,6 +1269,7 @@ class InterrogatePop(JobPopTemplate):
             worker=self.worker,
             forms_list=self.forms,
             priority_user_ids=self.priority_user_ids,
+            annotation_types=self.annotation_types,
         )
         for form in priority_list:
             if not self._supports_annotation_type(form):
@@ -1282,6 +1283,7 @@ class InterrogatePop(JobPopTemplate):
                 worker=self.worker,
                 forms_list=self.forms,
                 excluded_forms=self.prioritized_forms,
+                annotation_types=self.annotation_types,
             ):
                 if not self._supports_annotation_type(form):
                     continue
