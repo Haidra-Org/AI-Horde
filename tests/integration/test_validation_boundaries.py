@@ -111,3 +111,42 @@ class TestImageExtraSourceImages:
         # Either the count guard (rc TooManyExtraSourceImages.) or schema validation
         # rejects it, both are 4xx, never a 500.
         assert 400 <= resp.status_code < 500, resp.get_data(as_text=True)[:300]
+
+
+class TestEffectiveStyleConstraints:
+    def test_flow_shift_is_validated_against_the_styles_models(self, client, api_key):
+        headers = _headers(api_key)
+        style_resp = client.post(
+            "/api/v2/styles/image",
+            json={
+                "name": "effective flow model",
+                "prompt": "flow style {p}###{np}",
+                "params": {
+                    "width": 512,
+                    "height": 512,
+                    "steps": 8,
+                    "sampler_name": "k_euler",
+                    "flow_shift": 1,
+                },
+                "models": ["Flux.1-Schnell fp8 (Compact)"],
+            },
+            headers=headers,
+        )
+        assert style_resp.status_code == 200, style_resp.get_data(as_text=True)
+        style_id = style_resp.get_json()["id"]
+
+        try:
+            request_resp = client.post(
+                "/api/v2/generate/async",
+                json={
+                    "prompt": "style constraint probe",
+                    "params": {"width": 512, "height": 512},
+                    "models": ["stable_diffusion"],
+                    "style": style_id,
+                },
+                headers=headers,
+            )
+            assert request_resp.status_code == 202, request_resp.get_data(as_text=True)
+            client.delete(f"/api/v2/generate/status/{request_resp.get_json()['id']}", headers=headers)
+        finally:
+            client.delete(f"/api/v2/styles/image/{style_id}", headers=headers)
