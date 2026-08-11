@@ -245,6 +245,7 @@ class SingleImageStyleByName(SingleStyleTemplateGet):
 
     @cache.cached(timeout=30)
     @api.expect(parsers.basic_parser)
+    @api.doc("get_single_text_style_by_name")
     @api.marshal_with(
         models.response_model_style,
         code=200,

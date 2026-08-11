@@ -42,3 +42,19 @@ def test_swagger_primitive_defaults_match_their_declared_types(client) -> None:
             continue
         expected_type = primitive_types[schema["type"]]
         assert isinstance(schema["default"], expected_type), schema
+
+
+def test_swagger_operation_ids_are_unique(client) -> None:
+    response = client.get("/api/swagger.json")
+    assert response.status_code == 200
+
+    swagger = response.get_json()
+    operation_ids = [
+        operation["operationId"]
+        for operations in swagger["paths"].values()
+        for operation in operations.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    ]
+    assert len(operation_ids) == len(set(operation_ids))
+    assert swagger["paths"]["/v2/styles/image_by_name/{style_name}"]["get"]["operationId"] == ("get_single_image_style_by_name")
+    assert swagger["paths"]["/v2/styles/text_by_name/{style_name}"]["get"]["operationId"] == ("get_single_text_style_by_name")
