@@ -210,6 +210,7 @@ class ImageWaitingPrompt(WaitingPrompt):
                 "model": procgen.model,
                 "ids": [g.id for g in procgen_list],
                 "ttl": procgen_list[0].job_ttl,
+                "shared": self.shared,
             }
             if self.source_image and check_bridge_capability("img2img", procgen.worker.bridge_agent):
                 if check_bridge_capability("r2_source", procgen.worker.bridge_agent):

@@ -514,6 +514,9 @@ class ImageModels(v2.Models):
                 "ttl": fields.Integer(description="The amount of seconds before this job is considered stale and aborted."),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
                 "model": fields.String(description="Which of the available models to use for this request."),
+                "shared": fields.Boolean(
+                    description="If True, the generated images are intended for public sharing.",
+                ),
                 "source_image": fields.String(description="The Base64-encoded webp to use for img2img."),
                 "source_processing": fields.String(
                     required=False,
