@@ -11,6 +11,7 @@ request reaching the same population of workers it always did.
 """
 
 import pytest
+from horde_sdk.ai_horde_api.apimodels import ImageGenerateJobPopResponse
 
 from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
 
@@ -85,8 +86,10 @@ def test_extended_schedule_skips_old_bridge_but_matches_new(
         new_pop = client.post("/api/v2/generate/pop", json=_pop_dict(NEW_BRIDGE_AGENT), headers=request_headers)
         assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
         new_results = new_pop.get_json()
+        sdk_response = ImageGenerateJobPopResponse.model_validate(new_results)
         assert new_results["id"] is not None, new_results
         assert new_results["payload"]["scheduler"] == schedule, new_results
+        assert sdk_response.payload.scheduler == schedule
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
@@ -202,8 +205,10 @@ def test_solver_option_skips_old_bridge_but_matches_new(
         new_pop = client.post("/api/v2/generate/pop", json=_pop_dict(NEW_BRIDGE_AGENT), headers=request_headers)
         assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
         new_results = new_pop.get_json()
+        sdk_response = ImageGenerateJobPopResponse.model_validate(new_results)
         assert new_results["id"] is not None, new_results
         assert new_results["payload"][field] == value, new_results
+        assert getattr(sdk_response.payload, field) == value
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
@@ -230,8 +235,10 @@ def test_flow_shift_skips_old_bridge_but_matches_new(client, request_headers: di
         new_pop = client.post("/api/v2/generate/pop", json=new_pop_body, headers=request_headers)
         assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
         new_results = new_pop.get_json()
+        sdk_response = ImageGenerateJobPopResponse.model_validate(new_results)
         assert new_results["id"] is not None, new_results
         assert new_results["payload"]["flow_shift"] == 1.1, new_results
+        assert sdk_response.payload.flow_shift == 1.1
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 

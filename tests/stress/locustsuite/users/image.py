@@ -10,10 +10,17 @@ import time
 from collections import deque
 from itertools import cycle
 
+from horde_sdk.generation_parameters.image.constraints import SAMPLER_CONSTRAINTS
 from locust import HttpUser, between, tag, task
 from locust.exception import RescheduleTask
 
-from ..config import _EXPECTED_RC_RECOVER, _HOT_PROMPT, _IMAGE_SAMPLER_FEATURE_CASES, _config
+from ..config import (
+    _EXPECTED_RC_RECOVER,
+    _EXTENDED_IMAGE_SAMPLERS,
+    _EXTENDED_SAMPLER_SETTING_FIELDS,
+    _HOT_PROMPT,
+    _config,
+)
 from ..helpers import (
     _handle_async_generate,
     _headers,
@@ -25,8 +32,6 @@ from ..helpers import (
     _record_expected,
     _safe_json,
 )
-
-_image_sampler_feature_cases = cycle(_IMAGE_SAMPLER_FEATURE_CASES)
 
 
 class StatusPoller(HttpUser):
@@ -370,12 +375,14 @@ class WorkerSimulator(HttpUser):
     start_generation, set_generation (record_contribution, R2, webhook).
     """
 
-    weight = 2
-    fixed_count = 0  # set via --image-workers in on_test_start
+    abstract = True
+    bridge_generation = "base"
+    supports_extended_samplers = False
+    required_models: tuple[str, ...] = ()
     wait_time = between(1, 4)
 
     def create_worker_name(self):
-        return f"StressWorker-{''.join(random.choices(string.ascii_lowercase, k=4))}"
+        return f"StressWorker-{self.bridge_generation}-{''.join(random.choices(string.ascii_lowercase, k=4))}"
 
     def on_start(self):
         self.worker_name = self.create_worker_name()
@@ -383,6 +390,7 @@ class WorkerSimulator(HttpUser):
 
         models = _config.get("models", [])
         self.worker_models = random.sample(models, k=random.randint(1, max(1, len(models))))
+        self.worker_models.extend(model for model in self.required_models if model in models and model not in self.worker_models)
 
         # Check that this worker doesn't already exist (from a previous test run), and choose a new name if so.
         # The endpoint returns 200 + worker JSON if a worker by that name exists,
@@ -446,7 +454,7 @@ class WorkerSimulator(HttpUser):
         pop_payload = {
             "name": self.worker_name,
             "models": self.worker_models,
-            "bridge_agent": opts.worker_bridge_agent,
+            "bridge_agent": self.bridge_agent,
             "nsfw": True,
             "amount": 1,
             "max_pixels": opts.worker_max_pixels,
@@ -455,6 +463,7 @@ class WorkerSimulator(HttpUser):
             "allow_unsafe_ipaddr": True,
             "allow_post_processing": True,
             "allow_controlnet": True,
+            "allow_extended_controlnet": self.supports_extended_samplers,
             "allow_lora": True,
         }
         with self.client.post(
@@ -496,6 +505,12 @@ class WorkerSimulator(HttpUser):
             if not job_id:
                 resp.success()
                 return
+            incompatibilities = self._extended_payload_features(pop_data.get("payload") or {})
+            if not self.supports_extended_samplers and incompatibilities:
+                resp.failure(
+                    "Pre-17 worker received an incompatible job containing: " + ", ".join(incompatibilities),
+                )
+                return
             resp.success()
 
         time.sleep(random.uniform(opts.sim_gen_time_min, opts.sim_gen_time_max))
@@ -534,24 +549,107 @@ class WorkerSimulator(HttpUser):
                 return
             resp.failure(f"Submit failed: {resp.status_code}: {resp.text[:200]}")
 
+    @staticmethod
+    def _extended_payload_features(payload: dict) -> list[str]:
+        """Return bridge-17-only features present in a popped job payload."""
+        features = sorted(_EXTENDED_SAMPLER_SETTING_FIELDS.intersection(payload))
+        sampler_name = payload.get("sampler_name")
+        if sampler_name in _EXTENDED_IMAGE_SAMPLERS:
+            features.insert(0, f"sampler_name={sampler_name}")
+        return features
 
-class SamplerFeatureRequester(HttpUser):
-    """Continuously cover the current sampler, scheduler, and solver-control API.
 
-    CI pins one instance of this user so a smoke run walks the cases in a
-    deterministic cycle. Only a small number of requests remain queued at once;
-    older ones are cancelled so the coverage sweep does not overwhelm the fake
-    workers or consume an unbounded amount of requestor kudos.
-    """
+class LegacyWorkerSimulator(WorkerSimulator):
+    """A pre-17 worker, used to verify dispatch excludes extended jobs."""
 
     weight = 1
-    fixed_count = 0  # set via --sampler-feature-requestors in on_test_start
+    fixed_count = 0
+    bridge_generation = "pre17"
+    required_models = ("stable_diffusion",)
+
+    def on_start(self):
+        self.bridge_agent = self.environment.parsed_options.legacy_worker_bridge_agent
+        super().on_start()
+
+
+class ExtendedWorkerSimulator(WorkerSimulator):
+    """A bridge-17+ worker capable of consuming extended sampler jobs."""
+
+    weight = 1
+    fixed_count = 0
+    bridge_generation = "17plus"
+    supports_extended_samplers = True
+    required_models = ("stable_diffusion", "Flux.1-Schnell fp8 (Compact)")
+
+    def on_start(self):
+        self.bridge_agent = self.environment.parsed_options.worker_bridge_agent
+        super().on_start()
+
+
+_SAMPLER_SETTING_VALUES = {
+    "eta": 0.8,
+    "s_noise": 1.05,
+    "s_churn": 0.1,
+    "s_tmin": 0.0,
+    "s_tmax": 10.0,
+    "order": 3,
+}
+
+
+def _sampler_setting_field(knob: object) -> str:
+    knob_name = str(knob)
+    return "sampler_order" if knob_name == "order" else f"sampler_{knob_name}"
+
+
+def _all_settings_for_sampler(sampler_name: str) -> dict:
+    """Build one valid value for every optional setting the SDK exposes."""
+    constraints = SAMPLER_CONSTRAINTS[sampler_name]
+    settings = {_sampler_setting_field(knob): _SAMPLER_SETTING_VALUES[str(knob)] for knob in constraints.numeric_knob_ranges}
+    if constraints.solver_type_choices:
+        settings["sampler_solver_type"] = str(constraints.solver_type_choices[0])
+    settings["scheduler"] = "karras"
+    return settings
+
+
+class SamplerFeatureRequester(HttpUser):
+    """Submit extended samplers with zero, some, or all optional settings."""
+
+    weight = 1
+    fixed_count = 0
     wait_time = between(1, 2)
     max_pending = 8
 
     def on_start(self):
         self.api_key = _pick_requestor_key()
         self.pending_ids = deque()
+        profiles = [(sampler_name, _all_settings_for_sampler(sampler_name), None) for sampler_name in _EXTENDED_IMAGE_SAMPLERS]
+        profiles.append(
+            (
+                "k_euler",
+                {"scheduler": "simple", "flow_shift": 1.1},
+                "Flux.1-Schnell fp8 (Compact)",
+            ),
+        )
+        profiles.extend(
+            ("uni_pc", {"scheduler": scheduler}, None)
+            for scheduler in (
+                "normal",
+                "simple",
+                "sgm_uniform",
+                "exponential",
+                "ddim_uniform",
+                "beta",
+                "linear_quadratic",
+                "kl_optimal",
+            )
+        )
+        profiles.extend(("k_euler", {"scheduler": scheduler}, "stable_diffusion") for scheduler in ("align_your_steps", "gits"))
+        self.feature_cases = cycle(
+            (sampler_name, mode, settings, model)
+            for sampler_name, settings, model in profiles
+            for mode in ("none", "subset", "all")
+            if mode != "subset" or len(settings) > 1
+        )
 
     def _cancel_oldest(self):
         if not self.pending_ids:
@@ -572,6 +670,18 @@ class SamplerFeatureRequester(HttpUser):
         while self.pending_ids:
             self._cancel_oldest()
 
+    def _next_case(self) -> tuple[str, str, dict, str | None]:
+        sampler_name, mode, all_settings, model = next(self.feature_cases)
+        if mode == "none":
+            selected_settings = {}
+        elif mode == "all":
+            selected_settings = all_settings
+        else:
+            count = random.randint(1, len(all_settings) - 1)
+            names = random.sample(list(all_settings), k=count)
+            selected_settings = {name: all_settings[name] for name in names}
+        return sampler_name, mode, selected_settings, model
+
     @tag("image", "cold", "requestor", "sampler-features")
     @task
     def generate_sampler_feature(self):
@@ -580,20 +690,14 @@ class SamplerFeatureRequester(HttpUser):
 
         opts = self.environment.parsed_options
         configured_models = _config.get("models", [])
-        default_feature_models = ["stable_diffusion"] if "stable_diffusion" in configured_models else configured_models[:1]
-
-        # Cases with baseline-specific settings only run when their known model
-        # is in the configured worker pool. Custom deployments can therefore
-        # replace --horde-models without receiving predictable validation 4xxs.
-        case = next(_image_sampler_feature_cases)
-        for _ in range(len(_IMAGE_SAMPLER_FEATURE_CASES)):
-            preferred_models = list(case.get("models", ()))
-            if not preferred_models or all(model in configured_models for model in preferred_models):
-                break
-            case = next(_image_sampler_feature_cases)
-        else:
-            preferred_models = []
-
+        sampler_name, mode, settings, preferred_model = self._next_case()
+        while preferred_model and preferred_model not in configured_models:
+            sampler_name, mode, settings, preferred_model = self._next_case()
+        models = (
+            [preferred_model]
+            if preferred_model
+            else (["stable_diffusion"] if "stable_diffusion" in configured_models else configured_models[:1])
+        )
         payload = {
             "prompt": _random_prompt(),
             "nsfw": False,
@@ -603,17 +707,18 @@ class SamplerFeatureRequester(HttpUser):
                 "width": opts.gen_width,
                 "height": opts.gen_height,
                 "steps": opts.gen_steps,
-                "cfg_scale": 1.5 if case["params"]["sampler_name"].endswith("cfg_pp") else opts.gen_cfg_scale,
-                **case["params"],
+                "cfg_scale": 1.5 if sampler_name.endswith("cfg_pp") else opts.gen_cfg_scale,
+                "sampler_name": sampler_name,
+                **settings,
             },
-            "models": preferred_models or default_feature_models,
+            "models": models,
         }
         with self.client.post(
             "/api/v2/generate/async",
             json=payload,
             headers=_headers(self.api_key),
             catch_response=True,
-            name=f"/api/v2/generate/async [sampler-feature/{case['name']}]",
+            name=f"/api/v2/generate/async [sampler-feature/{mode}]",
         ) as resp:
             req_id = _handle_async_generate(resp, self.environment)
             if req_id:

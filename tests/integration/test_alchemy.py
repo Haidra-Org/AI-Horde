@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import pytest
+from horde_sdk.ai_horde_api.apimodels import AlchemyJobPopResponse
 
 # The annotation form is image-output: its pop mints an R2 upload URL, so the object store must be
 # provisioned for this module rather than depending on a co-running marked module to bring it up.
@@ -150,6 +151,7 @@ def test_alchemy_annotation(client, request_headers: dict[str, str]) -> None:
 
     assert pop_req.status_code < 400, pop_req.get_data(as_text=True)
     pop_results = pop_req.get_json()
+    sdk_response = AlchemyJobPopResponse.model_validate(pop_results)
 
     popped_form = pop_results["forms"][0]
     job_id = popped_form["id"]
@@ -159,6 +161,9 @@ def test_alchemy_annotation(client, request_headers: dict[str, str]) -> None:
     assert popped_form["r2_upload"], pop_results
     # The parameterized control type must survive round-trip to the worker via the form payload.
     assert popped_form["payload"]["control_type"] == "canny", pop_results
+    assert sdk_response.forms is not None
+    assert sdk_response.forms[0].payload is not None
+    assert sdk_response.forms[0].payload.control_type == "canny"
 
     submit_dict = {
         "id": job_id,

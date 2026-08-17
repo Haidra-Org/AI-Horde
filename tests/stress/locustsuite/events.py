@@ -125,8 +125,15 @@ def add_ai_horde_arguments(parser):
         "--worker-bridge-agent",
         type=str,
         env_var="HORDE_WORKER_BRIDGE_AGENT",
-        default="AI Horde Worker reGen:17.0.0:https://github.com/Haidra-Org/horde-worker-reGen",
-        help="Bridge agent string for simulated workers",
+        default="AI Horde Worker reGen:17.0.0-stress:https://github.com/Haidra-Org/horde-worker-reGen",
+        help="Bridge agent string for bridge-17+ simulated workers",
+    )
+    group.add_argument(
+        "--legacy-worker-bridge-agent",
+        type=str,
+        env_var="HORDE_LEGACY_WORKER_BRIDGE_AGENT",
+        default="AI Horde Worker reGen:16.0.0-stress:https://github.com/Haidra-Org/horde-worker-reGen",
+        help="Bridge agent string for pre-17 simulated workers",
     )
     group.add_argument(
         "--sim-gen-time-min",
@@ -204,6 +211,8 @@ def add_ai_horde_arguments(parser):
     for _flag, _envvar, _help in (
         ("--image-requestors", "HORDE_IMAGE_REQUESTORS", "Concurrent RequestGenerator users (image POST /generate/async)"),
         ("--image-workers", "HORDE_IMAGE_WORKERS", "Concurrent WorkerSimulator users (image POST /generate/pop+submit)"),
+        ("--legacy-image-workers", "HORDE_LEGACY_IMAGE_WORKERS", "Concurrent pre-17 image worker users"),
+        ("--extended-image-workers", "HORDE_EXTENDED_IMAGE_WORKERS", "Concurrent bridge-17+ image worker users"),
         ("--text-requestors", "HORDE_TEXT_REQUESTORS", "Concurrent TextRequester users"),
         ("--text-workers", "HORDE_TEXT_WORKERS", "Concurrent TextWorkerSimulator users"),
         ("--interrogate-requestors", "HORDE_INTERROGATE_REQUESTORS", "Concurrent InterrogationRequester users"),
@@ -217,7 +226,7 @@ def add_ai_horde_arguments(parser):
         (
             "--sampler-feature-requestors",
             "HORDE_SAMPLER_FEATURE_REQUESTORS",
-            "Concurrent SamplerFeatureRequester users (new samplers, schedulers, and solver settings)",
+            "Concurrent sampler feature requestors (zero, subset, and all extended settings)",
         ),
         ("--meta-browsers", "HORDE_META_BROWSERS", "Concurrent MetaBrowser users (read-only meta endpoints)"),
         ("--misuse-users", "HORDE_MISUSE_USERS", "Concurrent MisuseUser users (4xx validation paths)"),
@@ -428,9 +437,11 @@ def on_test_start(environment, **kw):
     # spawner respects it. We do this here rather than at import time so the
     # CLI arguments are guaranteed to be parsed.
     from .users import (
+        ExtendedWorkerSimulator,
         HotPathRequester,
         InterrogationRequester,
         InterrogationWorkerSimulator,
+        LegacyWorkerSimulator,
         MetaBrowser,
         MisuseUser,
         RequestGenerator,
@@ -438,13 +449,13 @@ def on_test_start(environment, **kw):
         StatusPoller,
         TextRequester,
         TextWorkerSimulator,
-        WorkerSimulator,
     )
 
     _fixed_count_overrides = (
         (StatusPoller, "status_pollers"),
         (RequestGenerator, "image_requestors"),
-        (WorkerSimulator, "image_workers"),
+        (LegacyWorkerSimulator, "legacy_image_workers"),
+        (ExtendedWorkerSimulator, "extended_image_workers"),
         (TextRequester, "text_requestors"),
         (TextWorkerSimulator, "text_workers"),
         (InterrogationRequester, "interrogate_requestors"),
@@ -454,6 +465,15 @@ def on_test_start(environment, **kw):
         (MetaBrowser, "meta_browsers"),
         (MisuseUser, "misuse_users"),
     )
+    total_image_workers = int(getattr(opts, "image_workers", 0) or 0)
+    if total_image_workers and not opts.legacy_image_workers and not opts.extended_image_workers:
+        if total_image_workers < 2:
+            logger.warning("--image-workers=1 cannot represent both bridge generations; using one bridge-17+ worker")
+            opts.extended_image_workers = 1
+        else:
+            opts.legacy_image_workers = total_image_workers // 2
+            opts.extended_image_workers = total_image_workers - opts.legacy_image_workers
+
     fixed_total = 0
     for cls, attr in _fixed_count_overrides:
         n = int(getattr(opts, attr, 0) or 0)
