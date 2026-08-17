@@ -34,6 +34,7 @@ runs:
         {
           printf 'AWS_ACCESS_KEY_ID=%s\n' "$AWS_ACCESS_KEY_ID"
           printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$AWS_SECRET_ACCESS_KEY"
+          printf 'AWS_DEFAULT_REGION=%s\n' "$AWS_DEFAULT_REGION"
           printf 'SHARED_AWS_ACCESS_ID=%s\n' "$SHARED_AWS_ACCESS_ID"
           printf 'SHARED_AWS_ACCESS_KEY=%s\n' "$SHARED_AWS_ACCESS_KEY"
           printf 'R2_TRANSIENT_ACCOUNT=%s\n' "$R2_TRANSIENT_ACCOUNT"

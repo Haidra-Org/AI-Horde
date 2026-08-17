@@ -3,8 +3,19 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import base64
+from io import BytesIO
+
 import pytest
+import requests
 from horde_sdk.ai_horde_api.apimodels import AlchemyJobPopResponse
+from PIL import Image
+
+from tests.integration._object_storage import (
+    assert_presigned_image_download,
+    make_test_webp,
+    upload_to_presigned_url,
+)
 
 # The annotation form is image-output: its pop mints an R2 upload URL, so the object store must be
 # provisioned for this module rather than depending on a co-running marked module to bring it up.
@@ -125,11 +136,13 @@ def test_alchemy_vectorize(client, request_headers: dict[str, str]) -> None:
 
 
 def test_alchemy_annotation(client, request_headers: dict[str, str]) -> None:
+    source_image = make_test_webp(size=(12, 8), color=(17, 91, 203))
+    annotation_image = make_test_webp(size=(12, 8), color=(240, 240, 240))
     async_dict = {
         "forms": [
             {"name": "annotation", "payload": {"control_type": "canny"}},
         ],
-        "source_image": "https://github.com/Haidra-Org/AI-Horde/blob/main/icon.png?raw=true",
+        "source_image": base64.b64encode(source_image).decode("ascii"),
     }
     async_req = client.post("/api/v2/interrogate/async", json=async_dict, headers=request_headers)
     assert async_req.status_code < 400, async_req.get_data(as_text=True)
@@ -165,6 +178,17 @@ def test_alchemy_annotation(client, request_headers: dict[str, str]) -> None:
     assert sdk_response.forms[0].payload is not None
     assert sdk_response.forms[0].payload.control_type == "canny"
 
+    # A base64 request source is stored by the API and handed to the worker as a presigned URL.
+    # Dereference it as a worker would, rather than merely checking that a URL was minted.
+    source_response = requests.get(popped_form["source_image"], timeout=10)
+    assert source_response.status_code == 200, source_response.text
+    with Image.open(BytesIO(source_response.content)) as popped_source:
+        assert popped_source.format == "WEBP"
+        assert popped_source.size == (12, 8)
+
+    # Exercise the worker-facing presigned PUT before claiming that the result lives in R2.
+    upload_to_presigned_url(popped_form["r2_upload"], annotation_image)
+
     submit_dict = {
         "id": job_id,
         "result": {"annotation": "R2"},
@@ -183,6 +207,9 @@ def test_alchemy_annotation(client, request_headers: dict[str, str]) -> None:
     gen = retrieve_results["forms"][0]
     assert gen["form"] == "annotation"
     assert gen["state"] == "done"
+    assert gen["result"]["annotation"], gen
+    # The requester-facing URL must dereference to exactly what the worker uploaded.
+    assert_presigned_image_download(gen["result"]["annotation"], annotation_image)
     assert retrieve_results["state"] == "done"
 
 

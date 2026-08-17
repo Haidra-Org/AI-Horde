@@ -493,6 +493,7 @@ def start_managed_object_store(runtime: HordeTestRuntime) -> None:
 
     runtime.set_env("AWS_ACCESS_KEY_ID", access_key_id)
     runtime.set_env("AWS_SECRET_ACCESS_KEY", secret_key)
+    runtime.set_env("AWS_DEFAULT_REGION", "garage")
     runtime.set_env("SHARED_AWS_ACCESS_ID", access_key_id)
     runtime.set_env("SHARED_AWS_ACCESS_KEY", secret_key)
     runtime.set_env("R2_TRANSIENT_ACCOUNT", f"http://{host}:{s3_port}")
