@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Run server-backed horde_sdk smoke
+description: Start AI-Horde and run the compatible SDK's real worker round-trip test against it.
+
+inputs:
+  sdk-version-spec:
+    description: Published horde_sdk versions supported by this AI-Horde release.
+    required: false
+    default: '>=0.28.0,<0.29.0'
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/start-test-stack
+
+    - name: Start AI-Horde server
+      shell: bash
+      run: |
+        uv run python server.py -vvvvi --horde stable > server.log 2>&1 &
+        echo "$!" > server.pid
+
+        timeout=120
+        until curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
+          timeout=$((timeout - 2))
+          if [[ "$timeout" -le 0 ]]; then
+            echo "Server failed to start within timeout"
+            cat server.log
+            exit 1
+          fi
+          sleep 2
+        done
+
+        uv run python tests/integration/bootstrap_test_user.py --horde-url http://localhost:7001 --github-env "$GITHUB_ENV"
+
+    - name: Run horde_sdk live worker round-trip
+      shell: bash
+      env:
+        HORDE_SDK_VERSION_SPEC: ${{ inputs.sdk-version-spec }}
+      run: |
+        sdk_workdir="$RUNNER_TEMP/horde-sdk-smoke"
+        mkdir -p "$sdk_workdir"
+        cd "$sdk_workdir"
+
+        python -m venv .venv
+        source .venv/bin/activate
+        python -m pip install --upgrade pip wheel setuptools
+        python -m pip download --no-deps --no-binary :all: "horde_sdk${HORDE_SDK_VERSION_SPEC}"
+        tar -xzf horde_sdk-*.tar.gz
+        cd horde_sdk-*/
+        python -m pip install . --group dev
+        python -m pytest tests/ai_horde_api/test_ai_worker_roundtrip_api_calls.py -m api_side_ci -s
+
+    - uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: horde-sdk-server-log
+        path: server.log
+        if-no-files-found: ignore
+
+    - name: Stop server and local test stack
+      if: always()
+      shell: bash
+      run: |
+        if [[ -f server.pid ]]; then
+          kill "$(cat server.pid)" || true
+        fi
+        docker compose -f tests/docker-compose.yml down
