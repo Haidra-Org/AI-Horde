@@ -78,6 +78,7 @@ dev = [
     "tox~=4.14.1",
     "pytest-asyncio",
     "pytest-cov",
+    "sqlparse",
     "fakeredis",
     "freezegun",
     "testcontainers[postgres,redis]",

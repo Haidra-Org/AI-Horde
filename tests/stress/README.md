@@ -111,16 +111,21 @@ cd tests/stress && locust
 locust -f tests/stress/locustfile.py --host http://localhost:7001
 ```
 
-The mixed workload includes a `SamplerFeatureRequester`. With
-`--sampler-feature-requestors 1`, it deterministically rotates through every
-new sampler plus all explicit schedulers, solver-control fields, and
-`flow_shift`. It keeps at most eight requests queued and cancels older ones, so
-the sweep exercises request validation, waiting-prompt creation, worker
-matching, and cancellation without creating an unbounded backlog. Meta users
-also fetch `/api/v2/status/sampler_constraints`, while misuse users exercise
-the new hard-constraint rejection paths. The default model pool includes the
-SD1 and Flux models needed by the baseline-specific cases, and simulated image
-workers advertise reGen bridge 17 capabilities by default.
+The mixed workload contains separate pre-17 and bridge-17+ image worker
+populations. Pre-17 workers actively fail the Locust run if they receive an
+extended sampler, an explicit scheduler, a solver-control field, or
+`flow_shift`; bridge-17+ workers serve those jobs. Both populations always
+offer `stable_diffusion`, and the newer population also offers the default Flux
+model, while their remaining model sets vary normally.
+
+`SamplerFeatureRequester` walks every extended sampler using no optional
+settings and every applicable setting. Where at least two settings apply, it
+also selects a non-empty proper subset; the same zero/subset/all pattern covers
+the Flux `flow_shift` profile. Applicable solver controls come from the installed
+`horde_sdk` constraints rather than a second Locust-owned compatibility table.
+Use `--sampler-feature-requestors 1 --legacy-image-workers 1
+--extended-image-workers 1` for a deterministic smoke population. Meta users
+also fetch `/api/v2/status/sampler_constraints` as ordinary read-only traffic.
 
 Staged load profile:
 
@@ -401,16 +406,14 @@ A fourth job, `stress-kudos-ledger-job`, does not fit this checker pattern: it
 starts a second `--quorum` server and gates inside the harnesses themselves. See
 the CI regression job note under Kudos ledger operational verification above.
 
-The attribution job runs its server with `HORDE_TEST_RATELIMIT_DISABLED=1`: the
+The attribution and staged sampler-sweep jobs run their server with
+`HORDE_TEST_RATELIMIT_DISABLED=1`: the
 oracle probes pop/declare and maintenance interleavings rather than rate-limit
 behaviour, and a throttled run could reach zero violations without ever reaching
 the interleavings the gate is meant to protect. It passes `--stats` to the
 checker for the same reason, so a run that drove no requests fails instead of
 reporting a vacuous pass. The classic smoke job leaves the limiter in force,
-since the suite counts 429s as successes and the gate is crash-class only. The
-staged-shape smoke disables it so the pinned sampler-feature user can complete
-its deterministic catalog; rate-limit behavior remains covered by the classic
-job.
+since the suite counts 429s as successes and the gate is crash-class only.
 
 The hot-user convoy and queue-pressure scenarios are not in CI. Their verdicts
 come from `analyze_hot_user_convoy.py` and `analyze_queue_pressure.py`, which are

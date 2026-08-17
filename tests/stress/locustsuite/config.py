@@ -37,10 +37,11 @@ _HOT_PROMPT = "a serene cyberpunk landscape at sunset, ultra detailed"
 _HOT_TEXT_PROMPT = "Once upon a time in a faraway land,"
 _INTERROGATION_FORMS = ["caption", "interrogation", "nsfw", "vectorize", "palette", "describe", "aesthetic"]
 
-# Keep this list local to the black-box workload instead of importing the Horde
-# application. Importing the app from a locustfile initializes server-side
-# configuration and defeats the point of exercising a separately running target.
-_NEW_IMAGE_SAMPLERS = (
+# The bridge-17 sampler tiers accepted by this API. The SDK supplies the
+# per-sampler setting constraints; this short list defines which API additions
+# the stress workload should exercise and which jobs a pre-17 worker must never
+# receive.
+_EXTENDED_IMAGE_SAMPLERS = (
     "uni_pc",
     "uni_pc_bh2",
     "dpmpp_2m_sde",
@@ -70,66 +71,16 @@ _NEW_IMAGE_SAMPLERS = (
     "sa_solver_pece",
 )
 
-# Deterministic cases for SamplerFeatureRequester. The first block makes every
-# newly accepted sampler traverse async creation and worker matching. The
-# remaining cases cover every explicit scheduler and solver-control field with
-# combinations accepted by the public constraints document.
-_IMAGE_SAMPLER_FEATURE_CASES = tuple(
+_EXTENDED_SAMPLER_SETTING_FIELDS = frozenset(
     {
-        "name": f"sampler-{sampler}",
-        "params": {"sampler_name": sampler, "scheduler": "karras"},
-    }
-    for sampler in _NEW_IMAGE_SAMPLERS
-) + (
-    {"name": "scheduler-normal", "params": {"sampler_name": "uni_pc", "scheduler": "normal"}},
-    {"name": "scheduler-simple", "params": {"sampler_name": "uni_pc", "scheduler": "simple"}},
-    {"name": "scheduler-sgm-uniform", "params": {"sampler_name": "uni_pc", "scheduler": "sgm_uniform"}},
-    {"name": "scheduler-exponential", "params": {"sampler_name": "uni_pc", "scheduler": "exponential"}},
-    {"name": "scheduler-ddim-uniform", "params": {"sampler_name": "uni_pc", "scheduler": "ddim_uniform"}},
-    {"name": "scheduler-beta", "params": {"sampler_name": "uni_pc", "scheduler": "beta"}},
-    {
-        "name": "scheduler-linear-quadratic",
-        "params": {"sampler_name": "uni_pc", "scheduler": "linear_quadratic"},
-    },
-    {"name": "scheduler-kl-optimal", "params": {"sampler_name": "uni_pc", "scheduler": "kl_optimal"}},
-    {
-        "name": "scheduler-align-your-steps",
-        "params": {"sampler_name": "k_euler", "scheduler": "align_your_steps"},
-        "models": ("stable_diffusion",),
-    },
-    {
-        "name": "scheduler-gits",
-        "params": {"sampler_name": "k_euler", "scheduler": "gits"},
-        "models": ("stable_diffusion",),
-    },
-    {
-        "name": "solver-eta-noise-type",
-        "params": {
-            "sampler_name": "dpmpp_2m_sde",
-            "scheduler": "beta",
-            "sampler_eta": 0.8,
-            "sampler_s_noise": 1.05,
-            "sampler_solver_type": "heun",
-        },
-    },
-    {
-        "name": "solver-churn-window",
-        "params": {
-            "sampler_name": "k_euler",
-            "scheduler": "exponential",
-            "sampler_s_churn": 0.1,
-            "sampler_s_noise": 1.05,
-            "sampler_s_tmin": 0.0,
-            "sampler_s_tmax": 10.0,
-        },
-    },
-    {
-        "name": "solver-order",
-        "params": {"sampler_name": "deis", "scheduler": "sgm_uniform", "sampler_order": 3},
-    },
-    {
-        "name": "flow-shift",
-        "params": {"sampler_name": "k_euler", "scheduler": "simple", "flow_shift": 1.1},
-        "models": ("Flux.1-Schnell fp8 (Compact)",),
+        "scheduler",
+        "sampler_eta",
+        "sampler_s_noise",
+        "sampler_s_churn",
+        "sampler_s_tmin",
+        "sampler_s_tmax",
+        "sampler_solver_type",
+        "sampler_order",
+        "flow_shift",
     },
 )

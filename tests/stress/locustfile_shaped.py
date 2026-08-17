@@ -10,9 +10,11 @@ This imports the same users/events as ``locustfile.py`` and additionally exposes
 """
 
 from locustsuite import (
+    ExtendedWorkerSimulator,
     HotPathRequester,
     InterrogationRequester,
     InterrogationWorkerSimulator,
+    LegacyWorkerSimulator,
     MetaBrowser,
     MisuseUser,
     RequestGenerator,
@@ -20,15 +22,16 @@ from locustsuite import (
     StatusPoller,
     TextRequester,
     TextWorkerSimulator,
-    WorkerSimulator,
 )
 from locustsuite.shapes import HordeStagesShape
 
 __all__ = [
+    "ExtendedWorkerSimulator",
     "HordeStagesShape",
     "HotPathRequester",
     "InterrogationRequester",
     "InterrogationWorkerSimulator",
+    "LegacyWorkerSimulator",
     "MetaBrowser",
     "MisuseUser",
     "RequestGenerator",
@@ -36,5 +39,4 @@ __all__ = [
     "StatusPoller",
     "TextRequester",
     "TextWorkerSimulator",
-    "WorkerSimulator",
 ]

@@ -15,6 +15,7 @@ import base64
 from io import BytesIO
 
 import pytest
+from horde_sdk.ai_horde_api.apimodels import ImageGenerateJobPopResponse
 from PIL import Image
 
 from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
@@ -98,9 +99,11 @@ def test_new_control_type_skips_old_bridge_but_matches_new(client, request_heade
         new_pop = client.post("/api/v2/generate/pop", json=_pop_dict(NEW_BRIDGE_AGENT), headers=request_headers)
         assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
         new_results = new_pop.get_json()
+        sdk_response = ImageGenerateJobPopResponse.model_validate(new_results)
         # The extended-capable worker with the opt-in flag matches the same job.
         assert new_results["id"] is not None, new_results
         assert new_results["payload"]["control_type"] == "lineart", new_results
+        assert sdk_response.payload.control_type == "lineart"
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
 
