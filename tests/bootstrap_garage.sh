@@ -219,6 +219,7 @@ emit_exports() {
   cat <<EOF
 export AWS_ACCESS_KEY_ID="$garage_access_key_id"
 export AWS_SECRET_ACCESS_KEY="$garage_secret_key"
+export AWS_DEFAULT_REGION="garage"
 export SHARED_AWS_ACCESS_ID="$garage_access_key_id"
 export SHARED_AWS_ACCESS_KEY="$garage_secret_key"
 export R2_TRANSIENT_ACCOUNT="http://127.0.0.1:${garage_s3_port}"
@@ -246,6 +247,7 @@ emit_powershell_assignment() {
 emit_powershell_exports() {
   emit_powershell_assignment AWS_ACCESS_KEY_ID "$garage_access_key_id"
   emit_powershell_assignment AWS_SECRET_ACCESS_KEY "$garage_secret_key"
+  emit_powershell_assignment AWS_DEFAULT_REGION "garage"
   emit_powershell_assignment SHARED_AWS_ACCESS_ID "$garage_access_key_id"
   emit_powershell_assignment SHARED_AWS_ACCESS_KEY "$garage_secret_key"
   emit_powershell_assignment R2_TRANSIENT_ACCOUNT "http://127.0.0.1:${garage_s3_port}"

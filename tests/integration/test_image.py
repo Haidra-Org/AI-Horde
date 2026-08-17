@@ -8,6 +8,12 @@ import time
 
 import pytest
 
+from tests.integration._object_storage import (
+    assert_presigned_image_download,
+    make_test_webp,
+    upload_to_presigned_url,
+)
+
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
 
 pytestmark = [
@@ -78,6 +84,10 @@ def test_simple_image_gen(client, request_headers: dict[str, str]) -> None:
         print("Request cancelled")
         raise err
 
+    generated_image = make_test_webp(size=(16, 10), color=(126, 44, 211))
+    # Use the worker-facing presigned URL for a real transfer before submitting the R2 sentinel.
+    upload_to_presigned_url(pop_results["r2_upload"], generated_image)
+
     submit_dict = {
         "id": job_id,
         "generation": "R2",
@@ -100,6 +110,8 @@ def test_simple_image_gen(client, request_headers: dict[str, str]) -> None:
     assert gen["worker_name"] == "CICD Fake Dreamer"
     assert gen["model"] in TEST_MODELS
     assert gen["state"] == "ok"
+    # The requester-facing URL must retrieve exactly the bytes uploaded by the worker simulation.
+    assert_presigned_image_download(gen["img"], generated_image)
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
     _cancel_image_request(client, request_headers, req_id)
