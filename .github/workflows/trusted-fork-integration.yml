@@ -114,52 +114,7 @@ jobs:
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.12'
-      - uses: ./.github/actions/start-test-stack
-
-      - name: Start AI-Horde server
-        run: |
-          uv run python server.py -vvvvi --horde stable > server.log 2>&1 &
-          echo "$!" > server.pid
-
-          timeout=120
-          until curl -sf http://localhost:7001/api/v2/status/heartbeat > /dev/null 2>&1; do
-            timeout=$((timeout - 2))
-            if [[ "$timeout" -le 0 ]]; then
-              echo "Server failed to start within timeout"
-              cat server.log
-              exit 1
-            fi
-            sleep 2
-          done
-
-          uv run python tests/integration/bootstrap_test_user.py --horde-url http://localhost:7001 --github-env "$GITHUB_ENV"
-
-      - name: Run horde_sdk tests
-        run: |
-          python -m venv .venv-sdk
-          source .venv-sdk/bin/activate
-          python -m pip install --upgrade pip wheel setuptools
-
-          python -m pip download --no-deps --no-binary :all: horde_sdk
-          tar -xvf horde_sdk-*.tar.gz
-          cd horde_sdk**/
-          python -m pip install . --group dev
-          python -m pytest tests/ --ignore-glob=*api_calls.py --ignore-glob=*test_model_meta.py -s
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: horde-sdk-server-log
-          path: server.log
-          if-no-files-found: ignore
-
-      - name: Stop server and local test stack
-        if: always()
-        run: |
-          if [[ -f server.pid ]]; then
-            kill "$(cat server.pid)" || true
-          fi
-          docker compose -f tests/docker-compose.yml down
+      - uses: ./.github/actions/run-horde-sdk-smoke
 
   stress-smoke-job:
     name: Locust stress smoke (no 5xx/crashes)
@@ -210,6 +165,8 @@ jobs:
             --run-time 90s \
             --bootstrap-requestors 4 \
             --bootstrap-workers 8 \
+            --legacy-image-workers 1 \
+            --extended-image-workers 1 \
             --sampler-feature-requestors 1 \
             --preflight-fail-hard \
             --bootstrap-fail-hard \
