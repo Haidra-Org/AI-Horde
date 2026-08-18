@@ -209,13 +209,18 @@ class InterrogationForms(db.Model):
         db.session.commit()
 
     def get_details(self):
-        return {
+        details = {
             "form": self.name,
             "state": self.state.name.lower(),
             "result": self.result,
             "worker_id": self.worker_id,
             "worker_name": self.worker.name if self.worker else None,
         }
+        # A request may carry the same form more than once with different payloads (one annotation
+        # per detector), so the payload is the only thing that tells those results apart.
+        if self.payload:
+            details["payload"] = self.payload
+        return details
 
     def send_webhook(self, kudos):
         if not self.interrogation.webhook:
@@ -301,11 +306,14 @@ class Interrogation(db.Model):
     def set_forms(self, forms=None):
         if not forms:
             forms = []
-        seen_names = []
+        seen_forms = set()
         for form in forms:
-            # We don't allow the same interrogation type twice
-            if form["name"] in seen_names:
+            # The same form is only queued once per payload. Forms whose payload differs, such as
+            # annotations for different detectors, are distinct work and are all kept.
+            form_key = (form["name"], json.dumps(form.get("payload"), sort_keys=True))
+            if form_key in seen_forms:
                 continue
+            seen_forms.add(form_key)
             kudos = 1
             # Interrogations are more intensive so they reward better
             if form["name"] == "interrogation":

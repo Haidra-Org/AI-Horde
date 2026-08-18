@@ -1013,6 +1013,15 @@ class ImageModels(v2.Models):
                     description="The overall status of this interrogation.",
                 ),
                 "result": fields.Nested(self.response_model_interrogation_form_result, skip_none=True),
+                "payload": fields.Nested(
+                    self.input_model_interrogation_form_payload,
+                    skip_none=True,
+                    description=(
+                        "The payload this form was requested with, when it had one. "
+                        "Distinguishes results when a request carries the same form more than once, "
+                        "such as one annotation per control_type."
+                    ),
+                ),
             },
         )
         self.response_model_interrogation_status = api.model(

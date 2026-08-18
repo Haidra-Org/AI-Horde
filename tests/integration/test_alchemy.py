@@ -213,6 +213,36 @@ def test_alchemy_annotation(client, request_headers: dict[str, str]) -> None:
     assert retrieve_results["state"] == "done"
 
 
+def test_alchemy_annotation_forms_are_distinct_per_detector(client, request_headers: dict[str, str]) -> None:
+    """One request may carry an annotation form per detector; status echoes each form's payload.
+
+    Identical name+payload pairs collapse to one form, so a repeated detector is not queued twice.
+    """
+    source_image = make_test_webp(size=(12, 8), color=(17, 91, 203))
+    async_dict = {
+        "forms": [
+            {"name": "annotation", "payload": {"control_type": "canny"}},
+            {"name": "annotation", "payload": {"control_type": "depth"}},
+            {"name": "annotation", "payload": {"control_type": "canny"}},
+            {"name": "caption"},
+        ],
+        "source_image": base64.b64encode(source_image).decode("ascii"),
+    }
+    async_req = client.post("/api/v2/interrogate/async", json=async_dict, headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+    try:
+        status = client.get(f"/api/v2/interrogate/status/{req_id}", headers=request_headers).get_json()
+        forms = status["forms"]
+        assert len(forms) == 3, forms
+        annotations = [form for form in forms if form["form"] == "annotation"]
+        assert sorted(form["payload"]["control_type"] for form in annotations) == ["canny", "depth"], forms
+        caption = next(form for form in forms if form["form"] == "caption")
+        assert "payload" not in caption, caption
+    finally:
+        client.delete(f"/api/v2/interrogate/status/{req_id}", headers=request_headers)
+
+
 def _annotation_reward_for_control_type(client, request_headers: dict[str, str], control_type: str) -> float:
     """Run a full annotation pop->submit cycle for ``control_type`` and return the awarded kudos."""
     async_dict = {
