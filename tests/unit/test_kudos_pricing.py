@@ -405,7 +405,7 @@ class TestSchedulerPricing:
 class TestSolverKnobSamplerSlotting:
     """The solver-knob tier has no trained slots, so each name is collapsed onto one that has.
 
-    The grouping is by model evaluations per step, read from horde_sdk, and then by whether the solver is
+    The grouping is by marginal sampler-work rate, read from horde_sdk, and then by whether the solver is
     deterministic or stochastic. A sampler landing on the wrong slot is priced as the wrong workload, and
     nothing else in the system would notice.
     """
@@ -467,33 +467,67 @@ class TestSolverKnobSamplerSlotting:
             assert sampler in CANONICAL_KUDOS_SAMPLERS, f"'{sampler}' would silently price as the euler fallback"
             assert CANONICAL_KUDOS_SAMPLERS[sampler] in KudosModel.KNOWN_SAMPLERS, sampler
 
-    def test_slotting_matches_the_shared_evaluation_counts_where_a_slot_exists(self, kudos_model, basis_payload):
+    def test_slotting_matches_the_shared_work_rates_where_a_slot_exists(self, kudos_model, basis_payload):
         # The slot a sampler takes has to cost what the sampler costs, or the grouping is decorative.
         # The exception is the three-evaluation solvers: the trained vocabulary tops out at two
         # evaluations per step, so they take the most expensive slot available and are under-priced by
         # roughly a third. That predates this tier (heunpp2 has always sat there) and cannot be fixed
         # without retraining, which is why it is asserted rather than left to be discovered.
-        from horde.classes.stable.kudos import CANONICAL_KUDOS_SAMPLERS, KudosModel
-        from horde.consts import SOLVER_KNOB_SAMPLERS, sampler_evaluations_per_step
+        from horde_sdk.generation_parameters.image.consts import KNOWN_IMAGE_SAMPLERS
+        from horde_sdk.generation_parameters.image.sampler_work import (
+            FixedRateSamplerWorkProfile,
+            get_sampler_work_profile,
+        )
 
-        most_expensive_trained_slot = max(sampler_evaluations_per_step(slot) for slot in KudosModel.KNOWN_SAMPLERS)
+        from horde.classes.stable.kudos import CANONICAL_KUDOS_SAMPLERS, KudosModel
+        from horde.consts import SOLVER_KNOB_SAMPLERS
+
+        def fixed_rate(sampler_name):
+            legacy_aliases = {
+                "ddim": KNOWN_IMAGE_SAMPLERS.DDIM,
+                "plms": KNOWN_IMAGE_SAMPLERS.k_lms,
+            }
+            sdk_sampler = legacy_aliases[sampler_name] if sampler_name in legacy_aliases else KNOWN_IMAGE_SAMPLERS(sampler_name)
+            profile = get_sampler_work_profile(sdk_sampler)
+            assert isinstance(profile, FixedRateSamplerWorkProfile)
+            return profile.marginal_work_units_per_trajectory_step
+
+        fixed_trained_slots = [slot for slot in KudosModel.KNOWN_SAMPLERS if slot != "k_dpm_adaptive"]
+        most_expensive_trained_slot = max(fixed_rate(slot) for slot in fixed_trained_slots)
 
         for sampler in SOLVER_KNOB_SAMPLERS:
+            if sampler == "k_dpm_adaptive":
+                continue
             slot = CANONICAL_KUDOS_SAMPLERS[sampler]
-            sampler_cost = sampler_evaluations_per_step(sampler)
-            slot_cost = sampler_evaluations_per_step(slot)
+            sampler_cost = fixed_rate(sampler)
+            slot_cost = fixed_rate(slot)
             expected_cost = min(sampler_cost, most_expensive_trained_slot)
             assert slot_cost == expected_cost, (
-                f"'{sampler}' costs {sampler_cost} evaluations per step but is priced as '{slot}', which costs {slot_cost}"
+                f"'{sampler}' has work rate {sampler_cost} but is priced as '{slot}', which has rate {slot_cost}"
             )
 
-    def test_the_trained_vocabulary_cannot_express_a_three_evaluation_step(self, kudos_model, basis_payload):
+    def test_the_trained_vocabulary_cannot_express_a_three_unit_work_rate(self, kudos_model, basis_payload):
         # Stated outright so the under-pricing above is a known quantity rather than an accident: if a
         # retrained checkpoint ever adds a costlier slot, this fails and the slotting should be revisited.
-        from horde.classes.stable.kudos import KudosModel
-        from horde.consts import sampler_evaluations_per_step
+        from horde_sdk.generation_parameters.image.consts import KNOWN_IMAGE_SAMPLERS
+        from horde_sdk.generation_parameters.image.sampler_work import (
+            FixedRateSamplerWorkProfile,
+            get_sampler_work_profile,
+        )
 
-        assert max(sampler_evaluations_per_step(slot) for slot in KudosModel.KNOWN_SAMPLERS) == 2
+        from horde.classes.stable.kudos import KudosModel
+
+        rates = []
+        for slot in KudosModel.KNOWN_SAMPLERS:
+            legacy_aliases = {
+                "ddim": KNOWN_IMAGE_SAMPLERS.DDIM,
+                "plms": KNOWN_IMAGE_SAMPLERS.k_lms,
+            }
+            sdk_sampler = legacy_aliases[slot] if slot in legacy_aliases else KNOWN_IMAGE_SAMPLERS(slot)
+            profile = get_sampler_work_profile(sdk_sampler)
+            if isinstance(profile, FixedRateSamplerWorkProfile):
+                rates.append(profile.marginal_work_units_per_trajectory_step)
+        assert max(rates) == 2
 
 
 class TestExistingRequestsAreNotRepriced:

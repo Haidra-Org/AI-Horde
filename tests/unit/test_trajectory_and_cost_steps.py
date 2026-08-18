@@ -2,18 +2,17 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""The split between how far a request denoises and how much that costs.
+"""The split between requested trajectory progress and operational sampler work.
 
-``get_accurate_steps`` answers "how far along the denoising path does this go" and
-``get_evaluation_steps`` answers "how many times does the model run". They differ for any solver that
-evaluates the model more than once per step, and the two questions have different right answers:
+Trajectory steps answer "how far along the denoising path was requested". Estimated work answers how
+much first-order-equivalent marginal inference the service should account for.
 
 - A model's own step requirements describe where its output stops improving. That limit is a property
   of the trajectory and does not move because a solver evaluates the model twice per step.
-- A time budget or a usage total is spent per model evaluation, so it does scale.
+- A time budget or a usage total scales with first-order-equivalent sampler work.
 
-Conflating them is not a loud failure. It silently pushes second-order samplers into upfront-kudos
-gates and step-count downgrades they do not warrant, which is what these tests pin against.
+Conflating them is not a loud failure. It silently undercounts higher-order samplers in operational
+gates or incorrectly treats adaptive accounting estimates as requested trajectory length.
 """
 
 from __future__ import annotations
@@ -34,19 +33,25 @@ class FakeWaitingPrompt:
     """
 
     def __init__(self, sampler_name="k_euler", steps=30, width=512, height=512):
-        self.params = {"sampler_name": sampler_name, "steps": steps}
+        self.params = {"sampler_name": sampler_name, "steps": steps, "width": width, "height": height}
         self.gen_payload = {}
         self.width = width
         self.height = height
+        self.n = 1
+        self.slow_workers = False
+        self.id = "fake"
 
     def get_model_names(self):
         return []
 
-    def get_accurate_steps(self):
-        return ImageWaitingPrompt.get_accurate_steps(self)
+    def get_requested_trajectory_steps(self):
+        return ImageWaitingPrompt.get_requested_trajectory_steps(self)
 
-    def get_evaluation_steps(self):
-        return ImageWaitingPrompt.get_evaluation_steps(self)
+    def get_estimated_sampler_work(self):
+        return ImageWaitingPrompt.get_estimated_sampler_work(self)
+
+    def is_using_lcm(self):
+        return False
 
 
 class FakeWorker:
@@ -76,39 +81,38 @@ class FakeProcessingGeneration:
 
 class TestTrajectoryIsUnscaled:
     def test_a_first_order_sampler_reports_the_steps_requested(self):
-        assert FakeWaitingPrompt("k_euler", steps=30).get_accurate_steps() == 30
+        assert FakeWaitingPrompt("k_euler", steps=30).get_requested_trajectory_steps() == 30
 
     def test_a_second_order_sampler_reports_the_steps_requested(self):
-        # Two model evaluations per step is a cost, not a longer trajectory.
-        assert FakeWaitingPrompt("k_heun", steps=30).get_accurate_steps() == 30
+        # A two-unit marginal work rate is a cost, not a longer trajectory.
+        assert FakeWaitingPrompt("k_heun", steps=30).get_requested_trajectory_steps() == 30
 
-    def test_a_three_evaluation_sampler_reports_the_steps_requested(self):
-        assert FakeWaitingPrompt("heunpp2", steps=30).get_accurate_steps() == 30
+    def test_a_three_unit_sampler_reports_the_steps_requested(self):
+        assert FakeWaitingPrompt("heunpp2", steps=30).get_requested_trajectory_steps() == 30
 
-    def test_the_adaptive_sampler_reports_its_own_step_count(self):
-        # It chooses its own step size and disregards the requested value entirely.
-        assert FakeWaitingPrompt("k_dpm_adaptive", steps=5).get_accurate_steps() == 40
+    def test_the_adaptive_sampler_preserves_requested_trajectory_length(self):
+        assert FakeWaitingPrompt("k_dpm_adaptive", steps=5).get_requested_trajectory_steps() == 5
 
 
-class TestCostIsScaled:
-    def test_a_first_order_sampler_costs_one_evaluation_per_step(self):
-        assert FakeWaitingPrompt("k_euler", steps=30).get_evaluation_steps() == 30
+class TestEstimatedWork:
+    def test_a_first_order_sampler_costs_one_work_unit_per_step(self):
+        assert FakeWaitingPrompt("k_euler", steps=30).get_estimated_sampler_work().work_units.value == 30
 
-    def test_a_second_order_sampler_costs_two_evaluations_per_step(self):
-        assert FakeWaitingPrompt("k_heun", steps=30).get_evaluation_steps() == 60
+    def test_a_second_order_sampler_costs_two_work_units_per_step(self):
+        assert FakeWaitingPrompt("k_heun", steps=30).get_estimated_sampler_work().work_units.value == 60
 
-    def test_a_three_evaluation_sampler_costs_three_per_step(self):
-        assert FakeWaitingPrompt("heunpp2", steps=30).get_evaluation_steps() == 90
+    def test_a_three_unit_sampler_costs_three_per_step(self):
+        assert FakeWaitingPrompt("heunpp2", steps=30).get_estimated_sampler_work().work_units.value == 90
 
-    def test_a_multistep_solver_costs_one_evaluation_per_step(self):
-        # It reuses its previous evaluation, so the "2M" in the name is not a cost.
-        assert FakeWaitingPrompt("dpmpp_2m_sde", steps=30).get_evaluation_steps() == 30
+    def test_a_multistep_solver_costs_one_work_unit_per_step(self):
+        # It reuses prior state, so the "2M" in the name is not a marginal work multiplier.
+        assert FakeWaitingPrompt("dpmpp_2m_sde", steps=30).get_estimated_sampler_work().work_units.value == 30
 
-    def test_an_unknown_sampler_costs_one_evaluation_per_step(self):
-        assert FakeWaitingPrompt("not_a_real_sampler_xyz", steps=30).get_evaluation_steps() == 30
+    def test_an_unknown_sampler_uses_the_legacy_first_order_fallback(self):
+        assert FakeWaitingPrompt("not_a_real_sampler_xyz", steps=30).get_estimated_sampler_work().work_units.value == 30
 
     def test_the_adaptive_sampler_costs_its_assumed_step_count(self):
-        assert FakeWaitingPrompt("k_dpm_adaptive", steps=5).get_evaluation_steps() == 40
+        assert FakeWaitingPrompt("k_dpm_adaptive", steps=5).get_estimated_sampler_work().work_units.value == 40
 
 
 class TestJobTimeBudget:
@@ -135,38 +139,42 @@ class TestJobTimeBudget:
         assert tiny.job_ttl == 150
 
 
-class TestUsageIsCountedInEvaluations:
-    def test_usage_scales_with_evaluations_rather_than_steps(self):
+class TestUsageIsCountedInWorkUnits:
+    def test_usage_scales_with_work_rather_than_trajectory_steps(self):
         # `things` is what the user's recorded usage is measured in, so it should reflect the work done.
         first_order = FakeWaitingPrompt("k_euler", steps=30, width=512, height=512)
         second_order = FakeWaitingPrompt("k_heun", steps=30, width=512, height=512)
 
-        first_order_things = first_order.width * first_order.height * first_order.get_evaluation_steps()
-        second_order_things = second_order.width * second_order.height * second_order.get_evaluation_steps()
+        first_order_things = first_order.width * first_order.height * first_order.get_estimated_sampler_work().work_units.value
+        second_order_things = second_order.width * second_order.height * second_order.get_estimated_sampler_work().work_units.value
 
         assert second_order_things == first_order_things * 2
 
 
-class TestModelStepLimitsReadTheTrajectory:
-    """The comparisons against a model's own step requirements must not scale with solver cost.
-
-    These mirror the upfront-kudos gates, the downgrade loop and the worker step-count match, all of
-    which compare against `max_steps` from the model reference.
-    """
+class TestOperationalBudgetsReadWork:
+    """Service workload gates compare explicit work units, not ambiguous sampler steps."""
 
     @pytest.mark.parametrize("sampler_name", ["k_euler", "k_heun", "heunpp2", "seeds_3"])
-    def test_a_request_at_the_models_limit_is_within_it_on_any_sampler(self, sampler_name):
-        model_max_steps = 30
-        waiting_prompt = FakeWaitingPrompt(sampler_name, steps=model_max_steps)
-
-        # This is the comparison the downgrade loop and the upfront-kudos gates perform.
-        assert waiting_prompt.get_accurate_steps() <= model_max_steps
+    def test_a_request_at_a_trajectory_limit_has_sampler_dependent_work(self, sampler_name):
+        waiting_prompt = FakeWaitingPrompt(sampler_name, steps=30)
+        expected = {"k_euler": 30, "k_heun": 60, "heunpp2": 90, "seeds_3": 90}[sampler_name]
+        assert waiting_prompt.get_estimated_sampler_work().work_units.value == expected
 
     def test_a_request_above_the_models_limit_is_still_caught(self):
         waiting_prompt = FakeWaitingPrompt("k_heun", steps=31)
-        assert waiting_prompt.get_accurate_steps() > 30
+        assert waiting_prompt.get_estimated_sampler_work().work_units.value > 30
 
     def test_the_lcm_step_gate_reads_the_trajectory(self):
-        # The LCM gate allows 10 steps; a solver's evaluation count must not consume that allowance.
+        # A 10-unit operational budget admits five second-order trajectory steps, not ten.
         waiting_prompt = FakeWaitingPrompt("k_heun", steps=10)
-        assert waiting_prompt.get_accurate_steps() <= 10
+        assert waiting_prompt.get_estimated_sampler_work().work_units.value > 10
+
+
+class TestDowngradePlanning:
+    def test_over_budget_adaptive_request_is_left_entirely_unchanged(self):
+        waiting_prompt = FakeWaitingPrompt("k_dpm_adaptive", steps=30, width=1024, height=1024)
+        waiting_prompt.params["control_type"] = "canny"
+        original = (dict(waiting_prompt.params), waiting_prompt.width, waiting_prompt.height, waiting_prompt.slow_workers)
+
+        assert ImageWaitingPrompt.downgrade(waiting_prompt, 512) is False
+        assert (waiting_prompt.params, waiting_prompt.width, waiting_prompt.height, waiting_prompt.slow_workers) == original

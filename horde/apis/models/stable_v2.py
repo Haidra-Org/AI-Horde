@@ -179,7 +179,15 @@ class ImageParsers(v2.Parsers):
             type=bool,
             required=False,
             default=False,
-            help="If True, This worker will not pick up jobs with more steps than the average allowed for that model.",
+            help="If true, reject jobs whose guaranteed maximum sampler work exceeds the model-average budget.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "sampler_execution_contract_version",
+            type=str,
+            required=False,
+            default=None,
+            help="SDK sampler execution contract version guaranteed by this worker process.",
             location="json",
         )
         self.job_submit_parser.add_argument(
@@ -238,6 +246,12 @@ def inline_json_schema_definitions(schema: dict[str, Any]) -> dict[str, Any]:
                 expanded["enum"] = [constant]
 
             expanded.pop("propertyNames", None)
+
+            discriminator = expanded.get("discriminator")
+            if isinstance(discriminator, dict):
+                # Pydantic emits OpenAPI 3's object form, including a map back into `$defs`.
+                # Swagger 2 represents the same discriminator as the property name alone.
+                expanded["discriminator"] = discriminator["propertyName"]
 
             alternatives = expanded.pop("anyOf", None)
             if alternatives is not None:
@@ -742,9 +756,12 @@ class ImageModels(v2.Models):
                 "limit_max_steps": fields.Boolean(
                     default=True,
                     description=(
-                        "If True, This worker will not pick up jobs with more steps than the average allowed for that model."
-                        " this is for use by workers which might run into issues doing too many steps."
+                        "If true, reject jobs whose guaranteed maximum sampler work exceeds the model-average budget."
                     ),
+                ),
+                "sampler_execution_contract_version": fields.String(
+                    default=None,
+                    description="SDK sampler execution contract version guaranteed by this worker process.",
                 ),
             },
         )

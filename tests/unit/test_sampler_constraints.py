@@ -21,6 +21,12 @@ from horde_sdk.generation_parameters.image.constraints_document import (
     PublishedSamplerRecord,
     SamplerConstraintsDocument,
 )
+from horde_sdk.generation_parameters.image.consts import KNOWN_IMAGE_SAMPLERS
+from horde_sdk.generation_parameters.image.sampler_work import (
+    AdaptiveSamplerWorkProfile,
+    FixedRateSamplerWorkProfile,
+    get_sampler_work_profile,
+)
 
 from horde import exceptions as e
 from horde.apis.models.stable_v2 import inline_json_schema_definitions
@@ -29,7 +35,6 @@ from horde.consts import (
     KNOWN_SCHEDULERS,
     SOLVER_KNOB_SAMPLERS,
     baseline_for_constraints,
-    sampler_evaluations_per_step,
 )
 from horde.sampler_constraints import compile_sampler_constraints
 from horde.validation import ParamValidator
@@ -215,26 +220,38 @@ class TestCfgPPAdvisory:
         assert WarningMessage.CfgPPScaleTooLarge not in validator.warnings
 
 
-class TestEvaluationCounts:
-    def test_the_classic_second_order_samplers_cost_two_evaluations(self):
+def marginal_work_rate(sampler_name: str) -> int | None:
+    """Return a fixed sampler's marginal work rate, or none for adaptive/unknown names."""
+    try:
+        profile = get_sampler_work_profile(KNOWN_IMAGE_SAMPLERS(sampler_name))
+    except ValueError:
+        return None
+    if isinstance(profile, FixedRateSamplerWorkProfile):
+        return profile.marginal_work_units_per_trajectory_step
+    assert isinstance(profile, AdaptiveSamplerWorkProfile)
+    return None
+
+
+class TestWorkProfiles:
+    def test_the_classic_second_order_samplers_have_two_work_units_per_step(self):
         for sampler in ("k_heun", "k_dpm_2", "k_dpm_2_a", "k_dpmpp_2s_a", "k_dpmpp_sde"):
-            assert sampler_evaluations_per_step(sampler) == 2, sampler
+            assert marginal_work_rate(sampler) == 2, sampler
 
     def test_the_three_evaluation_samplers_are_priced_as_such(self):
         for sampler in ("heunpp2", "seeds_3"):
-            assert sampler_evaluations_per_step(sampler) == 3, sampler
+            assert marginal_work_rate(sampler) == 3, sampler
 
     def test_multistep_solvers_cost_one_evaluation(self):
         for sampler in ("k_dpmpp_2m", "dpmpp_2m_sde", "dpmpp_3m_sde", "deis", "ipndm", "res_multistep"):
-            assert sampler_evaluations_per_step(sampler) == 1, sampler
+            assert marginal_work_rate(sampler) == 1, sampler
 
     def test_an_unknown_sampler_is_priced_as_first_order(self):
         # Read for payloads already stored, whose sampler was validated when the request was made.
-        assert sampler_evaluations_per_step("not_a_real_sampler_xyz") == 1
+        assert marginal_work_rate("not_a_real_sampler_xyz") is None
 
     def test_every_accepted_sampler_has_a_count(self):
         for sampler in KNOWN_SAMPLERS:
-            assert sampler_evaluations_per_step(sampler) >= 1, sampler
+            assert get_sampler_work_profile(KNOWN_IMAGE_SAMPLERS(sampler)) is not None
 
 
 class TestPublishedConstraints:
@@ -256,10 +273,10 @@ class TestPublishedConstraints:
         for sampler in document["samplers"]:
             assert sampler in KNOWN_SAMPLERS, sampler
 
-    def test_each_sampler_carries_its_cost_and_vocabulary(self, document):
+    def test_each_sampler_carries_its_work_profile_and_vocabulary(self, document):
         for sampler, entry in document["samplers"].items():
             assert entry["name"] == sampler
-            assert entry["evaluations_per_step"] == sampler_evaluations_per_step(sampler)
+            assert entry["work_profile"]["kind"] in {"fixed_rate", "adaptive"}
             assert isinstance(entry["accepted_settings"], dict)
             assert isinstance(entry["solver_type_choices"], list)
 
@@ -333,20 +350,20 @@ class TestPublishedConstraints:
     def test_the_measured_cost_ratios_are_labelled_and_traceable(self, document):
         # Published as bare numbers they read like prices. They are evidence about cost, and a client
         # needs to be told what produced them and which field a request is actually charged on.
-        cost_basis = document["cost_basis"]
+        work_accounting = document["work_accounting"]
 
-        assert cost_basis["measured_cost_ratio_provenance"] == "measured"
-        assert cost_basis["authoritative_field"] == "evaluations_per_step"
-        assert cost_basis["measured_cost_ratio_source"].endswith(".json")
-        assert "pricing and time budgeting read evaluations_per_step" in cost_basis["measured_cost_ratio_note"]
+        assert work_accounting["measured_cost_ratio_provenance"] == "measured"
+        assert work_accounting["authoritative_field"] == "work_profile"
+        assert work_accounting["measured_cost_ratio_source"].endswith(".json")
+        assert "fixed-rate work profiles" in work_accounting["measured_cost_ratio_note"]
 
     def test_each_measured_figure_states_the_model_it_was_taken_on(self, document):
         # The two differ systematically, so a figure read without its resolution is misleading.
-        cost_basis = document["cost_basis"]
+        work_accounting = document["work_accounting"]
 
-        assert "1024x1024" in cost_basis["measured_cost_ratio_sdxl_note"]
-        assert "512x512" in cost_basis["measured_cost_ratio_sd15_note"]
-        assert "biases the one-evaluation samplers upwards" in cost_basis["measured_cost_ratio_sd15_note"]
+        assert "1024x1024" in work_accounting["measured_cost_ratio_sdxl_note"]
+        assert "512x512" in work_accounting["measured_cost_ratio_sd15_note"]
+        assert "biases the one-evaluation samplers upwards" in work_accounting["measured_cost_ratio_sd15_note"]
 
     def test_both_measured_figures_are_served_for_every_sampler_that_has_them(self, document):
         for sampler, entry in document["samplers"].items():
@@ -370,7 +387,7 @@ class TestPublishedConstraints:
             if ratio is None:
                 continue
 
-            expected = entry["evaluations_per_step"]
+            expected = entry["work_profile"]["marginal_work_units_per_trajectory_step"]
             assert abs(ratio - expected) <= 0.2 * expected, sampler
 
     def test_the_ruled_recommendations_are_served_as_ruled(self, document):
@@ -437,8 +454,8 @@ class TestTheDocumentAndItsPublishedTypeStayInLockstep:
         assert '"const"' not in rendered
         assert '"propertyNames"' not in rendered
         assert rendered.count('"x-nullable"') == 4
-        assert swagger_schema["properties"]["cost_basis"]["properties"]["authoritative_field"]["enum"] == [
-            "evaluations_per_step",
+        assert swagger_schema["properties"]["work_accounting"]["properties"]["authoritative_field"]["enum"] == [
+            "work_profile",
         ]
 
     def test_the_swagger_schema_describes_the_served_top_level(self, swagger_schema, document):

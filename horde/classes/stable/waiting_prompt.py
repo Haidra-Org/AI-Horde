@@ -9,6 +9,7 @@ import random
 import time
 
 import logfire
+from horde_sdk.generation_parameters.image.sampler_work import SamplerWorkEstimate, SamplerWorkUnitCount
 from sqlalchemy.sql import expression
 
 from horde import vars as hv
@@ -22,7 +23,6 @@ from horde.consts import (
     KNOWN_LCM_LORA_VERSIONS,
     KNOWN_POST_PROCESSORS,
     LEGACY_SCHEDULERS,
-    sampler_evaluations_per_step,
     scheduler_for_request,
 )
 from horde.flask import db
@@ -40,6 +40,11 @@ from horde.r2 import (
     download_source_image,
     download_source_mask,
     generate_procgen_upload_url,
+)
+from horde.sampler_work_policy import (
+    estimate_request_sampler_work,
+    maximum_request_trajectory_steps_for_work_budget,
+    sampler_work_request_from_payload,
 )
 from horde.utils import get_random_seed
 
@@ -138,7 +143,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([self.prompt,self.params['width'],self.params['sampler_name']])
         # Usage is counted in model evaluations rather than denoising steps, so a solver that evaluates
         # the model more than once per step is recorded at what it actually consumed.
-        self.things = self.width * self.height * self.get_evaluation_steps()
+        self.things = self.width * self.height * self.get_estimated_sampler_work().work_units.value
         self.total_usage = round(self.things * self.n / hv.thing_divisors["image"], 2)
         # Education accounts get some settings hardcoded regardless of the request
         if self.user.education:
@@ -298,7 +303,8 @@ class ImageWaitingPrompt(WaitingPrompt):
                 client_agent = self.client_agent
                 width = self.width
                 height = self.height
-                accurate_steps = self.get_accurate_steps()
+                trajectory_steps = self.get_requested_trajectory_steps()
+                estimated_work_units = self.get_estimated_sampler_work().work_units.value
                 n_value = self.n
                 kudos_value = self.kudos
                 total_usage = self.total_usage
@@ -308,7 +314,8 @@ class ImageWaitingPrompt(WaitingPrompt):
                 log_msg = (
                     f"New {prompt_type} prompt with ID {wp_id} by {user_alias}{proxied_account} "
                     f"({ipaddr}) ({client_agent}): "
-                    f"w:{width} * h:{height} * s:{accurate_steps} * n:{n_value} "
+                    f"w:{width} * h:{height} * trajectory_steps:{trajectory_steps} * "
+                    f"estimated_work_units:{estimated_work_units} * n:{n_value} "
                     + (f"using model(s) {', '.join(model_names)} " if model_names else "(no model specified) ")
                 )
                 if params_copy.get("post_processing"):
@@ -460,15 +467,17 @@ class ImageWaitingPrompt(WaitingPrompt):
             max_res = 1024
         if max_res > 1024:
             max_res = 1024
-        # Using more than 10 steps with LCM requires upfront kudos
-        if self.is_using_lcm() and self.get_accurate_steps() > 10:
+        estimated_work_units = self.get_estimated_sampler_work().work_units.value
+        # LCM's free-tier operational budget is 10 first-order-equivalent work units.
+        if self.is_using_lcm() and estimated_work_units > 10:
             return (True, max_res, False)
-        # Some models don't require a lot of steps, so we check their requirements. The max steps we allow without upfront kudos is 40
-        if any(model_reference.get_model_requirements(mn).get("max_steps", 40) < self.get_accurate_steps() for mn in model_names):
+        # Model requirement values seed the service's first-order-equivalent work budgets. They are not
+        # used here as trajectory-quality validation.
+        if any(model_reference.get_model_requirements(mn).get("max_steps", 40) < estimated_work_units for mn in model_names):
             return (True, max_res, False)
         if self.width * self.height > max_res * max_res:
             return (True, max_res, False)
-        if self.params.get("control_type") and self.get_accurate_steps() > 20:
+        if self.params.get("control_type") and estimated_work_units > 20:
             return (True, max_res, False)
         # haven't decided yet if this is a good idea.
         # if 'RealESRGAN_x4plus' in self.gen_payload.get('post_processing', []):
@@ -478,20 +487,22 @@ class ImageWaitingPrompt(WaitingPrompt):
             return (True, max_res, True)
         return (False, max_res, False)
 
-    def downgrade(self, max_resolution):
-        """Ensures this WP requirements are not exceeding upfront kudos requirements"""
-        self.slow_workers = True
-        downgraded = False
+    def downgrade(self, max_resolution: int) -> bool:
+        """Atomically fit this request within free-tier resolution and sampler-work budgets.
 
+        Returns false without mutation when the sampler's accounting profile cannot be made to fit by
+        reducing trajectory steps. In particular, adaptive work estimates are request-independent and
+        never trigger sampler substitution.
+        """
         area_limit = max_resolution * max_resolution
         area = self.width * self.height
+        new_width = self.width
+        new_height = self.height
         if area > area_limit:
-            downgraded = True
-
             # Scale to fit into max_resolution
             scale = math.sqrt(area_limit / area)
-            new_width = int(self.width * scale)
-            new_height = int(self.height * scale)
+            new_width = int(new_width * scale)
+            new_height = int(new_height * scale)
 
             # Snap down to multiple of 64
             new_width = (new_width // 64) * 64
@@ -508,26 +519,39 @@ class ImageWaitingPrompt(WaitingPrompt):
             if new_width * new_height < 512 * 512:
                 new_width = 512
                 new_height = 512
+        max_work_units = min(
+            (model_reference.get_model_requirements(mn).get("max_steps", 40) for mn in self.get_model_names()),
+            default=40,
+        )
+        if self.params.get("control_type"):
+            max_work_units = 20
+        if self.is_using_lcm():
+            max_work_units = 10
+        work_request = sampler_work_request_from_payload(self.params)
+        maximum_steps = maximum_request_trajectory_steps_for_work_budget(
+            work_request,
+            work_budget=SamplerWorkUnitCount(int(max_work_units)),
+        )
+        if maximum_steps is None:
+            return False
+
+        new_steps = maximum_steps.value
+        downgraded = (new_width, new_height, new_steps) != (self.width, self.height, self.params["steps"])
+        self.slow_workers = True
+        if downgraded:
             self.width = new_width
             self.height = new_height
-        max_steps = min(model_reference.get_model_requirements(mn).get("max_steps", 30) for mn in self.get_model_names())
-        if self.params.get("control_type"):
-            max_steps = 20
-        if self.is_using_lcm():
-            max_steps = 10
-        while self.get_accurate_steps() > max_steps:
-            downgraded = True
-            self.params["steps"] -= 1
-            if self.params["steps"] < 5:
-                break
-        if downgraded:
+            self.params["steps"] = new_steps
             self.params["width"] = self.width
             self.params["height"] = self.height
             self.gen_payload["height"] = self.height
             self.gen_payload["width"] = self.width
             self.gen_payload["ddim_steps"] = self.params["steps"]
+            self.things = self.width * self.height * self.get_estimated_sampler_work().work_units.value
+            self.total_usage = round(self.things * self.n / hv.thing_divisors["image"], 2)
             logger.info(f"Image WP {self.id} was downgraded to {self.width}x{self.height}x{self.params['steps']}")
             db.session.commit()
+        return True
 
     def is_using_lcm(self):
         if self.params["sampler_name"] == "lcm":
@@ -539,34 +563,13 @@ class ImageWaitingPrompt(WaitingPrompt):
             elif lora["name"] in KNOWN_LCM_LORA_IDS:
                 return True
 
-    def get_accurate_steps(self):
-        """Returns the denoising steps this request performs, disregarding what each one costs.
+    def get_requested_trajectory_steps(self):
+        """Return requested denoising-schedule progress without applying accounting policy."""
+        return sampler_work_request_from_payload(self.params).trajectory_steps.value
 
-        This is trajectory length, not cost. It answers "how far along the denoising path does this go",
-        which is what a model's own step requirements are expressed in: a model asking for at most 30
-        steps is describing where its output stops improving, and that limit does not move because a
-        solver evaluates the model more than once per step. Anything measuring cost or time wants
-        get_evaluation_steps() instead.
-        """
-        if self.params.get("sampler_name", "k_euler_a") in ["k_dpm_adaptive"]:
-            # This sampler chooses the steps amount automatically
-            # and disregards the steps value from the user
-            # so we just calculate it as an average 40 steps
-            return 40
-        return self.params["steps"]
-
-    def get_evaluation_steps(self):
-        """Returns the model evaluations this request performs, which is what its cost scales with.
-
-        A second-order solver evaluates the model twice per denoising step and takes about twice as long
-        for the same step count, so a time budget or a usage total that counted steps alone would
-        under-count it. Per-sampler evaluation counts come from horde_sdk, which reads them from the
-        image backend's own solver implementations.
-
-        This deliberately differs from get_accurate_steps(): see its docstring for why a model's step
-        requirements are not scaled this way.
-        """
-        return self.get_accurate_steps() * sampler_evaluations_per_step(self.params.get("sampler_name", "k_euler_a"))
+    def get_estimated_sampler_work(self) -> SamplerWorkEstimate:
+        """Return AI-Horde's operational work estimate for this request."""
+        return estimate_request_sampler_work(sampler_work_request_from_payload(self.params))
 
     def log_faulted_prompt(self):
         source_processing = "txt2img"

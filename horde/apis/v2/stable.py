@@ -308,15 +308,23 @@ class ImageAsyncGenerate(GenerateTemplate):
             )
             if reservation is None:
                 if self.args.allow_downgrade and not disable_downgrade:
-                    self.wp.downgrade(resolution)
+                    if not self.wp.downgrade(resolution):
+                        self.wp.delete()
+                        raise e.KudosUpfront(
+                            required_kudos,
+                            self.username,
+                            message=(
+                                "This request's adaptive sampler work estimate exceeds the free-tier budget and "
+                                "cannot be reduced by changing trajectory steps without changing sampler identity."
+                            ),
+                        )
                 else:
                     self.wp.delete()
                     raise e.KudosUpfront(
                         required_kudos,
                         self.username,
                         message=f"Due to heavy demand, for requests over {resolution}x{resolution} "
-                        "or over 50 steps (10 steps for LCM work, 30 steps for Stable Cascade, "
-                        "and half those steps for k_heun, dpmpp_sde, and dpm_2*) "
+                        "or over the applicable first-order-equivalent sampler work budget "
                         "the client needs to already have the required kudos. "
                         f"This request requires {required_kudos} kudos to fulfil.",
                     )
@@ -701,7 +709,7 @@ class ImageJobPop(JobPopTemplate):
 
     def check_in(self):
         self.worker.check_in(
-            self.args.max_pixels,
+            max_pixels=self.args.max_pixels,
             nsfw=self.args.nsfw,
             require_upfront_kudos=self.args.require_upfront_kudos,
             blacklist=self.blacklist,
@@ -720,6 +728,7 @@ class ImageJobPop(JobPopTemplate):
             allow_lora=self.args.allow_lora,
             extra_slow_worker=self.args.extra_slow_worker,
             limit_max_steps=self.args.limit_max_steps,
+            sampler_execution_contract_version=self.args.sampler_execution_contract_version,
             priority_usernames=self.priority_usernames,
         )
 

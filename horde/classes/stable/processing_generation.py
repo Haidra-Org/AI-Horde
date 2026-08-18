@@ -193,7 +193,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
         # Budgeted in model evaluations rather than denoising steps: the wall time a worker needs scales
         # with how many times it runs the model, so a solver that evaluates twice per step needs about
         # twice as long at the same step count.
-        self.job_ttl = 30 + (self.wp.get_evaluation_steps() * 2 * ttl_multiplier)
+        self.job_ttl = 30 + (self.wp.get_estimated_sampler_work().work_units.value * 2 * ttl_multiplier)
         # CN is 3 times slower
         if self.wp.gen_payload.get("control_type"):
             self.job_ttl = self.job_ttl * 2

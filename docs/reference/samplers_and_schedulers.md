@@ -39,21 +39,30 @@ inject fresh noise at each step, so they have no fixed point to converge to and 
 different output at any step count. This is why they look distinct in side-by-side comparisons while the
 deterministic ones do not.
 
-## Cost is per model evaluation, not per step
+## Trajectory steps, estimated work, and execution ceilings are different units
 
 A second-order sampler evaluates the model twice per step, so comparing samplers at equal step counts
 charges them unequally. The correct comparison is at equal wall time: published guidance puts it as
 comparing Heun at 30 steps against Euler at 15
 
-Evaluations per step is a code fact, read from the solver implementations and carried in horde_sdk. It
-is the durable half of this document: `k_heun`, `k_dpm_2`, `k_dpm_2_a`, `k_dpmpp_2s_a` and `k_dpmpp_sde`
-evaluate the model twice per step; `heunpp2` and `seeds_3` three times; everything else once, including
-the multistep solvers whose names suggest otherwise. The wall-time ratios measured below are a separate
-claim about one card, and they corroborate these counts rather than compete with them.
+The SDK calls this relationship **sampler work**: one work unit approximates the marginal inference work
+of an ordinary first-order model evaluation at the same payload. Fixed samplers carry a one-, two-, or
+three-unit marginal rate. This is intentionally not called an exact evaluation count because terminal
+steps and solver reuse make exact NFE differ slightly, and it is not wall time because hardware and
+payload overhead still matter.
 
 `k_dpm_adaptive` is excluded from the comparisons below because it chooses its own iteration count rather
-than following the schedule; the worker bounds it at 1.25x the nominal count and discloses when it
-truncates.
+than following the schedule. AI-Horde uses a stable 40-work-unit request estimate for usage, TTL, and
+upfront policy. A backend may separately advertise sampler execution contract `1.0`, which contains
+the atomic `bounded_dpm_adaptive_v1` guarantee: at most `ceil(1.25 * trajectory_steps)` solver
+iterations. Each iteration costs the requested solver order—two or three work units—so a 20-step
+request has a hard ceiling of 50 or 75 work units respectively. An estimate and a ceiling answer
+different questions and are never substituted for one another.
+
+The public sampler-constraints document is self-describing. Its `schema_version` identifies the JSON
+shape, while `execution_contracts` publishes each worker conformance version and the complete formulas
+behind its atomic guarantees. A worker reports only `sampler_execution_contract_version`; it does not
+need to assemble or interpret a list of individual guarantees.
 
 ## Measured: cost per step and how quickly each sampler settles
 
@@ -71,9 +80,9 @@ more nearly stopped changing by 24 steps. It is a rate proxy, not an absolute qu
 **meaningless for stochastic samplers**, which have no fixed point and cannot settle by construction.
 Their rows are retained for completeness rather than for comparison.
 
-The two cost columns are wall-time fits on one card. Read them as confirmation of the evaluation counts
-rather than as a price: the horde prices on the evaluation count, which is read from the solver
-implementations and holds on any hardware.
+The two cost columns are wall-time fits on one card. Read them as evidence for the fixed marginal work
+families rather than as a price. The learned Kudos model consumes raw trajectory steps plus sampler
+identity and is not multiplied by these work rates.
 
 The SDXL column is the one to read for what a sampler itself costs. At 1024x1024 the GPU work of a step
 swamps the host-side work of issuing it, and every sampler lands within a fifth of its evaluation count.
@@ -126,15 +135,17 @@ takes longer, not because anything multiplies its step count.
 Two consequences are worth stating, because both are easy to assume otherwise:
 
 - A sampler the model was never trained on has no slot of its own. It is collapsed onto a trained slot
-  with the same evaluations per step before the lookup (`CANONICAL_KUDOS_SAMPLERS` in
+  with the same marginal work profile before the lookup (`CANONICAL_KUDOS_SAMPLERS` in
   `horde/classes/stable/kudos.py`), which is where every sampler added after the checkpoint was frozen
   gets its price. Adding samplers therefore reprices nothing that was already being served.
 - The trained vocabulary tops out at two evaluations per step, so the three-evaluation solvers
   (`heunpp2`, `seeds_3`) take the most expensive slot available and are under-priced by roughly a third.
   Correcting that needs a retrained checkpoint rather than a multiplier.
 
-Evaluations per step is used elsewhere, for the quantities that genuinely scale with compute: the job
-time budget a worker is given, and the usage totals recorded against an account.
+Estimated work is used for quantities that scale with expected compute: job TTL, upfront policy, and
+usage totals. A worker opting into `limit_max_steps` instead uses maximum work: fixed samplers have a
+finite profile-derived ceiling, while adaptive work requires an explicitly advertised backend
+execution contract.
 
 ## Solver options
 

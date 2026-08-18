@@ -49,7 +49,7 @@ dependencies = [
     # sampler/scheduler/baseline combinations cannot produce an image. Request validation, pricing and
     # the published constraints endpoint all read it, so the vocabulary cannot drift between this API,
     # the workers, and the clients that share this package.
-    "horde_sdk>=0.28.0,<0.29.0",
+    "horde_sdk>=0.29.0,<0.30.0",
     "markdownify",
     "stripe<15",
     "environs",
@@ -192,5 +192,7 @@ module = [
     "horde.database.kudos_legacy_projection",
     "horde.database.kudos_reconciliation",
     "horde.database.kudos_reservations",
+    "horde.sampler_constraints",
+    "horde.sampler_work_policy",
 ]
 strict = true

@@ -34,51 +34,64 @@ from horde_sdk.generation_parameters.image.constraints import (
     SamplerRecommendation,
 )
 from horde_sdk.generation_parameters.image.constraints_document import (
+    PublishedAdaptiveIterationCeiling,
+    PublishedAdaptiveWorkProfile,
     PublishedAdvisories,
-    PublishedCostBasis,
+    PublishedBoundedAdaptiveSamplerExecutionGuarantee,
+    PublishedFixedRateWorkProfile,
     PublishedHardConstraints,
     PublishedKnobRange,
     PublishedPresentationTiers,
     PublishedRecommendation,
     PublishedRejectedPairing,
+    PublishedSamplerExecutionContract,
     PublishedSamplerRecord,
+    PublishedWorkAccounting,
     SamplerConstraintsDocument,
 )
 from horde_sdk.generation_parameters.image.consts import KNOWN_IMAGE_SAMPLERS, KNOWN_IMAGE_SCHEDULERS
+from horde_sdk.generation_parameters.image.sampler_work import (
+    BOUNDED_DPM_ADAPTIVE_V1,
+    SAMPLER_EXECUTION_CONTRACTS,
+    AdaptiveSamplerWorkProfile,
+    FixedRateSamplerWorkProfile,
+    SamplerExecutionContractVersion,
+    SamplerExecutionGuarantee,
+)
 
 from horde.consts import KNOWN_SAMPLERS, KNOWN_SCHEDULERS
+from horde.sampler_work_policy import AI_HORDE_SAMPLER_WORK_ESTIMATION_POLICY
 from horde.validation import CFG_PP_ADVISED_MAX_CFG_SCALE, SOLVER_KNOB_REQUEST_FIELDS
 
 # JSON has no literal for infinity, and the encoders that emit one produce output strict parsers reject.
 # An unbounded maximum, or a default of "no limit", therefore publishes null: for a bound that reads as
 # "no upper limit", and for a default as "the solver applies no limit unless you set one".
-_JSON_UNBOUNDED = None
+_JSON_UNBOUNDED: None = None
 
-_AUTHORITATIVE_NOTE = (
-    "How many times a step runs the model, read from the backend's own solver "
-    "implementations. This is what a request is priced and time-budgeted on."
+_AUTHORITATIVE_NOTE: str = (
+    "First-order-equivalent marginal sampler work. Fixed samplers scale with requested trajectory "
+    "steps; adaptive samplers use an explicit service estimate. This drives operational accounting "
+    "and time budgeting, while learned Kudos pricing remains separate."
 )
-_MEASURED_COST_RATIO_NOTE = (
+_MEASURED_COST_RATIO_NOTE: str = (
     "Wall-clock cost per step relative to k_euler, measured on one card through the "
     "production render pipeline. Each figure is the slope of a fit of render time against "
     "step count, so it excludes the fixed overhead of a render. The two figures corroborate "
-    "evaluations_per_step rather than replace it: pricing and time budgeting read "
-    "evaluations_per_step, which is counted from the sampler implementations themselves and "
-    "holds on any hardware. A sampler that sets its own step count publishes no ratio, "
+    "the fixed-rate work profiles rather than replace them. A sampler that sets its own iteration count publishes no ratio, "
     "because cost per requested step is not a quantity it has."
 )
-_MEASURED_COST_RATIO_SDXL_NOTE = (
+_MEASURED_COST_RATIO_SDXL_NOTE: str = (
     "Measured on a stable_diffusion_xl model at 1024x1024. The step is long enough that "
     "per-step host work is negligible, so this figure reflects what the sampler itself "
-    "costs, and every sampler lands within a fifth of its evaluations_per_step."
+    "costs, and every fixed sampler lands close to its marginal work family."
 )
-_MEASURED_COST_RATIO_SD15_NOTE = (
+_MEASURED_COST_RATIO_SD15_NOTE: str = (
     "Measured on a stable_diffusion_1 model at 512x512. The step there is short enough that "
     "per-step host work is a visible fraction of it, which biases the one-evaluation "
     "samplers upwards by up to a third. Read the stable_diffusion_xl figure for the "
     "sampler's own cost."
 )
-_PRESENTATION_TIER_NOTE = (
+_PRESENTATION_TIER_NOTE: str = (
     "A presentation hint only. Every sampler is accepted, priced and dispatched identically "
     "whatever its tier. Clients may show the recommended tier by default and put the rest "
     "behind an advanced affordance; nothing in the advanced tier is deprecated."
@@ -108,9 +121,31 @@ def _serialize_sampler(
     constraints: SamplerConstraints,
 ) -> PublishedSamplerRecord:
     """Return one sampler's knobs, cost, tier and vocabulary in the published shape."""
+    published_work_profile: PublishedFixedRateWorkProfile | PublishedAdaptiveWorkProfile
+    if isinstance(constraints.work_profile, FixedRateSamplerWorkProfile):
+        published_work_profile = PublishedFixedRateWorkProfile(
+            marginal_work_units_per_trajectory_step=(
+                constraints.work_profile.marginal_work_units_per_trajectory_step
+            ),
+        )
+    elif isinstance(constraints.work_profile, AdaptiveSamplerWorkProfile):
+        finite_ceiling_contract_versions = [
+            contract_version
+            for contract_version, execution_contract in SAMPLER_EXECUTION_CONTRACTS.items()
+            if BOUNDED_DPM_ADAPTIVE_V1.guarantee in execution_contract.guarantees
+        ]
+        published_work_profile = PublishedAdaptiveWorkProfile(
+            estimated_work_units_per_request=AI_HORDE_SAMPLER_WORK_ESTIMATION_POLICY.adaptive_sampler_work_units[
+                sampler
+            ].value,
+            finite_ceiling_contract_versions=finite_ceiling_contract_versions,
+        )
+    else:
+        raise TypeError(f"Unsupported sampler work profile: {type(constraints.work_profile).__name__}")
+
     return PublishedSamplerRecord(
         name=sampler,
-        evaluations_per_step=constraints.evaluations_per_step,
+        work_profile=published_work_profile,
         measured_cost_ratio_sd15=constraints.measured_cost_ratio_sd15,
         measured_cost_ratio_sdxl=constraints.measured_cost_ratio_sdxl,
         presentation_tier=SAMPLER_PRESENTATION_TIERS[sampler],
@@ -155,9 +190,9 @@ def _serialize_hard_constraints() -> PublishedHardConstraints:
     )
 
 
-def _serialize_cost_basis() -> PublishedCostBasis:
-    """Return what each published cost figure is, and which of them a request is charged against."""
-    return PublishedCostBasis(
+def _serialize_work_accounting() -> PublishedWorkAccounting:
+    """Return what each published operational work figure means."""
+    return PublishedWorkAccounting(
         authoritative_note=_AUTHORITATIVE_NOTE,
         measured_cost_ratio_provenance=MEASURED_COST_RATIO_PROVENANCE,
         measured_cost_ratio_source=MEASURED_COST_RATIO_SOURCE,
@@ -165,6 +200,40 @@ def _serialize_cost_basis() -> PublishedCostBasis:
         measured_cost_ratio_sdxl_note=_MEASURED_COST_RATIO_SDXL_NOTE,
         measured_cost_ratio_sd15_note=_MEASURED_COST_RATIO_SD15_NOTE,
     )
+
+
+def _serialize_execution_guarantee(
+    guarantee: SamplerExecutionGuarantee,
+) -> PublishedBoundedAdaptiveSamplerExecutionGuarantee:
+    """Return one atomic execution guarantee with its complete discoverable semantics.
+
+    Raises:
+        ValueError: If the SDK contract contains a guarantee this API cannot publish faithfully.
+    """
+    if guarantee is not BOUNDED_DPM_ADAPTIVE_V1.guarantee:
+        raise ValueError(f"Unsupported sampler execution guarantee: {guarantee!s}")
+
+    return PublishedBoundedAdaptiveSamplerExecutionGuarantee(
+        sampler=BOUNDED_DPM_ADAPTIVE_V1.sampler,
+        maximum_solver_iterations=PublishedAdaptiveIterationCeiling(
+            trajectory_multiplier_numerator=BOUNDED_DPM_ADAPTIVE_V1.iteration_multiplier_numerator,
+            trajectory_multiplier_denominator=BOUNDED_DPM_ADAPTIVE_V1.iteration_multiplier_denominator,
+        ),
+    )
+
+
+def _serialize_execution_contracts() -> dict[SamplerExecutionContractVersion, PublishedSamplerExecutionContract]:
+    """Return every SDK execution contract as a self-describing public profile."""
+    return {
+        contract_version: PublishedSamplerExecutionContract(
+            version=contract_version,
+            guarantees=[
+                _serialize_execution_guarantee(guarantee)
+                for guarantee in sorted(execution_contract.guarantees, key=str)
+            ],
+        )
+        for contract_version, execution_contract in SAMPLER_EXECUTION_CONTRACTS.items()
+    }
 
 
 def compile_sampler_constraints() -> SamplerConstraintsDocument:
@@ -184,11 +253,12 @@ def compile_sampler_constraints() -> SamplerConstraintsDocument:
     }
 
     return SamplerConstraintsDocument(
+        execution_contracts=_serialize_execution_contracts(),
         samplers=samplers,
         hard_constraints=_serialize_hard_constraints(),
         recommendations=[_serialize_recommendation(recommendation) for recommendation in SAMPLER_RECOMMENDATIONS],
         advisories=PublishedAdvisories(cfg_pp_advised_max_cfg_scale=CFG_PP_ADVISED_MAX_CFG_SCALE),
-        cost_basis=_serialize_cost_basis(),
+        work_accounting=_serialize_work_accounting(),
         presentation_tiers=PublishedPresentationTiers(
             note=_PRESENTATION_TIER_NOTE,
             recommended=sorted(sampler for sampler in RECOMMENDED_SAMPLERS if str(sampler) in KNOWN_SAMPLERS),
