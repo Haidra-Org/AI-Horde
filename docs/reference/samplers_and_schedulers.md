@@ -41,6 +41,10 @@ deterministic ones do not.
 
 ## Trajectory steps, estimated work, and execution ceilings are different units
 
+The unit boundary is an architectural constraint recorded in
+[ADR 11](../decisions/0011-separate-sampler-trajectory-estimate-and-ceiling.md). The versioned registry
+and HTTP projection are recorded in [ADR 12](../decisions/0012-publish-versioned-sampler-contracts.md).
+
 A second-order sampler evaluates the model twice per step, so comparing samplers at equal step counts
 charges them unequally. The correct comparison is at equal wall time: published guidance puts it as
 comparing Heun at 30 steps against Euler at 15
@@ -151,6 +155,9 @@ finite profile-derived ceiling, while adaptive work requires an explicitly adver
 execution contract.
 
 ### Why job TTL is longer than isolated inference
+
+The lease policy and its alternatives are recorded in
+[ADR 13](../decisions/0013-image-job-ttl-is-a-prefetch-lease.md).
 
 The job TTL begins when a worker pops an assignment and ends when it submits the result. It is a lease,
 not a benchmark forecast. Workers are encouraged to keep a shallow local look-ahead queue so they can

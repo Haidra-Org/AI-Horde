@@ -22,6 +22,9 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Promote users to trusted inside the projector](0008-trust-promotion-in-the-projector.md) | accepted | 2026-07-24 |
 | [Balance every currency event against system accounts](0009-balanced-events-via-system-accounts.md) | proposed | 2026-07-25 |
 | [Gate mode pins and transitions on an advisory lock](0010-advisory-lock-mode-gate.md) | accepted | 2026-07-25 |
+| [Separate sampler trajectory, estimated work, and execution ceilings](0011-separate-sampler-trajectory-estimate-and-ceiling.md) | accepted | 2026-08-18 |
+| [Publish versioned sampler contracts from one authoritative registry](0012-publish-versioned-sampler-contracts.md) | accepted | 2026-08-18 |
+| [Treat image job TTL as a conservative prefetch lease](0013-image-job-ttl-is-a-prefetch-lease.md) | accepted | 2026-08-18 |
 
 ## Relationships
 
@@ -39,6 +42,9 @@ flowchart TD
     r0008["0008: Promote users to trusted inside the p…"]
     r0009["0009: Balance every currency event against…"]
     r0010["0010: Gate mode pins and transitions on an…"]
+    r0011["0011: Separate sampler trajectory, estimate…"]
+    r0012["0012: Publish versioned sampler contracts f…"]
+    r0013["0013: Treat image job TTL as a conservative…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005
@@ -58,4 +64,6 @@ flowchart TD
     r0008 --> r0005
     r0008 --> r0006
     r0010 --> r0005
+    r0012 --> r0011
+    r0013 --> r0011
 ```
