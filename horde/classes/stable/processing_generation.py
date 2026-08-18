@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import math
 import os
 import time
 
@@ -183,25 +184,43 @@ class ImageProcessingGeneration(ProcessingGeneration):
         os.remove(filename)
 
     def set_job_ttl(self):
-        # We are aiming here for a graceful min 2sec/it speed on workers for 512x512 which is well below our requested min 0.5mps/s,
-        # to buffer for model loading and allow for the occasional slowdown without dropping jobs.
-        # There is also a minimum of 2mins, regardless of steps and resolution used and an extra 30 seconds for model loading.
-        # This means a worker at 1mps/s should be able to finish a 512x512x50 request comfortably within 30s but we allow up to 2.5mins.
-        # This number then increases lineary based on the resolution requested.
-        # Using this formula, a 1536x768x40 request is expected to take ~50s on a 1mps/s worker, but we will only time out after 390s.
+        """Persist the completion deadline offered to the worker for this assignment.
+
+        This is a lease from pop to submission, not a prediction of uninterrupted inference time. A
+        worker may pop ahead so that model and LoRA I/O overlaps its current generation; the lease must
+        therefore cover some local queue residence as well as this job's inference. At 512 square the
+        scalable term allows one work unit every two seconds, or 0.131072 megapixel-work units per
+        second. That is deliberately more conservative than the 0.5-MPS normal-speed worker threshold:
+        it gives such a worker about 3.8 times its isolated compute time, or about 1.9 times the combined
+        compute time when one equally expensive job is already ahead of it.
+
+        The 150-second floor protects short jobs, where model and asset preparation dominate and the
+        proportional allowance would be least useful. Workload and worker multipliers retain extra
+        room for known slow paths. They intentionally compound the whole lease, including its fixed
+        allowance; changing that ordering is a policy change rather than an algebraic cleanup.
+        """
         ttl_multiplier = (self.wp.width * self.wp.height) / (512 * 512)
-        # Budgeted in model evaluations rather than denoising steps: the wall time a worker needs scales
-        # with how many times it runs the model, so a solver that evaluates twice per step needs about
-        # twice as long at the same step count.
-        self.job_ttl = 30 + (self.wp.get_estimated_sampler_work().work_units.value * 2 * ttl_multiplier)
-        # CN is 3 times slower
+        sampler_work = self.wp.get_estimated_sampler_work().work_units.value
+        ttl = 30 + (sampler_work * 2 * ttl_multiplier)
+
+        # Sampler work does not represent the additional conditioned model path, so ControlNet keeps
+        # its separate allowance rather than pretending those costs are sampler trajectory.
         if self.wp.gen_payload.get("control_type"):
-            self.job_ttl = self.job_ttl * 2
-        # Flux and Qwen is way slower than Stable Diffusion
-        if any(model_reference.get_model_baseline(mn) in ["flux_1", "qwen_image", "z_image_turbo"] for mn in self.wp.get_model_names()):
-            self.job_ttl = self.job_ttl * 3
-        if self.job_ttl < 150:
-            self.job_ttl = 150
+            ttl *= 2
+
+        # Pixel-work is deliberately model-neutral. Larger architectures retain a separate allowance,
+        # applied only when this procgen was actually assigned that model; using every requested model
+        # would over-budget ordinary assignments from a multi-model request.
+        if model_reference.get_model_baseline(self.model) in ["flux_1", "qwen_image", "z_image_turbo"]:
+            ttl *= 3
+
+        ttl = max(ttl, 150)
+        # The extra-slow opt-in describes the worker, not the payload. Applying it after the floor keeps
+        # short leases viable on hardware whose model and asset preparation is itself unusually slow.
         if self.worker.extra_slow_worker is True:
-            self.job_ttl = self.job_ttl * 3
+            ttl *= 3
+
+        # The wire contract and database column are whole seconds. Round upward so fractional pixel
+        # ratios can never shorten the promised completion window.
+        self.job_ttl = math.ceil(ttl)
         db.session.commit()

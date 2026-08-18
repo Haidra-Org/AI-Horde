@@ -686,7 +686,12 @@ class ImageModels(v2.Models):
                     ),
                 ),
                 "messages": fields.List(fields.Nested(self.response_model_message, skip_none=True)),
-                "ttl": fields.Integer(description="The amount of seconds before this job is considered stale and aborted."),
+                "ttl": fields.Integer(
+                    description=(
+                        "The assignment-specific number of seconds the worker has to complete this job "
+                        "before it is considered stale and aborted."
+                    ),
+                ),
                 "skipped": fields.Nested(self.response_model_generations_skipped, skip_none=True),
                 "model": fields.String(description="Which of the available models to use for this request."),
                 "source_image": fields.String(description="The Base64-encoded webp to use for img2img."),
