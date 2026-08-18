@@ -147,6 +147,41 @@ usage totals. A worker opting into `limit_max_steps` instead uses maximum work: 
 finite profile-derived ceiling, while adaptive work requires an explicitly advertised backend
 execution contract.
 
+### Why job TTL is longer than isolated inference
+
+The job TTL begins when a worker pops an assignment and ends when it submits the result. It is a lease,
+not a benchmark forecast. Workers are encouraged to keep a shallow local look-ahead queue so they can
+load a model or fetch LoRAs while inference for the preceding assignment is still running. Queue
+residence, storage and network variance, and inference all have to fit inside the same lease.
+
+For an ordinary assignment the service starts with:
+
+```text
+30 seconds + 2 seconds * estimated work * (width * height / 512^2)
+```
+
+The scalable term corresponds to 0.131072 megapixel-work units per second. The normal-speed worker
+classification uses 0.5 MPS, so the lease provides about 3.8 times the isolated compute time of a
+worker exactly at that threshold. Requests which opt into slow workers can still be served below it.
+If one equally expensive assignment is already ahead in the local queue, the normal-speed comparison
+becomes about 1.9 times their combined compute time. This is deliberately conservative: the difference
+is capacity for prefetching and runtime variance, not a claim that median hardware needs two seconds
+for a 512-square first-order step.
+
+A 150-second minimum protects small jobs, for which fixed model and asset preparation can dominate.
+ControlNet doubles the computed lease; an assignment whose selected model has a Flux, Qwen Image, or
+Z-Image Turbo baseline triples it. Those factors compound before the minimum is applied. A worker
+explicitly marked extra-slow receives three times the resulting lease after the minimum. Consequently,
+combinations can produce intentionally large deadlines. This ordering is part of the worker pop
+contract and should not be rearranged as a mathematical simplification.
+
+Sampler work is the proportional input, which is why fixed higher-order samplers receive two or three
+times the scalable allowance. `k_dpm_adaptive` instead uses the service's stable 40-work-unit estimate;
+its backend execution ceiling is a safety bound, not a runtime forecast, and is not substituted into
+TTL. Schedulers and solver presentation controls do not independently change the lease. Neither do
+LoRAs, source processing, post-processing, or hires-fix: their ordinary setup cost is covered by the
+shared fixed and queue allowances rather than by a separate per-feature multiplier.
+
 ## Solver options
 
 A sampler takes tuning arguments beyond its name and schedule. They reach the solver through

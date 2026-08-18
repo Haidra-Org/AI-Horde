@@ -55,9 +55,8 @@ class FakeWaitingPrompt:
 
 
 class FakeWorker:
-    """A worker with no time-budget adjustment of its own."""
-
-    extra_slow_worker = False
+    def __init__(self, *, extra_slow_worker=False):
+        self.extra_slow_worker = extra_slow_worker
 
 
 class FakeProcessingGeneration:
@@ -67,9 +66,10 @@ class FakeProcessingGeneration:
     computed by then, and persisting it is not what these tests are about.
     """
 
-    def __init__(self, waiting_prompt):
+    def __init__(self, waiting_prompt, *, model="stable_diffusion", extra_slow_worker=False):
         self.wp = waiting_prompt
-        self.worker = FakeWorker()
+        self.worker = FakeWorker(extra_slow_worker=extra_slow_worker)
+        self.model = model
         self.job_ttl = None
 
     def set_job_ttl(self, monkeypatch):
@@ -116,27 +116,142 @@ class TestEstimatedWork:
 
 
 class TestJobTimeBudget:
-    def test_a_second_order_sampler_gets_twice_the_budget_of_a_first_order_one(self, monkeypatch):
-        first_order = FakeProcessingGeneration(FakeWaitingPrompt("k_euler", steps=50, width=1024, height=1024))
-        second_order = FakeProcessingGeneration(FakeWaitingPrompt("k_heun", steps=50, width=1024, height=1024))
-        first_order.set_job_ttl(monkeypatch)
-        second_order.set_job_ttl(monkeypatch)
+    """The deadline becomes concrete when a request is assigned to a model and worker.
 
-        # The fixed 30 second model-loading allowance is outside the scaled part.
-        assert (second_order.job_ttl - 30) == (first_order.job_ttl - 30) * 2
+    This suite fixes the policy reasons behind the numbers, not merely examples of the arithmetic. The
+    lease is intentionally longer than isolated inference so a worker can hold a shallow look-ahead
+    queue while overlapping model and asset I/O. ControlNet and an assigned slow-model baseline
+    multiply the lease before its floor; an extra-slow worker multiplies the floored result.
+    """
 
-    def test_a_three_evaluation_sampler_gets_three_times_the_budget(self, monkeypatch):
-        first_order = FakeProcessingGeneration(FakeWaitingPrompt("k_euler", steps=50, width=1024, height=1024))
-        three_eval = FakeProcessingGeneration(FakeWaitingPrompt("heunpp2", steps=50, width=1024, height=1024))
-        first_order.set_job_ttl(monkeypatch)
-        three_eval.set_job_ttl(monkeypatch)
+    def test_scalable_allowance_supports_one_prefetched_job_at_the_normal_speed_floor(self, monkeypatch):
+        """Queue-aware slack must remain visible if the constants are revisited.
 
-        assert (three_eval.job_ttl - 30) == (first_order.job_ttl - 30) * 3
+        Normal-speed matching uses 0.5 megapixel-work units per second. Away from the minimum-TTL
+        regime, the lease's scalable portion represents 0.131072 MPS. One equally expensive job ahead
+        doubles completion time, leaving about 1.9x headroom for variance and I/O.
+        """
+        waiting_prompt = FakeWaitingPrompt("k_euler", steps=100, width=1024, height=1024)
+        generation = FakeProcessingGeneration(waiting_prompt)
+        generation.set_job_ttl(monkeypatch)
+
+        estimated_work = waiting_prompt.get_estimated_sampler_work().work_units.value
+        pixel_work = waiting_prompt.width * waiting_prompt.height * estimated_work
+        scalable_allowance = generation.job_ttl - 30
+        effective_mps = pixel_work / scalable_allowance / 1_000_000
+        two_job_compute_time_at_worker_floor = 2 * pixel_work / 500_000
+
+        assert effective_mps == pytest.approx(0.131072)
+        assert scalable_allowance / two_job_compute_time_at_worker_floor == pytest.approx(1.9073486328125)
+
+    @pytest.mark.parametrize(
+        ("sampler_name", "expected_ttl"),
+        [
+            ("k_euler", 430),  # 30 + (50 work * 2 seconds * 4x pixels)
+            ("k_heun", 830),  # 30 + (100 work * 2 seconds * 4x pixels)
+            ("heunpp2", 1230),  # 30 + (150 work * 2 seconds * 4x pixels)
+        ],
+    )
+    def test_sampler_work_sets_the_ordinary_assignment_deadline(self, monkeypatch, sampler_name, expected_ttl):
+        generation = FakeProcessingGeneration(FakeWaitingPrompt(sampler_name, steps=50, width=1024, height=1024))
+        generation.set_job_ttl(monkeypatch)
+
+        assert generation.job_ttl == expected_ttl
+
+    def test_adaptive_work_uses_the_contract_estimate_not_requested_steps(self, monkeypatch):
+        generation = FakeProcessingGeneration(FakeWaitingPrompt("k_dpm_adaptive", steps=5, width=1024, height=1024))
+        generation.set_job_ttl(monkeypatch)
+
+        # The adaptive contract estimates 40 work units; treating the five requested steps literally
+        # would have hit the 150-second floor instead.
+        assert generation.job_ttl == 350
 
     def test_the_minimum_budget_still_applies(self, monkeypatch):
+        # Short assignments need a useful lease even when model/LoRA preparation costs more than
+        # inference; this floor is also what makes shallow prefetch practical for small requests.
         tiny = FakeProcessingGeneration(FakeWaitingPrompt("k_euler", steps=1, width=512, height=512))
         tiny.set_job_ttl(monkeypatch)
         assert tiny.job_ttl == 150
+
+    def test_controlnet_multiplies_the_computed_budget(self, monkeypatch):
+        waiting_prompt = FakeWaitingPrompt("k_euler", steps=50, width=1024, height=1024)
+        waiting_prompt.gen_payload["control_type"] = "canny"
+        generation = FakeProcessingGeneration(waiting_prompt)
+        generation.set_job_ttl(monkeypatch)
+
+        assert generation.job_ttl == 860
+
+    def test_slow_path_allowances_compound_in_the_documented_order(self, monkeypatch):
+        """Prevent a seemingly harmless reorder from silently changing the lease contract."""
+        monkeypatch.setattr(
+            "horde.classes.stable.processing_generation.model_reference.get_model_baseline",
+            lambda _model: "flux_1",
+        )
+        waiting_prompt = FakeWaitingPrompt("k_euler", steps=30, width=1024, height=1024)
+        waiting_prompt.gen_payload["control_type"] = "canny"
+        generation = FakeProcessingGeneration(waiting_prompt, model="slow-model", extra_slow_worker=True)
+        generation.set_job_ttl(monkeypatch)
+
+        # 270 ordinary seconds, then ControlNet 2x, assigned slow model 3x, and extra-slow worker 3x.
+        assert generation.job_ttl == 4860
+
+    def test_only_the_model_assigned_to_the_job_controls_the_slow_model_allowance(self, monkeypatch):
+        monkeypatch.setattr(
+            "horde.classes.stable.processing_generation.model_reference.get_model_baseline",
+            lambda model: "flux_1" if model == "slow-model" else "stable_diffusion_1",
+        )
+        ordinary = FakeProcessingGeneration(
+            FakeWaitingPrompt("k_euler", steps=50, width=1024, height=1024),
+            model="ordinary-model",
+        )
+        slow = FakeProcessingGeneration(
+            FakeWaitingPrompt("k_euler", steps=50, width=1024, height=1024),
+            model="slow-model",
+        )
+        ordinary.set_job_ttl(monkeypatch)
+        slow.set_job_ttl(monkeypatch)
+
+        assert ordinary.job_ttl == 430
+        assert slow.job_ttl == 1290
+
+    def test_extra_slow_worker_multiplies_even_the_minimum_deadline(self, monkeypatch):
+        generation = FakeProcessingGeneration(
+            FakeWaitingPrompt("k_euler", steps=1),
+            extra_slow_worker=True,
+        )
+        generation.set_job_ttl(monkeypatch)
+
+        assert generation.job_ttl == 450
+
+    def test_fractional_deadlines_round_up_to_whole_seconds(self, monkeypatch):
+        generation = FakeProcessingGeneration(FakeWaitingPrompt("k_euler", steps=100, width=520, height=520))
+        generation.set_job_ttl(monkeypatch)
+
+        assert generation.job_ttl == 237
+        assert isinstance(generation.job_ttl, int)
+
+
+class TestAssignedJobTimeBudgetContract:
+    def test_the_persisted_assignment_deadline_is_returned_by_the_worker_pop_payload(self, monkeypatch):
+        waiting_prompt = FakeWaitingPrompt("k_heun", steps=50, width=1024, height=1024)
+        waiting_prompt.source_image = None
+        waiting_prompt.extra_source_images = None
+        waiting_prompt.shared = False
+        generation = FakeProcessingGeneration(waiting_prompt)
+        generation.id = "generation-id"
+        generation.worker.bridge_agent = "test-bridge"
+        generation.set_job_ttl(monkeypatch)
+        monkeypatch.setattr("horde.classes.stable.waiting_prompt.check_bridge_capability", lambda *_args: True)
+        monkeypatch.setattr(
+            "horde.classes.stable.waiting_prompt.generate_procgen_upload_url",
+            lambda generation_id, _shared: f"https://upload.invalid/{generation_id}",
+        )
+
+        popped = ImageWaitingPrompt.get_pop_payload(waiting_prompt, [generation], {"sampler_name": "k_heun"})
+
+        assert generation.job_ttl == 830
+        assert popped["ttl"] == generation.job_ttl
+        assert popped["ttl"] == 830
 
 
 class TestUsageIsCountedInWorkUnits:

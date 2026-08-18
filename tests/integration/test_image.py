@@ -79,6 +79,9 @@ def test_simple_image_gen(client, request_headers: dict[str, str]) -> None:
     job_id = pop_results["id"]
     try:
         assert job_id is not None, pop_results
+        # 8 first-order work units at 1024x1024 calculate below the 150-second floor. The
+        # assignment contract is returned to the worker as an integer number of seconds.
+        assert pop_results["ttl"] == 150, pop_results
     except AssertionError as err:
         _cancel_image_request(client, request_headers, req_id)
         print("Request cancelled")
@@ -226,6 +229,9 @@ def test_flux_image_gen(client, request_headers: dict[str, str]) -> None:
     job_id = pop_results["id"]
     try:
         assert job_id is not None, pop_results
+        # 30 + (5 work * 2 seconds * 4x pixels), then the assigned Flux model and the
+        # accepting extra-slow worker each contribute their 3x allowance.
+        assert pop_results["ttl"] == 630, pop_results
     except AssertionError as err:
         _cancel_image_request(client, request_headers, req_id)
         print("Request cancelled")

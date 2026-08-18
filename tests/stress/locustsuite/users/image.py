@@ -505,6 +505,12 @@ class WorkerSimulator(HttpUser):
             if not job_id:
                 resp.success()
                 return
+            job_ttl = pop_data.get("ttl")
+            # Every accepted assignment must carry its concrete completion contract. Keep this strict
+            # under load: bool is an int subclass in Python but is not a meaningful duration on the wire.
+            if type(job_ttl) is not int or job_ttl <= 0:
+                resp.failure(f"Popped job {job_id} has invalid or missing ttl: {job_ttl!r}")
+                return
             incompatibilities = self._extended_payload_features(pop_data.get("payload") or {})
             if not self.supports_extended_samplers and incompatibilities:
                 resp.failure(
