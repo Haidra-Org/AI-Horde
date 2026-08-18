@@ -10,7 +10,7 @@ How this repository's service is built and how it is run:
 
 - [Explanation](explanation/README.md): why a subsystem is built the way it is.
 - [Reference](reference/README.md): contracts, schemas, gate orderings, and code maps.
-- [How-to](how-to/README.md): ordered procedures for cutover, rollback, and recovery.
+- [How-to](how-to/README.md): integration guides; procedures for AI-Horde operators and developers.
 - [Decisions](decisions/index.md): dated records of each choice, the alternatives, and
   the consequences.
 - [Topics](topics.md): the same documents grouped by subject.

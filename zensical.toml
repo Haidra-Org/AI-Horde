@@ -33,6 +33,7 @@ nav = [
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
         { "Kudos ledger operations" = "how-to/kudos_ledger_operations.md" },
+        { "Extended image frontend" = "how-to/extended_image_frontend.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
     { "Concepts" = [
