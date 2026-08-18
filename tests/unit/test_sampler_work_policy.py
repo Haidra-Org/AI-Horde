@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Tazlin <tazlin.on.github@gmail.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """AI-Horde policy tests over the SDK's unit-safe sampler work contract."""
 
 from __future__ import annotations
