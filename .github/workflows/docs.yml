@@ -63,7 +63,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             rm -rf site
-            if uvx --from "zensical==0.0.51" zensical build -s; then
+            if uvx --from "zensical==0.0.56" zensical build -s; then
               exit 0
             fi
             echo "Strict build attempt ${attempt} failed; retrying"
@@ -113,7 +113,7 @@ jobs:
         with:
           python-version: 3.x
       # Pinned to the version the docs job validated against.
-      - run: pip install zensical==0.0.51
+      - run: pip install zensical==0.0.56
       - run: zensical build --clean
       - uses: actions/upload-pages-artifact@v5
         with:
