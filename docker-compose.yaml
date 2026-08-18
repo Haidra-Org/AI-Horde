@@ -28,8 +28,10 @@ services:
     networks:
       - aihorde_network
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   postgres:
     image: ghcr.io/haidra-org/ai-horde-postgres:latest
@@ -38,12 +40,18 @@ services:
     environment:
         POSTGRES_PASSWORD: changeme
     volumes:
-      # Use a named volume to persist the data even if the container is deleted.
-      - postgres_data:/var/lib/postgresql/data/
+      # PostgreSQL 18+ keeps major-version-specific directories below this
+      # parent so an image update cannot reinterpret an older data directory.
+      - postgres_data:/var/lib/postgresql
     ports:
       - "5432:5432"
     networks:
       - aihorde_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
   redis:
     image: redis:7
