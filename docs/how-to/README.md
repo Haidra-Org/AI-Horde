@@ -15,4 +15,5 @@ the ordered steps, the checks between them, and the way back if a step fails.
 | Document | Summary |
 | --- | --- |
 | [Kudos ledger operations](kudos_ledger_operations.md) | Operator procedures for the kudos ledger: mode cutover, health checks, rollback, and recovery. |
+| [Add extended image controls to a frontend](extended_image_frontend.md) | Integrate sampler discovery, schedules, solver controls, expanded ControlNet types, and control-map annotations into an existing image frontend. |
 <!-- END GENERATED: documents -->

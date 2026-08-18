@@ -55,7 +55,7 @@ payload overhead still matter.
 than following the schedule. AI-Horde uses a stable 40-work-unit request estimate for usage, TTL, and
 upfront policy. A backend may separately advertise sampler execution contract `1.0`, which contains
 the atomic `bounded_dpm_adaptive_v1` guarantee: at most `ceil(1.25 * trajectory_steps)` solver
-iterations. Each iteration costs the requested solver order—two or three work units—so a 20-step
+iterations. Each iteration costs the requested solver order (two or three work units), so a 20-step
 request has a hard ceiling of 50 or 75 work units respectively. An estimate and a ceiling answer
 different questions and are never substituted for one another.
 
@@ -100,20 +100,23 @@ SDXL column is inside measurement noise and is not worth reading as a ranking.
 | `k_lms` | ODE 1st | 1.02x | 1.00x | 0.47 | |
 | `deis` | ODE 1st | 1.13x | 0.96x | 0.46 | |
 | `k_dpmpp_2m` | ODE 1st | 1.08x | 0.98x | 0.55 | One evaluation per step despite the "2M": it is multistep, reusing the previous evaluation. |
-| `ddpm` | stochastic | 1.05x | 1.03x | ~~0.38~~ | |
-| `er_sde` | stochastic | 1.07x | 0.98x | ~~0.28~~ | |
+| `ddpm` | stochastic | 1.05x | 1.03x | (0.38)* | |
+| `er_sde` | stochastic | 1.07x | 0.98x | (0.28)* | |
 | `ipndm` | ODE 1st | 1.01x | 1.00x | 0.59 | |
 | `k_euler_a` | ancestral | 1.08x | 1.01x | 0.39 | Does not converge by design. |
 | `res_multistep` | ODE 1st | 1.01x | 0.98x | 0.55 | |
-| `sa_solver` | stochastic | 1.08x | 0.94x | ~~0.13~~ | Stochastic Adams; the low settle figure is the giveaway. |
+| `sa_solver` | stochastic | 1.08x | 0.94x | (0.13)* | Stochastic Adams; the low settle figure is the giveaway. |
 | `uni_pc_bh2` | ODE 1st | 1.17x | 0.99x | 0.54 | |
-| `dpmpp_2m_sde` | stochastic | 1.33x | 1.14x | ~~0.55~~ | |
+| `dpmpp_2m_sde` | stochastic | 1.33x | 1.14x | (0.55)* | |
 | `uni_pc` | ODE 1st | 1.34x | 0.98x | 0.56 | The largest gap between the two columns, and entirely the small-model overhead. |
 | `k_heun` | ODE 2nd | 2.03x | 1.87x | 0.77 | Two evaluations per step. |
 | `k_dpm_2` | ODE 2nd | 2.17x | 1.94x | 0.75 | Two evaluations per step; settled highest overall. |
 | `k_dpmpp_2s_a` | ancestral 2nd | 2.35x | 2.01x | 0.27 | Pays second-order cost without converging. |
-| `k_dpmpp_sde` | stochastic 2nd | 2.58x | 2.22x | ~~0.51~~ | |
+| `k_dpmpp_sde` | stochastic 2nd | 2.58x | 2.22x | (0.51)* | |
 | `heunpp2` | ODE 3rd | 3.21x | 2.93x | 0.71 | Three evaluations per step for all but the last two steps. |
+
+> * Stochastic samplers do not converge by design, so their `settled` figures are meaningless. They are
+> retained for completeness rather than for comparison.
 
 `k_dpm_adaptive` publishes no ratio at all. It picks its own step count, so wall time per requested step
 is not a quantity it has: the fit lands near 0.6 r-squared on both baselines against better than 0.97
