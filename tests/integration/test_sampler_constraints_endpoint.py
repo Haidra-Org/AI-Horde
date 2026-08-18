@@ -34,10 +34,12 @@ def test_the_payload_survives_the_json_encoder(client):
     assert isinstance(document, dict)
     assert set(document) == {
         "samplers",
+        "schema_version",
+        "execution_contracts",
         "hard_constraints",
         "recommendations",
         "advisories",
-        "cost_basis",
+        "work_accounting",
         "presentation_tiers",
     }
 
@@ -112,15 +114,36 @@ def test_the_presentation_tier_is_served(client):
 def test_both_measured_cost_ratios_are_served_with_their_basis(client):
     # Served as bare numbers they would read like prices, which they are not.
     document = client.get(CONSTRAINTS_URL).get_json()
-    cost_basis = document["cost_basis"]
+    work_accounting = document["work_accounting"]
 
-    assert cost_basis["measured_cost_ratio_provenance"] == "measured"
-    assert cost_basis["authoritative_field"] == "evaluations_per_step"
-    assert cost_basis["measured_cost_ratio_source"].endswith(".json")
-    assert cost_basis["measured_cost_ratio_sd15_note"]
-    assert cost_basis["measured_cost_ratio_sdxl_note"]
+    assert work_accounting["measured_cost_ratio_provenance"] == "measured"
+    assert work_accounting["authoritative_field"] == "work_profile"
+    assert work_accounting["measured_cost_ratio_source"].endswith(".json")
+    assert work_accounting["measured_cost_ratio_sd15_note"]
+    assert work_accounting["measured_cost_ratio_sdxl_note"]
 
     euler = document["samplers"]["k_euler"]
     assert euler["measured_cost_ratio_sd15"] == 1.0
     assert euler["measured_cost_ratio_sdxl"] == 1.0
     assert document["samplers"]["k_dpm_adaptive"]["measured_cost_ratio_sdxl"] is None
+    assert document["samplers"]["k_dpm_adaptive"]["work_profile"] == {
+        "kind": "adaptive",
+        "estimated_work_units_per_request": 40,
+        "finite_ceiling_contract_versions": ["1.0"],
+    }
+    assert document["schema_version"] == "1.0"
+    assert document["execution_contracts"]["1.0"] == {
+        "version": "1.0",
+        "guarantees": [
+            {
+                "name": "bounded_dpm_adaptive_v1",
+                "sampler": "k_dpm_adaptive",
+                "maximum_solver_iterations": {
+                    "trajectory_multiplier_numerator": 5,
+                    "trajectory_multiplier_denominator": 4,
+                    "rounding": "ceiling",
+                },
+                "work_units_per_solver_iteration_source": "sampler_order",
+            },
+        ],
+    }

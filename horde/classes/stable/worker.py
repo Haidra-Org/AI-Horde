@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from typing import Any
+
+from sqlalchemy.orm import Mapped, mapped_column
 
 from horde import exceptions as e
 from horde.bridge_reference import (
@@ -22,6 +25,11 @@ from horde.consts import (
 from horde.flask import db
 from horde.logger import logger
 from horde.model_reference import model_reference
+from horde.sampler_work_policy import (
+    maximum_request_sampler_work,
+    parse_sampler_execution_contract_version,
+    sampler_work_request_from_payload,
+)
 from horde.suspicions import Suspicions
 
 
@@ -39,12 +47,22 @@ class ImageWorker(Worker):
     allow_sdxl_controlnet = db.Column(db.Boolean, default=False, nullable=False, index=True)
     allow_lora = db.Column(db.Boolean, default=False, nullable=False, index=True)
     limit_max_steps = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    sampler_execution_contract_version: Mapped[str | None] = mapped_column(db.String(32), nullable=True)
     wtype = "image"
 
-    def check_in(self, max_pixels, **kwargs):
+    def check_in(self, *, max_pixels: int = 512 * 512, **kwargs: Any) -> bool:
+        # The worker row is the shared, recent capability snapshot used by forecasting as well as
+        # this pop. Update the claim even when ordinary check-in bookkeeping is debounced; the pop
+        # handler's unconditional commit persists a changed value.
+        execution_contract_version = parse_sampler_execution_contract_version(
+            kwargs.get("sampler_execution_contract_version"),
+        )
+        self.sampler_execution_contract_version = (
+            execution_contract_version.value if execution_contract_version is not None else None
+        )
         if not super().check_in(**kwargs):
-            return
-        if kwargs.get("max_pixels", 512 * 512) > 3072 * 3072:  # FIXME #noqa SIM102
+            return False
+        if max_pixels > 3072 * 3072:  # FIXME #noqa SIM102
             if not self.user.trusted:
                 self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
@@ -66,6 +84,7 @@ class ImageWorker(Worker):
             f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} "
             f"at {self.max_pixels} max pixels",
         )
+        return True
 
     def calculate_uptime_reward(self):
         baseline = 50 + (len(self.get_model_names()) * 2)
@@ -199,29 +218,23 @@ class ImageWorker(Worker):
         if not waiting_prompt.safe_ip and not self.allow_unsafe_ipaddr:
             return [False, "unsafe_ip"]
         if self.limit_max_steps:
-            if len(waiting_prompt.get_model_names()) > 1:
-                for mn in waiting_prompt.get_model_names():
-                    avg_steps = (
-                        int(
-                            model_reference.get_model_requirements(mn).get("min_steps", 20)
-                            + model_reference.get_model_requirements(mn).get("max_steps", 40),
-                        )
-                        / 2
-                    )
-                    if waiting_prompt.get_accurate_steps() > avg_steps:
-                        return [False, "step_count"]
-            else:
-                # If the request has an empty model list, we compare instead to the worker's model list
-                for mn in my_model_names:
-                    avg_steps = (
-                        int(
-                            model_reference.get_model_requirements(mn).get("min_steps", 20)
-                            + model_reference.get_model_requirements(mn).get("max_steps", 40),
-                        )
-                        / 2
-                    )
-                    if waiting_prompt.get_accurate_steps() > avg_steps:
-                        return [False, "step_count"]
+            execution_contract_version = parse_sampler_execution_contract_version(
+                self.sampler_execution_contract_version,
+            )
+            sampler_work_ceiling = maximum_request_sampler_work(
+                sampler_work_request_from_payload(waiting_prompt.params),
+                execution_contract_version=execution_contract_version,
+            )
+            if sampler_work_ceiling is None:
+                return [False, "step_count"]
+
+            requested_model_names = waiting_prompt.get_model_names()
+            budget_model_names = requested_model_names if requested_model_names else my_model_names
+            for model_name in budget_model_names:
+                requirements = model_reference.get_model_requirements(model_name)
+                average_work_budget = int(requirements.get("min_steps", 20) + requirements.get("max_steps", 40)) // 2
+                if sampler_work_ceiling.work_units.value > average_work_budget:
+                    return [False, "step_count"]
         # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
         # logger.warning(datetime.utcnow())
         if not self.user.trusted:  # FIXME #noqa SIM102

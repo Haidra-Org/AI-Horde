@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from horde_sdk.generation_parameters.image.sampler_work import SamplerExecutionContractVersion
 
 from horde.classes.base.worker import WorkerModel
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -91,6 +92,7 @@ def _make_image_worker(
     models: tuple[str, ...] = (_HOSTED_MODEL,),
     max_pixels: int = 1024 * 1024,
     stale: bool = False,
+    limit_max_steps: bool = False,
 ) -> ImageWorker:
     """Create and persist an ``ImageWorker`` hosting ``models``.
 
@@ -104,6 +106,7 @@ def _make_image_worker(
         name=f"worker_{uuid.uuid4().hex[:12]}",
         max_pixels=max_pixels,
         last_check_in=last_check_in,
+        limit_max_steps=limit_max_steps,
     )
     db.session.add(worker)
     db.session.commit()
@@ -120,6 +123,8 @@ def _make_image_wp(
     width: int = _WP_WIDTH,
     height: int = _WP_HEIGHT,
     n: int = 1,
+    sampler_name: str = "k_euler_a",
+    steps: int = 10,
 ) -> ImageWaitingPrompt:
     """Create and persist an ``ImageWaitingPrompt`` constrained to ``models``."""
     wp = ImageWaitingPrompt(
@@ -131,8 +136,8 @@ def _make_image_wp(
             "n": n,
             "width": width,
             "height": height,
-            "steps": 10,
-            "sampler_name": "k_euler_a",
+            "steps": steps,
+            "sampler_name": sampler_name,
             "karras": True,
         },
     )
@@ -232,6 +237,58 @@ class TestFreshCapableWorker:
         _make_image_worker(user)
 
         assert f.wp_has_valid_workers(wp) is True
+
+
+class TestPersistedSamplerExecutionContract:
+    """Forecasting reads the same recent execution capability that pop-time dispatch uses."""
+
+    def test_reloaded_worker_keeps_adaptive_request_possible(
+        self,
+        db_session,
+        fake_redis,
+        make_user,
+        make_user_role,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        wp = _make_image_wp(user, sampler_name="k_dpm_adaptive", steps=5)
+        worker = _make_image_worker(user, limit_max_steps=True)
+
+        # Exercise the debounced path: the capability assignment happens before the base check-in
+        # returns False, and the pop handler's unconditional commit is represented explicitly here.
+        worker.created = datetime.utcnow() - timedelta(minutes=5)
+        worker.last_check_in = datetime.utcnow()
+        worker.check_in(
+            max_pixels=worker.max_pixels,
+            sampler_execution_contract_version=SamplerExecutionContractVersion.V1.value,
+        )
+        worker_id = worker.id
+        wp_id = wp.id
+        db.session.commit()
+        db.session.remove()
+
+        reloaded_worker = db.session.get(ImageWorker, worker_id)
+        reloaded_wp = db.session.get(ImageWaitingPrompt, wp_id)
+        assert reloaded_worker is not None
+        assert reloaded_wp is not None
+        assert reloaded_worker.sampler_execution_contract_version == SamplerExecutionContractVersion.V1.value
+        assert f.wp_has_valid_workers(reloaded_wp) is True
+
+    def test_legacy_worker_remains_fail_closed_for_adaptive_request(
+        self,
+        db_session,
+        fake_redis,
+        make_user,
+        make_user_role,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        wp = _make_image_wp(user, sampler_name="k_dpm_adaptive", steps=5)
+        _make_image_worker(user, limit_max_steps=True)
+        wp_id = wp.id
+
+        db.session.remove()
+        reloaded_wp = db.session.get(ImageWaitingPrompt, wp_id)
+        assert reloaded_wp is not None
+        assert f.wp_has_valid_workers(reloaded_wp) is False
 
 
 class TestWrongModelWorker:

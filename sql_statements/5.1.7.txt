@@ -1,0 +1,11 @@
+-- Persist the latest sampler execution contract advertised by an image worker. The worker row is
+-- already treated as a recent capability snapshot through last_check_in, and /check/ and /status/
+-- reconstruct workers from this row when forecasting whether a request is serviceable.
+--
+-- NULL is deliberately fail-closed: existing and legacy workers have not proven any SDK execution
+-- contract. No index is needed because the value is consumed by Python-side can_generate(), not a
+-- candidate-query predicate.
+SET lock_timeout = '3s';
+
+ALTER TABLE workers
+  ADD COLUMN IF NOT EXISTS sampler_execution_contract_version VARCHAR(32) NULL;

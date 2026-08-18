@@ -83,7 +83,7 @@ requires-dist = [
     { name = "flask-limiter", specifier = "~=3.0" },
     { name = "flask-restx" },
     { name = "flask-sqlalchemy", specifier = "~=3.1.1" },
-    { name = "horde-sdk", specifier = ">=0.28.0,<0.29.0" },
+    { name = "horde-sdk", specifier = ">=0.29.0,<0.30.0" },
     { name = "logfire", extras = ["flask", "sqlalchemy", "redis", "requests"], specifier = "==4.32.1" },
     { name = "loguru" },
     { name = "markdown", specifier = "~=3.4.1" },
@@ -1088,7 +1088,7 @@ wheels = [
 
 [[package]]
 name = "horde-sdk"
-version = "0.28.0"
+version = "0.29.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiodns" },
@@ -1105,9 +1105,8 @@ dependencies = [
     { name = "requests" },
     { name = "strenum" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/06/887e86efd2c819abd739deac456e4af5a7c1f99fedbc1cfe970036f8e1e0/horde_sdk-0.28.0.tar.gz", hash = "sha256:688af6c8123f847d00797d2a2363e4da51466d22e13ec5828ce391ea023b6de1", size = 4859423, upload-time = "2026-08-04T01:16:06.279Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/87/4d9b700e122fee6b32d58ce6783be2e797f1b5cc68f69bb7be834e4bbacf/horde_sdk-0.28.0-py3-none-any.whl", hash = "sha256:1deb3ca5faf661c8201b0d8286126392d2c762060e987179be7bac1b700610fd", size = 284070, upload-time = "2026-08-04T01:16:04.677Z" },
+    { url = "https://files.pythonhosted.org/packages/91/b9/1cb6a4eb29981deaebf694f71abe92f4e03192112c7256753cfd3a1c408c/horde_sdk-0.29.0-py3-none-any.whl", hash = "sha256:622b862347039e4e30b23d6a7217cf9c44f67078dee64586ac9e933f034f4b21", size = 300458, upload-time = "2026-08-18T02:09:18.096Z" },
 ]
 
 [[package]]

@@ -5,10 +5,9 @@
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde_sdk.generation_parameters.image.constraints import (
     KNOWN_SAMPLER_SOLVER_TYPES,
-    SAMPLER_CONSTRAINTS,
 )
 
-HORDE_VERSION = "5.1.6"
+HORDE_VERSION = "5.1.7"
 HORDE_API_VERSION = "2.5"
 
 WHITELISTED_SERVICE_IPS = {
@@ -369,29 +368,6 @@ def baseline_for_constraints(baseline_name):
 
 
 SOLVER_OPTION_PARAMS = SOLVER_KNOB_PARAMS | {FLOW_SHIFT_PARAM}
-
-# The number of model evaluations a step performs for a sampler nothing has told us about. First-order
-# is both the common case and the conservative one: it never inflates a cost for a name we cannot place.
-DEFAULT_EVALUATIONS_PER_STEP = 1
-
-
-def sampler_evaluations_per_step(sampler_name):
-    """Return how many model evaluations one denoising step of this sampler performs.
-
-    This is the difference between how long a request takes and how long its denoising trajectory is. A
-    second-order solver evaluates the model twice per step, so twenty of its steps cost about what forty
-    steps of a first-order solver cost, while still being twenty steps of denoising. Cost-shaped
-    quantities (time budgets, usage accounting) scale by this number; trajectory-shaped ones (how many
-    steps a model wants) do not.
-
-    An unrecognised name yields DEFAULT_EVALUATIONS_PER_STEP rather than raising, because this is also
-    read for payloads already stored, whose sampler was validated when the request was made.
-    """
-    constraints = SAMPLER_CONSTRAINTS.get(sampler_name)
-    if constraints is None:
-        return DEFAULT_EVALUATIONS_PER_STEP
-    return constraints.evaluations_per_step
-
 
 # What `karras: true` and `karras: false` mean once a request can name a schedule outright. Ruling: the
 # boolean keeps its existing meaning exactly, so no request already in flight changes its output. The

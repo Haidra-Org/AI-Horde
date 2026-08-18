@@ -162,6 +162,7 @@ def test_flux_image_gen(client, request_headers: dict[str, str]) -> None:
         "allow_lora": True,
         "extra_slow_worker": False,
         "limit_max_steps": True,
+        "sampler_execution_contract_version": "1.0",
     }
 
     # Test limit_max_steps
