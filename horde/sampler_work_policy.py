@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Tazlin <tazlin.on.github@gmail.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """AI-Horde policy over the SDK's sampler trajectory and work primitives.
 
 The SDK owns portable units, sampler profiles, and execution contracts. This module owns only
