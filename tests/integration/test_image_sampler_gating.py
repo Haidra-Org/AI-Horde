@@ -67,7 +67,7 @@ def _pop_dict(bridge_agent: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("sampler_name", ["uni_pc", "deis", "heunpp2"])
+@pytest.mark.parametrize("sampler_name", ["uni_pc", "deis", "res_multistep"])
 def test_extended_sampler_skips_old_bridge_but_matches_new(
     client,
     request_headers: dict[str, str],
