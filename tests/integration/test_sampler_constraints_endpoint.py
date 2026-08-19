@@ -91,7 +91,7 @@ def test_recommendations_are_served_with_their_provenance(client):
 
     assert document["recommendations"]
     for recommendation in document["recommendations"]:
-        assert recommendation["provenance"] in {"upstream_author", "community", "measured", "user_ruled"}
+        assert recommendation["provenance"] in {"upstream_author", "community", "measured", "ai_horde_devs"}
 
 
 def test_the_presentation_tier_is_served(client):
