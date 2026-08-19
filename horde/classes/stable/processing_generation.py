@@ -29,6 +29,14 @@ from horde.r2 import (
     upload_shared_metadata,
 )
 
+# Each requested LoRA may have to be fetched before the job can start. The lease assumes the largest
+# permitted file arriving over a modest connection, since a cache miss on every LoRA is a legitimate
+# case rather than a fault. Kept separate from the pixel-work term because download time does not
+# scale with resolution or sampler.
+LORA_MAX_SIZE_MB = 400
+LORA_ASSUMED_DOWNLOAD_MBPS = 30
+LORA_DOWNLOAD_SECONDS = LORA_MAX_SIZE_MB * 8 / LORA_ASSUMED_DOWNLOAD_MBPS
+
 
 class ImageProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
@@ -198,6 +206,11 @@ class ImageProcessingGeneration(ProcessingGeneration):
         proportional allowance would be least useful. Workload and worker multipliers retain extra
         room for known slow paths. They intentionally compound the whole lease, including its fixed
         allowance; changing that ordering is a policy change rather than an algebraic cleanup.
+
+        Requested LoRAs add a fixed download allowance per file on top of the floored lease. Up to five
+        LoRAs of the maximum permitted size can exceed the floor several times over on an uncached
+        worker, so no proportional or fixed term covers them; the addition is applied after the floor
+        so it never disappears into it.
         """
         ttl_multiplier = (self.wp.width * self.wp.height) / (512 * 512)
         sampler_work = self.wp.get_estimated_sampler_work().work_units.value
@@ -215,6 +228,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             ttl *= 3
 
         ttl = max(ttl, 150)
+        ttl += len(self.wp.params.get("loras", [])) * LORA_DOWNLOAD_SECONDS
         # The extra-slow opt-in describes the worker, not the payload. Applying it after the floor keeps
         # short leases viable on hardware whose model and asset preparation is itself unusually slow.
         if self.worker.extra_slow_worker is True:

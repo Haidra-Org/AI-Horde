@@ -180,8 +180,9 @@ for a 512-square first-order step.
 
 A 150-second minimum protects small jobs, for which fixed model and asset preparation can dominate.
 ControlNet doubles the computed lease; an assignment whose selected model has a Flux, Qwen Image, or
-Z-Image Turbo baseline triples it. Those factors compound before the minimum is applied. A worker
-explicitly marked extra-slow receives three times the resulting lease after the minimum. Consequently,
+Z-Image Turbo baseline triples it. Those factors compound before the minimum is applied. Each requested
+LoRA then adds a fixed download allowance of about 107 seconds (a 400 MB file at 30 Mbps) on top of the
+floored lease. A worker explicitly marked extra-slow receives three times the resulting lease. Consequently,
 combinations can produce intentionally large deadlines. This ordering is part of the worker pop
 contract and should not be rearranged as a mathematical simplification.
 
@@ -189,8 +190,9 @@ Sampler work is the proportional input, which is why fixed higher-order samplers
 times the scalable allowance. `k_dpm_adaptive` instead uses the service's stable 40-work-unit estimate;
 its backend execution ceiling is a safety bound, not a runtime forecast, and is not substituted into
 TTL. Schedulers and solver presentation controls do not independently change the lease. Neither do
-LoRAs, source processing, post-processing, or hires-fix: their ordinary setup cost is covered by the
-shared fixed and queue allowances rather than by a separate per-feature multiplier.
+source processing, post-processing, or hires-fix: their ordinary setup cost is covered by the shared
+fixed and queue allowances rather than by a separate per-feature multiplier. LoRAs are the exception,
+because a cache miss on several maximum-size files costs more than the whole floor.
 
 ## Solver options
 
