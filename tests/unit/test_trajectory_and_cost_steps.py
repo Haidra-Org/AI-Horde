@@ -223,6 +223,28 @@ class TestJobTimeBudget:
 
         assert generation.job_ttl == 450
 
+    def test_each_requested_lora_adds_a_download_allowance_after_the_floor(self, monkeypatch):
+        """Five maximum-size LoRAs on an uncached worker take longer than the whole floor to fetch.
+
+        The allowance is additive rather than folded into the floor, so a short job with LoRAs is not
+        left with the same lease as one without.
+        """
+        tiny = FakeWaitingPrompt("k_euler", steps=1)
+        tiny.params["loras"] = [{"name": str(i)} for i in range(5)]
+        generation = FakeProcessingGeneration(tiny)
+        generation.set_job_ttl(monkeypatch)
+
+        # 150 floor plus five downloads of 400 MB at 30 Mbps (106.67 s each), rounded up.
+        assert generation.job_ttl == 684
+
+    def test_the_lora_allowance_is_multiplied_for_an_extra_slow_worker(self, monkeypatch):
+        tiny = FakeWaitingPrompt("k_euler", steps=1)
+        tiny.params["loras"] = [{"name": "one"}]
+        generation = FakeProcessingGeneration(tiny, extra_slow_worker=True)
+        generation.set_job_ttl(monkeypatch)
+
+        assert generation.job_ttl == 770
+
     def test_fractional_deadlines_round_up_to_whole_seconds(self, monkeypatch):
         generation = FakeProcessingGeneration(FakeWaitingPrompt("k_euler", steps=100, width=520, height=520))
         generation.set_job_ttl(monkeypatch)
