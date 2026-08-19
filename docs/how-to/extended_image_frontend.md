@@ -430,7 +430,8 @@ The completed payload identifies the form independently and returns a temporary 
     {
       "form": "annotation",
       "state": "done",
-      "result": {"annotation": "<temporary-image-url>"}
+      "result": {"annotation": "<temporary-image-url>"},
+      "payload": {"control_type": "canny"}
     }
   ]
 }
@@ -439,6 +440,12 @@ The completed payload identifies the form independently and returns a temporary 
 Match the result by `form === "annotation"`; do not assume it is the first entry when the request also
 contains caption or post-processing forms. Display or download `result.annotation` promptly because it
 is a presigned result URL rather than permanent frontend storage.
+
+One request may carry several `annotation` forms, one per `control_type`, and each comes back as its own
+entry. A form's status entry echoes the `payload` it was requested with, so match a map to its detector
+by `payload.control_type` rather than by position. Identical name and payload pairs are queued once. A
+server older than this guide omits `payload`; when a request carried a single annotation form the
+detector is the one you sent, so fall back to that rather than failing.
 
 Cancel an unfinished request with:
 
