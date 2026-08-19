@@ -147,3 +147,12 @@ def test_both_measured_cost_ratios_are_served_with_their_basis(client):
             },
         ],
     }
+
+
+def test_repeated_requests_serve_an_unchanged_document(client):
+    # The document is compiled once per process and handed to every caller, so anything that mutated it
+    # on the way out would corrupt it for every later request rather than just its own.
+    first = client.get(CONSTRAINTS_URL).get_json()
+    second = client.get(CONSTRAINTS_URL).get_json()
+
+    assert first == second
