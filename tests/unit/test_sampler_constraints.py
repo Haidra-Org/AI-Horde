@@ -313,7 +313,7 @@ class TestPublishedConstraints:
         # cannot weigh them without knowing which is which.
         assert document["recommendations"]
         for recommendation in document["recommendations"]:
-            assert recommendation["provenance"] in {"upstream_author", "community", "measured", "user_ruled"}
+            assert recommendation["provenance"] in {"upstream_author", "community", "measured", "ai_horde_devs"}
             assert recommendation["source"]
             assert recommendation["summary"]
 
@@ -391,7 +391,7 @@ class TestPublishedConstraints:
             assert abs(ratio - expected) <= 0.2 * expected, sampler
 
     def test_the_ruled_recommendations_are_served_as_ruled(self, document):
-        ruled = [rec for rec in document["recommendations"] if rec["provenance"] == "user_ruled"]
+        ruled = [rec for rec in document["recommendations"] if rec["provenance"] == "ai_horde_devs"]
 
         assert ruled
         summaries = " ".join(rec["summary"] for rec in ruled)
