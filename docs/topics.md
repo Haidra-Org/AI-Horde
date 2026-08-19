@@ -31,6 +31,7 @@ procedure for one subject sit together.
 ### generation
 
 - How-to: [Add extended image controls to a frontend](how-to/extended_image_frontend.md)
+- How-to: [Add a sampler, scheduler, solver control, or annotator](how-to/add_sampler_or_annotator.md)
 - Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
 
 ### kudos
