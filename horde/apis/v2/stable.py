@@ -55,7 +55,7 @@ from horde.metrics import (
 )
 from horde.model_reference import model_reference
 from horde.patreon import patrons
-from horde.sampler_constraints import compile_sampler_constraints
+from horde.sampler_constraints import published_sampler_constraints
 from horde.telemetry import (
     get_traceparent,
     pyroscope_tag,
@@ -1520,7 +1520,6 @@ class ImageSamplerConstraints(Resource):
     decorators = [limiter.exempt]
 
     @logger.catch(reraise=True)
-    @cache.cached(timeout=3600)
     @api.expect(get_parser)
     @api.response(200, "Constraints Published", models.response_model_sampler_constraints)
     def get(self):
@@ -1532,6 +1531,7 @@ class ImageSamplerConstraints(Resource):
         Recommendations are advisory and each carries the provenance of the claim, because they range
         from statements by the image backend's own author to third-party folklore.
         """
-        # The document is typed all the way up, and is rendered to plain JSON types only here, at the
-        # boundary, so nothing downstream of the compiler works in anonymous dicts.
-        return compile_sampler_constraints().model_dump(mode="json"), 200
+        # The document is a pure function of the installed code, so it is compiled once per process and
+        # held rather than cached between them: a response cache could only ever return what this
+        # process already has, and would outlive the build that filled it.
+        return published_sampler_constraints(), 200

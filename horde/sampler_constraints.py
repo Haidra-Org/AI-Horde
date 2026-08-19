@@ -13,10 +13,14 @@ The document's type also lives in horde_sdk, as
 :class:`~horde_sdk.generation_parameters.image.constraints_document.SamplerConstraintsDocument`, so a
 python client parses the response back into the same models this module builds it from.
 
-The public entry point is :func:`compile_sampler_constraints`.
+The endpoint serves :func:`published_sampler_constraints`, which renders what
+:func:`compile_sampler_constraints` builds.
 """
 
 from __future__ import annotations
+
+import functools
+from typing import Any
 
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde_sdk.generation_parameters.image.constraints import (
@@ -264,3 +268,20 @@ def compile_sampler_constraints() -> SamplerConstraintsDocument:
             recommended=sorted(sampler for sampler in RECOMMENDED_SAMPLERS if str(sampler) in KNOWN_SAMPLERS),
         ),
     )
+
+
+@functools.cache
+def published_sampler_constraints() -> dict[str, Any]:
+    """Return the document the endpoint publishes, compiled and serialised once per process.
+
+    The document is a pure function of the installed code: no request input, no database read, nothing a
+    running process can change. Holding it removes any window in which a process could publish a document
+    other than the one its own code produces, and it is cheaper than fetching one from a shared cache.
+
+    The returned mapping is shared by every caller and must not be mutated.
+
+    Returns:
+        The document rendered to plain JSON types.
+
+    """
+    return compile_sampler_constraints().model_dump(mode="json")

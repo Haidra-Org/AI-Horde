@@ -167,6 +167,9 @@ Rules that follow from those being separate:
 - **Version pins.** A new SDK symbol means bumping the `horde_sdk` bound in `pyproject.toml` and
   `requirements.txt`, and regenerating `uv.lock`. reGen pins the SDK separately, so a worker-visible
   addition needs both bumps before the capability gate can open.
+- **Publishing the change.** The sampler constraints endpoint compiles its document once per process
+  and holds it, with no response cache in front, so a deployed change serves as soon as the process
+  restarts. Nothing needs invalidating and no cache flush belongs in the deploy.
 - **Tests.** `tests/unit/test_consts.py` pins the vocabularies, `tests/unit/test_sampler_constraints.py`
   compares the published document with the registry, `tests/unit/test_kudos_pricing.py` pins prices for
   pre-existing requests, and `tests/unit/test_bridge_reference.py` pins capability gating. The Locust
