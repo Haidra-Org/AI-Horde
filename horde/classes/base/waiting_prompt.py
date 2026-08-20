@@ -351,6 +351,11 @@ class WaitingPrompt(db.Model):
         if len(candidates) == 0:
             candidates = list(declared_models)
         if len(candidates) == 0:
+            # The worker declared no models in its pop, so there is no committed list to draw from.
+            # The WP's own request list is the next-most-truthful record; a blank model is worse than
+            # either, because workers reject a nameless job outright and fault it back for reissue.
+            candidates = list(wp_models)
+        if len(candidates) == 0:
             logger.warning(
                 f"No models available to record for a generation on WP {self.id} by worker {worker.id}. "
                 f"WP Models: {wp_models}. Declared Models: {declared_models}.",

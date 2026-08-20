@@ -150,3 +150,32 @@ class TestEffectiveStyleConstraints:
             client.delete(f"/api/v2/generate/status/{request_resp.get_json()['id']}", headers=headers)
         finally:
             client.delete(f"/api/v2/styles/image/{style_id}", headers=headers)
+
+
+class TestImageEmptyModelsDefault:
+    def test_empty_models_list_defaults_to_stable_diffusion(self, app, client, api_key):
+        # The parser default only covers an absent "models" key; an explicit [] used to create a WP
+        # with no model constraint, which could be popped and recorded with a blank model name.
+        headers = _headers(api_key)
+        resp = client.post(
+            "/api/v2/generate/async",
+            json={
+                "prompt": "empty models probe",
+                "models": [],
+                "params": {"width": 512, "height": 512},
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 202, resp.get_data(as_text=True)
+        wp_id = resp.get_json()["id"]
+
+        try:
+            from horde.classes.base.waiting_prompt import WPModels
+
+            with app.app_context():
+                from horde.flask import db
+
+                rows = db.session.query(WPModels.model).filter(WPModels.wp_id == wp_id).all()
+            assert [row.model for row in rows] == ["stable_diffusion"]
+        finally:
+            client.delete(f"/api/v2/generate/status/{wp_id}", headers=headers)

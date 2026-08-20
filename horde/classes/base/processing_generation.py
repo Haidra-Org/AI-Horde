@@ -161,8 +161,13 @@ class ProcessingGeneration(db.Model):
             else:
                 matching_models = worker_models.copy()
             if len(matching_models) == 0:
-                # Record no model rather than a WP model the worker does not
-                # host: a mislabeled hosted model is worse than an empty one.
+                # An empty intersection still has to name a model: workers reject a nameless job
+                # outright and fault it back, which defeats this path's remaining caller (the fake
+                # generation handed to a paused worker). Prefer a model the worker hosts, since it
+                # can actually run it; fall back to the WP's own list; go blank only when neither
+                # side names anything.
+                matching_models = worker_models.copy() or wp_models.copy()
+            if len(matching_models) == 0:
                 logger.warning(
                     f"No models matched between worker and request for generation {self.id}. "
                     f"Worker Models: {worker_models}. Request Models: {wp_models}. Using empty model string.",

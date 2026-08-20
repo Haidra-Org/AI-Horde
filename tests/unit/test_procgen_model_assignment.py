@@ -201,3 +201,47 @@ class TestBatching:
         recorded_models = {procgen.model for procgen in procgens}
         assert len(recorded_models) == 1
         assert recorded_models.pop() in {"model_b", "model_c"}
+
+
+class TestEmptyDeclaredList:
+    """A pop that declared no models still records a real model, drawn from the WP's own list."""
+
+    def test_wp_model_is_recorded_when_declared_list_is_empty(self, db_session, fake_redis, make_user):
+        user = make_user()
+        worker = _make_text_worker(db_session, user, name="worker_empty_declared", models=["model_alpha"])
+        wp = _make_text_wp(db_session, user, models=["model_beta"])
+
+        wp.start_generation(worker, declared_models=[])
+
+        procgens = _procgens_for_wp(wp)
+        assert len(procgens) == 1
+        assert procgens[0].model == "model_beta"
+
+
+class TestFakeGenerationModel:
+    """A fake generation still names a model, so the tricked worker does not reject it as malformed."""
+
+    def test_disjoint_sets_record_a_worker_model(self, db_session, fake_redis, make_user):
+        # Worker hosts model_alpha; the prompt is constrained to model_beta. The fake job must name
+        # a model the worker can actually run, so the worker's own model wins over the WP's.
+        user = make_user()
+        worker = _make_text_worker(db_session, user, name="worker_fake_disjoint", models=["model_alpha"])
+        wp = _make_text_wp(db_session, user, models=["model_beta"])
+
+        wp.fake_generation(worker)
+
+        procgens = _procgens_for_wp(wp)
+        assert len(procgens) == 1
+        assert procgens[0].model == "model_alpha"
+
+    def test_workerless_model_set_falls_back_to_wp_models(self, db_session, fake_redis, make_user):
+        # A worker with no recorded models still yields a named fake job via the WP's own list.
+        user = make_user()
+        worker = _make_text_worker(db_session, user, name="worker_fake_modelless", models=[])
+        wp = _make_text_wp(db_session, user, models=["model_beta"])
+
+        wp.fake_generation(worker)
+
+        procgens = _procgens_for_wp(wp)
+        assert len(procgens) == 1
+        assert procgens[0].model == "model_beta"

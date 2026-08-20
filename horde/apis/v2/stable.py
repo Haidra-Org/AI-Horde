@@ -135,6 +135,13 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.prompt = self.args.prompt
         self.apikey = self.args.apikey
         self.apply_style()
+        if len(self.models) == 0:
+            # The parser's default covers only an absent or null "models" key. An explicit empty list
+            # (from the request, or from a style that names no models) would otherwise create a WP with
+            # no WPModels rows, which the pop query matches as "any model" and which can then be
+            # recorded, and returned to the worker, with no model name at all. An image request that
+            # names no model means the documented default.
+            self.models = ["stable_diffusion"]
         super().validate()
         # Validated against the models the job will actually run on, which is what ImageWaitingPrompt is
         # built with below. A style replaces both the params and the model list, so reading the request's
