@@ -617,10 +617,12 @@ class WaitingPrompt(db.Model):
         self.consumed_kudos = round(self.consumed_kudos + kudos, 2)
         self.refresh(commit=commit)
 
-    def extrapolate_dry_run_kudos(self):
+    def extrapolate_dry_run_kudos(self, extra_source_images_count=0):
         kudos = self.calculate_kudos()
-        # The +1 is the extra kudos burn per request
-        return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1
+        # The horde tax has to match the one _activate() charges, or the quote underpromises
+        # what the same request costs when it's not a dry run.
+        horde_tax = 1 + (5 * extra_source_images_count)
+        return (self.calculate_extra_kudos_burn(kudos) * self.n) + horde_tax
 
     def log_faulted_prompt(self):
         """Extendable function to log why a request was aborted"""
