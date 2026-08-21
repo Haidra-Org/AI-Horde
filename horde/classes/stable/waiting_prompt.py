@@ -590,22 +590,25 @@ class ImageWaitingPrompt(WaitingPrompt):
             random.shuffle(generations)
         return generations
 
-    def extrapolate_dry_run_kudos(self):
+    def extrapolate_dry_run_kudos(self, extra_source_images_count=0):
         kudos = self.calculate_kudos()
         if len(self.models) > 0:
             model_name = self.models[0].model
         else:
             model_name = "SDXL 1.0"
+        # The horde tax has to match the one _activate() charges, or the quote underpromises
+        # what the same request costs when it's not a dry run. It is a flat per-request cost,
+        # so the baseline multipliers do not apply to it.
+        horde_tax = 1 + (5 * extra_source_images_count)
         if model_reference.get_model_baseline(model_name) in ["stable_diffusion_xl"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + 1
+            return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + horde_tax
         if model_reference.get_model_baseline(model_name) in ["stable_cascade"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 4) + 1
+            return (self.calculate_extra_kudos_burn(kudos) * self.n * 4) + horde_tax
         if model_reference.get_model_baseline(model_name) in ["flux_1", "z_image_turbo"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 8) + 1
+            return (self.calculate_extra_kudos_burn(kudos) * self.n * 8) + horde_tax
         if model_reference.get_model_baseline(model_name) in ["qwen_image"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 12) + 1
-        # The +1 is the extra kudos burn per request
-        return (self.calculate_extra_kudos_burn(kudos) * self.n) + 1
+            return (self.calculate_extra_kudos_burn(kudos) * self.n * 12) + horde_tax
+        return (self.calculate_extra_kudos_burn(kudos) * self.n) + horde_tax
 
     def get_amount_calculation_things(self):
         return self.width * self.height
