@@ -341,6 +341,41 @@ def workers_exist(worker_ids):
     return missing | invalid_ids
 
 
+MODEL_ETA_NO_CAPACITY = 10000
+"""The eta reported when a model's queue has no way to clear: no workers, or no known speed at all."""
+
+
+def compute_model_eta(
+    things_queued: float,
+    jobs_queued: int,
+    worker_count: int,
+    model_avg_perf: float,
+    global_avg_perf: float,
+) -> int:
+    """Return the estimated seconds for one model's queue to clear.
+
+    Pure arithmetic on values the caller already holds, so it does no DB or Redis work.
+
+    A model's threads only parallelize across the jobs actually queued for it, so the
+    thread count is clamped to the queued job count. Without that clamp a model with far
+    more idle threads than demand reports an eta far below the time a single job takes.
+    This mirrors the request-level clamp in ``WaitingPrompt.get_status``.
+
+    A model that has served too little to have its own recorded average would otherwise
+    report the no-capacity sentinel while workers are sitting ready for it, so the
+    horde-wide average for that model's type stands in. Both rates are raw things per
+    second per thread, so they are directly interchangeable here.
+    """
+    if worker_count <= 0:
+        return MODEL_ETA_NO_CAPACITY
+    if things_queued <= 0 or jobs_queued <= 0:
+        return 0
+    perf = model_avg_perf if model_avg_perf > 0 else global_avg_perf
+    if perf <= 0:
+        return MODEL_ETA_NO_CAPACITY
+    return int(things_queued / (min(worker_count, jobs_queued) * perf))
+
+
 def get_available_models(filter_model_name: str = None):
     models_dict = {}
     available_worker_models = None
@@ -436,6 +471,9 @@ def get_available_models(filter_model_name: str = None):
             )
         else:
             things_per_model, jobs_per_model = count_things_per_model(wp_class)
+        # Fetched once per model type rather than per model: it is the same value for every
+        # model of that type and each call can reach Redis.
+        global_avg_perf = get_request_avg(model_type)
         # If we request a lite_dict, we only want worker count per model and a dict format
         for model_name in things_per_model:
             # This shouldn't happen, but I'm checking anyway
@@ -444,12 +482,13 @@ def get_available_models(filter_model_name: str = None):
                 continue
             models_dict[model_name]["queued"] = things_per_model[model_name]
             models_dict[model_name]["jobs"] = jobs_per_model[model_name]
-            total_performance_on_model = models_dict[model_name]["count"] * models_dict[model_name]["performance"]
-            # We don't want a division by zero when there's no workers for this model.
-            if total_performance_on_model > 0:
-                models_dict[model_name]["eta"] = int(things_per_model[model_name] / total_performance_on_model)
-            else:
-                models_dict[model_name]["eta"] = 10000
+            models_dict[model_name]["eta"] = compute_model_eta(
+                things_queued=things_per_model[model_name],
+                jobs_queued=jobs_per_model[model_name],
+                worker_count=models_dict[model_name]["count"],
+                model_avg_perf=models_dict[model_name]["performance"],
+                global_avg_perf=global_avg_perf,
+            )
     return list(models_dict.values())
 
 
