@@ -617,11 +617,11 @@ class WaitingPrompt(db.Model):
         self.consumed_kudos = round(self.consumed_kudos + kudos, 2)
         self.refresh(commit=commit)
 
-    def extrapolate_dry_run_kudos(self, extra_source_images_count=0):
+    def extrapolate_dry_run_kudos(self, extra_source_images_count=0, kudos_adjustment=0):
         kudos = self.calculate_kudos()
         # The horde tax has to match the one _activate() charges, or the quote underpromises
         # what the same request costs when it's not a dry run.
-        horde_tax = 1 + (5 * extra_source_images_count)
+        horde_tax = 1 + (5 * extra_source_images_count) + kudos_adjustment
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + horde_tax
 
     def log_faulted_prompt(self):

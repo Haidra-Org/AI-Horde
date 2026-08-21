@@ -250,7 +250,10 @@ class GenerateTemplate(Resource):
 
     # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):
-        kudos = self.wp.extrapolate_dry_run_kudos(extra_source_images_count=self.get_extra_source_images_count())
+        kudos = self.wp.extrapolate_dry_run_kudos(
+            extra_source_images_count=self.get_extra_source_images_count(),
+            kudos_adjustment=2 if self.style_kudos is True else 0,
+        )
         params_hash = self.get_hashed_params_dict()
         hr.horde_r_setex(f"payload_kudos_{params_hash}", timedelta(days=2), kudos)
         return kudos
@@ -272,6 +275,9 @@ class GenerateTemplate(Resource):
         # The quote includes the per-extra-source-image tax, so payloads which differ only
         # in how many they carry must not share a cached kudos calculation.
         gen_payload["extra_source_images"] = self.get_extra_source_images_count()
+        # The style surcharge is in the quote too, and whether a style applied is not
+        # visible in the params themselves.
+        gen_payload["style_kudos"] = self.style_kudos is True
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 

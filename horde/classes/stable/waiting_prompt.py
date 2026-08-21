@@ -590,7 +590,7 @@ class ImageWaitingPrompt(WaitingPrompt):
             random.shuffle(generations)
         return generations
 
-    def extrapolate_dry_run_kudos(self, extra_source_images_count=0):
+    def extrapolate_dry_run_kudos(self, extra_source_images_count=0, kudos_adjustment=0):
         kudos = self.calculate_kudos()
         if len(self.models) > 0:
             model_name = self.models[0].model
@@ -599,7 +599,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         # The horde tax has to match the one _activate() charges, or the quote underpromises
         # what the same request costs when it's not a dry run. It is a flat per-request cost,
         # so the baseline multipliers do not apply to it.
-        horde_tax = 1 + (5 * extra_source_images_count)
+        horde_tax = 1 + (5 * extra_source_images_count) + kudos_adjustment
         if model_reference.get_model_baseline(model_name) in ["stable_diffusion_xl"]:
             return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + horde_tax
         if model_reference.get_model_baseline(model_name) in ["stable_cascade"]:

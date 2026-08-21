@@ -379,6 +379,9 @@ class ImageAsyncGenerate(GenerateTemplate):
         # The quote includes the per-extra-source-image tax, so payloads which differ only
         # in how many they carry must not share a cached kudos calculation.
         gen_payload["extra_source_images"] = self.get_extra_source_images_count()
+        # The style surcharge is in the quote too, and whether a style applied is not
+        # visible in the params themselves.
+        gen_payload["style_kudos"] = self.style_kudos is True
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 
@@ -429,7 +432,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             source_image=self.source_image,
             source_mask=self.source_mask,
             extra_source_images=self.args.extra_source_images,
-            kudos_adjustment=2 if self.style_kudos is not None else 0,
+            kudos_adjustment=2 if self.style_kudos is True else 0,
         )
 
     def apply_style(self):
