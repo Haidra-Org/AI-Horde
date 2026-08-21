@@ -6,7 +6,8 @@
 
 Submitting an image request charges the requester an up-front horde tax at
 activation and seeds the request's queue priority from the requester's current
-balance. The anonymous user is charged the same tax as a registered user. When
+balance. The anonymous user is charged the same tax as a registered user, and a
+request applying someone else's style pays a surcharge on top of it. When
 a request needs kudos up front and the requester cannot cover the estimated
 cost, activation is refused and nothing is charged.
 """
@@ -42,8 +43,23 @@ GATED_REQUEST: dict[str, object] = {
     "allow_downgrade": False,
 }
 
+# A style owned by someone other than the requester. The surcharge applies only when
+# the applied style belongs to another user.
+BORROWED_STYLE: dict[str, object] = {
+    "name": "activation tax test style",
+    "info": "a style owned by another user",
+    "public": True,
+    "prompt": "{p}, as a test###{np}",
+    "nsfw": False,
+    "params": {"width": 512, "height": 512, "steps": 8, "cfg_scale": 1.5, "sampler_name": "k_euler_a"},
+    "models": ["stable_diffusion"],
+}
+
 # The up-front horde tax charged at activation for a minimal single-image request.
-ACTIVATION_TAX: int = 3
+BASE_ACTIVATION_TAX: int = 1
+
+# Applying another user's style costs the requester this much on top of the base tax.
+STYLE_SURCHARGE: int = 2
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +100,7 @@ class TestActivationDebit:
         settle_kudos()
         with app.app_context():
             after = database.find_user_by_id(uid).kudos
-        assert after == before - ACTIVATION_TAX
+        assert after == before - BASE_ACTIVATION_TAX
 
     def test_anonymous_request_debits_the_anonymous_user(self, client: FlaskClient, app: Flask, settle_kudos: Callable[[], int]) -> None:
         """The anonymous user is charged the same activation tax as a registered requester."""
@@ -103,7 +119,37 @@ class TestActivationDebit:
         settle_kudos()
         with app.app_context():
             after = database.find_user_by_id(0).kudos
-        assert after == 100 - ACTIVATION_TAX
+        assert after == 100 - BASE_ACTIVATION_TAX
+
+    def test_styled_request_debits_the_style_surcharge_as_well(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        api_key: str,
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """A request applying another user's style is charged the surcharge on top of the base tax."""
+        from horde.database import functions as database
+
+        style_owner = make_api_user(trusted=True)
+        style_resp = client.post("/api/v2/styles/image", json=BORROWED_STYLE, headers=_headers(style_owner.api_key))
+        assert style_resp.status_code == 200, style_resp.get_data(as_text=True)
+        style_id = style_resp.get_json()["id"]
+
+        settle_kudos()
+        with app.app_context():
+            uid = database.find_user_by_api_key(api_key).id
+            before = database.find_user_by_id(uid).kudos
+
+        styled_request = dict(SMALL_REQUEST, style=style_id)
+        resp = client.post("/api/v2/generate/async", json=styled_request, headers=_headers(api_key))
+        assert resp.status_code == 202, resp.get_data(as_text=True)
+
+        settle_kudos()
+        with app.app_context():
+            after = database.find_user_by_id(uid).kudos
+        assert after == before - (BASE_ACTIVATION_TAX + STYLE_SURCHARGE)
 
 
 class TestPrioritySeeding:
