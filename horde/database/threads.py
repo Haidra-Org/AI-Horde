@@ -325,7 +325,7 @@ def check_interrogations():
 
 @logger.catch(reraise=True)
 def store_available_models():
-    """Stores the retrieved model details as json for 5 seconds horde-wide"""
+    """Stores the retrieved model details as json horde-wide, expiring after 600 seconds"""
     with get_app().app_context():
         json_models = json.dumps(get_available_models())
         try:
