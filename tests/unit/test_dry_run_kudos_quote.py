@@ -50,6 +50,12 @@ class TestBaseQuote:
     def test_extra_source_images_are_taxed_five_each(self):
         assert WaitingPrompt.extrapolate_dry_run_kudos(_wp(), extra_source_images_count=3) == 36
 
+    def test_kudos_adjustment_joins_the_flat_tax(self):
+        assert WaitingPrompt.extrapolate_dry_run_kudos(_wp(), kudos_adjustment=2) == 23
+
+    def test_adjustment_and_extras_stack(self):
+        assert WaitingPrompt.extrapolate_dry_run_kudos(_wp(), extra_source_images_count=3, kudos_adjustment=2) == 38
+
 
 class TestImageQuote:
     def test_no_extra_source_images_quotes_the_flat_request_tax(self, baseline):
@@ -63,3 +69,7 @@ class TestImageQuote:
     def test_baseline_multiplier_does_not_apply_to_the_tax(self, baseline):
         baseline("stable_diffusion_xl")
         assert ImageWaitingPrompt.extrapolate_dry_run_kudos(_wp(), extra_source_images_count=3) == 56
+
+    def test_baseline_multiplier_does_not_apply_to_the_adjustment(self, baseline):
+        baseline("stable_diffusion_xl")
+        assert ImageWaitingPrompt.extrapolate_dry_run_kudos(_wp(), kudos_adjustment=2) == 43
