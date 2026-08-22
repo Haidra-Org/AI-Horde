@@ -2,12 +2,16 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import json
 import math
 import os
 import time
+from typing import TYPE_CHECKING
 
 import logfire
+from sqlalchemy.orm import Mapped, relationship
 
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.genstats import record_image_statistic
@@ -29,6 +33,10 @@ from horde.r2 import (
     upload_shared_metadata,
 )
 
+if TYPE_CHECKING:
+    from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+    from horde.classes.stable.worker import ImageWorker
+
 # Each requested LoRA may have to be fetched before the job can start. The lease assumes the largest
 # permitted file arriving over a modest connection, since a cache miss on every LoRA is a legitimate
 # case rather than a fault. Kept separate from the pixel-work term because download time does not
@@ -42,8 +50,8 @@ class ImageProcessingGeneration(ProcessingGeneration):
     __mapper_args__ = {
         "polymorphic_identity": "image",
     }
-    wp = db.relationship("ImageWaitingPrompt", back_populates="processing_gens")
-    worker = db.relationship("ImageWorker", back_populates="processing_gens")
+    wp: Mapped[ImageWaitingPrompt] = relationship("ImageWaitingPrompt", back_populates="processing_gens")
+    worker: Mapped[ImageWorker] = relationship("ImageWorker", back_populates="processing_gens")
 
     def get_details(self):
         """Returns a dictionary with details about this processing generation"""
