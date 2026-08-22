@@ -20,8 +20,12 @@ Locks in:
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import pytest
 from flask import Flask
+from opentelemetry.trace import Status, StatusCode
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +34,13 @@ def _isolate_telemetry_env(monkeypatch):
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", raising=False)
     monkeypatch.delenv("PYROSCOPE_ENABLED", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_SLOW_THRESHOLD_SECONDS", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_PROMOTION_COUNT", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_PROMOTION_WINDOW_SECONDS", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_PROMOTION_MAX_PER_MINUTE", raising=False)
+    monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_ALWAYS_INCLUDE", raising=False)
 
 
 @pytest.fixture(scope="module")
@@ -76,6 +87,267 @@ def test_init_telemetry_early_is_idempotent(telemetry_app):
     from horde.telemetry import init_telemetry_early
 
     init_telemetry_early(telemetry_app)
+
+
+@pytest.mark.parametrize("span_profiles", [None, "false"])
+def test_pyroscope_span_processor_is_disabled_by_default(monkeypatch, span_profiles):
+    from horde import telemetry
+
+    configure_calls = []
+    pyroscope_module = ModuleType("pyroscope")
+    pyroscope_module.__path__ = []
+    pyroscope_module.configure = lambda **kwargs: configure_calls.append(kwargs)
+
+    class UnexpectedSpanProcessor:
+        def __init__(self):
+            raise AssertionError("PyroscopeSpanProcessor must remain disabled")
+
+    pyroscope_otel_module = ModuleType("pyroscope.otel")
+    pyroscope_otel_module.PyroscopeSpanProcessor = UnexpectedSpanProcessor
+    monkeypatch.setitem(sys.modules, "pyroscope", pyroscope_module)
+    monkeypatch.setitem(sys.modules, "pyroscope.otel", pyroscope_otel_module)
+    monkeypatch.setattr(telemetry.logger, "init_ok", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setenv("PYROSCOPE_ENABLED", "true")
+    if span_profiles is None:
+        monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES", raising=False)
+    else:
+        monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES", span_profiles)
+
+    assert telemetry._init_pyroscope() == []
+    assert len(configure_calls) == 1
+
+
+def test_pyroscope_span_processor_requires_explicit_opt_in(monkeypatch):
+    from horde import telemetry
+
+    pyroscope_module = ModuleType("pyroscope")
+    pyroscope_module.__path__ = []
+    pyroscope_module.configure = lambda **_kwargs: None
+
+    class FakeSpanProcessor:
+        pass
+
+    pyroscope_otel_module = ModuleType("pyroscope.otel")
+    pyroscope_otel_module.PyroscopeSpanProcessor = FakeSpanProcessor
+    monkeypatch.setitem(sys.modules, "pyroscope", pyroscope_module)
+    monkeypatch.setitem(sys.modules, "pyroscope.otel", pyroscope_otel_module)
+    monkeypatch.setattr(telemetry.logger, "init_ok", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setenv("PYROSCOPE_ENABLED", "true")
+    monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES", "true")
+    monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE", "1")
+
+    processors = telemetry._init_pyroscope()
+
+    assert len(processors) == 1
+    assert isinstance(processors[0], telemetry._TraceRatioSpanProcessor)
+    assert isinstance(processors[0]._processor, FakeSpanProcessor)
+
+
+@pytest.mark.parametrize("raw_rate", [None, "invalid", "1.1", "-0.1"])
+def test_pyroscope_span_profile_sample_rate_fails_safe(monkeypatch, raw_rate):
+    from horde import telemetry
+
+    monkeypatch.setattr(telemetry.logger, "init_warn", lambda *_args, **_kwargs: None, raising=False)
+    if raw_rate is None:
+        monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE", raising=False)
+    else:
+        monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE", raw_rate)
+
+    assert telemetry._pyroscope_span_profile_sample_rate() == 0.10
+
+
+def test_pyroscope_span_processor_uses_deterministic_trace_ratio():
+    from horde.telemetry import _TRACE_ID_SPACE, _TraceRatioSpanProcessor
+
+    calls = []
+
+    class RecordingSpanProcessor:
+        def on_start(self, span, parent_context=None):
+            calls.append(("start", span.context.trace_id, parent_context))
+
+        def on_end(self, span):
+            calls.append(("end", span.context.trace_id))
+
+        def shutdown(self):
+            calls.append(("shutdown",))
+
+        def force_flush(self, timeout_millis=30000):
+            calls.append(("flush", timeout_millis))
+            return True
+
+    class Context:
+        def __init__(self, trace_id, span_id=1):
+            self.trace_id = trace_id
+            self.span_id = span_id
+
+    class Span:
+        def __init__(self, trace_id):
+            self.context = Context(trace_id)
+            self.name = "test"
+            self.parent = None
+            self.attributes = {}
+            self.status = Status(StatusCode.UNSET)
+            self.start_time = 0
+            self.end_time = 0
+
+    processor = _TraceRatioSpanProcessor(RecordingSpanProcessor(), 0.5)
+    selected = Span((_TRACE_ID_SPACE // 2) - 1)
+    rejected = Span(_TRACE_ID_SPACE // 2)
+
+    processor.on_start(selected, "parent")
+    processor.on_start(rejected, "parent")
+    processor.on_end(selected)
+    processor.on_end(rejected)
+    assert processor.force_flush(123)
+    processor.shutdown()
+
+    assert calls == [
+        ("start", selected.context.trace_id, "parent"),
+        ("end", selected.context.trace_id),
+        ("flush", 123),
+        ("shutdown",),
+    ]
+
+
+class _RecordingPyroscopeProcessor:
+    def __init__(self):
+        self.calls = []
+
+    def on_start(self, span, parent_context=None):
+        self.calls.append(("start", span.context.span_id))
+
+    def on_end(self, span):
+        self.calls.append(("end", span.context.span_id))
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self, timeout_millis=30000):
+        return True
+
+
+class _TestSpan:
+    def __init__(
+        self,
+        span_id,
+        *,
+        name="critical.operation",
+        duration_seconds=0.0,
+        attributes=None,
+        error=False,
+        parent=None,
+    ):
+        self.context = type("Context", (), {"trace_id": (1 << 128) - 1, "span_id": span_id})()
+        self.name = name
+        self.parent = parent
+        self.attributes = attributes or {}
+        self.status = Status(StatusCode.ERROR if error else StatusCode.UNSET)
+        self.start_time = 0
+        self.end_time = int(duration_seconds * 1_000_000_000)
+
+
+def test_pyroscope_span_processor_always_includes_forced_and_matching_root_spans():
+    from horde.telemetry import _TraceRatioSpanProcessor
+
+    delegate = _RecordingPyroscopeProcessor()
+    processor = _TraceRatioSpanProcessor(
+        delegate,
+        0,
+        always_include_operations="critical.operation,another.operation",
+    )
+    forced = _TestSpan(1, name="ordinary", attributes={"pyroscope.span_profile.force": True})
+    matching = _TestSpan(2)
+
+    for span in (forced, matching):
+        processor.on_start(span)
+        processor.on_end(span)
+
+    assert delegate.calls == [("start", 1), ("end", 1), ("start", 2), ("end", 2)]
+
+
+def test_pyroscope_span_key_does_not_use_high_cardinality_http_target():
+    from horde.telemetry import _TraceRatioSpanProcessor
+
+    delegate = _RecordingPyroscopeProcessor()
+    processor = _TraceRatioSpanProcessor(delegate, 0, promotion_count=1)
+    outlier = _TestSpan(
+        1,
+        name="GET request",
+        duration_seconds=2,
+        attributes={"http.target": "/users/first-user-id"},
+    )
+    recurrence = _TestSpan(
+        2,
+        name="GET request",
+        attributes={"http.target": "/users/second-user-id"},
+    )
+
+    processor.on_start(outlier)
+    processor.on_end(outlier)
+    processor.on_start(recurrence)
+    processor.on_end(recurrence)
+
+    assert delegate.calls == [("start", 2), ("end", 2)]
+
+
+@pytest.mark.parametrize("outlier", [{"duration_seconds": 1.0}, {"error": True}])
+def test_pyroscope_outlier_arms_follow_up_span_profiles(outlier):
+    from horde.telemetry import _TraceRatioSpanProcessor
+
+    delegate = _RecordingPyroscopeProcessor()
+    processor = _TraceRatioSpanProcessor(delegate, 0, promotion_count=2)
+    first = _TestSpan(1, **outlier)
+    processor.on_start(first)
+    processor.on_end(first)
+
+    for span_id in (2, 3, 4):
+        span = _TestSpan(span_id)
+        processor.on_start(span)
+        processor.on_end(span)
+
+    assert delegate.calls == [("start", 2), ("end", 2), ("start", 3), ("end", 3)]
+
+
+def test_pyroscope_adaptive_promotions_are_rate_limited():
+    from horde.telemetry import _TraceRatioSpanProcessor
+
+    now = [0.0]
+    delegate = _RecordingPyroscopeProcessor()
+    processor = _TraceRatioSpanProcessor(
+        delegate,
+        0,
+        promotion_count=3,
+        promotion_max_per_minute=1,
+        clock=lambda: now[0],
+    )
+    outlier = _TestSpan(1, duration_seconds=2)
+    processor.on_start(outlier)
+    processor.on_end(outlier)
+
+    for span_id in (2, 3):
+        span = _TestSpan(span_id)
+        processor.on_start(span)
+        processor.on_end(span)
+    now[0] = 60
+    third = _TestSpan(4)
+    processor.on_start(third)
+    processor.on_end(third)
+
+    assert delegate.calls == [("start", 2), ("end", 2), ("start", 4), ("end", 4)]
+
+
+def test_pyroscope_child_spans_do_not_create_profile_series():
+    from horde.telemetry import _TraceRatioSpanProcessor
+
+    delegate = _RecordingPyroscopeProcessor()
+    processor = _TraceRatioSpanProcessor(delegate, 1)
+    local_parent = type("Parent", (), {"is_remote": False})()
+    child = _TestSpan(1, parent=local_parent)
+
+    processor.on_start(child)
+    processor.on_end(child)
+
+    assert delegate.calls == []
 
 
 def test_no_otel_span_missing_warning_on_404(telemetry_app, caplog):
