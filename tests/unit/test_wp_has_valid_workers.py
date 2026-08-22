@@ -331,6 +331,175 @@ class TestFreshCapableWorker:
         assert one_worker_query_count <= 8
         assert five_worker_query_count == one_worker_query_count
 
+    def test_availability_deduplicates_active_batched_pop(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        target.active = True
+        competing_request = _make_image_wp(user, n=2)
+        worker = _make_image_worker(user, threads=2)
+        dispatch_batch_id = uuid.uuid4()
+        for _ in range(2):
+            ImageProcessingGeneration(
+                wp_id=competing_request.id,
+                worker_id=worker.id,
+                model=_HOSTED_MODEL,
+                dispatch_batch_id=dispatch_batch_id,
+            )
+
+        active_dispatches = f._get_active_worker_dispatches(target, [str(worker.id)])
+
+        assert len(active_dispatches) == 1
+        assert active_dispatches[0].dispatch_id == str(dispatch_batch_id)
+
+    def test_availability_reports_only_new_compatible_demand_ahead(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        target.created = datetime.utcnow() - timedelta(minutes=4)
+        target.extra_priority = 0
+        ahead_early = _make_image_wp(user, n=2)
+        ahead_early.active = True
+        ahead_early.created = datetime.utcnow() - timedelta(minutes=3)
+        ahead_early.extra_priority = 10
+        ahead_late = _make_image_wp(user)
+        ahead_late.active = True
+        ahead_late.created = datetime.utcnow() - timedelta(minutes=1)
+        ahead_late.extra_priority = 10
+        lower_priority = _make_image_wp(user)
+        lower_priority.active = True
+        lower_priority.created = datetime.utcnow() - timedelta(minutes=1)
+        lower_priority.extra_priority = -1
+        incompatible = _make_image_wp(user, models=("other_model",))
+        incompatible.active = True
+        incompatible.created = datetime.utcnow() - timedelta(minutes=1)
+        incompatible.extra_priority = 10
+        cancelled = _make_image_wp(user)
+        cancelled.active = True
+        cancelled.created = datetime.utcnow() - timedelta(minutes=1)
+        cancelled.extra_priority = 10
+        cancelled.n = 0
+        _make_image_worker(user)
+        db.session.commit()
+
+        eligible_workers = list(f._iter_eligible_workers_for_request(target))
+        preceding_arrivals = f._get_preceding_arrivals(target, eligible_workers, datetime.utcnow())
+
+        arrival_ids = {arrival.request_id for arrival in preceding_arrivals}
+        assert arrival_ids == {str(ahead_early.id), str(ahead_late.id)}
+        assert str(lower_priority.id) not in arrival_ids
+        assert str(incompatible.id) not in arrival_ids
+        assert str(cancelled.id) not in arrival_ids
+
+    def test_arrival_scan_does_not_truncate_after_fifty_candidates(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        target.created = datetime.utcnow() - timedelta(minutes=4)
+        target.extra_priority = 0
+        worker = _make_image_worker(user)
+        candidate_created_at = datetime.utcnow() - timedelta(minutes=1)
+        candidates: list[ImageWaitingPrompt] = []
+        for _ in range(51):
+            candidate = _make_image_wp(user)
+            candidate.active = True
+            candidate.created = candidate_created_at
+            candidate.extra_priority = 10
+            candidates.append(candidate)
+        db.session.commit()
+
+        preceding_arrivals = f._get_preceding_arrivals(target, [worker], datetime.utcnow())
+
+        assert {arrival.request_id for arrival in preceding_arrivals} == {
+            str(candidate.id) for candidate in candidates
+        }
+
+    def test_arrival_scan_query_count_does_not_scale_with_candidate_count(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        from sqlalchemy import event
+
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        target.created = datetime.utcnow() - timedelta(minutes=4)
+        target.extra_priority = 0
+        worker = _make_image_worker(user)
+        candidates: list[ImageWaitingPrompt] = []
+        for _ in range(51):
+            candidate = _make_image_wp(user)
+            candidate.active = False
+            candidate.created = datetime.utcnow() - timedelta(minutes=1)
+            candidate.extra_priority = 10
+            candidates.append(candidate)
+        candidates[0].active = True
+        db.session.commit()
+
+        def count_arrival_queries() -> int:
+            statement_count = 0
+
+            def count_statement(*_args: Any, **_kwargs: Any) -> None:
+                nonlocal statement_count
+                statement_count += 1
+
+            db.session.expire_all()
+            event.listen(db.engine, "before_cursor_execute", count_statement)
+            try:
+                f._get_preceding_arrivals(target, [worker], datetime.utcnow())
+            finally:
+                event.remove(db.engine, "before_cursor_execute", count_statement)
+            return statement_count
+
+        one_candidate_query_count = count_arrival_queries()
+        for candidate in candidates:
+            candidate.active = True
+        db.session.commit()
+        fifty_one_candidate_query_count = count_arrival_queries()
+
+        assert one_candidate_query_count <= 10
+        assert fifty_one_candidate_query_count == one_candidate_query_count
+
+    def test_cached_availability_performs_no_database_or_pressure_recalculation(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        _make_image_worker(user)
+        availability = f.get_worker_availability_for_request(target)
+
+        def fail_recalculation(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("availability cache hit recalculated database or pressure state")
+
+        monkeypatch.setattr(f, "_waiting_prompt_has_inflight_generation", fail_recalculation)
+        monkeypatch.setattr(f, "_iter_eligible_workers_for_request", fail_recalculation)
+        monkeypatch.setattr(f, "_get_active_worker_dispatches", fail_recalculation)
+        monkeypatch.setattr(f, "_get_preceding_arrivals", fail_recalculation)
+        monkeypatch.setattr(f, "get_request_assignment_pressure", fail_recalculation)
+
+        assert f.get_worker_availability_for_request(target) == availability
 
 class TestPersistedSamplerExecutionContract:
     """Forecasting reads the same recent execution capability that pop-time dispatch uses."""
