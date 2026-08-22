@@ -233,10 +233,22 @@ class TestNoWorkers:
 class TestFreshCapableWorker:
     """A fresh worker hosting the requested model makes the request possible."""
 
-    def test_fresh_worker_makes_request_possible(self, db_session, fake_redis, make_user, make_user_role):
+    def test_fresh_worker_makes_request_possible(
+        self,
+        db_session,
+        fake_redis,
+        make_user,
+        make_user_role,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         user = _make_trusted_user(make_user, make_user_role)
         wp = _make_image_wp(user)
         _make_image_worker(user)
+
+        def fail_inflight_query(_waiting_prompt: ImageWaitingPrompt) -> bool:
+            raise AssertionError("fresh request feasibility queried processing generations")
+
+        monkeypatch.setattr(f, "_waiting_prompt_has_inflight_generation", fail_inflight_query)
 
         assert f.wp_has_valid_workers(wp) is True
 
