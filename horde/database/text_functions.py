@@ -19,12 +19,11 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.worker import TextWorker
+from horde.classes.kobold.worker import TextWorker, get_minimum_text_worker_speed
 from horde.database.functions import query_prioritized_wps
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
-from horde.model_reference import model_reference
 
 
 # Should be overriden
@@ -40,16 +39,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     PER_PAGE = 3  # how many requests we're picking up to filter further
-    if len(models_list) >= 1:
-        params = model_reference.get_text_model_multiplier(models_list[0])
-        if params >= 20:
-            slow_speed = 3
-        elif params >= 13:
-            slow_speed = 4
-        else:
-            slow_speed = 5
-    else:
-        slow_speed = 3
+    slow_speed = get_minimum_text_worker_speed(models_list)
     # The model constraint is a semi-join: joining wp_models returns one row per
     # matching model, and the page LIMIT below counts joined rows, so a WP
     # naming several of the worker's models would consume several page slots as
