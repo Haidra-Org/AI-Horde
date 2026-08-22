@@ -254,6 +254,85 @@ def test_worker_priority_pass_precedes_a_target_outside_that_pass() -> None:
     assert pressure.might_stall is True
 
 
+def test_dispatch_and_capacity_return_observations_round_trip_through_redis(fake_redis, monkeypatch) -> None:
+    now = datetime.utcnow()
+    observations = [
+        _dispatch(now, 1, created_at=now - timedelta(minutes=3), dispatched_at=now - timedelta(seconds=190)),
+        _dispatch(now, 2, created_at=now - timedelta(seconds=90), dispatched_at=now - timedelta(seconds=80)),
+        _dispatch(now, 3, created_at=now - timedelta(seconds=30), dispatched_at=now - timedelta(seconds=20)),
+    ]
+    for observation in observations:
+        request_scheduling.record_worker_dispatch(observation)
+    for dispatch_id, seconds_ago in (("dispatch-1", 180), ("dispatch-2", 60)):
+        request_scheduling.record_capacity_return(
+            request_scheduling.CapacityReturn(
+                worker_id="worker-1",
+                dispatch_id=dispatch_id,
+                returned_at=now - timedelta(seconds=seconds_ago),
+            ),
+        )
+    assert request_scheduling.wait_for_scheduling_forecast_events()
+
+    redis_backend = fake_redis.horde_r
+    pipeline_calls = 0
+    original_pipeline = redis_backend.pipeline
+
+    def counted_pipeline(*args, **kwargs):
+        nonlocal pipeline_calls
+        pipeline_calls += 1
+        return original_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(redis_backend, "pipeline", counted_pipeline)
+
+    pressure = request_scheduling.get_request_assignment_pressure(
+        observed_at=now,
+        target_request_id="target",
+        target_user_id="target-user",
+        target_created_at=now - timedelta(minutes=4),
+        target_extra_priority=0,
+        eligible_worker_states={"worker-1": _CURRENT_WORKER_STATE},
+        eligible_worker_threads=1,
+        active_dispatch_ids=["dispatch-3"],
+        preceding_arrivals=(
+            request_scheduling.PrecedingArrival("request-1", now - timedelta(minutes=3), 2),
+            request_scheduling.PrecedingArrival("request-2", now - timedelta(seconds=90), 2),
+        ),
+        redis_backend=redis_backend,
+    )
+
+    assert pressure.might_stall is True
+    assert pipeline_calls == 1
+
+
+def test_assignment_pressure_loads_history_for_more_than_one_hundred_workers(fake_redis, monkeypatch) -> None:
+    redis_backend = fake_redis.horde_r
+    pipeline_calls = 0
+    original_pipeline = redis_backend.pipeline
+
+    def counted_pipeline(*args, **kwargs):
+        nonlocal pipeline_calls
+        pipeline_calls += 1
+        return original_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(redis_backend, "pipeline", counted_pipeline)
+    pressure = request_scheduling.get_request_assignment_pressure(
+        observed_at=datetime(2026, 8, 22, 12, 0, 0),
+        target_request_id="target",
+        target_user_id="target-user",
+        target_created_at=datetime(2026, 8, 22, 11, 55, 0),
+        target_extra_priority=0,
+        eligible_worker_states={f"worker-{index}": _CURRENT_WORKER_STATE for index in range(101)},
+        eligible_worker_threads=101,
+        active_dispatch_ids=(),
+        preceding_arrivals=(),
+        redis_backend=redis_backend,
+    )
+
+    assert pressure.evidence == "insufficient_replacement"
+    assert pressure.might_stall is False
+    assert pipeline_calls == 1
+
+
 def _forecast(now: datetime) -> request_scheduling.SchedulingForecast:
     return request_scheduling.calculate_scheduling_forecast(
         forecasted_at=now,

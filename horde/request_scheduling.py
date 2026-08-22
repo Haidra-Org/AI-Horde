@@ -26,6 +26,7 @@ P90_RELATIVE_MARGIN = 0.5
 FORECAST_EXPIRY_GRACE = timedelta(minutes=10)
 SCHEDULING_EVENT_QUEUE_SIZE = 2048
 ASSIGNMENT_PRESSURE_WINDOW = timedelta(minutes=5)
+DISPATCH_OBSERVATION_RETENTION = timedelta(minutes=10)
 ASSIGNMENT_PRESSURE_MINIMUM_SECONDS = 120
 
 _START_FORECAST_FIELD = "start_forecast"
@@ -240,12 +241,24 @@ class _CancellationObservedEvent:
     cancelled_at: datetime
 
 
+@dataclass(frozen=True)
+class _DispatchObservedEvent:
+    observation: DispatchObservation
+
+
+@dataclass(frozen=True)
+class _CapacityReturnedEvent:
+    observation: CapacityReturn
+
+
 type _SchedulingEvent = (
     _StoreForecastEvent
     | _StartObservedEvent
     | _CompletionObservedEvent
     | _ExpiryObservedEvent
     | _CancellationObservedEvent
+    | _DispatchObservedEvent
+    | _CapacityReturnedEvent
 )
 
 _scheduling_event_queue: queue.Queue[_SchedulingEvent] = queue.Queue(maxsize=SCHEDULING_EVENT_QUEUE_SIZE)
@@ -562,6 +575,111 @@ def store_scheduling_forecast(
     )
 
 
+def record_worker_dispatch(observation: DispatchObservation) -> None:
+    """Queue one successful worker pop for assignment-pressure observation.
+
+    Args:
+        observation: Immutable facts captured from the successful pop.
+    """
+
+    _enqueue_scheduling_event(_DispatchObservedEvent(observation))
+
+
+def record_capacity_return(observation: CapacityReturn) -> None:
+    """Queue one worker-pop batch that returned its occupied thread.
+
+    Args:
+        observation: Immutable identity and timing of the returned capacity.
+    """
+
+    _enqueue_scheduling_event(_CapacityReturnedEvent(observation))
+
+
+def get_request_assignment_pressure(
+    *,
+    observed_at: datetime,
+    target_request_id: str,
+    target_user_id: str,
+    target_created_at: datetime,
+    target_extra_priority: int,
+    eligible_worker_states: Mapping[str, WorkerSchedulingState],
+    eligible_worker_threads: int,
+    active_dispatch_ids: Sequence[str],
+    preceding_arrivals: Sequence[PrecedingArrival],
+    redis_backend: Any | None = None,
+) -> AssignmentPressure:
+    """Load compatible observations and return request-specific pressure.
+
+    Args:
+        observed_at: End of the bounded observation window.
+        target_request_id: Queued request whose opportunities are measured.
+        target_user_id: Owner of the target request.
+        target_created_at: Target creation time used by normal ordering.
+        target_extra_priority: Target's Kudos-derived normal queue priority.
+        eligible_worker_states: Current scheduling state by eligible worker ID.
+        eligible_worker_threads: Advertised threads across eligible workers.
+        active_dispatch_ids: Pop batches currently occupying those workers.
+        preceding_arrivals: Recent compatible demand independently observed to
+            have entered ahead of the target.
+        redis_backend: Optional Redis implementation used by tests.
+
+    Returns:
+        Bounded evidence. Redis failure produces an evidence-free result.
+    """
+
+    backend = hr.horde_r if redis_backend is None else redis_backend
+    dispatch_observations: list[DispatchObservation] = []
+    capacity_returns: list[CapacityReturn] = []
+    if backend is not None:
+        minimum_score = max(target_created_at, observed_at - ASSIGNMENT_PRESSURE_WINDOW).timestamp()
+        maximum_score = observed_at.timestamp()
+        history_score = observed_at.timestamp() - DISPATCH_OBSERVATION_RETENTION.total_seconds()
+        try:
+            worker_ids = tuple(eligible_worker_states)
+            pipeline = backend.pipeline(transaction=False)
+            for worker_id in eligible_worker_states:
+                pipeline.zrangebyscore(_dispatch_observation_key(worker_id), history_score, maximum_score)
+                pipeline.zrangebyscore(
+                    _capacity_return_key(worker_id),
+                    minimum_score,
+                    maximum_score,
+                    withscores=True,
+                )
+            history_results = pipeline.execute()
+            for worker_index, _worker_id in enumerate(worker_ids):
+                dispatch_payloads = history_results[worker_index * 2]
+                return_payloads = history_results[(worker_index * 2) + 1]
+                for payload in dispatch_payloads:
+                    observation = _parse_dispatch_observation(_decode_redis_value(payload))
+                    if observation is not None:
+                        dispatch_observations.append(observation)
+                for payload, score in return_payloads:
+                    capacity_return = _parse_capacity_return(
+                        _decode_redis_value(payload),
+                        datetime.fromtimestamp(float(score)),
+                    )
+                    if capacity_return is not None:
+                        capacity_returns.append(capacity_return)
+        except Exception as err:
+            logger.warning(f"Unable to load request assignment pressure: {err}")
+            dispatch_observations = []
+            capacity_returns = []
+
+    return calculate_assignment_pressure(
+        observed_at=observed_at,
+        target_request_id=target_request_id,
+        target_user_id=target_user_id,
+        target_created_at=target_created_at,
+        target_extra_priority=target_extra_priority,
+        eligible_worker_states=eligible_worker_states,
+        eligible_worker_threads=eligible_worker_threads,
+        active_dispatch_ids=active_dispatch_ids,
+        preceding_arrivals=preceding_arrivals,
+        dispatch_observations=dispatch_observations,
+        capacity_returns=capacity_returns,
+    )
+
+
 def record_request_start_forecast(
     *,
     request_id: str,
@@ -680,6 +798,13 @@ def _record_dropped_event(reason: str) -> None:
 
 
 def _process_scheduling_event(event: _SchedulingEvent, redis_backend: Any) -> None:
+    if isinstance(event, _DispatchObservedEvent):
+        _store_dispatch_observation(redis_backend, event.observation)
+        return
+    if isinstance(event, _CapacityReturnedEvent):
+        _store_capacity_return(redis_backend, event.observation)
+        return
+
     key = _forecast_key(event.request_id)
     if isinstance(event, _StoreForecastEvent):
         if redis_backend.hexists(key, _CANCELLED_AT_FIELD):
@@ -714,6 +839,39 @@ def _process_scheduling_event(event: _SchedulingEvent, redis_backend: Any) -> No
         _extend_state_expiry(redis_backend, key, event.cancelled_at)
         return
     _finalize_scheduling_validation(redis_backend, key)
+
+
+def _store_dispatch_observation(redis_backend: Any, observation: DispatchObservation) -> None:
+    payload = asdict(observation)
+    payload["request_created_at"] = observation.request_created_at.isoformat()
+    payload["dispatched_at"] = observation.dispatched_at.isoformat()
+    serialized_observation = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    _store_bounded_observation(
+        redis_backend,
+        _dispatch_observation_key(observation.worker_id),
+        serialized_observation,
+        observation.dispatched_at,
+    )
+
+
+def _store_capacity_return(redis_backend: Any, observation: CapacityReturn) -> None:
+    payload = {
+        "worker_id": observation.worker_id,
+        "dispatch_id": observation.dispatch_id,
+    }
+    _store_bounded_observation(
+        redis_backend,
+        _capacity_return_key(observation.worker_id),
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        observation.returned_at,
+    )
+
+
+def _store_bounded_observation(redis_backend: Any, key: str, member: str, observed_at: datetime) -> None:
+    score = observed_at.timestamp()
+    redis_backend.zadd(key, {member: score})
+    redis_backend.zremrangebyscore(key, "-inf", score - DISPATCH_OBSERVATION_RETENTION.total_seconds())
+    redis_backend.expire(key, int(DISPATCH_OBSERVATION_RETENTION.total_seconds()))
 
 
 def _finalize_scheduling_validation(redis_backend: Any, key: str) -> None:
@@ -809,6 +967,40 @@ def _parse_forecast(payload: str, key: str) -> SchedulingForecast | None:
         return None
 
 
+def _parse_dispatch_observation(payload: str) -> DispatchObservation | None:
+    try:
+        parsed = json.loads(payload)
+        worker_state = parsed["worker_state"]
+        return DispatchObservation(
+            dispatch_id=str(parsed["dispatch_id"]),
+            worker_id=str(parsed["worker_id"]),
+            worker_state=parse_worker_scheduling_state(worker_state),
+            request_id=str(parsed["request_id"]),
+            request_created_at=datetime.fromisoformat(parsed["request_created_at"]),
+            request_extra_priority=int(parsed["request_extra_priority"]),
+            selected_from_priority_queue=bool(parsed["selected_from_priority_queue"]),
+            priority_user_ids=tuple(str(user_id) for user_id in parsed["priority_user_ids"]),
+            dispatched_at=datetime.fromisoformat(parsed["dispatched_at"]),
+            assigned_work=float(parsed["assigned_work"]),
+        )
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("Discarding malformed request scheduling observation")
+        return None
+
+
+def _parse_capacity_return(payload: str, returned_at: datetime) -> CapacityReturn | None:
+    try:
+        parsed = json.loads(payload)
+        return CapacityReturn(
+            worker_id=str(parsed["worker_id"]),
+            dispatch_id=str(parsed["dispatch_id"]),
+            returned_at=returned_at,
+        )
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("Discarding malformed request capacity-return observation")
+        return None
+
+
 def _parse_forecast_field(
     redis_backend: Any,
     state: dict[str, str],
@@ -831,3 +1023,11 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _dispatch_observation_key(worker_id: str) -> str:
+    return f"request_dispatches:{worker_id}"
+
+
+def _capacity_return_key(worker_id: str) -> str:
+    return f"request_capacity_returns:{worker_id}"
