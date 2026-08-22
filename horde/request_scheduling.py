@@ -10,11 +10,13 @@ import json
 import queue
 import threading
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from horde import metrics
+from horde.bridge_reference import get_bridge_capabilities, get_supported_samplers, is_backed_validated
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger  # type: ignore[attr-defined]
 
@@ -23,6 +25,8 @@ P90_MINIMUM_MARGIN_SECONDS = 60
 P90_RELATIVE_MARGIN = 0.5
 FORECAST_EXPIRY_GRACE = timedelta(minutes=10)
 SCHEDULING_EVENT_QUEUE_SIZE = 2048
+ASSIGNMENT_PRESSURE_WINDOW = timedelta(minutes=5)
+ASSIGNMENT_PRESSURE_MINIMUM_SECONDS = 120
 
 _START_FORECAST_FIELD = "start_forecast"
 _COMPLETION_FORECAST_FIELD = "completion_forecast"
@@ -47,6 +51,156 @@ class SchedulingForecast:
     completion_p50_seconds: float
     completion_p90_seconds: float
     predicted_stall: bool
+
+
+@dataclass(frozen=True)
+class BridgeSchedulingCapabilities:
+    """Represent bridge behavior that affects request eligibility.
+
+    Attributes:
+        feature_names: Feature gates supported by the bridge version.
+        sampler_names: Samplers supported when Karras scheduling is not
+            required; this includes samplers that also support Karras.
+        karras_sampler_names: Samplers supported with Karras scheduling.
+        validated_backend: Whether text requests requiring a validated backend
+            may be dispatched to this bridge.
+    """
+
+    feature_names: tuple[str, ...]
+    sampler_names: tuple[str, ...]
+    karras_sampler_names: tuple[str, ...]
+    validated_backend: bool
+
+
+@dataclass(frozen=True)
+class WorkerSchedulingState:
+    """Represent the worker capabilities used to compare recent pop history.
+
+    Attributes:
+        gentype: Request family served by the worker, such as image or text.
+        model_names: Sorted models advertised for this worker state.
+        bridge_capabilities: Bridge behavior that governed dispatch.
+        softprompt_names: Sorted softprompts advertised by a text worker.
+    """
+
+    gentype: str
+    model_names: tuple[str, ...]
+    bridge_capabilities: BridgeSchedulingCapabilities
+    softprompt_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EligibleWorkerState:
+    """Represent a worker currently eligible for a particular request.
+
+    Attributes:
+        worker_id: Stable worker identifier used to find recent pop history.
+        scheduling_state: Models, bridge capabilities, and text softprompts that make
+            recent observations comparable with the worker's current state.
+    """
+
+    worker_id: str
+    scheduling_state: WorkerSchedulingState
+
+
+@dataclass(frozen=True)
+class ActiveWorkerDispatch:
+    """Represent one worker-pop batch that currently occupies a thread.
+
+    Attributes:
+        worker_id: Worker currently processing the batch.
+        dispatch_id: Shared identity of the processing-generation batch.
+    """
+
+    worker_id: str
+    dispatch_id: str
+
+
+@dataclass(frozen=True)
+class DispatchObservation:
+    """Represent one successful worker pop on a capability state.
+
+    The request ordering fields preserve the facts needed to compare this pop
+    with any target request during the bounded observation window. One record
+    represents one occupied worker thread even when the pop returns a batch.
+
+    Attributes:
+        dispatch_id: Shared identity for every generation returned by the pop.
+        worker_id: Worker that accepted the request.
+        worker_state: Scheduling capabilities advertised during the pop.
+        request_id: Request selected by the worker.
+        request_created_at: Creation time used by normal queue ordering.
+        request_extra_priority: Kudos-derived normal queue priority.
+        selected_from_priority_queue: Whether selection occurred in the
+            owner/bridge-priority pass.
+        priority_user_ids: Users included in that priority pass.
+        dispatched_at: Time the pop occupied a worker thread.
+        assigned_work: Normalized work assigned in this worker-pop batch.
+    """
+
+    dispatch_id: str
+    worker_id: str
+    worker_state: WorkerSchedulingState
+    request_id: str
+    request_created_at: datetime
+    request_extra_priority: int
+    selected_from_priority_queue: bool
+    priority_user_ids: tuple[str, ...]
+    dispatched_at: datetime
+    assigned_work: float
+
+
+@dataclass(frozen=True)
+class PrecedingArrival:
+    """Represent new compatible demand that entered ahead of a target.
+
+    Attributes:
+        request_id: Stable request identity used to avoid double-counting.
+        arrived_at: Time the request entered the queue.
+        work_amount: Normalized demand from this arrival still queued now.
+    """
+
+    request_id: str
+    arrived_at: datetime
+    work_amount: float
+
+
+@dataclass(frozen=True)
+class CapacityReturn:
+    """Represent one worker-pop batch returning an eligible thread.
+
+    Attributes:
+        worker_id: Worker whose thread became available.
+        dispatch_id: Identity joining the return to its assigned work.
+        returned_at: Time the complete pop batch became terminal.
+    """
+
+    worker_id: str
+    dispatch_id: str
+    returned_at: datetime
+
+
+@dataclass(frozen=True)
+class AssignmentPressure:
+    """Represent the bounded evidence behind a request stall advisory.
+
+    Attributes:
+        evidence: Stable reason describing why the signal fired or failed clear.
+        lost_opportunities: Compatible pops assigned to preceding requests.
+        returned_capacity: Eligible pop batches that returned capacity.
+        active_preceding_dispatches: Preceding pops still occupying worker threads.
+        might_stall: Whether preceding arrivals persistently outpace clearance.
+        arriving_preceding_work: Compatible work arriving ahead during the window.
+        returned_work: Work completed by eligible capacity during the window.
+    """
+
+    evidence: str
+    lost_opportunities: int
+    returned_capacity: int
+    active_preceding_dispatches: int
+    might_stall: bool
+    arriving_preceding_work: float = 0
+    returned_work: float = 0
 
 
 @dataclass(frozen=True)
@@ -97,6 +251,237 @@ type _SchedulingEvent = (
 _scheduling_event_queue: queue.Queue[_SchedulingEvent] = queue.Queue(maxsize=SCHEDULING_EVENT_QUEUE_SIZE)
 _scheduling_worker_lock = threading.Lock()
 _scheduling_worker: threading.Thread | None = None
+
+
+def build_worker_scheduling_state(
+    *,
+    gentype: str,
+    model_names: Sequence[str],
+    bridge_agent: str,
+    softprompt_names: Sequence[str] = (),
+) -> WorkerSchedulingState:
+    """Return the normalized worker state used for recent-history comparison.
+
+    The live eligibility check remains authoritative. This state only prevents
+    reuse of observations after a worker changes generation type, models,
+    effective bridge capabilities, or text softprompts.
+
+    Args:
+        gentype: Request family served by the worker.
+        model_names: Models advertised by the worker.
+        bridge_agent: Bridge identity used to resolve effective dispatch gates.
+        softprompt_names: Softprompts advertised by a text worker.
+
+    Returns:
+        A normalized immutable scheduling state.
+    """
+
+    bridge_capabilities = BridgeSchedulingCapabilities(
+        feature_names=tuple(sorted(get_bridge_capabilities(bridge_agent))) if gentype == "image" else (),
+        sampler_names=tuple(sorted(get_supported_samplers(bridge_agent, karras=False))) if gentype == "image" else (),
+        karras_sampler_names=(tuple(sorted(get_supported_samplers(bridge_agent, karras=True))) if gentype == "image" else ()),
+        validated_backend=is_backed_validated(bridge_agent) if gentype == "text" else False,
+    )
+    return WorkerSchedulingState(
+        gentype=gentype,
+        model_names=tuple(sorted(model_names)),
+        bridge_capabilities=bridge_capabilities,
+        softprompt_names=tuple(sorted(softprompt_names)),
+    )
+
+
+def parse_worker_scheduling_state(payload: Mapping[str, Any]) -> WorkerSchedulingState:
+    """Parse a worker scheduling state from its JSON-compatible representation.
+
+    Args:
+        payload: Mapping produced from a serialized ``WorkerSchedulingState``.
+
+    Returns:
+        Parsed immutable scheduling state.
+
+    Raises:
+        KeyError: If a required field is absent.
+        TypeError: If the validated-backend field is not a Boolean.
+    """
+
+    bridge_capabilities = payload["bridge_capabilities"]
+    validated_backend = bridge_capabilities["validated_backend"]
+    if not isinstance(validated_backend, bool):
+        raise TypeError("validated_backend must be a boolean")
+    return WorkerSchedulingState(
+        gentype=str(payload["gentype"]),
+        model_names=tuple(str(model_name) for model_name in payload["model_names"]),
+        bridge_capabilities=BridgeSchedulingCapabilities(
+            feature_names=tuple(str(name) for name in bridge_capabilities["feature_names"]),
+            sampler_names=tuple(str(name) for name in bridge_capabilities["sampler_names"]),
+            karras_sampler_names=tuple(str(name) for name in bridge_capabilities["karras_sampler_names"]),
+            validated_backend=validated_backend,
+        ),
+        softprompt_names=tuple(str(name) for name in payload["softprompt_names"]),
+    )
+
+
+def request_precedes_target(
+    observation: DispatchObservation,
+    *,
+    target_request_id: str,
+    target_user_id: str,
+    target_created_at: datetime,
+    target_extra_priority: int,
+) -> bool:
+    """Return whether the scheduler placed an observed request first.
+
+    Args:
+        observation: Successful pop being compared with the target.
+        target_request_id: Queued request whose opportunities are measured.
+        target_user_id: Owner of the target request.
+        target_created_at: Target creation time used by normal ordering.
+        target_extra_priority: Target's Kudos-derived normal queue priority.
+
+    Returns:
+        True when the priority pass or normal ordering selects the observation.
+    """
+
+    if observation.request_id == target_request_id:
+        return False
+    target_had_priority = target_user_id in observation.priority_user_ids
+    if observation.selected_from_priority_queue and not target_had_priority:
+        return True
+    if observation.request_extra_priority != target_extra_priority:
+        return observation.request_extra_priority > target_extra_priority
+    return observation.request_created_at < target_created_at
+
+
+def calculate_assignment_pressure(
+    *,
+    observed_at: datetime,
+    target_request_id: str,
+    target_user_id: str,
+    target_created_at: datetime,
+    target_extra_priority: int,
+    eligible_worker_states: Mapping[str, WorkerSchedulingState],
+    eligible_worker_threads: int,
+    active_dispatch_ids: Sequence[str],
+    preceding_arrivals: Sequence[PrecedingArrival],
+    dispatch_observations: Sequence[DispatchObservation],
+    capacity_returns: Sequence[CapacityReturn],
+) -> AssignmentPressure:
+    """Return a conservative arrival-versus-drain stall advisory.
+
+    The observation window is split in half. Each half must contain a complete
+    replacement wave and more newly arrived, scheduler-preceding compatible
+    work than eligible workers completed. A finite backlog or one finite burst
+    therefore cannot satisfy the signal. Missing evidence always fails clear.
+
+    Args:
+        observed_at: End of the bounded observation window.
+        target_request_id: Queued request whose opportunities are measured.
+        target_user_id: Owner of the target request.
+        target_created_at: Target creation time used by normal ordering.
+        target_extra_priority: Target's Kudos-derived normal queue priority.
+        eligible_worker_states: Current scheduling state by eligible worker ID.
+        eligible_worker_threads: Advertised threads across eligible workers.
+        active_dispatch_ids: Pop batches currently occupying those workers.
+        preceding_arrivals: Recent requests independently verified to precede
+            the target and be compatible with at least one eligible worker.
+        dispatch_observations: Recent successful worker pops.
+        capacity_returns: Pop batches whose complete work returned capacity.
+
+    Returns:
+        Bounded evidence and the resulting stall advisory.
+    """
+
+    if eligible_worker_threads < 1 or not eligible_worker_states:
+        return AssignmentPressure("none_eligible", 0, 0, 0, False)
+
+    window_start = max(target_created_at, observed_at - ASSIGNMENT_PRESSURE_WINDOW)
+    midpoint = window_start + (observed_at - window_start) / 2
+    relevant_dispatches = [
+        observation
+        for observation in dispatch_observations
+        if window_start <= observation.dispatched_at <= observed_at
+        and eligible_worker_states.get(observation.worker_id) == observation.worker_state
+        and observation.request_id != target_request_id
+    ]
+    preceding_dispatches = [
+        observation
+        for observation in relevant_dispatches
+        if request_precedes_target(
+            observation,
+            target_request_id=target_request_id,
+            target_user_id=target_user_id,
+            target_created_at=target_created_at,
+            target_extra_priority=target_extra_priority,
+        )
+    ]
+    dispatches_by_id = {observation.dispatch_id: observation for observation in dispatch_observations}
+    relevant_returns = [
+        capacity_return
+        for capacity_return in capacity_returns
+        if capacity_return.worker_id in eligible_worker_states and window_start <= capacity_return.returned_at <= observed_at
+    ]
+    matched_returns = [
+        (capacity_return, dispatches_by_id[capacity_return.dispatch_id])
+        for capacity_return in relevant_returns
+        if capacity_return.dispatch_id in dispatches_by_id
+    ]
+    has_incomplete_return_history = len(matched_returns) != len(relevant_returns)
+
+    interval_arriving_work = [0.0, 0.0]
+    for arrival in preceding_arrivals:
+        if not window_start <= arrival.arrived_at <= observed_at or arrival.work_amount < 0:
+            continue
+        interval = 0 if arrival.arrived_at < midpoint else 1
+        interval_arriving_work[interval] += arrival.work_amount
+    # Assigned batches preserve demand that has already left the current queue
+    # snapshot. Actual priority-pass dispatches also supply precedence evidence
+    # when the bridge's transient priority list was not otherwise observable.
+    for observation in preceding_dispatches:
+        if observation.request_created_at <= target_created_at:
+            continue
+        interval = 0 if observation.request_created_at < midpoint else 1
+        interval_arriving_work[interval] += observation.assigned_work
+    interval_returned_work = [0.0, 0.0]
+    interval_returns = [0, 0]
+    for capacity_return, dispatch in matched_returns:
+        interval = 0 if capacity_return.returned_at < midpoint else 1
+        interval_returned_work[interval] += dispatch.assigned_work
+        interval_returns[interval] += 1
+
+    active_ids = set(active_dispatch_ids)
+    active_preceding = sum(observation.dispatch_id in active_ids for observation in preceding_dispatches)
+    required_returns_per_interval = max(eligible_worker_threads, 1)
+    every_observed_opportunity_was_lost = bool(relevant_dispatches) and len(preceding_dispatches) == len(
+        relevant_dispatches,
+    )
+    arrivals_outpace_drain = all(
+        arriving_work > returned_work for arriving_work, returned_work in zip(interval_arriving_work, interval_returned_work, strict=True)
+    )
+
+    if (observed_at - window_start).total_seconds() < ASSIGNMENT_PRESSURE_MINIMUM_SECONDS:
+        evidence = "insufficient_window"
+    elif has_incomplete_return_history:
+        evidence = "incomplete_return_history"
+    elif any(return_count < required_returns_per_interval for return_count in interval_returns):
+        evidence = "insufficient_replacement"
+    elif not every_observed_opportunity_was_lost:
+        evidence = "target_opportunity_seen"
+    elif active_preceding < eligible_worker_threads:
+        evidence = "compatible_capacity_returning"
+    elif not arrivals_outpace_drain:
+        evidence = "preceding_arrivals_not_outpacing_drain"
+    else:
+        evidence = "arrival_outpaces_drain"
+
+    return AssignmentPressure(
+        evidence=evidence,
+        lost_opportunities=len(preceding_dispatches),
+        returned_capacity=len(matched_returns),
+        active_preceding_dispatches=active_preceding,
+        might_stall=evidence == "arrival_outpaces_drain",
+        arriving_preceding_work=sum(interval_arriving_work),
+        returned_work=sum(interval_returned_work),
+    )
 
 
 def calculate_scheduling_forecast(
