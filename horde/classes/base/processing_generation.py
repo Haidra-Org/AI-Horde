@@ -19,7 +19,7 @@ from horde.classes.base.kudos import kudos_event
 from horde.enums import RequestTerminalOutcome
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
-from horde.request_scheduling import record_request_completion_forecast
+from horde.request_scheduling import CapacityReturn, record_capacity_return, record_request_completion_forecast
 from horde.utils import get_db_uuid
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
@@ -106,6 +106,16 @@ class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
 
     __tablename__ = "processing_gens"
+    __table_args__ = (
+        db.Index(
+            "ix_processing_gens_active_worker_dispatch",
+            "worker_id",
+            "dispatch_batch_id",
+            postgresql_where=db.text(
+                "dispatch_batch_id IS NOT NULL AND generation IS NULL AND NOT faulted AND NOT fake",
+            ),
+        ),
+    )
     __mapper_args__ = {
         "polymorphic_identity": "template",
         "polymorphic_on": "procgen_type",
@@ -129,6 +139,7 @@ class ProcessingGeneration(db.Model):
         server_default=expression.literal(False),
     )
     job_ttl = db.Column(db.Integer, default=150, nullable=False, index=True)
+    dispatch_batch_id = db.Column(uuid_column_type(), nullable=True, index=True)
 
     wp_id = db.Column(
         uuid_column_type(),
@@ -250,6 +261,7 @@ class ProcessingGeneration(db.Model):
         _t = time.monotonic()
         db.session.commit()
         submit_commit_duration.record(time.monotonic() - _t)
+        self._record_capacity_return()
         # Persist the worker performance sample AFTER the main commit so its INSERT
         # on worker_performances does not extend the time the hot `users` row locks
         # are held above. Performance samples are telemetry, so a separate follow-up
@@ -305,6 +317,7 @@ class ProcessingGeneration(db.Model):
         self.cancelled = True
         self.record(things_per_sec, kudos)
         db.session.commit()
+        self._record_capacity_return()
         # See set_generation: keep the performance write out of the locked window.
         self.worker.record_performance(things_per_sec)
         if self.wp.is_completed():
@@ -360,6 +373,32 @@ class ProcessingGeneration(db.Model):
         self.worker.log_aborted_job()
         self.log_aborted_generation()
         db.session.commit()
+        self._record_capacity_return()
+
+    def _record_capacity_return(self) -> None:
+        """Record one returned worker thread when this pop batch is terminal."""
+
+        if self.dispatch_batch_id is None:
+            return
+        pending_sibling = (
+            db.session.query(ProcessingGeneration.id)
+            .filter(
+                ProcessingGeneration.dispatch_batch_id == self.dispatch_batch_id,
+                ProcessingGeneration.generation.is_(None),
+                ProcessingGeneration.faulted.is_(False),
+                ProcessingGeneration.fake.is_(False),
+            )
+            .first()
+        )
+        if pending_sibling is not None:
+            return
+        record_capacity_return(
+            CapacityReturn(
+                worker_id=str(self.worker_id),
+                dispatch_id=str(self.dispatch_batch_id),
+                returned_at=datetime.utcnow(),
+            ),
+        )
 
     def log_aborted_generation(self):
         logger.info(f"Aborted Stale Generation {self.id} from by worker: {self.worker.name} ({self.worker.id})")

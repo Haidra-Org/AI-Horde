@@ -8,6 +8,7 @@ import json
 import random
 import time
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -38,9 +39,12 @@ from horde.metrics import (
     wp_activation_age,
 )
 from horde.request_scheduling import (
+    DispatchObservation,
+    build_worker_scheduling_state,
     calculate_scheduling_forecast,
     record_request_cancellation_forecast,
     record_request_start_forecast,
+    record_worker_dispatch,
     store_scheduling_forecast,
 )
 from horde.utils import get_db_uuid, get_expiry_date, get_extra_slow_expiry_date
@@ -360,14 +364,31 @@ class WaitingPrompt(db.Model):
     def needs_gen(self):
         return self.n > 0
 
-    def start_generation(self, worker, amount: int = 1, declared_models: list[str] | None = None):
+    def start_generation(
+        self,
+        worker,
+        amount: int = 1,
+        declared_models: list[str] | None = None,
+        declared_softprompts: list[str] | None = None,
+        *,
+        selected_from_priority_queue: bool = False,
+        priority_user_ids: Sequence[int | str] = (),
+    ):
         with logfire.span(
             "horde.wp.start_generation",
             wp_id=str(self.id),
             worker_id=str(worker.id),
             amount=amount,
         ) as gen_span:
-            return self._start_generation(worker, amount, gen_span, declared_models)
+            return self._start_generation(
+                worker,
+                amount,
+                gen_span,
+                declared_models,
+                declared_softprompts,
+                selected_from_priority_queue=selected_from_priority_queue,
+                priority_user_ids=priority_user_ids,
+            )
 
     def _select_model(self, worker, declared_models: list[str] | None = None) -> str:
         """Choose the single model recorded for every procgen in a batch.
@@ -412,7 +433,17 @@ class WaitingPrompt(db.Model):
         random.shuffle(candidates)
         return candidates[0]
 
-    def _start_generation(self, worker, amount=1, gen_span=None, declared_models: list[str] | None = None):
+    def _start_generation(
+        self,
+        worker,
+        amount=1,
+        gen_span=None,
+        declared_models: list[str] | None = None,
+        declared_softprompts: list[str] | None = None,
+        *,
+        selected_from_priority_queue: bool = False,
+        priority_user_ids: Sequence[int | str] = (),
+    ):
         # # We have to do this to lock the row for updates, to ensure we don't have racing conditions on who is picking up requests
         # myself_refresh = db.session.query(
         #     type(self)
@@ -439,13 +470,19 @@ class WaitingPrompt(db.Model):
         self.refresh(worker)
         procgen_class = procgen_classes[self.wp_type]
         gens_list = []
+        dispatch_batch_id = uuid.uuid4()
         # Select the batch's model once from the pop-declared list so every
         # procgen records the same model the worker committed to running.
         model = self._select_model(worker, declared_models)
         while safe_amount >= 1:
             safe_amount -= 1
             current_n -= 1
-            new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, model=model)
+            new_gen = procgen_class(
+                wp_id=self.id,
+                worker_id=worker.id,
+                model=model,
+                dispatch_batch_id=dispatch_batch_id,
+            )
             logger.info(
                 f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
                 f"('{worker.name}' / {worker.ipaddr}) - {current_n} gens left",
@@ -455,6 +492,28 @@ class WaitingPrompt(db.Model):
                 break
         if gen_span is not None:
             gen_span.set_attribute("horde.procgens_created", len(gens_list))
+        if gens_list:
+            model_names = declared_models if declared_models is not None else list(worker.get_model_names())
+            softprompt_names = declared_softprompts or []
+            record_worker_dispatch(
+                DispatchObservation(
+                    dispatch_id=str(dispatch_batch_id),
+                    worker_id=str(worker.id),
+                    worker_state=build_worker_scheduling_state(
+                        gentype=self.wp_type,
+                        model_names=model_names,
+                        bridge_agent=worker.bridge_agent,
+                        softprompt_names=softprompt_names,
+                    ),
+                    request_id=str(self.id),
+                    request_created_at=self.created,
+                    request_extra_priority=int(self.extra_priority),
+                    selected_from_priority_queue=selected_from_priority_queue,
+                    priority_user_ids=tuple(str(user_id) for user_id in priority_user_ids),
+                    dispatched_at=gens_list[0].created,
+                    assigned_work=self.things * len(gens_list) / hv.thing_divisors[self.wp_type],
+                ),
+            )
         if could_be_first_assignment and gens_list:
             first_real_generation = (
                 db.session.query(procgen_class.id)
