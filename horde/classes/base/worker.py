@@ -2,13 +2,16 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import logfire
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, relationship
 
 from horde import vars as hv
 from horde.classes.base import settings
@@ -25,6 +28,9 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import get_db_uuid, get_message_expiry_date, is_profane, sanitize_string
+
+if TYPE_CHECKING:
+    from horde.classes.base.user import User
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -143,7 +149,7 @@ class WorkerTemplate(db.Model):
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     worker_type = db.Column(db.String(30), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
-    user = db.relationship("User", back_populates="workers")
+    user: Mapped[User] = relationship("User", back_populates="workers")
     name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     info = db.Column(db.String(1000))
     ipaddr = db.Column(db.String(39))
@@ -174,9 +180,21 @@ class WorkerTemplate(db.Model):
 
     allow_unsafe_ipaddr = db.Column(db.Boolean, default=True, nullable=False)
 
-    stats = db.relationship("WorkerStats", back_populates="worker", cascade="all, delete-orphan")
-    performance = db.relationship("WorkerPerformance", back_populates="worker", cascade="all, delete-orphan")
-    suspicions = db.relationship("WorkerSuspicions", back_populates="worker", cascade="all, delete-orphan")
+    stats: Mapped[list[WorkerStats]] = relationship(
+        "WorkerStats",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
+    performance: Mapped[list[WorkerPerformance]] = relationship(
+        "WorkerPerformance",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
+    suspicions: Mapped[list[WorkerSuspicions]] = relationship(
+        "WorkerSuspicions",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
     problem_jobs = db.relationship("UserProblemJobs", back_populates="worker", cascade="all, delete-orphan")
     messages = db.relationship("WorkerMessage", back_populates="worker", cascade="all, delete-orphan")
 
@@ -676,8 +694,16 @@ class Worker(WorkerTemplate):
     }
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
 
-    blacklist = db.relationship("WorkerBlackList", back_populates="worker", cascade="all, delete-orphan")
-    models = db.relationship("WorkerModel", back_populates="worker", cascade="all, delete-orphan")
+    blacklist: Mapped[list[WorkerBlackList]] = relationship(
+        "WorkerBlackList",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
+    models: Mapped[list[WorkerModel]] = relationship(
+        "WorkerModel",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
     processing_gens = db.relationship("ImageProcessingGeneration", back_populates="worker", lazy="raise")
 
     # This should be extended by each specific horde

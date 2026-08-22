@@ -2,13 +2,17 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timedelta
 
 import dateutil.relativedelta
-from sqlalchemy import Enum, UniqueConstraint
+from sqlalchemy import Enum, UniqueConstraint, exists
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy.sql.elements import ColumnElement
 
 from horde import vars as hv
 from horde.classes.base.kudos import (
@@ -307,7 +311,7 @@ class User(db.Model):
     sharedkeys = db.relationship("UserSharedKey", back_populates="user", cascade="all, delete-orphan")
     suspicions = db.relationship("UserSuspicions", back_populates="user", cascade="all, delete-orphan")
     records = db.relationship("UserRecords", back_populates="user", cascade="all, delete-orphan")
-    roles = db.relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
+    roles: Mapped[list[UserRole]] = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     stats = db.relationship("UserStats", back_populates="user", cascade="all, delete-orphan")
     problem_jobs = db.relationship("UserProblemJobs", back_populates="user", cascade="all, delete-orphan")
     waiting_prompts = db.relationship("WaitingPrompt", back_populates="user", cascade="all, delete-orphan")
@@ -342,19 +346,18 @@ class User(db.Model):
     def trusted(self) -> bool:
         return self._has_role(UserRoleTypes.TRUSTED)
 
-    @trusted.expression
-    def trusted(cls):
-        subquery = (
-            db.session.query(UserRole.user_id)
-            .filter(
+    @trusted.inplace.expression
+    @classmethod
+    def _trusted_expression(cls) -> ColumnElement[bool]:
+        return (
+            exists()
+            .where(
                 UserRole.user_role == UserRoleTypes.TRUSTED,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
-            .as_scalar()
         )
-        return cls.id == subquery
 
     @hybrid_property
     def flagged(self) -> bool:

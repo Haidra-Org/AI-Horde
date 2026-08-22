@@ -2,14 +2,18 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import copy
 import math
 import os
 import random
 import time
+from typing import TYPE_CHECKING
 
 import logfire
 from horde_sdk.generation_parameters.image.sampler_work import SamplerWorkEstimate, SamplerWorkUnitCount
+from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import expression
 
 from horde import vars as hv
@@ -49,6 +53,9 @@ from horde.sampler_work_policy import (
 )
 from horde.utils import get_random_seed
 
+if TYPE_CHECKING:
+    from horde.classes.stable.processing_generation import ImageProcessingGeneration
+
 
 class ImageWaitingPrompt(WaitingPrompt):
     __mapper_args__ = {
@@ -81,7 +88,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         nullable=False,
         server_default=expression.literal(False),
     )
-    processing_gens = db.relationship(
+    processing_gens: Mapped[list[ImageProcessingGeneration]] = relationship(
         "ImageProcessingGeneration",
         back_populates="wp",
         passive_deletes=True,

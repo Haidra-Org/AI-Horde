@@ -2,12 +2,15 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import json
 from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, relationship
 
 from horde import exceptions as e
 from horde.bridge_reference import (
@@ -64,7 +67,11 @@ class TextWorker(Worker):
     max_length = db.Column(db.Integer, default=80, nullable=False)
     max_context_length = db.Column(db.Integer, default=2048, nullable=False)
 
-    softprompts = db.relationship("TextWorkerSoftprompts", back_populates="worker", cascade="all, delete-orphan")
+    softprompts: Mapped[list[TextWorkerSoftprompts]] = relationship(
+        "TextWorkerSoftprompts",
+        back_populates="worker",
+        cascade="all, delete-orphan",
+    )
     wtype = "text"
 
     def check_in(self, max_length, max_context_length, softprompts, **kwargs):

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from horde.classes.base.user import User
 from horde.enums import UserRoleTypes
 
 pytestmark = pytest.mark.unit
@@ -54,6 +55,19 @@ class TestRoleTruthiness:
         assert user.trusted is False
         assert user.flagged is False
         assert user.moderator is False
+
+
+def test_trusted_hybrid_filters_to_true_roles(make_user, make_user_role, db_session):
+    trusted_user = make_user()
+    explicitly_untrusted_user = make_user()
+    user_without_role = make_user()
+    make_user_role(trusted_user, UserRoleTypes.TRUSTED, value=True)
+    make_user_role(explicitly_untrusted_user, UserRoleTypes.TRUSTED, value=False)
+
+    candidate_ids = [trusted_user.id, explicitly_untrusted_user.id, user_without_role.id]
+    matched_ids = {user_id for (user_id,) in db_session.query(User.id).filter(User.id.in_(candidate_ids), User.trusted.is_(True)).all()}
+
+    assert matched_ids == {trusted_user.id}
 
 
 class TestRoleAccessQueryCount:
