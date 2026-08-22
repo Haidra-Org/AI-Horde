@@ -402,6 +402,11 @@ Three entrypoints run as parallel jobs on pull requests and on pushes to `main`
 | `stress-shaped-job` | `locustfile_shaped.py` (`smoke` profile) | `check_smoke_results.py` |
 | `stress-attribution-job` | `locustfile_attribution.py` | `check_attribution_results.py` |
 
+The Docker publish workflow additionally runs the mixed `locustfile.py` suite
+against both built image variants. This checks the default dependency image and
+the telemetry-profiling image under identical load, including native Pyroscope
+span correlation in the telemetry variant.
+
 A fourth job, `stress-kudos-ledger-job`, does not fit this checker pattern: it
 starts a second `--quorum` server and gates inside the harnesses themselves. See
 the CI regression job note under Kudos ledger operational verification above.
