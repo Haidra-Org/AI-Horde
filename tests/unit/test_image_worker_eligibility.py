@@ -111,7 +111,6 @@ def test_runtime_gate_rejects_worker_pop_constraints(
     ("capability", "params", "request_change"),
     [
         ("extra_source_images", {}, {"extra_source_images": {"esi": []}}),
-        ("r2", {}, {"r2": True}),
         ("lora", {"loras": []}, {}),
         ("textual_inversion", {"tis": []}, {}),
         ("layer_diffuse", {"transparent": True}, {}),
@@ -137,6 +136,23 @@ def test_runtime_gate_rejects_missing_bridge_capability(
     )
 
     assert worker.can_generate_with_model_names(request, [_MODEL]) == [False, "bridge_version"]
+
+
+def test_runtime_gate_allows_r2_request_without_bridge_capability(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, worker = _make_pair(make_user, make_user_role)
+    request.r2 = True
+    monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+    monkeypatch.setattr(
+        "horde.classes.stable.worker.check_bridge_capability",
+        lambda checked_capability, _bridge_agent: checked_capability != "r2",
+    )
+
+    assert worker.can_generate_with_model_names(request, [_MODEL]) == [True, None]
 
 
 @pytest.mark.parametrize(

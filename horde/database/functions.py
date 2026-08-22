@@ -1071,10 +1071,6 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 worker.nsfw == True,  # noqa E712
             ),
             or_(
-                check_bridge_capability("r2", worker.bridge_agent),
-                ImageWaitingPrompt.r2 == False,  # noqa E712
-            ),
-            or_(
                 not_(ImageWaitingPrompt.params.has_key("loras")),
                 and_(
                     worker.allow_lora == True,  # noqa E712
