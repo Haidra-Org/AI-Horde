@@ -143,6 +143,47 @@ class TestCheckWaitingPrompts:
         outcomes.add.assert_not_called()
         expiry_times.record.assert_not_called()
 
+    def test_retry_limit_records_fault_when_request_is_faulted(self, client, app, api_key, make_api_user):
+        from datetime import datetime
+
+        from horde.classes.kobold.processing_generation import TextProcessingGeneration
+        from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+        from horde.classes.kobold.worker import TextWorker
+        from horde.database import threads
+        from horde.enums import RequestTerminalOutcome
+        from horde.flask import db
+
+        request_id = _queue_text_wp(client, api_key)
+        worker_user = make_api_user(trusted=True, kudos=100)
+        with app.app_context():
+            worker = TextWorker(user_id=worker_user.id, name="maintenance-fault-worker")
+            db.session.add(worker)
+            db.session.commit()
+            for _ in range(3):
+                procgen = TextProcessingGeneration(
+                    wp_id=request_id,
+                    worker_id=worker.id,
+                    model=TEXT_MODEL,
+                )
+                procgen.faulted = True
+            db.session.commit()
+
+        before_fault = datetime.utcnow()
+        threads.check_waiting_prompts()
+        after_fault = datetime.utcnow()
+
+        with app.app_context():
+            faulted = db.session.query(TextWaitingPrompt).filter_by(id=request_id).one()
+            assert faulted.faulted is True
+            assert faulted.terminal_outcome == RequestTerminalOutcome.FAULTED.value
+            assert before_fault <= faulted.terminal_recorded_at <= after_fault
+
+        response = client.delete(f"/api/v2/generate/text/status/{request_id}", headers=_headers(api_key))
+        assert response.status_code == 200
+        with app.app_context():
+            faulted = db.session.query(TextWaitingPrompt).filter_by(id=request_id).one()
+            assert faulted.terminal_outcome == RequestTerminalOutcome.FAULTED.value
+
 
 class TestCacheBuilders:
     def test_store_prioritized_wp_queue_populates_cache(self, client, api_key):

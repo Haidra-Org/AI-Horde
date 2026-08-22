@@ -79,11 +79,8 @@ class TextWaitingPrompt(WaitingPrompt):
         return kudos + 1
 
     def log_faulted_prompt(self):
-        source_processing = "txt2img"
-        if self.source_image:
-            source_processing = self.source_processing
         logger.warning(
-            f"Faulting waiting {source_processing} prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
+            f"Faulting waiting text prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
         )
 
     def get_status(self, **kwargs):

@@ -373,10 +373,24 @@ def check_waiting_prompts():
             )
             wp_ids = [wp_id[0] for wp_id in wp_ids]
             waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted == False)  # noqa E712
-            logger.info(f"Found {waiting_prompts.count()} New faulted WPs")
-            waiting_prompts.update({wp_class.faulted: True}, synchronize_session=False)
+            newly_faulted_wp_ids = [wp_id for (wp_id,) in waiting_prompts.with_entities(wp_class.id).all()]
+            logger.info(f"Found {len(newly_faulted_wp_ids)} New faulted WPs")
+            waiting_prompts.update(
+                {
+                    wp_class.faulted: True,
+                    wp_class.terminal_outcome: case(
+                        (wp_class.terminal_outcome.is_(None), RequestTerminalOutcome.FAULTED.value),
+                        else_=wp_class.terminal_outcome,
+                    ),
+                    wp_class.terminal_recorded_at: case(
+                        (wp_class.terminal_outcome.is_(None), cutoff_time),
+                        else_=wp_class.terminal_recorded_at,
+                    ),
+                },
+                synchronize_session=False,
+            )
             db.session.commit()
-            for wp in waiting_prompts.all():
+            for wp in db.session.query(wp_class).filter(wp_class.id.in_(newly_faulted_wp_ids)).all():
                 wp.log_faulted_prompt()
 
 
