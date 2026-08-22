@@ -8,6 +8,251 @@ from datetime import datetime, timedelta
 
 from horde import request_scheduling
 
+_CURRENT_WORKER_STATE = request_scheduling.build_worker_scheduling_state(
+    gentype="image",
+    model_names=("model",),
+    bridge_agent="AI Horde Worker reGen:17:unknown",
+)
+
+
+def _dispatch(
+    now: datetime,
+    dispatch_number: int,
+    *,
+    created_at: datetime,
+    extra_priority: int = 1,
+    worker_state: request_scheduling.WorkerSchedulingState = _CURRENT_WORKER_STATE,
+    selected_from_priority_queue: bool = False,
+    priority_user_ids: tuple[str, ...] = (),
+    dispatched_at: datetime | None = None,
+    assigned_work: float = 1,
+) -> request_scheduling.DispatchObservation:
+    return request_scheduling.DispatchObservation(
+        dispatch_id=f"dispatch-{dispatch_number}",
+        worker_id="worker-1",
+        worker_state=worker_state,
+        request_id=f"request-{dispatch_number}",
+        request_created_at=created_at,
+        request_extra_priority=extra_priority,
+        selected_from_priority_queue=selected_from_priority_queue,
+        priority_user_ids=priority_user_ids,
+        dispatched_at=dispatched_at or now - timedelta(seconds=150 - dispatch_number),
+        assigned_work=assigned_work,
+    )
+
+
+def _return(
+    now: datetime,
+    dispatch_number: int,
+    *,
+    seconds_ago: int,
+) -> request_scheduling.CapacityReturn:
+    return request_scheduling.CapacityReturn(
+        worker_id="worker-1",
+        dispatch_id=f"dispatch-{dispatch_number}",
+        returned_at=now - timedelta(seconds=seconds_ago),
+    )
+
+
+def _pressure(
+    now: datetime,
+    observations: list[request_scheduling.DispatchObservation],
+    capacity_returns: list[request_scheduling.CapacityReturn],
+    arrivals: tuple[request_scheduling.PrecedingArrival, ...] = (),
+    active_ids: tuple[str, ...] = ("dispatch-3",),
+) -> request_scheduling.AssignmentPressure:
+    return request_scheduling.calculate_assignment_pressure(
+        observed_at=now,
+        target_request_id="target",
+        target_user_id="target-user",
+        target_created_at=now - timedelta(minutes=4),
+        target_extra_priority=0,
+        eligible_worker_states={"worker-1": _CURRENT_WORKER_STATE},
+        eligible_worker_threads=1,
+        active_dispatch_ids=active_ids,
+        preceding_arrivals=arrivals,
+        dispatch_observations=observations,
+        capacity_returns=capacity_returns,
+    )
+
+
+def test_sustained_preceding_arrivals_outpacing_returns_might_stall() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    observations = [
+        _dispatch(now, 1, created_at=now - timedelta(minutes=3), dispatched_at=now - timedelta(seconds=190)),
+        _dispatch(now, 2, created_at=now - timedelta(seconds=90), dispatched_at=now - timedelta(seconds=80)),
+        _dispatch(now, 3, created_at=now - timedelta(seconds=30), dispatched_at=now - timedelta(seconds=20)),
+    ]
+    arrivals = (
+        request_scheduling.PrecedingArrival("request-1", now - timedelta(minutes=3), 2),
+        request_scheduling.PrecedingArrival("request-2", now - timedelta(seconds=90), 2),
+    )
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+        arrivals,
+    )
+
+    assert pressure.evidence == "arrival_outpaces_drain"
+    assert pressure.returned_capacity == 2
+    assert pressure.arriving_preceding_work == 7
+    assert pressure.returned_work == 2
+    assert pressure.active_preceding_dispatches == 1
+    assert pressure.might_stall is True
+
+
+def test_finite_preexisting_backlog_never_counts_as_new_arrival_pressure() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    created_at = now - timedelta(minutes=5)
+    observations = [_dispatch(now, index, created_at=created_at) for index in range(1, 4)]
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+    )
+
+    assert pressure.evidence == "preceding_arrivals_not_outpacing_drain"
+    assert pressure.might_stall is False
+
+
+def test_one_finite_arrival_burst_does_not_show_sustained_rate_pressure() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    observations = [_dispatch(now, index, created_at=now - timedelta(minutes=3)) for index in range(1, 4)]
+    arrivals = (request_scheduling.PrecedingArrival("burst", now - timedelta(minutes=3), 20),)
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+        arrivals,
+    )
+
+    assert pressure.evidence == "preceding_arrivals_not_outpacing_drain"
+    assert pressure.might_stall is False
+
+
+def test_arrivals_matching_clearance_do_not_might_stall() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    observations = [
+        _dispatch(
+            now,
+            1,
+            created_at=now - timedelta(minutes=3),
+            dispatched_at=now - timedelta(seconds=190),
+        ),
+        _dispatch(
+            now,
+            2,
+            created_at=now - timedelta(seconds=90),
+            dispatched_at=now - timedelta(seconds=80),
+        ),
+        _dispatch(
+            now,
+            3,
+            created_at=now - timedelta(minutes=5),
+            dispatched_at=now - timedelta(seconds=20),
+        ),
+    ]
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+    )
+
+    assert pressure.evidence == "preceding_arrivals_not_outpacing_drain"
+    assert pressure.might_stall is False
+
+
+def test_non_preceding_pop_breaks_the_stall_evidence() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    older = now - timedelta(minutes=5)
+    newer = now - timedelta(minutes=1)
+    observations = [
+        _dispatch(now, 1, created_at=older),
+        _dispatch(now, 2, created_at=older),
+        _dispatch(now, 3, created_at=older),
+        _dispatch(now, 4, created_at=newer, extra_priority=-1),
+    ]
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+        (
+            request_scheduling.PrecedingArrival("arrival-1", now - timedelta(minutes=3), 2),
+            request_scheduling.PrecedingArrival("arrival-2", now - timedelta(minutes=1), 2),
+        ),
+    )
+
+    assert pressure.evidence == "target_opportunity_seen"
+    assert pressure.might_stall is False
+
+
+def test_history_from_an_old_worker_state_is_ignored() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    created_at = now - timedelta(minutes=5)
+    old_worker_state = request_scheduling.build_worker_scheduling_state(
+        gentype="image",
+        model_names=("old-model",),
+        bridge_agent="AI Horde Worker reGen:17:unknown",
+    )
+    observations = [_dispatch(now, index, created_at=created_at, worker_state=old_worker_state) for index in range(1, 4)]
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+    )
+
+    assert pressure.lost_opportunities == 0
+    assert pressure.might_stall is False
+
+
+def test_worker_state_compares_effective_bridge_capabilities() -> None:
+    equivalent_state = request_scheduling.build_worker_scheduling_state(
+        gentype="image",
+        model_names=("model",),
+        bridge_agent="AI Horde Worker reGen:18:other-build",
+    )
+    older_state = request_scheduling.build_worker_scheduling_state(
+        gentype="image",
+        model_names=("model",),
+        bridge_agent="AI Horde Worker reGen:16:unknown",
+    )
+
+    assert equivalent_state == _CURRENT_WORKER_STATE
+    assert older_state != _CURRENT_WORKER_STATE
+
+
+def test_worker_priority_pass_precedes_a_target_outside_that_pass() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    observations = []
+    for index, seconds_ago in enumerate((210, 170, 80, 20), start=1):
+        observations.append(
+            _dispatch(
+                now,
+                index,
+                created_at=now - timedelta(seconds=seconds_ago + 10),
+                extra_priority=-1,
+                selected_from_priority_queue=True,
+                priority_user_ids=("other-user",),
+                dispatched_at=now - timedelta(seconds=seconds_ago),
+            ),
+        )
+
+    pressure = _pressure(
+        now,
+        observations,
+        [_return(now, 1, seconds_ago=180), _return(now, 2, seconds_ago=60)],
+        active_ids=("dispatch-4",),
+    )
+
+    assert pressure.might_stall is True
+
 
 def _forecast(now: datetime) -> request_scheduling.SchedulingForecast:
     return request_scheduling.calculate_scheduling_forecast(
