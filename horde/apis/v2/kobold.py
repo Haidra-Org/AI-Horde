@@ -265,6 +265,7 @@ class TextAsyncStatus(Resource):
             active_worker_count=database.count_active_workers("text"),
             eligible_workers=worker_availability.worker_count,
             eligible_worker_threads=worker_availability.thread_count,
+            might_stall=worker_availability.might_stall,
         )
         # wp_status is a fully materialized plain dict; release the pooled
         # connection before flask_restx marshalling/JSON serialization and the
@@ -310,6 +311,7 @@ class TextAsyncStatus(Resource):
             active_worker_count=database.count_active_workers("text"),
             eligible_workers=worker_availability.worker_count,
             eligible_worker_threads=worker_availability.thread_count,
+            might_stall=worker_availability.might_stall,
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions

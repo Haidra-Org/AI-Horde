@@ -59,40 +59,9 @@ procgen_classes = {
 }
 
 WP_ACTIVATION_MAX_ATTEMPTS = 4
-STALL_GRACE_SECONDS = 120
-STALL_ESTIMATE_OVERRUN_MULTIPLIER = 2
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
-
-
-def _request_might_stall(
-    *,
-    availability_known: bool,
-    is_possible: bool,
-    waiting: int,
-    processing: int,
-    queue_position: int,
-    estimated_wait_time: int,
-    eligible_worker_threads: int,
-    queue_age: float,
-    remaining_lifetime: float,
-) -> bool:
-    """Return whether compatible capacity and queue pressure may stall a request."""
-
-    request_is_waiting = waiting > 0 and processing == 0
-    if not availability_known or not is_possible or not request_is_waiting:
-        return False
-    if eligible_worker_threads == 0:
-        return True
-
-    queue_has_pressure = queue_position > eligible_worker_threads
-    estimate_has_overrun = queue_age > max(
-        estimated_wait_time * STALL_ESTIMATE_OVERRUN_MULTIPLIER,
-        STALL_GRACE_SECONDS,
-    )
-    expiry_is_foreseeable = estimated_wait_time >= remaining_lifetime
-    return queue_has_pressure and (estimate_has_overrun or expiry_is_foreseeable)
 
 
 class WPAllowedWorkers(db.Model):
@@ -649,6 +618,7 @@ class WaitingPrompt(db.Model):
         *,
         eligible_workers: int | None = None,
         eligible_worker_threads: int | None = None,
+        might_stall: bool = False,
     ) -> dict[str, Any]:
         """Return the request's current generation and queue status.
 
@@ -660,6 +630,7 @@ class WaitingPrompt(db.Model):
             lite: Whether to omit completed generation payloads.
             eligible_workers: Exact number of workers eligible for this request.
             eligible_worker_threads: Advertised threads across eligible workers.
+            might_stall: Cached assignment-pressure advisory for this request.
 
         Returns:
             Materialized request status ready for API serialization.
@@ -738,17 +709,9 @@ class WaitingPrompt(db.Model):
         ret_dict["eligible_worker_threads"] = eligible_worker_threads
 
         status_time = datetime.utcnow()
-        ret_dict["might_stall"] = _request_might_stall(
-            availability_known=availability_known,
-            is_possible=ret_dict["is_possible"],
-            waiting=ret_dict["waiting"],
-            processing=ret_dict["processing"],
-            queue_position=ret_dict["queue_position"],
-            estimated_wait_time=ret_dict["wait_time"],
-            eligible_worker_threads=eligible_worker_threads,
-            queue_age=max((status_time - self.created).total_seconds(), 0),
-            remaining_lifetime=max((self.expiry - status_time).total_seconds(), 0),
-        )
+        ret_dict["might_stall"] = False
+        if availability_known and ret_dict["waiting"] > 0 and ret_dict["processing"] == 0:
+            ret_dict["might_stall"] = might_stall
         if availability_known and ret_dict["waiting"] > 0 and ret_dict["processing"] == 0:
             thing_divisor = hv.thing_divisors[self.wp_type]
             own_queued_work = self.things * ret_dict["waiting"] / thing_divisor

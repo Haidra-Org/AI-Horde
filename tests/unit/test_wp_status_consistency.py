@@ -118,6 +118,7 @@ def _status(
     wp_queue_stats: tuple[int, float, int] = (0, 0, 0),
     eligible_workers: int | None = None,
     eligible_worker_threads: int | None = None,
+    might_stall: bool = False,
 ) -> dict[str, Any]:
     """Return ``wp.get_status`` with neutral queue and worker-population inputs.
 
@@ -132,6 +133,7 @@ def _status(
         wp_queue_stats=wp_queue_stats,
         eligible_workers=eligible_workers,
         eligible_worker_threads=eligible_worker_threads,
+        might_stall=might_stall,
         lite=True,
     )
 
@@ -201,7 +203,7 @@ class TestStatusSignatureCompatibility:
 class TestStallSignal:
     """The additive signal identifies observed pressure without changing possibility."""
 
-    def test_scarce_compatible_capacity_after_estimate_overrun_might_stall(
+    def test_scarce_capacity_without_observations_fails_clear(
         self,
         db_session: Any,
         fake_redis: Any,
@@ -223,7 +225,7 @@ class TestStallSignal:
         assert status["is_possible"] is True
         assert status["eligible_workers"] == 1
         assert status["eligible_worker_threads"] == 1
-        assert status["might_stall"] is True
+        assert status["might_stall"] is False
 
     def test_front_of_compatible_capacity_does_not_signal_stall(
         self,
@@ -246,7 +248,7 @@ class TestStallSignal:
 
         assert status["might_stall"] is False
 
-    def test_foreseeable_expiry_pressure_might_stall_before_estimate_overrun(
+    def test_foreseeable_expiry_alone_does_not_claim_arrival_rate_pressure(
         self,
         db_session: Any,
         fake_redis: Any,
@@ -264,6 +266,25 @@ class TestStallSignal:
             eligible_worker_threads=1,
         )
 
+        assert status["might_stall"] is False
+
+    def test_observed_arrival_rate_pressure_sets_the_advisory(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+    ) -> None:
+        user = make_user()
+        wp = _make_wp(user)
+
+        status = _status(
+            wp,
+            eligible_workers=1,
+            eligible_worker_threads=1,
+            might_stall=True,
+        )
+
+        assert status["is_possible"] is True
         assert status["might_stall"] is True
 
     def test_impossible_request_is_not_only_a_possible_stall(
