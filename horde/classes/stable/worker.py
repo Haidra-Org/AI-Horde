@@ -116,6 +116,15 @@ class ImageWorker(Worker):
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
         my_model_names = model_names
+        requested_models = waiting_prompt.get_model_names()
+        if requested_models and set(requested_models).isdisjoint(my_model_names):
+            return [False, "models"]
+        if waiting_prompt.width * waiting_prompt.height > self.max_pixels:
+            return [False, "max_pixels"]
+        if not waiting_prompt.slow_workers and self.speed < 500000:
+            return [False, "performance"]
+        if self.extra_slow_worker and not waiting_prompt.extra_slow_workers:
+            return [False, "performance"]
         my_baselines = model_reference.get_all_model_baselines(my_model_names)
         # logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not check_bridge_capability("img2img", self.bridge_agent):
@@ -179,6 +188,13 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
         if waiting_prompt.source_image and not self.allow_img2img:
             return [False, "img2img"]
+        if waiting_prompt.extra_source_images is not None and not check_bridge_capability(
+            "extra_source_images",
+            self.bridge_agent,
+        ):
+            return [False, "bridge_version"]
+        if waiting_prompt.r2 and not check_bridge_capability("r2", self.bridge_agent):
+            return [False, "bridge_version"]
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
         if not waiting_prompt.source_image and (
             self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]
@@ -228,6 +244,18 @@ class ImageWorker(Worker):
             self.bridge_agent,
         ):
             return [False, "bridge_version"]
+        if "loras" in waiting_prompt.params:
+            if not self.allow_lora:
+                return [False, "lora"]
+            if not check_bridge_capability("lora", self.bridge_agent):
+                return [False, "bridge_version"]
+        if "tis" in waiting_prompt.params and not check_bridge_capability("textual_inversion", self.bridge_agent):
+            return [False, "bridge_version"]
+        if waiting_prompt.params.get("transparent", False):
+            if not check_bridge_capability("layer_diffuse", self.bridge_agent):
+                return [False, "bridge_version"]
+            if not self.allow_sdxl_controlnet:
+                return [False, "controlnet"]
         if any(lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])) and not check_bridge_capability(
             "lora_versions",
             self.bridge_agent,
