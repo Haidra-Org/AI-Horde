@@ -228,31 +228,35 @@ def parse_bridge_agent(bridge_agent):
 
 @functools.lru_cache(maxsize=1024)
 @logger.catch(reraise=True)
-def check_bridge_capability(capability, bridge_agent):
+def get_bridge_capabilities(bridge_agent: str) -> frozenset[str]:
+    """Return every feature capability supported by a bridge agent."""
+
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
-    # logger.debug([bridge_name, bridge_version])
     if bridge_name not in BRIDGE_CAPABILITIES:
-        return False
-    total_capabilities = set()
-    # Because we start from 0
+        return frozenset()
+    total_capabilities: set[str] = set()
     for version in BRIDGE_CAPABILITIES[bridge_name]:
         checked_semver = semver.Version.parse(str(version), True)
         if checked_semver.compare(bridge_version) <= 0:
             total_capabilities.update(BRIDGE_CAPABILITIES[bridge_name][version])
-    # logger.debug([total_capabilities, capability, capability in total_capabilities])
-    # logger.debug([bridge_name, BRIDGE_CAPABILITIES[bridge_name]])
-    return capability in total_capabilities
+    return frozenset(total_capabilities)
+
+
+@functools.lru_cache(maxsize=1024)
+@logger.catch(reraise=True)
+def check_bridge_capability(capability: str, bridge_agent: str) -> bool:
+    return capability in get_bridge_capabilities(bridge_agent)
 
 
 @logger.catch(reraise=True)
-def is_backed_validated(bridge_agent):
+def is_backed_validated(bridge_agent: str) -> bool:
     bridge_name, _ = parse_bridge_agent(bridge_agent)
     return bridge_name in LLM_VALIDATED_BACKENDS
 
 
 @functools.lru_cache(maxsize=256)
 @logger.catch(reraise=True)
-def get_supported_samplers(bridge_agent, karras=True):
+def get_supported_samplers(bridge_agent: str, karras: bool = True) -> frozenset[str]:
     bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
     if bridge_name not in BRIDGE_SAMPLERS:
         # When it's an unknown worker agent we treat it like AI Horde Worker
