@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
@@ -20,6 +21,26 @@ from horde.model_reference import model_reference
 from horde.utils import sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+
+
+def get_minimum_text_worker_speed(model_names: Sequence[str]) -> int:
+    """Return the normal-speed threshold for a text worker's first model.
+
+    Args:
+        model_names: Models advertised in bridge preference order.
+
+    Returns:
+        Minimum tokens per second for requests that disallow slow workers.
+    """
+
+    if not model_names:
+        return 3
+    parameter_count = model_reference.get_text_model_multiplier(model_names[0])
+    if parameter_count >= 20:
+        return 3
+    if parameter_count >= 13:
+        return 4
+    return 5
 
 
 class TextWorkerSoftprompts(db.Model):
@@ -132,19 +153,24 @@ class TextWorker(Worker):
     def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
         """Return whether this worker can serve a text request."""
 
+        model_names = self.get_model_names()
         softprompt_names = self.get_softprompt_names() if waiting_prompt.softprompt else []
-        return self.can_generate_with_softprompt_names(waiting_prompt, softprompt_names)
+        return self.can_generate_with_softprompt_names(waiting_prompt, softprompt_names, model_names=model_names)
 
     def can_generate_with_softprompt_names(
         self,
         waiting_prompt: Any,
         softprompt_names: list[str],
+        *,
+        model_names: list[str] | None = None,
     ) -> list[bool | str | None]:
         """Evaluate a text request using already loaded softprompt names.
 
         Args:
             waiting_prompt: Text request being evaluated.
             softprompt_names: Softprompts currently advertised by this worker.
+            model_names: Models currently advertised by this worker. When
+                omitted, load the worker's current models.
 
         Returns:
             Eligibility followed by the existing rejection reason, if any.
@@ -153,10 +179,17 @@ class TextWorker(Worker):
         can_generate = super().can_generate(waiting_prompt)
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
+        if model_names is None:
+            model_names = self.get_model_names()
+        requested_models = waiting_prompt.get_model_names()
+        if requested_models and set(requested_models).isdisjoint(model_names):
+            return [False, "models"]
         if self.max_context_length < waiting_prompt.max_context_length:
             return [False, "max_context_length"]
         if self.max_length < waiting_prompt.max_length:
             return [False, "max_length"]
+        if not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(model_names):
+            return [False, "performance"]
         if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
             return [False, "bridge_version"]
         matching_softprompt = True
