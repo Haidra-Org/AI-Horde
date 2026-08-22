@@ -193,8 +193,6 @@ class ImageWorker(Worker):
             self.bridge_agent,
         ):
             return [False, "bridge_version"]
-        if waiting_prompt.r2 and not check_bridge_capability("r2", self.bridge_agent):
-            return [False, "bridge_version"]
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
         if not waiting_prompt.source_image and (
             self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]
