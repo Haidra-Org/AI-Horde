@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import pyroscope
 from opentelemetry.sdk.trace import TracerProvider
 from pyroscope.otel import PyroscopeSpanProcessor
@@ -42,7 +44,8 @@ def test_real_pyroscope_processor_correlates_real_sdk_root_span(monkeypatch) -> 
         pass
     tracer_provider.shutdown()
 
-    assert len(added_tags) == 2
-    assert len(removed_tags) == 2
-    assert {tag_name for tag_name, _tag_value in added_tags} == {"span_id", "span_name"}
-    assert {tag_name for tag_name, _tag_value in removed_tags} == {"span_id", "span_name"}
+    # Pyroscope may add correlation fields across compatible releases.  Verify
+    # the fields our integration relies on while allowing additive metadata.
+    added_tag_names = {tag_name for tag_name, _tag_value in added_tags}
+    assert {"span_id", "span_name"} <= added_tag_names
+    assert Counter(removed_tags) == Counter(added_tags)
