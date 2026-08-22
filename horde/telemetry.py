@@ -268,20 +268,20 @@ class _TraceRatioSpanProcessor(SpanProcessor):
 
 
 def telemetry_enabled() -> bool:
-    """Return ``True`` when telemetry should be activated for this process.
+    """Return whether OpenTelemetry or continuous profiling should start.
 
-    Telemetry is opt-in. It activates only when an OTLP endpoint is configured
-    (the deployments Ansible role sets ``OTEL_EXPORTER_OTLP_ENDPOINT`` whenever
-    observability is enabled) or when ``AI_HORDE_TELEMETRY_ENABLED`` is set
-    explicitly (handy for local console/no-export debugging). The standard
-    ``OTEL_SDK_DISABLED=true`` remains an absolute off switch that overrides
-    both.
+    OpenTelemetry is opt-in through an OTLP endpoint or
+    ``AI_HORDE_TELEMETRY_ENABLED``. ``OTEL_SDK_DISABLED=true`` disables only
+    the OTel SDK; ``PYROSCOPE_ENABLED=true`` independently enables continuous
+    profiling so profiling-only deployments remain valid.
 
     The dependency surface and image are always telemetry-capable; this gate
     only governs runtime activation so a bare ``python server.py`` stays inert
     by default.
     """
-    if os.environ.get("OTEL_SDK_DISABLED", "").lower() == "true":
+    if os.environ.get("PYROSCOPE_ENABLED", "").lower() == "true":
+        return True
+    if not _otel_sdk_enabled():
         return False
     if os.environ.get("AI_HORDE_TELEMETRY_ENABLED", "").lower() in ("1", "true", "yes"):
         return True
@@ -293,6 +293,11 @@ def telemetry_enabled() -> bool:
             "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
         )
     )
+
+
+def _otel_sdk_enabled() -> bool:
+    """Return whether the OpenTelemetry SDK is allowed to initialize."""
+    return os.environ.get("OTEL_SDK_DISABLED", "").lower() != "true"
 
 
 def init_telemetry_early(app: Flask) -> None:
@@ -308,11 +313,12 @@ def init_telemetry_early(app: Flask) -> None:
         return
     _initialized_early = True
 
-    if os.environ.get("OTEL_SDK_DISABLED", "").lower() == "true":
-        logger.init_warn("Telemetry", status="Disabled")
-        return
+    otel_sdk_enabled = _otel_sdk_enabled()
+    span_processors = _init_pyroscope(span_profiles_enabled=otel_sdk_enabled)
 
-    span_processors = _init_pyroscope()
+    if not otel_sdk_enabled:
+        logger.init_warn("Telemetry", status="OpenTelemetry disabled")
+        return
 
     sampling = _build_sampling_options()
 
@@ -362,7 +368,7 @@ def init_telemetry_late(app: Flask) -> None:
         return
     _initialized_late = True
 
-    if os.environ.get("OTEL_SDK_DISABLED", "").lower() == "true":
+    if not _otel_sdk_enabled():
         return
 
     from horde.flask import db
@@ -403,7 +409,7 @@ def _build_sampling_options() -> logfire.SamplingOptions:
     return logfire.SamplingOptions(head=ratio)
 
 
-def _init_pyroscope() -> list[SpanProcessor]:
+def _init_pyroscope(*, span_profiles_enabled: bool = True) -> list[SpanProcessor]:
     """Start continuous profiling and optionally enable span correlation.
 
     ``PyroscopeSpanProcessor`` adds per-root-span identifiers to profiling
@@ -437,6 +443,12 @@ def _init_pyroscope() -> list[SpanProcessor]:
 
     if os.environ.get("PYROSCOPE_SPAN_PROFILES", "").lower() != "true":
         logger.init_ok("Telemetry", status="Pyroscope span profiles disabled")
+        return []
+    if not span_profiles_enabled:
+        logger.init_warn(
+            "Telemetry",
+            status="Pyroscope span profiles require the OpenTelemetry SDK",
+        )
         return []
 
     try:

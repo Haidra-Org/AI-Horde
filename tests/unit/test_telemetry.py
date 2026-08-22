@@ -32,7 +32,9 @@ from opentelemetry.trace import Status, StatusCode
 def _isolate_telemetry_env(monkeypatch):
     monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", raising=False)
+    monkeypatch.delenv("AI_HORDE_TELEMETRY_ENABLED", raising=False)
     monkeypatch.delenv("PYROSCOPE_ENABLED", raising=False)
     monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES", raising=False)
     monkeypatch.delenv("PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE", raising=False)
@@ -89,6 +91,50 @@ def test_init_telemetry_early_is_idempotent(telemetry_app):
     init_telemetry_early(telemetry_app)
 
 
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({}, False),
+        ({"AI_HORDE_TELEMETRY_ENABLED": "true"}, True),
+        ({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}, True),
+        ({"PYROSCOPE_ENABLED": "true"}, True),
+        ({"OTEL_SDK_DISABLED": "true"}, False),
+        ({"OTEL_SDK_DISABLED": "true", "AI_HORDE_TELEMETRY_ENABLED": "true"}, False),
+        ({"OTEL_SDK_DISABLED": "true", "PYROSCOPE_ENABLED": "true"}, True),
+    ],
+)
+def test_telemetry_enabled_activation_matrix(monkeypatch, environment, expected):
+    from horde.telemetry import telemetry_enabled
+
+    for variable, value in environment.items():
+        monkeypatch.setenv(variable, value)
+
+    assert telemetry_enabled() is expected
+
+
+def test_profiling_only_initializes_pyroscope_without_logfire(monkeypatch):
+    from horde import telemetry
+
+    pyroscope_calls = []
+    monkeypatch.setattr(telemetry, "_initialized_early", False)
+    monkeypatch.setattr(
+        telemetry,
+        "_init_pyroscope",
+        lambda *, span_profiles_enabled: pyroscope_calls.append(span_profiles_enabled) or [],
+    )
+    monkeypatch.setattr(
+        telemetry.logfire,
+        "configure",
+        lambda **_kwargs: pytest.fail("Logfire must not initialize in profiling-only mode"),
+    )
+    monkeypatch.setenv("PYROSCOPE_ENABLED", "true")
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+
+    telemetry.init_telemetry_early(Flask("profiling-only"))
+
+    assert pyroscope_calls == [False]
+
+
 @pytest.mark.parametrize("span_profiles", [None, "false"])
 def test_pyroscope_span_processor_is_disabled_by_default(monkeypatch, span_profiles):
     from horde import telemetry
@@ -141,6 +187,31 @@ def test_pyroscope_span_processor_requires_explicit_opt_in(monkeypatch):
     assert len(processors) == 1
     assert isinstance(processors[0], telemetry._TraceRatioSpanProcessor)
     assert isinstance(processors[0]._processor, FakeSpanProcessor)
+
+
+def test_profiling_only_skips_span_processor_when_otel_sdk_is_disabled(monkeypatch):
+    from horde import telemetry
+
+    configure_calls = []
+    pyroscope_module = ModuleType("pyroscope")
+    pyroscope_module.__path__ = []
+    pyroscope_module.configure = lambda **kwargs: configure_calls.append(kwargs)
+
+    class UnexpectedSpanProcessor:
+        def __init__(self):
+            raise AssertionError("Span correlation cannot run without the OTel SDK")
+
+    pyroscope_otel_module = ModuleType("pyroscope.otel")
+    pyroscope_otel_module.PyroscopeSpanProcessor = UnexpectedSpanProcessor
+    monkeypatch.setitem(sys.modules, "pyroscope", pyroscope_module)
+    monkeypatch.setitem(sys.modules, "pyroscope.otel", pyroscope_otel_module)
+    monkeypatch.setattr(telemetry.logger, "init_ok", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(telemetry.logger, "init_warn", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setenv("PYROSCOPE_ENABLED", "true")
+    monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES", "true")
+
+    assert telemetry._init_pyroscope(span_profiles_enabled=False) == []
+    assert len(configure_calls) == 1
 
 
 @pytest.mark.parametrize("raw_rate", [None, "invalid", "1.1", "-0.1"])

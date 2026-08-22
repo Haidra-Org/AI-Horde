@@ -8,6 +8,14 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.py'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
 
 env:
@@ -163,7 +171,10 @@ jobs:
             -e USE_SQLITE=0 \
             -e 'ADMINS=["test_user#1"]' \
             -e KUDOS_TRUST_THRESHOLD=100 \
+            -e AI_HORDE_TELEMETRY_ENABLED="${{ matrix.profiling_expected }}" \
             -e PYROSCOPE_ENABLED="${{ matrix.profiling_expected }}" \
+            -e PYROSCOPE_SPAN_PROFILES="${{ matrix.profiling_expected }}" \
+            -e PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE=0.10 \
             "ai-horde-${{ matrix.variant }}:validate"
 
       - name: Wait for healthy heartbeat
@@ -179,6 +190,12 @@ jobs:
             sleep 2
           done
           echo "Image validation passed; heartbeat responded OK"
+
+      - name: Assert telemetry image initialized native profiling and span correlation
+        if: matrix.profiling_expected == 'true'
+        run: >-
+          docker logs "ai-horde-validate-${{ matrix.variant }}" 2>&1 |
+          grep -F "Pyroscope span profiles (baseline 10.00%)"
 
       - name: Dump container logs on failure
         if: failure()

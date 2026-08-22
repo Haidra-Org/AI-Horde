@@ -95,6 +95,24 @@ jobs:
       - name: Run unit and integration tests through shared pytest runtime
         run: uv run pytest tests/unit tests/integration -q -rs
 
+  profiling-integration-job:
+    name: Real Pyroscope/OpenTelemetry integration
+    runs-on: ubuntu-latest
+    needs: resolve-and-validate-pr
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ needs.resolve-and-validate-pr.outputs.merge_ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+      - name: Install optional profiling dependencies
+        run: uv sync --locked --group telemetry-profiling
+      - name: Exercise real SDK and pyroscope-otel processors
+        run: uv run pytest tests/profiling -q
+
   runner-horde-sdk-job:
     name: Server-backed horde_sdk smoke
     runs-on: ubuntu-latest
@@ -124,10 +142,13 @@ jobs:
       PGUSER: postgres
       PGPASSWORD: postgres
       HORDE_TEST_APIKEYS: '1'
-      # Drive the telemetry instrumentation under load. No OTLP endpoint is set,
-      # so logfire installs no exporters: spans/metrics are created and dropped
-      # in-memory. This surfaces instrumentation crashes without any export I/O.
+      # Drive OTel instrumentation and the native profiler under load. No OTLP
+      # endpoint is set, so spans/metrics remain in-memory; Pyroscope export
+      # failures are non-fatal while its sampler and span tags remain exercised.
       AI_HORDE_TELEMETRY_ENABLED: '1'
+      PYROSCOPE_ENABLED: 'true'
+      PYROSCOPE_SPAN_PROFILES: 'true'
+      PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE: '0.10'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -137,6 +158,8 @@ jobs:
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
+      - name: Install optional profiling dependencies
+        run: uv sync --locked --group telemetry-profiling
       - uses: ./.github/actions/start-test-stack
 
       - name: Start AI-Horde server
@@ -154,6 +177,9 @@ jobs:
             fi
             sleep 2
           done
+
+      - name: Assert native profiling and span correlation initialized
+        run: grep -F "Pyroscope span profiles (baseline 10.00%)" server.log
 
       - name: Run Locust smoke
         run: |
