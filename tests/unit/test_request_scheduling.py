@@ -376,6 +376,25 @@ def test_calculate_scheduling_forecast_marks_missing_capacity_as_stall() -> None
     assert forecast.predicted_stall is True
 
 
+def test_calculate_scheduling_forecast_handles_workers_without_throughput_history() -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+
+    forecast = request_scheduling.calculate_scheduling_forecast(
+        forecasted_at=now,
+        request_expires_at=now + timedelta(minutes=20),
+        queued_work=300,
+        own_work=100,
+        queued_jobs=3,
+        own_jobs=1,
+        average_work_per_second=0,
+        eligible_worker_threads=2,
+    )
+
+    assert forecast.start_p50_seconds == 200
+    assert forecast.completion_p50_seconds == 300
+    assert forecast.predicted_stall is True
+
+
 def test_stored_forecast_is_paired_with_start_and_completion(
     fake_redis,
     monkeypatch,

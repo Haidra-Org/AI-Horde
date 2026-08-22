@@ -536,7 +536,7 @@ def calculate_scheduling_forecast(
     has_observed_capacity = average_work_per_second > 0 and eligible_worker_threads > 0
     start_parallel_threads = min(eligible_worker_threads, max(queued_jobs - own_jobs, 0))
     completion_parallel_threads = min(eligible_worker_threads, queued_jobs)
-    start_throughput = average_work_per_second * start_parallel_threads if start_parallel_threads > 0 else 1
+    start_throughput = average_work_per_second * start_parallel_threads if has_observed_capacity and start_parallel_threads > 0 else 1
     completion_throughput = average_work_per_second * completion_parallel_threads if has_observed_capacity else 1
 
     start_p50 = max(queued_work - own_work, 0) / start_throughput
