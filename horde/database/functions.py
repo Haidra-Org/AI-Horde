@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 import logfire
 from sqlalchemy import Boolean, and_, case, func, not_, or_
-from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload
+from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 
 import horde.classes.base.stats as stats
 from horde import vars as hv
@@ -52,6 +52,14 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.metrics import kudos_transfers_idempotent_replays, pop_query_duration
 from horde.model_reference import model_reference
+from horde.request_scheduling import (
+    ASSIGNMENT_PRESSURE_WINDOW,
+    ActiveWorkerDispatch,
+    EligibleWorkerState,
+    PrecedingArrival,
+    build_worker_scheduling_state,
+    get_request_assignment_pressure,
+)
 from horde.utils import hash_api_key, validate_regex
 
 ALLOW_ANONYMOUS = True
@@ -67,19 +75,37 @@ WP_CLASS_MAP = {
 }
 
 
+def _worker_model_names(worker: Worker) -> list[str]:
+    """Return the worker's eagerly loaded model names."""
+
+    return [worker_model.model for worker_model in worker.models]
+
+
+def _text_worker_softprompt_names(worker: TextWorker) -> list[str]:
+    """Return the text worker's eagerly loaded softprompt names."""
+
+    return [softprompt.softprompt for softprompt in worker.softprompts]
+
+
 @dataclass(frozen=True)
 class RequestWorkerAvailability:
-    """Represents current worker capacity that passes the same gates as job dispatch."""
+    """Represents current worker capacity that passes the dispatch gates.
+
+    Attributes:
+        worker_count: Number of distinct eligible workers.
+        thread_count: Advertised threads across those workers.
+        might_stall: Cached assignment-pressure advisory for the request.
+    """
 
     worker_count: int
     thread_count: int
-    has_inflight_generation: bool = False
+    might_stall: bool = False
 
     @property
     def is_possible(self) -> bool:
-        """Return whether capacity or an in-flight generation can serve the request."""
+        """Return whether current compatible worker capacity exists."""
 
-        return self.has_inflight_generation or self.worker_count > 0
+        return self.worker_count > 0
 
 
 def get_anon():
@@ -1853,18 +1879,111 @@ def _iter_eligible_workers_for_request(
             if isinstance(worker, ImageWorker):
                 can_generate = worker.can_generate_with_model_names(
                     waiting_prompt,
-                    [worker_model.model for worker_model in worker.models],
+                    _worker_model_names(worker),
                 )
             elif isinstance(worker, TextWorker):
                 can_generate = worker.can_generate_with_softprompt_names(
                     waiting_prompt,
-                    [softprompt.softprompt for softprompt in worker.softprompts],
-                    model_names=[worker_model.model for worker_model in worker.models],
+                    _text_worker_softprompt_names(worker),
+                    model_names=_worker_model_names(worker),
                 )
             else:
                 continue
             if can_generate[0]:
                 yield worker
+
+
+def _get_preceding_arrivals(
+    waiting_prompt: WaitingPrompt,
+    eligible_workers: list[ImageWorker | TextWorker],
+    observed_at: datetime,
+) -> tuple[PrecedingArrival, ...]:
+    """Return recent compatible demand that entered ahead of a request.
+
+    The existing runtime ``can_generate`` checks remain authoritative. A
+    candidate is counted once when at least one worker already proven eligible
+    for the target can also generate it and would order it first. Normal queue
+    priority and persistent worker-owner priority are observable here;
+    transient bridge priority is supplemented later from actual pop records.
+
+    Args:
+        waiting_prompt: Queued request whose incoming pressure is measured.
+        eligible_workers: Workers that passed the target's dispatch gates.
+        observed_at: End of the bounded arrival window.
+
+    Returns:
+        Deduplicated compatible arrivals, expressed in normalized work units.
+
+    Performance:
+        Candidate relationships are loaded in a fixed number of eager ORM
+        queries so the five-minute window is evaluated without truncating
+        arrival evidence or issuing per-candidate SQL.
+    """
+
+    if waiting_prompt.wp_type not in WP_CLASS_MAP or not eligible_workers:
+        return ()
+    if isinstance(waiting_prompt, ImageWaitingPrompt):
+        candidate_class = ImageWaitingPrompt
+    elif isinstance(waiting_prompt, TextWaitingPrompt):
+        candidate_class = TextWaitingPrompt
+    else:
+        return ()
+    window_start = max(waiting_prompt.created, observed_at - ASSIGNMENT_PRESSURE_WINDOW)
+    owner_ids = {worker.user_id for worker in eligible_workers}
+    candidate_query = (
+        db.session.query(candidate_class)
+        .options(
+            subqueryload(WaitingPrompt.models),
+            subqueryload(WaitingPrompt.workers),
+            subqueryload(WaitingPrompt.tricked_workers),
+            joinedload(WaitingPrompt.user).subqueryload(User.roles),
+        )
+        .filter(
+            WaitingPrompt.id != waiting_prompt.id,
+            WaitingPrompt.wp_type == waiting_prompt.wp_type,
+            WaitingPrompt.created >= window_start,
+            WaitingPrompt.created <= observed_at,
+            WaitingPrompt.n > 0,
+            WaitingPrompt.active.is_(True),
+            WaitingPrompt.faulted.is_(False),
+            or_(
+                WaitingPrompt.extra_priority > waiting_prompt.extra_priority,
+                WaitingPrompt.user_id.in_(owner_ids),
+            ),
+        )
+    )
+    arrivals: list[PrecedingArrival] = []
+    thing_divisor = hv.thing_divisors[waiting_prompt.wp_type]
+    candidates = candidate_query.order_by(WaitingPrompt.created.asc()).all()
+    for candidate in candidates:
+        for worker in eligible_workers:
+            normal_precedence = candidate.extra_priority > waiting_prompt.extra_priority
+            owner_precedence = candidate.user_id == worker.user_id and waiting_prompt.user_id != worker.user_id
+            if not normal_precedence and not owner_precedence:
+                continue
+            if isinstance(worker, ImageWorker):
+                can_generate = worker.can_generate_with_model_names(
+                    candidate,
+                    _worker_model_names(worker),
+                )
+            elif isinstance(worker, TextWorker):
+                can_generate = worker.can_generate_with_softprompt_names(
+                    candidate,
+                    _text_worker_softprompt_names(worker),
+                    model_names=_worker_model_names(worker),
+                )
+            else:
+                continue
+            if can_generate[0]:
+                arrivals.append(
+                    PrecedingArrival(
+                        request_id=str(candidate.id),
+                        arrived_at=candidate.created,
+                        work_amount=max(float(candidate.things * candidate.n / thing_divisor), 0),
+                    ),
+                )
+                break
+    return tuple(arrivals)
 
 
 def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> RequestWorkerAvailability:
@@ -1880,29 +1999,66 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
     Performance:
         Results are cached per request for 60 seconds. A cache miss evaluates
         every SQL candidate because an exact count cannot stop at the first
-        valid worker.
+        valid worker. Pressure history is loaded for the complete eligible pool
+        in one Redis pipeline.
     """
 
-    # In-flight state is always read live so cached zero capacity cannot
-    # contradict a generation that started after the cache was populated.
-    has_inflight_generation = _waiting_prompt_has_inflight_generation(waiting_prompt)
     cached_availability = hr.horde_r_get(f"wp_availability_{waiting_prompt.id}")
     if cached_availability is not None:
         try:
             parsed_availability = json.loads(cached_availability)
+            might_stall = parsed_availability["might_stall"]
+            if not isinstance(might_stall, bool):
+                raise TypeError("might_stall must be a boolean")
             return RequestWorkerAvailability(
                 worker_count=int(parsed_availability["workers"]),
                 thread_count=int(parsed_availability["threads"]),
-                has_inflight_generation=has_inflight_generation,
+                might_stall=might_stall,
             )
         except (KeyError, TypeError, ValueError):
             logger.debug(f"Ignoring malformed worker availability cache for request {waiting_prompt.id}")
 
     eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
+    eligible_worker_states = tuple(
+        EligibleWorkerState(
+            worker_id=str(worker.id),
+            scheduling_state=build_worker_scheduling_state(
+                gentype=waiting_prompt.wp_type,
+                model_names=_worker_model_names(worker),
+                bridge_agent=worker.bridge_agent,
+                softprompt_names=(
+                    _text_worker_softprompt_names(worker) if isinstance(worker, TextWorker) else ()
+                ),
+            ),
+        )
+        for worker in eligible_workers
+    )
+    thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
+    might_stall = False
+    if waiting_prompt.n > 0 and eligible_worker_states:
+        observed_at = datetime.utcnow()
+        active_dispatches = _get_active_worker_dispatches(
+            waiting_prompt,
+            [worker_state.worker_id for worker_state in eligible_worker_states],
+        )
+        assignment_pressure = get_request_assignment_pressure(
+            observed_at=observed_at,
+            target_request_id=str(waiting_prompt.id),
+            target_user_id=str(waiting_prompt.user_id),
+            target_created_at=waiting_prompt.created,
+            target_extra_priority=int(waiting_prompt.extra_priority),
+            eligible_worker_states={
+                worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states
+            },
+            eligible_worker_threads=thread_count,
+            active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
+            preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
+        )
+        might_stall = assignment_pressure.might_stall
     availability = RequestWorkerAvailability(
         worker_count=len(eligible_workers),
-        thread_count=sum(max(worker.threads, 1) for worker in eligible_workers),
-        has_inflight_generation=has_inflight_generation,
+        thread_count=thread_count,
+        might_stall=might_stall,
     )
     worker_found = availability.worker_count > 0
     hr.horde_r_setex(
@@ -1917,10 +2073,40 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
             {
                 "workers": availability.worker_count,
                 "threads": availability.thread_count,
+                "might_stall": availability.might_stall,
             },
         ),
     )
     return availability
+
+
+def _get_active_worker_dispatches(
+    waiting_prompt: WaitingPrompt,
+    eligible_worker_ids: list[str],
+) -> tuple[ActiveWorkerDispatch, ...]:
+    """Return current pop batches occupying eligible worker threads."""
+
+    if waiting_prompt.wp_type not in {"image", "text"} or not eligible_worker_ids:
+        return ()
+    active_rows = (
+        db.session.query(
+            ProcessingGeneration.worker_id,
+            ProcessingGeneration.dispatch_batch_id,
+        )
+        .filter(
+            ProcessingGeneration.worker_id.in_(eligible_worker_ids),
+            ProcessingGeneration.dispatch_batch_id.is_not(None),
+            ProcessingGeneration.generation.is_(None),
+            ProcessingGeneration.faulted.is_(False),
+            ProcessingGeneration.fake.is_(False),
+        )
+        .distinct()
+        .all()
+    )
+    return tuple(
+        ActiveWorkerDispatch(worker_id=str(row.worker_id), dispatch_id=str(row.dispatch_batch_id))
+        for row in active_rows
+    )
 
 
 def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
