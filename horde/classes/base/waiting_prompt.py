@@ -2,18 +2,21 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from __future__ import annotations
+
 import json
 import random
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import logfire
 from sqlalchemy import JSON, or_
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import expression
 
 from horde import vars as hv
@@ -41,6 +44,9 @@ from horde.request_scheduling import (
     store_scheduling_forecast,
 )
 from horde.utils import get_db_uuid, get_expiry_date, get_extra_slow_expiry_date
+
+if TYPE_CHECKING:
+    from horde.classes.base.user import User
 
 procgen_classes = {
     "template": ProcessingGeneration,
@@ -157,7 +163,7 @@ class WaitingPrompt(db.Model):
     prompt = db.Column(db.Text, nullable=False)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
-    user = db.relationship("User", back_populates="waiting_prompts")
+    user: Mapped[User] = relationship("User", back_populates="waiting_prompts")
 
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
     gen_payload = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
@@ -196,19 +202,19 @@ class WaitingPrompt(db.Model):
     sharedkey = db.relationship("UserSharedKey", back_populates="waiting_prompts")
     proxied_account = db.Column(db.String(255), nullable=True)
 
-    tricked_workers = db.relationship(
+    tricked_workers: Mapped[list[WPTrickedWorkers]] = relationship(
         "WPTrickedWorkers",
         back_populates="wp",
         passive_deletes=True,
         cascade="all, delete-orphan",
     )
-    workers = db.relationship(
+    workers: Mapped[list[WPAllowedWorkers]] = relationship(
         "WPAllowedWorkers",
         back_populates="wp",
         passive_deletes=True,
         cascade="all, delete-orphan",
     )
-    models = db.relationship("WPModels", back_populates="wp", cascade="all, delete-orphan")
+    models: Mapped[list[WPModels]] = relationship("WPModels", back_populates="wp", cascade="all, delete-orphan")
 
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 
