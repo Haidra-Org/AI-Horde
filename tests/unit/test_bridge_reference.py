@@ -21,6 +21,7 @@ from horde.bridge_reference import (
     CAPABILITY_EXPANDED_REGEN_VERSION,
     check_bridge_capability,
     check_sampler_capability,
+    get_bridge_capabilities,
     get_supported_samplers,
 )
 from horde.consts import EXTENDED_SAMPLERS, LEGACY_SAMPLERS, SOLVER_KNOB_SAMPLERS
@@ -30,6 +31,19 @@ pytestmark = pytest.mark.unit
 
 def _regen_agent(version: int) -> str:
     return f"AI Horde Worker reGen:{version}:https://github.com/Haidra-Org/horde-worker-reGen"
+
+
+def test_capability_checks_share_one_agent_capability_set() -> None:
+    agent = _regen_agent(CAPABILITY_EXPANDED_REGEN_VERSION)
+    get_bridge_capabilities.cache_clear()
+    check_bridge_capability.cache_clear()
+
+    for capability in ("controlnet", "extended_controlnet", "scheduler"):
+        check_bridge_capability(capability, agent)
+
+    cache_info = get_bridge_capabilities.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 2
 
 
 class TestExtendedControlnetCapability:
