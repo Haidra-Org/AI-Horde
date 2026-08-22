@@ -5,6 +5,7 @@
 import copy
 import random
 from collections import defaultdict
+from datetime import datetime
 
 from flask import request
 from flask_restx import Resource, reqparse
@@ -29,11 +30,12 @@ from horde.classes.kobold.worker import TextWorker
 from horde.database import functions as database
 from horde.database import text_functions as text_database
 from horde.database.kudos_reservations import reserve_kudos
-from horde.enums import KudosEntryType
+from horde.enums import KudosEntryType, RequestTerminalOutcome
 from horde.flask import cache, db
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
+from horde.request_scheduling import record_request_cancellation_forecast
 from horde.utils import hash_dictionary
 from horde.validation import ParamValidator
 from horde.vars import horde_title
@@ -255,11 +257,14 @@ class TextAsyncStatus(Resource):
                 client_agent=self.args["Client-Agent"],
                 ipaddr=request.remote_addr,
             )
+        worker_availability = database.get_worker_availability_for_request(wp)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("text"),
-            has_valid_workers=database.wp_has_valid_workers(wp),
+            has_valid_workers=worker_availability.is_possible,
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers("text"),
+            eligible_workers=worker_availability.worker_count,
+            eligible_worker_threads=worker_availability.thread_count,
         )
         # wp_status is a fully materialized plain dict; release the pooled
         # connection before flask_restx marshalling/JSON serialization and the
@@ -297,17 +302,28 @@ class TextAsyncStatus(Resource):
                 client_agent=self.args["Client-Agent"],
                 ipaddr=request.remote_addr,
             )
+        worker_availability = database.get_worker_availability_for_request(wp)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("text"),
-            has_valid_workers=database.wp_has_valid_workers(wp),
+            has_valid_workers=worker_availability.is_possible,
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers("text"),
+            eligible_workers=worker_availability.worker_count,
+            eligible_worker_threads=worker_availability.thread_count,
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway
+        cancelled_at = datetime.utcnow()
+        cancellation_claimed = wp.claim_terminal_outcome(
+            RequestTerminalOutcome.CANCELLED,
+            recorded_at=cancelled_at,
+            commit=False,
+        )
         wp.n = 0
         db.session.commit()
+        if cancellation_claimed:
+            record_request_cancellation_forecast(request_id=str(wp.id), cancelled_at=cancelled_at)
         return (wp_status, 200)
 
 

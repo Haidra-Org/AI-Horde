@@ -7,6 +7,7 @@ import random
 import time
 import uuid
 from datetime import datetime, timedelta
+from typing import Any
 
 import logfire
 from sqlalchemy import JSON, or_
@@ -21,15 +22,23 @@ from horde.classes.base.kudos import kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.enums import RequestTerminalOutcome
 from horde.exceptions import is_deadlock_error
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.metrics import (
+    request_time_to_first_start,
     wp_activate_base_commit_duration,
     wp_activate_base_record_usage_duration,
     wp_activate_duration,
     wp_activation_age,
+)
+from horde.request_scheduling import (
+    calculate_scheduling_forecast,
+    record_request_cancellation_forecast,
+    record_request_start_forecast,
+    store_scheduling_forecast,
 )
 from horde.utils import get_db_uuid, get_expiry_date, get_extra_slow_expiry_date
 
@@ -40,9 +49,40 @@ procgen_classes = {
 }
 
 WP_ACTIVATION_MAX_ATTEMPTS = 4
+STALL_GRACE_SECONDS = 120
+STALL_ESTIMATE_OVERRUN_MULTIPLIER = 2
 
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+
+
+def _request_might_stall(
+    *,
+    availability_known: bool,
+    is_possible: bool,
+    waiting: int,
+    processing: int,
+    queue_position: int,
+    estimated_wait_time: int,
+    eligible_worker_threads: int,
+    queue_age: float,
+    remaining_lifetime: float,
+) -> bool:
+    """Return whether compatible capacity and queue pressure may stall a request."""
+
+    request_is_waiting = waiting > 0 and processing == 0
+    if not availability_known or not is_possible or not request_is_waiting:
+        return False
+    if eligible_worker_threads == 0:
+        return True
+
+    queue_has_pressure = queue_position > eligible_worker_threads
+    estimate_has_overrun = queue_age > max(
+        estimated_wait_time * STALL_ESTIMATE_OVERRUN_MULTIPLIER,
+        STALL_GRACE_SECONDS,
+    )
+    expiry_is_foreseeable = estimated_wait_time >= remaining_lifetime
+    return queue_has_pressure and (estimate_has_overrun or expiry_is_foreseeable)
 
 
 class WPAllowedWorkers(db.Model):
@@ -173,6 +213,8 @@ class WaitingPrompt(db.Model):
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
 
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
+    terminal_outcome = db.Column(db.String(32), nullable=True)
+    terminal_recorded_at = db.Column(db.DateTime(timezone=False), nullable=True)
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         with logfire.span("horde.wp.init"):
@@ -384,6 +426,7 @@ class WaitingPrompt(db.Model):
         # due to all the commits clearing row lock,
         # can we can't ensure a race-condition won't have changed self.n between iterations
         current_n = self.n
+        could_be_first_assignment = current_n == self.jobs
         self.n -= safe_amount
         payload = self.get_job_payload(current_n)
         # This does a commit as well
@@ -406,6 +449,29 @@ class WaitingPrompt(db.Model):
                 break
         if gen_span is not None:
             gen_span.set_attribute("horde.procgens_created", len(gens_list))
+        if could_be_first_assignment and gens_list:
+            first_real_generation = (
+                db.session.query(procgen_class.id)
+                .filter(
+                    procgen_class.wp_id == self.id,
+                    procgen_class.fake.is_(False),
+                )
+                .order_by(procgen_class.created.asc(), procgen_class.id.asc())
+                .first()
+            )
+            if first_real_generation is not None and first_real_generation.id == gens_list[0].id:
+                started_at = gens_list[0].created
+                start_delay = max((started_at - self.created).total_seconds(), 0)
+                request_time_to_first_start.record(start_delay, {"horde.gentype": self.wp_type})
+                try:
+                    record_request_start_forecast(
+                        request_id=str(self.id),
+                        gentype=self.wp_type,
+                        started_at=started_at,
+                        request_expires_at=self.expiry,
+                    )
+                except Exception as err:
+                    logger.warning(f"Unable to validate scheduling forecast for request {self.id}: {err}")
         pop_payload = self.get_pop_payload(gens_list, payload)
         return pop_payload
 
@@ -510,12 +576,30 @@ class WaitingPrompt(db.Model):
 
     def get_status(
         self,
-        request_avg,
-        active_worker_count,
-        has_valid_workers,
-        wp_queue_stats,
-        lite=False,
-    ):
+        request_avg: float,
+        active_worker_count: tuple[int, int],
+        has_valid_workers: bool,
+        wp_queue_stats: tuple[int, float, int],
+        lite: bool = False,
+        *,
+        eligible_workers: int | None = None,
+        eligible_worker_threads: int | None = None,
+    ) -> dict[str, Any]:
+        """Return the request's current generation and queue status.
+
+        Args:
+            request_avg: Horde-wide average generation throughput.
+            active_worker_count: Counts of active workers and their threads.
+            has_valid_workers: Whether the request is currently feasible.
+            wp_queue_stats: Global queue position, work, and generation counts.
+            lite: Whether to omit completed generation payloads.
+            eligible_workers: Exact number of workers eligible for this request.
+            eligible_worker_threads: Advertised threads across eligible workers.
+
+        Returns:
+            Materialized request status ready for API serialization.
+        """
+
         active_worker_thread_count = active_worker_count[1]
         ret_dict = self.count_processing_gens()
         # `self.n` holds the value read when this instance was loaded, which is
@@ -572,10 +656,63 @@ class WaitingPrompt(db.Model):
         # this request, which is the same conclusion `wp_has_valid_workers` reaches
         # from its own in-flight check.
         ret_dict["is_possible"] = has_valid_workers or ret_dict["processing"] > 0
+
+        # These additive fields make the deliberately broad `is_possible`
+        # verdict easier to interpret. A matching worker may be busy, and a
+        # single matching thread can be starved by higher-priority work even
+        # while the horde-wide queue looks healthy.
+        availability_known = eligible_workers is not None and eligible_worker_threads is not None
+        if not availability_known:
+            # Preserve useful output for internal/legacy callers that only
+            # provide the boolean verdict. API status routes pass exact counts.
+            eligible_workers = int(bool(has_valid_workers))
+            eligible_worker_threads = int(bool(has_valid_workers))
+        eligible_workers = max(int(eligible_workers), 0)
+        eligible_worker_threads = max(int(eligible_worker_threads), 0)
+        ret_dict["eligible_workers"] = eligible_workers
+        ret_dict["eligible_worker_threads"] = eligible_worker_threads
+
+        status_time = datetime.utcnow()
+        ret_dict["might_stall"] = _request_might_stall(
+            availability_known=availability_known,
+            is_possible=ret_dict["is_possible"],
+            waiting=ret_dict["waiting"],
+            processing=ret_dict["processing"],
+            queue_position=ret_dict["queue_position"],
+            estimated_wait_time=ret_dict["wait_time"],
+            eligible_worker_threads=eligible_worker_threads,
+            queue_age=max((status_time - self.created).total_seconds(), 0),
+            remaining_lifetime=max((self.expiry - status_time).total_seconds(), 0),
+        )
+        if availability_known and ret_dict["waiting"] > 0 and ret_dict["processing"] == 0:
+            thing_divisor = hv.thing_divisors[self.wp_type]
+            own_queued_work = self.things * ret_dict["waiting"] / thing_divisor
+            already_started = ret_dict["finished"] > 0 or ret_dict["restarted"] > 0 or self.n < self.jobs
+            if queued_things >= own_queued_work and queued_n >= ret_dict["waiting"]:
+                try:
+                    forecast = calculate_scheduling_forecast(
+                        forecasted_at=status_time,
+                        request_expires_at=self.expiry,
+                        queued_work=queued_things,
+                        own_work=own_queued_work,
+                        queued_jobs=queued_n,
+                        own_jobs=ret_dict["waiting"],
+                        average_work_per_second=request_avg / thing_divisor,
+                        eligible_worker_threads=eligible_worker_threads,
+                    )
+                    store_scheduling_forecast(
+                        request_id=str(self.id),
+                        forecast=forecast,
+                        request_expires_at=self.expiry,
+                        already_started=already_started,
+                    )
+                except Exception as err:
+                    logger.warning(f"Unable to create scheduling forecast for request {self.id}: {err}")
         return ret_dict
 
-    def get_lite_status(self, **kwargs):
-        """Same as get_status(), but without the images to avoid unnecessary size"""
+    def get_lite_status(self, **kwargs: Any) -> dict[str, Any]:
+        """Return the request status without completed generation payloads."""
+
         ret_dict = self.get_status(lite=True, **kwargs)
         return ret_dict
 
@@ -652,8 +789,16 @@ class WaitingPrompt(db.Model):
         try:
             if self.is_completed():
                 return
+            cancelled_at = datetime.utcnow()
+            cancellation_claimed = self.claim_terminal_outcome(
+                RequestTerminalOutcome.CANCELLED,
+                recorded_at=cancelled_at,
+                commit=False,
+            )
             self.n = 0
             db.session.commit()
+            if cancellation_claimed:
+                record_request_cancellation_forecast(request_id=str(self.id), cancelled_at=cancelled_at)
         except Exception as err:
             logger.warning(f"Error when aborting WP. Skipping: {err}")
 
@@ -671,6 +816,47 @@ class WaitingPrompt(db.Model):
         if datetime.utcnow() > self.expiry:
             return True
         return False
+
+    def claim_terminal_outcome(
+        self,
+        outcome: RequestTerminalOutcome,
+        *,
+        recorded_at: datetime | None = None,
+        commit: bool = True,
+    ) -> bool:
+        """Claim the request's first terminal outcome.
+
+        Args:
+            outcome: Terminal state to claim.
+            recorded_at: Observation time stored with the outcome.
+            commit: Whether to commit the claim immediately.
+
+        Returns:
+            True when this call claimed the previously unset outcome.
+
+        Concurrency:
+            The conditional update arbitrates concurrent completion,
+            cancellation, and expiry paths in PostgreSQL.
+        """
+
+        terminal_recorded_at = recorded_at or datetime.utcnow()
+        updated_rows = (
+            db.session.query(WaitingPrompt)
+            .filter(
+                WaitingPrompt.id == self.id,
+                WaitingPrompt.terminal_outcome.is_(None),
+            )
+            .update(
+                {
+                    WaitingPrompt.terminal_outcome: outcome.value,
+                    WaitingPrompt.terminal_recorded_at: terminal_recorded_at,
+                },
+                synchronize_session="fetch",
+            )
+        )
+        if commit:
+            db.session.commit()
+        return updated_rows == 1
 
     def get_priority(self):
         return self.extra_priority

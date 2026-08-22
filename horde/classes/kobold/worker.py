@@ -4,6 +4,7 @@
 
 import json
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -128,7 +129,27 @@ class TextWorker(Worker):
         # The uptime is based on both how much context they provide, as well as how many parameters they're serving
         return round(base_kudos * param_multiplier, 2)
 
-    def can_generate(self, waiting_prompt):
+    def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
+        """Return whether this worker can serve a text request."""
+
+        softprompt_names = self.get_softprompt_names() if waiting_prompt.softprompt else []
+        return self.can_generate_with_softprompt_names(waiting_prompt, softprompt_names)
+
+    def can_generate_with_softprompt_names(
+        self,
+        waiting_prompt: Any,
+        softprompt_names: list[str],
+    ) -> list[bool | str | None]:
+        """Evaluate a text request using already loaded softprompt names.
+
+        Args:
+            waiting_prompt: Text request being evaluated.
+            softprompt_names: Softprompts currently advertised by this worker.
+
+        Returns:
+            Eligibility followed by the existing rejection reason, if any.
+        """
+
         can_generate = super().can_generate(waiting_prompt)
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
@@ -144,7 +165,7 @@ class TextWorker(Worker):
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
             if waiting_prompt.softprompt == "":
                 matching_softprompt = True
-            if waiting_prompt.softprompt in self.get_softprompt_names():
+            if waiting_prompt.softprompt in softprompt_names:
                 matching_softprompt = True
         if not matching_softprompt:
             return [False, "matching_softprompt"]

@@ -16,8 +16,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import expression
 
 from horde.classes.base.kudos import kudos_event
+from horde.enums import RequestTerminalOutcome
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
+from horde.request_scheduling import record_request_completion_forecast
 from horde.utils import get_db_uuid
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
@@ -132,6 +134,7 @@ class ProcessingGeneration(db.Model):
         uuid_column_type(),
         db.ForeignKey("waiting_prompts.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     worker_id = db.Column(uuid_column_type(), db.ForeignKey("workers.id"), nullable=False)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -183,6 +186,8 @@ class ProcessingGeneration(db.Model):
 
     def set_generation(self, generation: str, things_per_sec: float, **kwargs: object) -> float | int:
         from horde.metrics import (
+            request_outcomes,
+            request_time_to_completion,
             submit_claim_duration,
             submit_commit_duration,
             submit_gen_kudos_duration,
@@ -254,11 +259,33 @@ class ProcessingGeneration(db.Model):
         self.worker.record_performance(things_per_sec)
         submit_record_performance_duration.record(time.monotonic() - _t, gentype_label)
         _t = time.monotonic()
-        if self.wp.is_completed():
+        request_completed = self.wp.is_completed()
+        if request_completed:
             from horde.database.kudos_reservations import release_reservation
 
             release_reservation(f"upfront:{self.wp.id}")
+            completed_at = datetime.utcnow()
+            outcome_claimed = self.wp.claim_terminal_outcome(
+                RequestTerminalOutcome.COMPLETED,
+                recorded_at=completed_at,
+                commit=False,
+            )
             db.session.commit()
+            if outcome_claimed:
+                completion_delay = max((completed_at - self.wp.created).total_seconds(), 0)
+                try:
+                    request_time_to_completion.record(completion_delay, gentype_label)
+                    request_outcomes.add(
+                        1,
+                        {**gentype_label, "horde.outcome": RequestTerminalOutcome.COMPLETED.value},
+                    )
+                except Exception as err:
+                    logger.warning(f"Unable to record completion metrics for request {self.wp.id}: {err}")
+                record_request_completion_forecast(
+                    request_id=str(self.wp.id),
+                    gentype=self.procgen_type,
+                    completed_at=completed_at,
+                )
         submit_wp_completion_duration.record(time.monotonic() - _t, gentype_label)
         # Queue the webhook after commit; delivery runs on the background
         # sender thread, so this only measures payload build and enqueue.

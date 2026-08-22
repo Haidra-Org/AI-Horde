@@ -23,8 +23,8 @@ verdict must agree with the live worker and generation state rather than pin an
 outdated answer. The remaining tests cover the availability query's
 model/staleness/capacity filters and the processing-count bucketing.
 
-Every test uses ``fake_redis`` because the verdict is Redis-memoized and worker
-model lookups are Redis-cached via ``Worker.get_model_names``. The
+Every test uses ``fake_redis`` because the verdict is Redis-memoized. Availability
+loads worker capabilities from their relational rows in batches. The
 ``_stub_model_reference`` autouse fixture pins the image model reference to a
 minimal in-memory dict so ``can_generate`` and procgen construction stay
 hermetic (no network dependency on the remote model reference).
@@ -91,6 +91,7 @@ def _make_image_worker(
     *,
     models: tuple[str, ...] = (_HOSTED_MODEL,),
     max_pixels: int = 1024 * 1024,
+    threads: int = 1,
     stale: bool = False,
     limit_max_steps: bool = False,
 ) -> ImageWorker:
@@ -105,6 +106,7 @@ def _make_image_worker(
         user_id=user.id,
         name=f"worker_{uuid.uuid4().hex[:12]}",
         max_pixels=max_pixels,
+        threads=threads,
         last_check_in=last_check_in,
         limit_max_steps=limit_max_steps,
     )
@@ -237,6 +239,49 @@ class TestFreshCapableWorker:
         _make_image_worker(user)
 
         assert f.wp_has_valid_workers(wp) is True
+
+    def test_availability_reports_exact_worker_and_thread_capacity(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        wp = _make_image_wp(user)
+        _make_image_worker(user, threads=2)
+        _make_image_worker(user, threads=3)
+        _make_image_worker(user, models=("some_other_model",), threads=20)
+
+        availability = f.get_worker_availability_for_request(wp)
+
+        assert isinstance(availability, f.RequestWorkerAvailability)
+        assert availability.worker_count == 2
+        assert availability.thread_count == 5
+        assert availability.is_possible is True
+        # The existing boolean API and cache contract remain unchanged.
+        assert f.wp_has_valid_workers(wp) is True
+
+    def test_availability_does_not_read_each_workers_model_cache(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        wp = _make_image_wp(user)
+        _make_image_worker(user)
+
+        def fail_model_cache_read(_worker: ImageWorker) -> list[str]:
+            raise AssertionError("availability performed a per-worker model-cache read")
+
+        monkeypatch.setattr(ImageWorker, "get_model_names", fail_model_cache_read)
+
+        availability = f.get_worker_availability_for_request(wp)
+
+        assert availability.worker_count == 1
 
 
 class TestPersistedSamplerExecutionContract:

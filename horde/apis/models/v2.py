@@ -474,15 +474,39 @@ class Models:
                     description="True when this request caused an internal server error and could not be completed.",
                 ),
                 "wait_time": fields.Integer(
-                    description="The expected amount to wait (in seconds) to generate all jobs in this request.",
+                    description=(
+                        "A horde-wide estimate of the seconds needed to generate all jobs in this request. "
+                        "It is not restricted to workers eligible for this request."
+                    ),
                 ),
                 "queue_position": fields.Integer(
-                    description="The position in the requests queue. This position is determined by relative Kudos amounts.",
+                    description=(
+                        "The position in the horde-wide request queue, determined by relative Kudos amounts. "
+                        "It is not a position in a compatibility-specific worker queue."
+                    ),
                 ),
                 "kudos": fields.Float(description="The amount of total Kudos this request has consumed until now."),
                 "is_possible": fields.Boolean(
                     default=True,
                     description="If False, this request will not be able to be completed with the pool of workers currently available.",
+                ),
+                "eligible_workers": fields.Integer(
+                    default=0,
+                    description=(
+                        "The number of recently active workers that currently pass all known capability gates for this request. "
+                        "Eligible workers may still be busy."
+                    ),
+                ),
+                "eligible_worker_threads": fields.Integer(
+                    default=0,
+                    description="The total advertised generation threads across eligible workers. These threads may still be busy.",
+                ),
+                "might_stall": fields.Boolean(
+                    default=False,
+                    description=(
+                        "True when the request remains technically possible but current compatible capacity and observed queue "
+                        "pressure make continued delay or expiry plausible."
+                    ),
                 ),
             },
         )

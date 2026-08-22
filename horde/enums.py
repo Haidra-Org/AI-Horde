@@ -97,6 +97,17 @@ class State(enum.Enum):
     PARTIAL = 5
 
 
+class RequestTerminalOutcome(enum.StrEnum):
+    """Classify the first terminal state reached by a generation request."""
+
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    FAULTED = "faulted"
+    LEGACY_TERMINAL = "legacy_terminal"
+    EXPIRED_UNSTARTED = "expired_unstarted"
+    EXPIRED_AFTER_START = "expired_after_start"
+
+
 class ImageGenState(enum.Enum):
     OK = 0
     CENSORED = 1
