@@ -8,6 +8,19 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.py'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/actions/setup-test-python/**'
+      - '.github/actions/start-test-stack/**'
+      - '.github/workflows/docker-publish.yml'
+      - 'tests/docker-compose.yml'
+      - 'tests/garage/**'
+      - 'tests/stress/**'
   workflow_dispatch:
 
 env:
@@ -46,34 +59,15 @@ jobs:
       packages: write
       attestations: write
       id-token: write
-    services:
-      ai-horde-postgres:
-        image: ghcr.io/haidra-org/ai-horde-postgres:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-test-python
+        with:
+          python-version: '3.13'
+
+      - uses: ./.github/actions/start-test-stack
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -155,15 +149,30 @@ jobs:
         run: |
           docker run -d --name "ai-horde-validate-${{ matrix.variant }}" \
             --network host \
-            -e POSTGRES_URL="localhost:5432/postgres" \
-            -e PGUSER=postgres \
-            -e PGPASSWORD=postgres \
-            -e REDIS_IP=localhost \
-            -e 'REDIS_SERVERS=["localhost"]' \
+            -e POSTGRES_URL \
+            -e PGUSER \
+            -e PGPASSWORD \
+            -e REDIS_IP \
+            -e REDIS_PORT \
+            -e REDIS_SERVERS \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_DEFAULT_REGION \
+            -e SHARED_AWS_ACCESS_ID \
+            -e SHARED_AWS_ACCESS_KEY \
+            -e R2_TRANSIENT_ACCOUNT \
+            -e R2_PERMANENT_ACCOUNT \
+            -e R2_TRANSIENT_BUCKET \
+            -e R2_PERMANENT_BUCKET \
+            -e R2_SOURCE_IMAGE_BUCKET \
             -e USE_SQLITE=0 \
             -e 'ADMINS=["test_user#1"]' \
             -e KUDOS_TRUST_THRESHOLD=100 \
+            -e HORDE_TEST_APIKEYS=1 \
+            -e AI_HORDE_TELEMETRY_ENABLED="${{ matrix.profiling_expected }}" \
             -e PYROSCOPE_ENABLED="${{ matrix.profiling_expected }}" \
+            -e PYROSCOPE_SPAN_PROFILES="${{ matrix.profiling_expected }}" \
+            -e PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE=0.10 \
             "ai-horde-${{ matrix.variant }}:validate"
 
       - name: Wait for healthy heartbeat
@@ -180,6 +189,61 @@ jobs:
           done
           echo "Image validation passed; heartbeat responded OK"
 
+      - name: Assert telemetry image initialized native profiling and span correlation
+        if: matrix.profiling_expected == 'true'
+        run: >-
+          docker logs "ai-horde-validate-${{ matrix.variant }}" 2>&1 |
+          grep -F "Pyroscope span profiles (baseline 10.00%)"
+
+      - name: Run mixed Locust suite against built image
+        run: |
+          uv run locust -f tests/stress/locustfile.py \
+            --host http://localhost:7001 \
+            --headless \
+            --users 24 \
+            --spawn-rate 6 \
+            --run-time 90s \
+            --bootstrap-requestors 4 \
+            --bootstrap-workers 8 \
+            --legacy-image-workers 1 \
+            --extended-image-workers 1 \
+            --sampler-feature-requestors 1 \
+            --preflight-fail-hard \
+            --bootstrap-fail-hard \
+            --csv "image-${{ matrix.variant }}" \
+            --exit-code-on-error 0 \
+            --only-summary
+
+      - name: Gate built image on crash-class failures
+        run: >-
+          uv run python tests/stress/check_smoke_results.py
+          --stats "image-${{ matrix.variant }}_stats.csv"
+          --failures "image-${{ matrix.variant }}_failures.csv"
+
+      - name: Capture built image logs
+        if: always()
+        run: >-
+          docker logs "ai-horde-validate-${{ matrix.variant }}"
+          > "image-${{ matrix.variant }}-server.log" 2>&1 || true
+
+      - name: Upload built-image Locust artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-${{ matrix.variant }}-locust-artifacts
+          path: |
+            image-${{ matrix.variant }}-server.log
+            image-${{ matrix.variant }}_stats.csv
+            image-${{ matrix.variant }}_failures.csv
+            image-${{ matrix.variant }}_stats_history.csv
+          if-no-files-found: ignore
+
       - name: Dump container logs on failure
         if: failure()
         run: docker logs "ai-horde-validate-${{ matrix.variant }}" 2>&1 || true
+
+      - name: Stop image and local test stack
+        if: always()
+        run: |
+          docker rm -f "ai-horde-validate-${{ matrix.variant }}" 2>/dev/null || true
+          docker compose -f tests/docker-compose.yml down
