@@ -295,6 +295,42 @@ class TestFreshCapableWorker:
 
         assert availability.worker_count == 1
 
+    def test_eligibility_query_count_does_not_scale_with_worker_count(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        from sqlalchemy import event
+
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        _make_image_worker(user)
+
+        def count_eligibility_queries() -> int:
+            statement_count = 0
+
+            def count_statement(*_args: Any, **_kwargs: Any) -> None:
+                nonlocal statement_count
+                statement_count += 1
+
+            db.session.expire_all()
+            event.listen(db.engine, "before_cursor_execute", count_statement)
+            try:
+                list(f._iter_eligible_workers_for_request(target))
+            finally:
+                event.remove(db.engine, "before_cursor_execute", count_statement)
+            return statement_count
+
+        one_worker_query_count = count_eligibility_queries()
+        for _ in range(4):
+            _make_image_worker(user)
+        five_worker_query_count = count_eligibility_queries()
+
+        assert one_worker_query_count <= 8
+        assert five_worker_query_count == one_worker_query_count
+
 
 class TestPersistedSamplerExecutionContract:
     """Forecasting reads the same recent execution capability that pop-time dispatch uses."""

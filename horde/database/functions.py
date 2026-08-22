@@ -23,10 +23,11 @@ from horde.bridge_reference import (
 )
 from horde.classes.base.detection import Filter
 from horde.classes.base.kudos import KudosLedger, kudos_event
+from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
-from horde.classes.base.worker import WorkerMessage, WorkerModel, WorkerPerformance
+from horde.classes.base.worker import Worker, WorkerMessage, WorkerModel, WorkerPerformance
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
@@ -1727,19 +1728,15 @@ def get_request_avg(request_type="image"):
 def _waiting_prompt_has_inflight_generation(waiting_prompt: WaitingPrompt) -> bool:
     """Return whether a real generation is currently serving the request."""
 
-    processing_generation_class = {
-        "image": ImageProcessingGeneration,
-        "text": TextProcessingGeneration,
-    }.get(waiting_prompt.wp_type)
-    if processing_generation_class is None:
+    if waiting_prompt.wp_type not in {"image", "text"}:
         return False
     return (
-        db.session.query(processing_generation_class.id)
+        db.session.query(ProcessingGeneration.id)
         .filter(
-            processing_generation_class.wp_id == waiting_prompt.id,
-            processing_generation_class.generation.is_(None),
-            processing_generation_class.faulted.is_(False),
-            processing_generation_class.fake.is_(False),
+            ProcessingGeneration.wp_id == waiting_prompt.id,
+            ProcessingGeneration.generation.is_(None),
+            ProcessingGeneration.faulted.is_(False),
+            ProcessingGeneration.fake.is_(False),
         )
         .first()
         is not None
@@ -1748,7 +1745,7 @@ def _waiting_prompt_has_inflight_generation(waiting_prompt: WaitingPrompt) -> bo
 
 def _iter_eligible_workers_for_request(
     waiting_prompt: WaitingPrompt,
-) -> Iterator[ImageWorker | TextWorker | InterrogationWorker]:
+) -> Iterator[ImageWorker | TextWorker]:
     """Yield recently active workers that pass every known request gate."""
 
     with logfire.span(
@@ -1760,11 +1757,13 @@ def _iter_eligible_workers_for_request(
             return
         if waiting_prompt.expiry < datetime.utcnow():
             return
-        worker_class = ImageWorker
-        if waiting_prompt.wp_type == "text":
+        worker_class: type[ImageWorker] | type[TextWorker]
+        if isinstance(waiting_prompt, ImageWaitingPrompt):
+            worker_class = ImageWorker
+        elif isinstance(waiting_prompt, TextWaitingPrompt):
             worker_class = TextWorker
-        elif waiting_prompt.wp_type == "interrogation":
-            worker_class = InterrogationWorker
+        else:
+            return
         models_list = waiting_prompt.get_model_names()
         worker_ids = waiting_prompt.get_worker_ids()
         # The model constraint is a semi-join rather than an outer join: joining
@@ -1774,7 +1773,7 @@ def _iter_eligible_workers_for_request(
         serves_requested_model = (
             db.session.query(WorkerModel.id)
             .filter(
-                WorkerModel.worker_id == worker_class.id,
+                WorkerModel.worker_id == Worker.id,
                 WorkerModel.model.in_(models_list),
             )
             .exists()
@@ -1782,93 +1781,51 @@ def _iter_eligible_workers_for_request(
         final_worker_list = (
             db.session.query(worker_class)
             .options(
-                noload(worker_class.performance),
-                noload(worker_class.suspicions),
-                noload(worker_class.stats),
+                noload(Worker.performance),
+                noload(Worker.suspicions),
+                noload(Worker.stats),
                 # Eagerly load relationships accessed by can_generate() to avoid N+1 queries
-                selectinload(worker_class.blacklist),
-                contains_eager(worker_class.user).selectinload(User.roles),
-                selectinload(worker_class.models),
+                selectinload(Worker.blacklist),
+                contains_eager(Worker.user).selectinload(User.roles),
+                selectinload(Worker.models),
             )
             .join(
                 User,
             )
             .filter(
-                worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300),
+                Worker.last_check_in > datetime.utcnow() - timedelta(seconds=300),
                 or_(
-                    len(worker_ids) == 0,
+                    Worker.maintenance.is_(False),
                     and_(
-                        waiting_prompt.worker_blacklist is False,
-                        worker_class.id.in_(worker_ids),
-                    ),
-                    and_(
-                        waiting_prompt.worker_blacklist is True,
-                        worker_class.id.not_in(worker_ids),
+                        Worker.maintenance.is_(True),
+                        waiting_prompt.user_id == Worker.user_id,
                     ),
                 ),
                 or_(
-                    len(models_list) == 0,
-                    serves_requested_model,
-                ),
-                or_(
-                    waiting_prompt.trusted_workers == False,  # noqa E712
+                    Worker.paused.is_(False),
                     and_(
-                        waiting_prompt.trusted_workers == True,  # noqa E712
-                        User.trusted == True,  # noqa E712
-                    ),
-                ),
-                or_(
-                    waiting_prompt.safe_ip == True,  # noqa E712
-                    and_(
-                        waiting_prompt.safe_ip == False,  # noqa E712
-                        worker_class.allow_unsafe_ipaddr == True,  # noqa E712
-                    ),
-                ),
-                or_(
-                    waiting_prompt.nsfw == False,  # noqa E712
-                    and_(
-                        waiting_prompt.nsfw == True,  # noqa E712
-                        worker_class.nsfw == True,  # noqa E712
-                    ),
-                ),
-                or_(
-                    worker_class.maintenance == False,  # noqa E712
-                    and_(
-                        worker_class.maintenance == True,  # noqa E712
-                        waiting_prompt.user_id == worker_class.user_id,
-                    ),
-                ),
-                or_(
-                    worker_class.paused == False,  # noqa E712
-                    and_(
-                        worker_class.paused == True,  # noqa E712
-                        waiting_prompt.user_id == worker_class.user_id,
+                        Worker.paused.is_(True),
+                        waiting_prompt.user_id == Worker.user_id,
                     ),
                 ),
             )
         )
-        if waiting_prompt.wp_type == "image":
+        if waiting_prompt.trusted_workers:
+            final_worker_list = final_worker_list.filter(User.trusted.is_(True))
+        if not waiting_prompt.safe_ip:
+            final_worker_list = final_worker_list.filter(Worker.allow_unsafe_ipaddr.is_(True))
+        if waiting_prompt.nsfw:
+            final_worker_list = final_worker_list.filter(Worker.nsfw.is_(True))
+        if worker_ids:
+            if waiting_prompt.worker_blacklist:
+                final_worker_list = final_worker_list.filter(Worker.id.not_in(worker_ids))
+            else:
+                final_worker_list = final_worker_list.filter(Worker.id.in_(worker_ids))
+        if models_list:
+            final_worker_list = final_worker_list.filter(serves_requested_model)
+        if isinstance(waiting_prompt, ImageWaitingPrompt):
             final_worker_list = final_worker_list.filter(
-                waiting_prompt.width * waiting_prompt.height <= worker_class.max_pixels,
-                or_(
-                    waiting_prompt.source_image == None,  # noqa E712
-                    and_(
-                        waiting_prompt.source_image != None,  # noqa E712
-                        worker_class.allow_img2img == True,  # noqa E712
-                    ),
-                ),
-                or_(
-                    waiting_prompt.slow_workers == True,  # noqa E712
-                    worker_class.speed >= 500000,
-                ),
-                or_(
-                    "loras" not in waiting_prompt.params,
-                    and_(
-                        worker_class.allow_lora == True,  # noqa E712
-                        # TODO: Create an sql function I can call to check the worker bridge capabilities
-                        "loras" in waiting_prompt.params,
-                    ),
-                ),
+                waiting_prompt.width * waiting_prompt.height <= ImageWorker.max_pixels,
                 # or_(
                 #     'tis' not in waiting_prompt.params,
                 #     and_(
@@ -1877,18 +1834,20 @@ def _iter_eligible_workers_for_request(
                 #     ),
                 # ),
             )
-        elif waiting_prompt.wp_type == "text":
+            if waiting_prompt.source_image is not None:
+                final_worker_list = final_worker_list.filter(ImageWorker.allow_img2img.is_(True))
+            if not waiting_prompt.slow_workers:
+                final_worker_list = final_worker_list.filter(ImageWorker.speed >= 500000)
+            if "loras" in waiting_prompt.params:
+                final_worker_list = final_worker_list.filter(ImageWorker.allow_lora.is_(True))
+        elif isinstance(waiting_prompt, TextWaitingPrompt):
             final_worker_list = final_worker_list.filter(
-                waiting_prompt.max_length <= worker_class.max_length,
-                waiting_prompt.max_context_length <= worker_class.max_context_length,
-                or_(
-                    waiting_prompt.slow_workers == True,  # noqa E712
-                    worker_class.speed >= 2,
-                ),
+                waiting_prompt.max_length <= TextWorker.max_length,
+                waiting_prompt.max_context_length <= TextWorker.max_context_length,
             )
-        elif waiting_prompt.wp_type == "interrogation":
-            pass  # FIXME: Add interrogation filters
-        if waiting_prompt.wp_type == "text":
+            if not waiting_prompt.slow_workers:
+                final_worker_list = final_worker_list.filter(TextWorker.speed >= 2)
+        if isinstance(waiting_prompt, TextWaitingPrompt):
             final_worker_list = final_worker_list.options(selectinload(TextWorker.softprompts))
         for worker in final_worker_list.all():
             if isinstance(worker, ImageWorker):
@@ -1900,9 +1859,10 @@ def _iter_eligible_workers_for_request(
                 can_generate = worker.can_generate_with_softprompt_names(
                     waiting_prompt,
                     [softprompt.softprompt for softprompt in worker.softprompts],
+                    model_names=[worker_model.model for worker_model in worker.models],
                 )
             else:
-                can_generate = worker.can_generate(waiting_prompt)
+                continue
             if can_generate[0]:
                 yield worker
 
