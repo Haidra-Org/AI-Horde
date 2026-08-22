@@ -504,8 +504,10 @@ class Models:
                 "might_stall": fields.Boolean(
                     default=False,
                     description=(
-                        "True when the request remains technically possible but current compatible capacity and observed queue "
-                        "pressure make continued delay or expiry plausible."
+                        "True when newly arrived compatible work has persistently entered ahead of this request faster than "
+                        "eligible workers clear work, every observed opportunity was assigned to preceding work, and that work "
+                        "still occupies the eligible pool. Finite existing backlog does not trigger this signal. False can mean "
+                        "that pressure is draining or that there is not yet enough evidence."
                     ),
                 ),
             },
