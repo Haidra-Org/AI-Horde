@@ -1974,9 +1974,12 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
         active worker passes all known dispatch gates.
     """
 
-    if _waiting_prompt_has_inflight_generation(wp):
-        return True
     cached_validity = hr.horde_r_get(f"wp_validity_{wp.id}")
+    if cached_validity is not None and bool(int(cached_validity)):
+        return True
+    request_has_started = wp.jobs > 0 and wp.n < wp.jobs
+    if request_has_started and _waiting_prompt_has_inflight_generation(wp):
+        return True
     if cached_validity is not None:
         return bool(int(cached_validity))
     worker_found = next(_iter_eligible_workers_for_request(wp), None) is not None
