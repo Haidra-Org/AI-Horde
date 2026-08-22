@@ -39,7 +39,7 @@ from horde.consts import KNOWN_CONTROL_TYPES
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.database.kudos_reservations import reserve_kudos
-from horde.enums import KudosEntryType, WarningMessage
+from horde.enums import KudosEntryType, RequestTerminalOutcome, WarningMessage
 from horde.flask import cache, db, get_app
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
@@ -55,6 +55,7 @@ from horde.metrics import (
 )
 from horde.model_reference import model_reference
 from horde.patreon import patrons
+from horde.request_scheduling import record_request_cancellation_forecast
 from horde.sampler_constraints import published_sampler_constraints
 from horde.telemetry import (
     get_traceparent,
@@ -526,7 +527,7 @@ class ImageAsyncStatus(Resource):
                     )
                 with logfire.span("horde.db.get_request_avg", gentype="image"):
                     request_avg = database.get_request_avg("image")
-                has_valid_workers = database.wp_has_valid_workers(wp)
+                worker_availability = database.get_worker_availability_for_request(wp)
                 with logfire.span("horde.db.get_wp_queue_stats", wp_id=id):
                     wp_queue_stats = database.get_wp_queue_stats(wp)
                 with logfire.span("horde.db.count_active_workers"):
@@ -534,9 +535,11 @@ class ImageAsyncStatus(Resource):
                 with logfire.span("horde.generate.status.assemble"):
                     wp_status = wp.get_status(
                         request_avg=request_avg,
-                        has_valid_workers=has_valid_workers,
+                        has_valid_workers=worker_availability.is_possible,
                         wp_queue_stats=wp_queue_stats,
                         active_worker_count=active_worker_count,
+                        eligible_workers=worker_availability.worker_count,
+                        eligible_worker_threads=worker_availability.thread_count,
                     )
                 # wp_status is a fully materialized plain dict; release the
                 # pooled connection before flask_restx marshalling/JSON
@@ -584,18 +587,29 @@ class ImageAsyncStatus(Resource):
                 client_agent=self.args["Client-Agent"],
                 ipaddr=request.remote_addr,
             )
+        worker_availability = database.get_worker_availability_for_request(wp)
         wp_status = wp.get_status(
             request_avg=database.get_request_avg("image"),
-            has_valid_workers=database.wp_has_valid_workers(wp),
+            has_valid_workers=worker_availability.is_possible,
             wp_queue_stats=database.get_wp_queue_stats(wp),
             active_worker_count=database.count_active_workers(),
+            eligible_workers=worker_availability.worker_count,
+            eligible_worker_threads=worker_availability.thread_count,
         )
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway
+        cancelled_at = datetime.utcnow()
+        cancellation_claimed = wp.claim_terminal_outcome(
+            RequestTerminalOutcome.CANCELLED,
+            recorded_at=cancelled_at,
+            commit=False,
+        )
         wp.n = 0
         wp.jobs = wp_status["finished"]
         db.session.commit()
+        if cancellation_claimed:
+            record_request_cancellation_forecast(request_id=str(wp.id), cancelled_at=cancelled_at)
         return (wp_status, 200)
 
 
@@ -652,7 +666,7 @@ class ImageAsyncCheck(Resource):
                     )
                 with logfire.span("horde.db.get_request_avg", gentype="image"):
                     request_avg = database.get_request_avg("image")
-                has_valid_workers = database.wp_has_valid_workers(wp)
+                worker_availability = database.get_worker_availability_for_request(wp)
                 with logfire.span("horde.db.get_wp_queue_stats", wp_id=id):
                     wp_queue_stats = database.get_wp_queue_stats(wp)
                 with logfire.span("horde.db.count_active_workers"):
@@ -660,9 +674,11 @@ class ImageAsyncCheck(Resource):
                 with logfire.span("horde.generate.check.lite_status"):
                     lite_status = wp.get_lite_status(
                         request_avg=request_avg,
-                        has_valid_workers=has_valid_workers,
+                        has_valid_workers=worker_availability.is_possible,
                         wp_queue_stats=wp_queue_stats,
                         active_worker_count=active_worker_count,
+                        eligible_workers=worker_availability.worker_count,
+                        eligible_worker_threads=worker_availability.thread_count,
                     )
                 logger.debug(f"{id}: {lite_status}")
                 return (lite_status, 200)

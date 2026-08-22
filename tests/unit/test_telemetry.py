@@ -85,6 +85,100 @@ def test_histogram_views_cover_all_registered_histograms(telemetry_app):
     assert view_names == set(_BUCKET_REGISTRY)
 
 
+def test_request_estimate_validation_records_accuracy_and_coverage(telemetry_app, monkeypatch):
+    from horde import metrics
+
+    recorded_errors = []
+    validations = []
+    coverage = []
+
+    class _HistogramRecorder:
+        def record(self, value, attributes):
+            recorded_errors.append((value, attributes))
+
+    class _CounterRecorder:
+        def __init__(self, destination):
+            self.destination = destination
+
+        def add(self, value, attributes):
+            self.destination.append((value, attributes))
+
+    monkeypatch.setattr(metrics, "request_estimate_absolute_error", _HistogramRecorder())
+    monkeypatch.setattr(metrics, "request_estimate_validations", _CounterRecorder(validations))
+    monkeypatch.setattr(metrics, "request_estimate_quantile_coverage", _CounterRecorder(coverage))
+
+    metrics.record_request_estimate_validation(
+        estimator="candidate-v1",
+        gentype="image",
+        phase="start",
+        predicted_p50_seconds=100,
+        predicted_p90_seconds=200,
+        observed_seconds=150,
+    )
+
+    assert recorded_errors == [
+        (
+            50,
+            {
+                "horde.estimator": "candidate-v1",
+                "horde.gentype": "image",
+                "horde.phase": "start",
+            },
+        ),
+    ]
+    assert validations[0][1]["horde.result"] == "within_tolerance"
+    assert coverage[0][1]["horde.result"] == "covered"
+
+
+def test_request_estimate_validation_rejects_invalid_quantiles(telemetry_app):
+    from horde import metrics
+
+    with pytest.raises(ValueError, match="p90"):
+        metrics.record_request_estimate_validation(
+            estimator="candidate-v1",
+            gentype="text",
+            phase="completion",
+            predicted_p50_seconds=100,
+            predicted_p90_seconds=90,
+            observed_seconds=95,
+        )
+
+
+@pytest.mark.parametrize(
+    ("predicted_stall", "expired_without_start", "expected_result"),
+    [
+        (True, True, "true_positive"),
+        (True, False, "false_positive"),
+        (False, True, "false_negative"),
+        (False, False, "true_negative"),
+    ],
+)
+def test_request_stall_validation_records_confusion_outcome(
+    telemetry_app,
+    monkeypatch,
+    predicted_stall,
+    expired_without_start,
+    expected_result,
+):
+    from horde import metrics
+
+    calls = []
+
+    class _Recorder:
+        def add(self, value, attributes):
+            calls.append((value, attributes))
+
+    monkeypatch.setattr(metrics, "request_stall_validations", _Recorder())
+    metrics.record_request_stall_validation(
+        estimator="candidate-v1",
+        gentype="text",
+        predicted_stall=predicted_stall,
+        expired_without_start=expired_without_start,
+    )
+
+    assert calls[0][1]["horde.result"] == expected_result
+
+
 def test_init_telemetry_early_is_idempotent(telemetry_app):
     from horde.telemetry import init_telemetry_early
 

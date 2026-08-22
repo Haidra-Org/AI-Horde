@@ -94,6 +94,32 @@ BUCKETS_SECONDS = (
 )
 BUCKETS_COUNT = (0, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 5000)
 BUCKETS_KUDOS = (0, 1, 10, 100, 1000, 10000, 100000)
+BUCKETS_REQUEST_LIFECYCLE_SECONDS = (
+    0,
+    1,
+    2,
+    5,
+    10,
+    15,
+    20,
+    30,
+    45,
+    60,
+    90,
+    120,
+    180,
+    240,
+    300,
+    450,
+    600,
+    900,
+    1200,
+    1800,
+    3600,
+)
+
+REQUEST_ESTIMATE_MINIMUM_ABSOLUTE_TOLERANCE_SECONDS = 60
+REQUEST_ESTIMATE_RELATIVE_TOLERANCE = 0.5
 
 
 _BUCKET_REGISTRY: dict[str, tuple[float, ...]] = {}
@@ -112,6 +138,11 @@ def _count_histogram(name: str, description: str) -> Histogram:
 def _kudos_histogram(name: str, description: str) -> Histogram:
     _BUCKET_REGISTRY[name] = BUCKETS_KUDOS
     return logfire.metric_histogram(name, unit="kudos", description=description)
+
+
+def _request_lifecycle_histogram(name: str, description: str) -> Histogram:
+    _BUCKET_REGISTRY[name] = BUCKETS_REQUEST_LIFECYCLE_SECONDS
+    return logfire.metric_histogram(name, unit="s", description=description)
 
 
 def histogram_views() -> list[View]:
@@ -209,6 +240,138 @@ wp_activation_age = _seconds_histogram(
     "horde.wp.activation_age",
     "Elapsed time between WP create and activation",
 )
+request_time_to_first_start = _request_lifecycle_histogram(
+    "horde.request.time_to_first_start",
+    "Elapsed time between request creation and its first real worker assignment",
+)
+request_time_to_completion = _request_lifecycle_histogram(
+    "horde.request.time_to_completion",
+    "Elapsed time between request creation and successful completion",
+)
+request_time_to_expiry = _request_lifecycle_histogram(
+    "horde.request.time_to_expiry",
+    "Elapsed time between request creation and expiry",
+)
+request_outcomes = logfire.metric_counter(
+    "horde.request.outcomes",
+    unit="1",
+    description="Terminal request outcomes used to interpret lifecycle latency",
+)
+
+# These instruments form the shadow-validation contract for scheduling
+# estimators. Candidate code records paired forecasts and observations through
+# the helpers below. Monitoring opens promotion only after every request type
+# and milestone satisfies the sample, accuracy, calibration, and error thresholds.
+request_estimate_absolute_error = _request_lifecycle_histogram(
+    "horde.request.estimate.absolute_error",
+    "Absolute error of a shadow request scheduling estimate",
+)
+request_estimate_validations = logfire.metric_counter(
+    "horde.request.estimate.validations",
+    unit="1",
+    description="Shadow scheduling-estimate validations split by tolerance result",
+)
+request_estimate_quantile_coverage = logfire.metric_counter(
+    "horde.request.estimate.quantile_coverage",
+    unit="1",
+    description="Observed coverage of a shadow scheduling estimate's p90 bound",
+)
+request_stall_validations = logfire.metric_counter(
+    "horde.request.stall.validations",
+    unit="1",
+    description="Shadow stall-signal validations split by confusion-matrix outcome",
+)
+request_scheduling_events_dropped = logfire.metric_counter(
+    "horde.request.scheduling_events_dropped",
+    unit="1",
+    description="Shadow scheduling events dropped before validation",
+)
+
+
+def record_request_estimate_validation(
+    *,
+    estimator: str,
+    gentype: str,
+    phase: str,
+    predicted_p50_seconds: float,
+    predicted_p90_seconds: float,
+    observed_seconds: float,
+) -> None:
+    """Record one paired shadow estimate and observed scheduling outcome.
+
+    The point-accuracy tolerance is the larger of 60 seconds and 50 percent of
+    the observed duration. The monitoring promotion gate additionally checks
+    p90 absolute error and aggregate p90 coverage.
+
+    Args:
+        estimator: Bounded version label for the candidate estimator.
+        gentype: Generation type, currently ``image`` or ``text``.
+        phase: Predicted milestone, currently ``start`` or ``completion``.
+        predicted_p50_seconds: Candidate median duration in seconds.
+        predicted_p90_seconds: Candidate 90th-percentile duration in seconds.
+        observed_seconds: Actual duration in seconds.
+
+    Raises:
+        ValueError: If a duration is negative or p90 is below p50.
+    """
+
+    durations = (predicted_p50_seconds, predicted_p90_seconds, observed_seconds)
+    if any(duration < 0 for duration in durations):
+        raise ValueError("Request estimate durations must be non-negative")
+    if predicted_p90_seconds < predicted_p50_seconds:
+        raise ValueError("The p90 request estimate must be greater than or equal to p50")
+
+    absolute_error = abs(predicted_p50_seconds - observed_seconds)
+    tolerance = max(
+        REQUEST_ESTIMATE_MINIMUM_ABSOLUTE_TOLERANCE_SECONDS,
+        observed_seconds * REQUEST_ESTIMATE_RELATIVE_TOLERANCE,
+    )
+    attributes = {
+        "horde.estimator": estimator,
+        "horde.gentype": gentype,
+        "horde.phase": phase,
+    }
+    request_estimate_absolute_error.record(absolute_error, attributes)
+    request_estimate_validations.add(
+        1,
+        {
+            **attributes,
+            "horde.result": "within_tolerance" if absolute_error <= tolerance else "outside_tolerance",
+        },
+    )
+    request_estimate_quantile_coverage.add(
+        1,
+        {
+            **attributes,
+            "horde.quantile": "0.9",
+            "horde.result": "covered" if observed_seconds <= predicted_p90_seconds else "missed",
+        },
+    )
+
+
+def record_request_stall_validation(
+    *,
+    estimator: str,
+    gentype: str,
+    predicted_stall: bool,
+    expired_without_start: bool,
+) -> None:
+    """Compare one shadow stall prediction with an unstarted expiry."""
+
+    outcome = {
+        (True, True): "true_positive",
+        (True, False): "false_positive",
+        (False, True): "false_negative",
+        (False, False): "true_negative",
+    }[(predicted_stall, expired_without_start)]
+    request_stall_validations.add(
+        1,
+        {
+            "horde.estimator": estimator,
+            "horde.gentype": gentype,
+            "horde.result": outcome,
+        },
+    )
 
 # --- pop ---------------------------------------------------------------------
 pop_duration = _seconds_histogram(

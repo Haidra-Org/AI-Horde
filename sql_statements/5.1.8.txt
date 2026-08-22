@@ -1,0 +1,18 @@
+-- Run with psql in its default autocommit mode. Do not pass --single-transaction:
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block. The statements
+-- are safe to apply before deploying the application code that uses them.
+
+SET lock_timeout = '3s';
+
+-- The first terminal writer distinguishes completion, cancellation, fault, and
+-- expiry so cleanup can emit each request outcome once.
+ALTER TABLE waiting_prompts
+  ADD COLUMN IF NOT EXISTS terminal_outcome VARCHAR(32) NULL;
+ALTER TABLE waiting_prompts
+  ADD COLUMN IF NOT EXISTS terminal_recorded_at TIMESTAMP WITHOUT TIME ZONE NULL;
+
+-- Cleanup and existing request-scoped generation queries join processing_gens
+-- through wp_id. PostgreSQL does not create an index for the referencing side of
+-- a foreign key automatically.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_processing_gens_wp_id
+  ON public.processing_gens USING btree (wp_id);

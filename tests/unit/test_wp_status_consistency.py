@@ -26,11 +26,12 @@ stays hermetic.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 
+from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import WorkerModel
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
@@ -110,7 +111,14 @@ def _make_procgen(
     return procgen
 
 
-def _status(wp: ImageWaitingPrompt, *, has_valid_workers: bool = True) -> dict[str, Any]:
+def _status(
+    wp: ImageWaitingPrompt,
+    *,
+    has_valid_workers: bool = True,
+    wp_queue_stats: tuple[int, float, int] = (0, 0, 0),
+    eligible_workers: int | None = None,
+    eligible_worker_threads: int | None = None,
+) -> dict[str, Any]:
     """Return ``wp.get_status`` with neutral queue and worker-population inputs.
 
     The queue statistics and worker population only feed the wait-time estimate,
@@ -121,7 +129,9 @@ def _status(wp: ImageWaitingPrompt, *, has_valid_workers: bool = True) -> dict[s
         request_avg=1.0,
         active_worker_count=(1, 1),
         has_valid_workers=has_valid_workers,
-        wp_queue_stats=(0, 0, 0),
+        wp_queue_stats=wp_queue_stats,
+        eligible_workers=eligible_workers,
+        eligible_worker_threads=eligible_worker_threads,
         lite=True,
     )
 
@@ -169,6 +179,112 @@ class TestPossibilityAgreesWithTheProcessingCount:
         assert status["finished"] == 1
         assert status["processing"] == 0
         assert status["is_possible"] is False
+
+
+class TestStatusSignatureCompatibility:
+    """Existing positional callers retain the original ``lite`` argument position."""
+
+    def test_fifth_positional_argument_remains_lite(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+    ) -> None:
+        user = make_user()
+        wp = _make_wp(user)
+
+        status = WaitingPrompt.get_status(wp, 1.0, (1, 1), True, (0, 0, 0), True)
+
+        assert "generations" not in status
+
+
+class TestStallSignal:
+    """The additive signal identifies observed pressure without changing possibility."""
+
+    def test_scarce_compatible_capacity_after_estimate_overrun_might_stall(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+    ) -> None:
+        user = make_user()
+        wp = _make_wp(user)
+        wp.created = datetime.utcnow() - timedelta(minutes=10)
+        wp.expiry = datetime.utcnow() + timedelta(minutes=10)
+        db.session.commit()
+
+        status = _status(
+            wp,
+            wp_queue_stats=(9, 0, 10),
+            eligible_workers=1,
+            eligible_worker_threads=1,
+        )
+
+        assert status["is_possible"] is True
+        assert status["eligible_workers"] == 1
+        assert status["eligible_worker_threads"] == 1
+        assert status["might_stall"] is True
+
+    def test_front_of_compatible_capacity_does_not_signal_stall(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+    ) -> None:
+        user = make_user()
+        wp = _make_wp(user)
+        wp.created = datetime.utcnow() - timedelta(minutes=10)
+        wp.expiry = datetime.utcnow() + timedelta(minutes=10)
+        db.session.commit()
+
+        status = _status(
+            wp,
+            wp_queue_stats=(0, 0, 1),
+            eligible_workers=1,
+            eligible_worker_threads=1,
+        )
+
+        assert status["might_stall"] is False
+
+    def test_foreseeable_expiry_pressure_might_stall_before_estimate_overrun(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+    ) -> None:
+        user = make_user()
+        wp = _make_wp(user)
+        wp.expiry = datetime.utcnow() + timedelta(seconds=30)
+        db.session.commit()
+
+        status = _status(
+            wp,
+            wp_queue_stats=(4, 1, 5),
+            eligible_workers=1,
+            eligible_worker_threads=1,
+        )
+
+        assert status["might_stall"] is True
+
+    def test_impossible_request_is_not_only_a_possible_stall(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+    ) -> None:
+        user = make_user()
+        wp = _make_wp(user)
+
+        status = _status(
+            wp,
+            has_valid_workers=False,
+            wp_queue_stats=(9, 0, 10),
+            eligible_workers=0,
+            eligible_worker_threads=0,
+        )
+
+        assert status["is_possible"] is False
+        assert status["might_stall"] is False
 
 
 class TestOutstandingGenerationsNeverExceedTheRequest:

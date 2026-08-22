@@ -92,12 +92,30 @@ class ImageWorker(Worker):
             baseline += 30
         return baseline
 
-    def can_generate(self, waiting_prompt):
+    def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
+        """Return whether this worker can serve an image request."""
+
+        return self.can_generate_with_model_names(waiting_prompt, self.get_model_names())
+
+    def can_generate_with_model_names(
+        self,
+        waiting_prompt: Any,
+        model_names: list[str],
+    ) -> list[bool | str | None]:
+        """Evaluate an image request using an already loaded model list.
+
+        Args:
+            waiting_prompt: Image request being evaluated.
+            model_names: Models currently advertised by this worker.
+
+        Returns:
+            Eligibility followed by the existing rejection reason, if any.
+        """
+
         can_generate = super().can_generate(waiting_prompt)
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
-        # Cache these to avoid repeated Redis lookups within this method
-        my_model_names = self.get_model_names()
+        my_model_names = model_names
         my_baselines = model_reference.get_all_model_baselines(my_model_names)
         # logger.warning(datetime.utcnow())
         if waiting_prompt.source_image and not check_bridge_capability("img2img", self.bridge_agent):

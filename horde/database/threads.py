@@ -45,12 +45,14 @@ from horde.database.functions import (
     retrieve_regex_replacements,
 )
 from horde.database.kudos_reservations import release_reservations_for_business_ids
-from horde.enums import State
+from horde.enums import RequestTerminalOutcome, State
 from horde.flask import SQLITE_MODE, db, get_app
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
+from horde.metrics import request_outcomes, request_time_to_expiry
 from horde.patreon import patrons
 from horde.r2 import delete_source_image
+from horde.request_scheduling import record_request_expiry_forecast
 from horde.stripe_subs import stripe_subs
 from horde.vars import horde_instance_id
 
@@ -108,6 +110,7 @@ def store_prioritized_wp_queue():
     with get_app().app_context():
         for wp_type in ["image", "text"]:
             wp_queue = query_prioritized_wps(wp_type)
+            thing_divisor = hv.thing_divisors[wp_type]
             serialized_wp_list = []
             queue_positions = {}
             things_ahead_in_queue = 0
@@ -121,7 +124,7 @@ def store_prioritized_wp_queue():
                     "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 serialized_wp_list.append(wp_json)
-                queued_things = round(wp.things * wp.n / hv.thing_divisors["image"], 2)
+                queued_things = round(wp.things * wp.n / thing_divisor, 2)
                 things_ahead_in_queue += queued_things
                 n_ahead_in_queue += wp.n
                 queue_positions[str(wp.id)] = [idx, round(things_ahead_in_queue, 2), n_ahead_in_queue]
@@ -227,13 +230,96 @@ def check_waiting_prompts():
         #     delete_procgen_image(str(procgen.id))
         #     last_procgen = str(procgen.id)
         # logger.warning(f"Check Last procgen: {last_procgen}")
-        for wp_class, procgen_class in [
-            (ImageWaitingPrompt, ImageProcessingGeneration),
-            (TextWaitingPrompt, TextProcessingGeneration),
+        for wp_class, procgen_class, gentype in [
+            (ImageWaitingPrompt, ImageProcessingGeneration, "image"),
+            (TextWaitingPrompt, TextProcessingGeneration, "text"),
         ]:
             expired_wps = db.session.query(wp_class).filter(wp_class.expiry < cutoff_time)
             expired_wp_ids = [wp_id for (wp_id,) in expired_wps.with_entities(wp_class.id).all()]
+            # One row is returned per expired request. The aggregate columns
+            # distinguish requests that never started from requests that made
+            # progress before expiry. Example shape:
+            #
+            # id | created | n | faulted | first_start
+            # A  | 12:00   | 1 | false   | 12:04
+            # B  | 12:02   | 1 | false   | null
+            expired_wp_rows = (
+                db.session.query(
+                    wp_class.id,
+                    wp_class.created,
+                    wp_class.n,
+                    wp_class.faulted,
+                    func.min(procgen_class.created).label("first_start"),
+                )
+                .outerjoin(
+                    procgen_class,
+                    (procgen_class.wp_id == wp_class.id) & procgen_class.fake.is_(False),
+                )
+                .filter(
+                    wp_class.expiry < cutoff_time,
+                    wp_class.terminal_outcome.is_(None),
+                )
+                .group_by(
+                    wp_class.id,
+                    wp_class.created,
+                    wp_class.n,
+                    wp_class.faulted,
+                )
+                .all()
+            )
             logger.info(f"Pruned {len(expired_wp_ids)} expired Waiting Prompts")
+            claimed_expiries = []
+            for expired_wp in expired_wp_rows:
+                if expired_wp.faulted:
+                    terminal_outcome = RequestTerminalOutcome.FAULTED
+                elif expired_wp.n <= 0:
+                    # Rows created before terminal outcomes were persisted can
+                    # no longer distinguish completion from cancellation.
+                    terminal_outcome = RequestTerminalOutcome.LEGACY_TERMINAL
+                elif expired_wp.first_start is None:
+                    terminal_outcome = RequestTerminalOutcome.EXPIRED_UNSTARTED
+                else:
+                    terminal_outcome = RequestTerminalOutcome.EXPIRED_AFTER_START
+                # The conditional UPDATE is also the terminal-state claim:
+                # claimed_rows = 1 means this cleanup pass won; 0 means a
+                # completion, cancellation, or fault already recorded it.
+                claimed_rows = (
+                    db.session.query(wp_class)
+                    .filter(
+                        wp_class.id == expired_wp.id,
+                        wp_class.terminal_outcome.is_(None),
+                    )
+                    .update(
+                        {
+                            wp_class.terminal_outcome: terminal_outcome.value,
+                            wp_class.terminal_recorded_at: cutoff_time,
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                if claimed_rows == 1 and terminal_outcome in {
+                    RequestTerminalOutcome.EXPIRED_UNSTARTED,
+                    RequestTerminalOutcome.EXPIRED_AFTER_START,
+                }:
+                    claimed_expiries.append((expired_wp, terminal_outcome))
+            # Commit terminal claims before emitting best-effort telemetry. A
+            # retry can then undercount after a process crash, but it cannot
+            # classify one request as two different terminal outcomes.
+            db.session.commit()
+            for expired_wp, terminal_outcome in claimed_expiries:
+                expiry_delay = max((cutoff_time - expired_wp.created).total_seconds(), 0)
+                try:
+                    attributes = {"horde.gentype": gentype, "horde.outcome": terminal_outcome.value}
+                    request_time_to_expiry.record(expiry_delay, attributes)
+                    request_outcomes.add(1, attributes)
+                    record_request_expiry_forecast(
+                        request_id=str(expired_wp.id),
+                        gentype=gentype,
+                        expired_at=cutoff_time,
+                        expired_without_start=expired_wp.first_start is None,
+                    )
+                except Exception as err:
+                    logger.warning(f"Unable to record expiry telemetry for request {expired_wp.id}: {err}")
             # The bulk delete never runs WaitingPrompt.delete(), so release the
             # 'upfront:<wp-id>' admission holds here in the same transaction.
             # Otherwise a request that expires unserved leaves its hold active and
@@ -242,6 +328,11 @@ def check_waiting_prompts():
             expired_wps.delete()
             db.session.commit()
             # Faults stale ProcGens
+            # Each result is a pending, non-faulted processing-generation ORM
+            # object joined to its request. Conceptual columns used below:
+            #
+            # procgen.id | procgen.wp_id | start_time | job_ttl | wp.n
+            # G1         | A             | 12:04      | 300     | 1
             all_proc_gen = (
                 db.session.query(
                     procgen_class,
@@ -266,6 +357,12 @@ def check_waiting_prompts():
             if modifed_procgens >= 1:
                 db.session.commit()
             # Faults WP with 3 or more faulted Procgens
+            # The grouped query returns only request IDs whose fault count
+            # crossed the retry limit. Conceptual aggregate before HAVING:
+            #
+            # wp_id | faulted_procgens
+            # A     | 3
+            # B     | 5
             wp_ids = (
                 db.session.query(
                     procgen_class.wp_id,

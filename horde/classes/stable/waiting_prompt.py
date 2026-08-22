@@ -25,6 +25,7 @@ from horde.consts import (
     LEGACY_SCHEDULERS,
     scheduler_for_request,
 )
+from horde.enums import RequestTerminalOutcome
 from horde.flask import db
 from horde.image import convert_pil_to_b64
 from horde.logger import logger
@@ -257,6 +258,7 @@ class ImageWaitingPrompt(WaitingPrompt):
         else:
             prompt_payload = {}
             self.faulted = True
+            self.claim_terminal_outcome(RequestTerminalOutcome.FAULTED, commit=False)
             db.session.commit()
         # logger.debug([payload,prompt_payload])
         return prompt_payload

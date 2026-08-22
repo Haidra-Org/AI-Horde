@@ -7,6 +7,8 @@ import os
 import time
 import urllib.parse
 import uuid
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import logfire
@@ -62,6 +64,21 @@ WP_CLASS_MAP = {
     "image": ImageWaitingPrompt,
     "text": TextWaitingPrompt,
 }
+
+
+@dataclass(frozen=True)
+class RequestWorkerAvailability:
+    """Represents current worker capacity that passes the same gates as job dispatch."""
+
+    worker_count: int
+    thread_count: int
+    has_inflight_generation: bool = False
+
+    @property
+    def is_possible(self) -> bool:
+        """Return whether capacity or an in-flight generation can serve the request."""
+
+        return self.has_inflight_generation or self.worker_count > 0
 
 
 def get_anon():
@@ -1573,9 +1590,10 @@ def get_wp_queue_stats(wp):
                 "Cached WP priority query does not exist. Falling back to direct DB query. Please check thread on primary!",
             )
             priority_sorted_list = query_prioritized_wps(wp.wp_type)
+        thing_divisor = hv.thing_divisors[wp.wp_type]
         for riter in range(len(priority_sorted_list)):
             iter_wp = priority_sorted_list[riter]
-            queued_things = round(iter_wp.things * iter_wp.n / hv.thing_divisors["image"], 2)
+            queued_things = round(iter_wp.things * iter_wp.n / thing_divisor, 2)
             things_ahead_in_queue += queued_things
             n_ahead_in_queue += iter_wp.n
             if iter_wp.id == wp.id:
@@ -1706,47 +1724,49 @@ def get_request_avg(request_type="image"):
     return float(perf_cache)
 
 
-def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
-    # An in-flight generation means a worker is actively serving this request, so it
-    # is possible regardless of the memoized verdict or the serving worker's current
-    # staleness. This live-state check runs before the cache so a pinned-false verdict
-    # cannot contradict a request that is presently being generated.
-    # Fake generations are decoys handed to paused/tricked workers and never yield a
-    # real result, so they are excluded here just as count_processing_gens excludes
-    # them from the processing bucket.
-    inflight_procgen_class = {
+def _waiting_prompt_has_inflight_generation(waiting_prompt: WaitingPrompt) -> bool:
+    """Return whether a real generation is currently serving the request."""
+
+    processing_generation_class = {
         "image": ImageProcessingGeneration,
         "text": TextProcessingGeneration,
-    }.get(wp.wp_type)
-    if inflight_procgen_class is not None:
-        has_inflight_generation = (
-            db.session.query(inflight_procgen_class.id)
-            .filter(
-                inflight_procgen_class.wp_id == wp.id,
-                inflight_procgen_class.generation.is_(None),
-                inflight_procgen_class.faulted.is_(False),
-                inflight_procgen_class.fake.is_(False),
-            )
-            .first()
-            is not None
+    }.get(waiting_prompt.wp_type)
+    if processing_generation_class is None:
+        return False
+    return (
+        db.session.query(processing_generation_class.id)
+        .filter(
+            processing_generation_class.wp_id == waiting_prompt.id,
+            processing_generation_class.generation.is_(None),
+            processing_generation_class.faulted.is_(False),
+            processing_generation_class.fake.is_(False),
         )
-        if has_inflight_generation:
-            return True
-    cached_validity = hr.horde_r_get(f"wp_validity_{wp.id}")
-    if cached_validity is not None:
-        return bool(int(cached_validity))
-    with logfire.span("horde.db.wp_has_valid_workers", wp_id=str(wp.id), wp_type=wp.wp_type):
-        if wp.faulted:
-            return False
-        if wp.expiry < datetime.utcnow():
-            return False
+        .first()
+        is not None
+    )
+
+
+def _iter_eligible_workers_for_request(
+    waiting_prompt: WaitingPrompt,
+) -> Iterator[ImageWorker | TextWorker | InterrogationWorker]:
+    """Yield recently active workers that pass every known request gate."""
+
+    with logfire.span(
+        "horde.db.get_worker_availability_for_request",
+        wp_id=str(waiting_prompt.id),
+        wp_type=waiting_prompt.wp_type,
+    ):
+        if waiting_prompt.faulted:
+            return
+        if waiting_prompt.expiry < datetime.utcnow():
+            return
         worker_class = ImageWorker
-        if wp.wp_type == "text":
+        if waiting_prompt.wp_type == "text":
             worker_class = TextWorker
-        elif wp.wp_type == "interrogation":
+        elif waiting_prompt.wp_type == "interrogation":
             worker_class = InterrogationWorker
-        models_list = wp.get_model_names()
-        worker_ids = wp.get_worker_ids()
+        models_list = waiting_prompt.get_model_names()
+        worker_ids = waiting_prompt.get_worker_ids()
         # The model constraint is a semi-join rather than an outer join: joining
         # worker_models returns one full worker+user row per matching model, so
         # a request allowing N models multiplies every candidate row N-fold
@@ -1767,7 +1787,8 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
                 noload(worker_class.stats),
                 # Eagerly load relationships accessed by can_generate() to avoid N+1 queries
                 selectinload(worker_class.blacklist),
-                contains_eager(worker_class.user),
+                contains_eager(worker_class.user).selectinload(User.roles),
+                selectinload(worker_class.models),
             )
             .join(
                 User,
@@ -1777,11 +1798,11 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
                 or_(
                     len(worker_ids) == 0,
                     and_(
-                        wp.worker_blacklist is False,
+                        waiting_prompt.worker_blacklist is False,
                         worker_class.id.in_(worker_ids),
                     ),
                     and_(
-                        wp.worker_blacklist is True,
+                        waiting_prompt.worker_blacklist is True,
                         worker_class.id.not_in(worker_ids),
                     ),
                 ),
@@ -1790,23 +1811,23 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
                     serves_requested_model,
                 ),
                 or_(
-                    wp.trusted_workers == False,  # noqa E712
+                    waiting_prompt.trusted_workers == False,  # noqa E712
                     and_(
-                        wp.trusted_workers == True,  # noqa E712
+                        waiting_prompt.trusted_workers == True,  # noqa E712
                         User.trusted == True,  # noqa E712
                     ),
                 ),
                 or_(
-                    wp.safe_ip == True,  # noqa E712
+                    waiting_prompt.safe_ip == True,  # noqa E712
                     and_(
-                        wp.safe_ip == False,  # noqa E712
+                        waiting_prompt.safe_ip == False,  # noqa E712
                         worker_class.allow_unsafe_ipaddr == True,  # noqa E712
                     ),
                 ),
                 or_(
-                    wp.nsfw == False,  # noqa E712
+                    waiting_prompt.nsfw == False,  # noqa E712
                     and_(
-                        wp.nsfw == True,  # noqa E712
+                        waiting_prompt.nsfw == True,  # noqa E712
                         worker_class.nsfw == True,  # noqa E712
                     ),
                 ),
@@ -1814,66 +1835,157 @@ def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
                     worker_class.maintenance == False,  # noqa E712
                     and_(
                         worker_class.maintenance == True,  # noqa E712
-                        wp.user_id == worker_class.user_id,
+                        waiting_prompt.user_id == worker_class.user_id,
                     ),
                 ),
                 or_(
                     worker_class.paused == False,  # noqa E712
                     and_(
                         worker_class.paused == True,  # noqa E712
-                        wp.user_id == worker_class.user_id,
+                        waiting_prompt.user_id == worker_class.user_id,
                     ),
                 ),
             )
         )
-        if wp.wp_type == "image":
+        if waiting_prompt.wp_type == "image":
             final_worker_list = final_worker_list.filter(
-                wp.width * wp.height <= worker_class.max_pixels,
+                waiting_prompt.width * waiting_prompt.height <= worker_class.max_pixels,
                 or_(
-                    wp.source_image == None,  # noqa E712
+                    waiting_prompt.source_image == None,  # noqa E712
                     and_(
-                        wp.source_image != None,  # noqa E712
+                        waiting_prompt.source_image != None,  # noqa E712
                         worker_class.allow_img2img == True,  # noqa E712
                     ),
                 ),
                 or_(
-                    wp.slow_workers == True,  # noqa E712
+                    waiting_prompt.slow_workers == True,  # noqa E712
                     worker_class.speed >= 500000,
                 ),
                 or_(
-                    "loras" not in wp.params,
+                    "loras" not in waiting_prompt.params,
                     and_(
                         worker_class.allow_lora == True,  # noqa E712
                         # TODO: Create an sql function I can call to check the worker bridge capabilities
-                        "loras" in wp.params,
+                        "loras" in waiting_prompt.params,
                     ),
                 ),
                 # or_(
-                #     'tis' not in wp.params,
+                #     'tis' not in waiting_prompt.params,
                 #     and_(
                 #         #TODO: Create an sql function I can call to check the worker bridge capabilities
-                #         'tis' in wp.params,
+                #         'tis' in waiting_prompt.params,
                 #     ),
                 # ),
             )
-        elif wp.wp_type == "text":
+        elif waiting_prompt.wp_type == "text":
             final_worker_list = final_worker_list.filter(
-                wp.max_length <= worker_class.max_length,
-                wp.max_context_length <= worker_class.max_context_length,
+                waiting_prompt.max_length <= worker_class.max_length,
+                waiting_prompt.max_context_length <= worker_class.max_context_length,
                 or_(
-                    wp.slow_workers == True,  # noqa E712
+                    waiting_prompt.slow_workers == True,  # noqa E712
                     worker_class.speed >= 2,
                 ),
             )
-        elif wp.wp_type == "interrogation":
+        elif waiting_prompt.wp_type == "interrogation":
             pass  # FIXME: Add interrogation filters
-        worker_found = False
+        if waiting_prompt.wp_type == "text":
+            final_worker_list = final_worker_list.options(selectinload(TextWorker.softprompts))
         for worker in final_worker_list.all():
-            if worker.can_generate(wp)[0]:
-                worker_found = True
-                break
-        hr.horde_r_setex(f"wp_validity_{wp.id}", timedelta(seconds=60), int(worker_found))
-        return worker_found
+            if isinstance(worker, ImageWorker):
+                can_generate = worker.can_generate_with_model_names(
+                    waiting_prompt,
+                    [worker_model.model for worker_model in worker.models],
+                )
+            elif isinstance(worker, TextWorker):
+                can_generate = worker.can_generate_with_softprompt_names(
+                    waiting_prompt,
+                    [softprompt.softprompt for softprompt in worker.softprompts],
+                )
+            else:
+                can_generate = worker.can_generate(waiting_prompt)
+            if can_generate[0]:
+                yield worker
+
+
+def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> RequestWorkerAvailability:
+    """Return the recently active worker capacity eligible for a request.
+
+    Args:
+        waiting_prompt: Request whose worker capacity should be measured.
+
+    Returns:
+        Exact worker and advertised-thread counts after the same SQL and
+        Python capability gates used by the existing possibility check.
+
+    Performance:
+        Results are cached per request for 60 seconds. A cache miss evaluates
+        every SQL candidate because an exact count cannot stop at the first
+        valid worker.
+    """
+
+    # In-flight state is always read live so cached zero capacity cannot
+    # contradict a generation that started after the cache was populated.
+    has_inflight_generation = _waiting_prompt_has_inflight_generation(waiting_prompt)
+    cached_availability = hr.horde_r_get(f"wp_availability_{waiting_prompt.id}")
+    if cached_availability is not None:
+        try:
+            parsed_availability = json.loads(cached_availability)
+            return RequestWorkerAvailability(
+                worker_count=int(parsed_availability["workers"]),
+                thread_count=int(parsed_availability["threads"]),
+                has_inflight_generation=has_inflight_generation,
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.debug(f"Ignoring malformed worker availability cache for request {waiting_prompt.id}")
+
+    eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
+    availability = RequestWorkerAvailability(
+        worker_count=len(eligible_workers),
+        thread_count=sum(max(worker.threads, 1) for worker in eligible_workers),
+        has_inflight_generation=has_inflight_generation,
+    )
+    worker_found = availability.worker_count > 0
+    hr.horde_r_setex(
+        f"wp_validity_{waiting_prompt.id}",
+        timedelta(seconds=60),
+        int(worker_found),
+    )
+    hr.horde_r_setex(
+        f"wp_availability_{waiting_prompt.id}",
+        timedelta(seconds=60),
+        json.dumps(
+            {
+                "workers": availability.worker_count,
+                "threads": availability.thread_count,
+            },
+        ),
+    )
+    return availability
+
+
+def wp_has_valid_workers(wp: WaitingPrompt) -> bool:
+    """Return whether a request has an in-flight generation or an eligible worker.
+
+    Args:
+        wp: Request whose current feasibility should be checked.
+
+    Returns:
+        True when the request is already processing or at least one recently
+        active worker passes all known dispatch gates.
+    """
+
+    if _waiting_prompt_has_inflight_generation(wp):
+        return True
+    cached_validity = hr.horde_r_get(f"wp_validity_{wp.id}")
+    if cached_validity is not None:
+        return bool(int(cached_validity))
+    worker_found = next(_iter_eligible_workers_for_request(wp), None) is not None
+    hr.horde_r_setex(
+        f"wp_validity_{wp.id}",
+        timedelta(seconds=60),
+        int(worker_found),
+    )
+    return worker_found
 
 
 @logger.catch(reraise=True)
