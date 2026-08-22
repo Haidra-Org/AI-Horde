@@ -635,6 +635,7 @@ class JobPopTemplate(Resource):
         self.wp_page = 0
         with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
             wp_list = self.get_sorted_wp(self.priority_user_ids)
+        self.priority_wp_ids = {wp.id for wp in wp_list}
         for wp in wp_list:
             self.prioritized_wp.append(wp)
         ## End prioritize by bridge request ##
@@ -673,7 +674,10 @@ class JobPopTemplate(Resource):
                         continue
                     sg_t0 = time.monotonic()
                     with logfire.span("horde.pop.start_generation", wp_id=str(wp.id)):
-                        worker_ret = self.start_worker(wp)
+                        worker_ret = self.start_worker(
+                            wp,
+                            selected_from_priority_queue=wp.id in self.priority_wp_ids,
+                        )
                     pop_start_gen_duration.record(time.monotonic() - sg_t0, {"horde.gentype": self.gentype})
                     pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match", "horde.gentype": self.gentype})
                     worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
@@ -690,6 +694,7 @@ class JobPopTemplate(Resource):
                     return worker_ret, 200
                 db.session.commit()  # Unlock all locked wp rows before picking up new ones
                 self.wp_page += 1
+                self.priority_wp_ids = set()
                 with logfire.span("horde.pop.get_sorted_wp", priority=False, page=self.wp_page):
                     self.prioritized_wp = self.get_sorted_wp()
                 logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
@@ -712,7 +717,7 @@ class JobPopTemplate(Resource):
         )
 
     # Making it into its own function to allow extension
-    def start_worker(self, wp):
+    def start_worker(self, wp, *, selected_from_priority_queue: bool = False):
         # Paused worker gives a fake prompt
         # Unless the owner of the worker is the owner of the prompt
         # Then we allow them to fulfil their own request
@@ -722,7 +727,14 @@ class JobPopTemplate(Resource):
             # ``self.models`` is the model list the pop SQL matched this WP
             # against, so the recorded model is chosen from what the worker
             # declared it would run rather than from later-read worker state.
-            ret = wp.start_generation(self.worker, self.args.amount, declared_models=self.models)
+            ret = wp.start_generation(
+                self.worker,
+                self.args.amount,
+                declared_models=self.models,
+                declared_softprompts=getattr(self, "softprompts", None),
+                selected_from_priority_queue=selected_from_priority_queue,
+                priority_user_ids=self.priority_user_ids,
+            )
         return ret
 
     # We split this to its own function so that it can be extended with the specific vars needed to check in

@@ -29,6 +29,7 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.flask import db
+from horde.request_scheduling import CapacityReturn, DispatchObservation
 
 pytestmark = pytest.mark.unit
 
@@ -201,6 +202,45 @@ class TestBatching:
         recorded_models = {procgen.model for procgen in procgens}
         assert len(recorded_models) == 1
         assert recorded_models.pop() in {"model_b", "model_c"}
+
+    def test_batched_procgens_return_one_worker_thread(
+        self,
+        db_session,
+        fake_redis,
+        make_user,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from horde.classes.base import processing_generation as processing_generation_module
+        from horde.classes.base import waiting_prompt as waiting_prompt_module
+
+        user = make_user()
+        worker = _make_text_worker(db_session, user, name="worker_batch_return", models=["model_a"])
+        wp = _make_text_wp(db_session, user, models=["model_a"], jobs=2)
+        recorded_dispatches: list[DispatchObservation] = []
+        monkeypatch.setattr(waiting_prompt_module, "record_worker_dispatch", recorded_dispatches.append)
+        wp.start_generation(worker, amount=2)
+        procgens = _procgens_for_wp(wp)
+        assert {procgen.dispatch_batch_id for procgen in procgens} == {procgens[0].dispatch_batch_id}
+        assert len(recorded_dispatches) == 1
+        assert recorded_dispatches[0].dispatch_id == str(procgens[0].dispatch_batch_id)
+        recorded_returns: list[CapacityReturn] = []
+        monkeypatch.setattr(
+            processing_generation_module,
+            "record_capacity_return",
+            recorded_returns.append,
+        )
+
+        procgens[0].generation = "done"
+        db.session.commit()
+        procgens[0]._record_capacity_return()
+        assert recorded_returns == []
+
+        procgens[1].faulted = True
+        db.session.commit()
+        procgens[1]._record_capacity_return()
+
+        assert len(recorded_returns) == 1
+        assert recorded_returns[0].dispatch_id == str(procgens[0].dispatch_batch_id)
 
 
 class TestEmptyDeclaredList:

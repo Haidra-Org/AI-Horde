@@ -16,3 +16,19 @@ ALTER TABLE waiting_prompts
 -- a foreign key automatically.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_processing_gens_wp_id
   ON public.processing_gens USING btree (wp_id);
+
+-- One worker pop can return several generations while occupying one thread.
+-- The shared batch ID lets the last terminal generation record one capacity return.
+ALTER TABLE processing_gens
+  ADD COLUMN IF NOT EXISTS dispatch_batch_id UUID NULL;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_processing_gens_dispatch_batch_id
+  ON public.processing_gens USING btree (dispatch_batch_id);
+
+-- Availability refreshes only need active pop batches for the eligible worker
+-- IDs. Keep that bounded lookup off the full processing-generation history.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_processing_gens_active_worker_dispatch
+  ON public.processing_gens USING btree (worker_id, dispatch_batch_id)
+  WHERE dispatch_batch_id IS NOT NULL
+    AND generation IS NULL
+    AND NOT faulted
+    AND NOT fake;
