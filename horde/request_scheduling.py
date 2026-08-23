@@ -193,6 +193,7 @@ class AssignmentPressure:
         might_stall: Whether preceding arrivals persistently outpace clearance.
         arriving_preceding_work: Compatible work arriving ahead during the window.
         returned_work: Work completed by eligible capacity during the window.
+        dispatch_opportunities: Compatible worker pops observed during the window.
     """
 
     evidence: str
@@ -202,6 +203,7 @@ class AssignmentPressure:
     might_stall: bool
     arriving_preceding_work: float = 0
     returned_work: float = 0
+    dispatch_opportunities: int = 0
 
 
 @dataclass(frozen=True)
@@ -494,6 +496,7 @@ def calculate_assignment_pressure(
         might_stall=evidence == "arrival_outpaces_drain",
         arriving_preceding_work=sum(interval_arriving_work),
         returned_work=sum(interval_returned_work),
+        dispatch_opportunities=len(relevant_dispatches),
     )
 
 

@@ -100,6 +100,7 @@ def test_sustained_preceding_arrivals_outpacing_returns_might_stall() -> None:
     assert pressure.arriving_preceding_work == 7
     assert pressure.returned_work == 2
     assert pressure.active_preceding_dispatches == 1
+    assert pressure.dispatch_opportunities == 3
     assert pressure.might_stall is True
 
 

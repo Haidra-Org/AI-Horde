@@ -50,11 +50,12 @@ from horde.enums import KudosAuditDetail, KudosEntryType, State
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
-from horde.metrics import kudos_transfers_idempotent_replays, pop_query_duration
+from horde.metrics import kudos_transfers_idempotent_replays, pop_query_duration, record_request_assignment_pressure
 from horde.model_reference import model_reference
 from horde.request_scheduling import (
     ASSIGNMENT_PRESSURE_WINDOW,
     ActiveWorkerDispatch,
+    AssignmentPressure,
     EligibleWorkerState,
     PrecedingArrival,
     build_worker_scheduling_state,
@@ -2031,26 +2032,42 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
     )
     thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
     might_stall = False
-    if waiting_prompt.n > 0 and eligible_worker_states:
-        observed_at = datetime.utcnow()
-        active_dispatches = _get_active_worker_dispatches(
-            waiting_prompt,
-            [worker_state.worker_id for worker_state in eligible_worker_states],
-        )
-        assignment_pressure = get_request_assignment_pressure(
-            observed_at=observed_at,
-            target_request_id=str(waiting_prompt.id),
-            target_user_id=str(waiting_prompt.user_id),
-            target_created_at=waiting_prompt.created,
-            target_extra_priority=int(waiting_prompt.extra_priority),
-            eligible_worker_states={
-                worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states
-            },
-            eligible_worker_threads=thread_count,
-            active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
-            preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
-        )
+    if waiting_prompt.n > 0:
+        assignment_pressure = AssignmentPressure("none_eligible", 0, 0, 0, False)
+        if eligible_worker_states:
+            observed_at = datetime.utcnow()
+            active_dispatches = _get_active_worker_dispatches(
+                waiting_prompt,
+                [worker_state.worker_id for worker_state in eligible_worker_states],
+            )
+            assignment_pressure = get_request_assignment_pressure(
+                observed_at=observed_at,
+                target_request_id=str(waiting_prompt.id),
+                target_user_id=str(waiting_prompt.user_id),
+                target_created_at=waiting_prompt.created,
+                target_extra_priority=int(waiting_prompt.extra_priority),
+                eligible_worker_states={
+                    worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states
+                },
+                eligible_worker_threads=thread_count,
+                active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
+                preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
+            )
         might_stall = assignment_pressure.might_stall
+        try:
+            record_request_assignment_pressure(
+                gentype=waiting_prompt.wp_type,
+                evidence=assignment_pressure.evidence,
+                might_stall=assignment_pressure.might_stall,
+                dispatch_opportunities=assignment_pressure.dispatch_opportunities,
+                lost_opportunities=assignment_pressure.lost_opportunities,
+                returned_capacity=assignment_pressure.returned_capacity,
+                active_preceding_dispatches=assignment_pressure.active_preceding_dispatches,
+                arriving_preceding_work=assignment_pressure.arriving_preceding_work,
+                returned_work=assignment_pressure.returned_work,
+            )
+        except Exception as err:
+            logger.warning(f"Unable to record assignment-pressure metrics for request {waiting_prompt.id}: {err}")
     availability = RequestWorkerAvailability(
         worker_count=len(eligible_workers),
         thread_count=thread_count,

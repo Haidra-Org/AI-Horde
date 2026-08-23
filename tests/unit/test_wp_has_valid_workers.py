@@ -258,12 +258,15 @@ class TestFreshCapableWorker:
         fake_redis: Any,
         make_user: Any,
         make_user_role: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         user = _make_trusted_user(make_user, make_user_role)
         wp = _make_image_wp(user)
         _make_image_worker(user, threads=2)
         _make_image_worker(user, threads=3)
         _make_image_worker(user, models=("some_other_model",), threads=20)
+        pressure_samples: list[dict[str, Any]] = []
+        monkeypatch.setattr(f, "record_request_assignment_pressure", lambda **sample: pressure_samples.append(sample))
 
         availability = f.get_worker_availability_for_request(wp)
 
@@ -271,6 +274,19 @@ class TestFreshCapableWorker:
         assert availability.worker_count == 2
         assert availability.thread_count == 5
         assert availability.is_possible is True
+        assert pressure_samples == [
+            {
+                "gentype": "image",
+                "evidence": "insufficient_window",
+                "might_stall": False,
+                "dispatch_opportunities": 0,
+                "lost_opportunities": 0,
+                "returned_capacity": 0,
+                "active_preceding_dispatches": 0,
+                "arriving_preceding_work": 0,
+                "returned_work": 0,
+            },
+        ]
         # The existing boolean API and cache contract remain unchanged.
         assert f.wp_has_valid_workers(wp) is True
 
@@ -498,6 +514,7 @@ class TestFreshCapableWorker:
         monkeypatch.setattr(f, "_get_active_worker_dispatches", fail_recalculation)
         monkeypatch.setattr(f, "_get_preceding_arrivals", fail_recalculation)
         monkeypatch.setattr(f, "get_request_assignment_pressure", fail_recalculation)
+        monkeypatch.setattr(f, "record_request_assignment_pressure", fail_recalculation)
 
         assert f.get_worker_availability_for_request(target) == availability
 

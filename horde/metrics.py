@@ -94,6 +94,7 @@ BUCKETS_SECONDS = (
 )
 BUCKETS_COUNT = (0, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 5000)
 BUCKETS_KUDOS = (0, 1, 10, 100, 1000, 10000, 100000)
+BUCKETS_RATIO = (0, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1)
 BUCKETS_REQUEST_LIFECYCLE_SECONDS = (
     0,
     1,
@@ -120,6 +121,18 @@ BUCKETS_REQUEST_LIFECYCLE_SECONDS = (
 
 REQUEST_ESTIMATE_MINIMUM_ABSOLUTE_TOLERANCE_SECONDS = 60
 REQUEST_ESTIMATE_RELATIVE_TOLERANCE = 0.5
+REQUEST_ASSIGNMENT_PRESSURE_EVIDENCE = frozenset(
+    {
+        "none_eligible",
+        "insufficient_window",
+        "incomplete_return_history",
+        "insufficient_replacement",
+        "target_opportunity_seen",
+        "compatible_capacity_returning",
+        "preceding_arrivals_not_outpacing_drain",
+        "arrival_outpaces_drain",
+    },
+)
 
 
 _BUCKET_REGISTRY: dict[str, tuple[float, ...]] = {}
@@ -138,6 +151,11 @@ def _count_histogram(name: str, description: str) -> Histogram:
 def _kudos_histogram(name: str, description: str) -> Histogram:
     _BUCKET_REGISTRY[name] = BUCKETS_KUDOS
     return logfire.metric_histogram(name, unit="kudos", description=description)
+
+
+def _ratio_histogram(name: str, description: str) -> Histogram:
+    _BUCKET_REGISTRY[name] = BUCKETS_RATIO
+    return logfire.metric_histogram(name, unit="1", description=description)
 
 
 def _request_lifecycle_histogram(name: str, description: str) -> Histogram:
@@ -286,6 +304,92 @@ request_scheduling_events_dropped = logfire.metric_counter(
     unit="1",
     description="Shadow scheduling events dropped before validation",
 )
+request_assignment_pressure_dispatch_opportunities = _count_histogram(
+    "horde.request.assignment_pressure.dispatch_opportunities",
+    "Compatible worker dispatch opportunities observed while a request waited",
+)
+request_assignment_pressure_lost_opportunities = _count_histogram(
+    "horde.request.assignment_pressure.lost_opportunities",
+    "Compatible dispatch opportunities consumed by work preceding the request",
+)
+request_assignment_pressure_returned_capacity = _count_histogram(
+    "horde.request.assignment_pressure.returned_capacity",
+    "Compatible pop batches that returned capacity while a request waited",
+)
+request_assignment_pressure_active_preceding = _count_histogram(
+    "horde.request.assignment_pressure.active_preceding_dispatches",
+    "Preceding compatible pop batches still occupying worker threads",
+)
+request_assignment_pressure_arriving_work = _count_histogram(
+    "horde.request.assignment_pressure.arriving_preceding_work",
+    "Normalized compatible work that arrived ahead during the observation window",
+)
+request_assignment_pressure_returned_work = _count_histogram(
+    "horde.request.assignment_pressure.returned_work",
+    "Normalized work returned by compatible capacity during the observation window",
+)
+request_assignment_pressure_lost_share = _ratio_histogram(
+    "horde.request.assignment_pressure.lost_opportunity_share",
+    "Share of compatible dispatch opportunities consumed by preceding work",
+)
+request_assignment_pressure_samples = logfire.metric_counter(
+    "horde.request.assignment_pressure.samples",
+    unit="1",
+    description="Request-specific assignment-pressure samples split by bounded evidence state and advisory verdict",
+)
+
+
+def record_request_assignment_pressure(
+    *,
+    gentype: str,
+    evidence: str,
+    might_stall: bool,
+    dispatch_opportunities: int,
+    lost_opportunities: int,
+    returned_capacity: int,
+    active_preceding_dispatches: int,
+    arriving_preceding_work: float,
+    returned_work: float,
+) -> None:
+    """Record bounded diagnostics for one assignment-pressure calculation."""
+
+    counts = (
+        dispatch_opportunities,
+        lost_opportunities,
+        returned_capacity,
+        active_preceding_dispatches,
+        arriving_preceding_work,
+        returned_work,
+    )
+    if any(count < 0 for count in counts):
+        raise ValueError("Assignment-pressure values must be non-negative")
+    if lost_opportunities > dispatch_opportunities:
+        raise ValueError("Lost opportunities cannot exceed compatible dispatch opportunities")
+    if evidence not in REQUEST_ASSIGNMENT_PRESSURE_EVIDENCE:
+        raise ValueError(f"Unknown assignment-pressure evidence state: {evidence}")
+
+    histogram_attributes = {
+        "horde.gentype": gentype,
+        "horde.might_stall": might_stall,
+    }
+    request_assignment_pressure_dispatch_opportunities.record(dispatch_opportunities, histogram_attributes)
+    request_assignment_pressure_lost_opportunities.record(lost_opportunities, histogram_attributes)
+    request_assignment_pressure_returned_capacity.record(returned_capacity, histogram_attributes)
+    request_assignment_pressure_active_preceding.record(active_preceding_dispatches, histogram_attributes)
+    request_assignment_pressure_arriving_work.record(arriving_preceding_work, histogram_attributes)
+    request_assignment_pressure_returned_work.record(returned_work, histogram_attributes)
+    if dispatch_opportunities > 0:
+        request_assignment_pressure_lost_share.record(
+            lost_opportunities / dispatch_opportunities,
+            histogram_attributes,
+        )
+    request_assignment_pressure_samples.add(
+        1,
+        {
+            **histogram_attributes,
+            "horde.evidence": evidence,
+        },
+    )
 
 
 def record_request_estimate_validation(
@@ -372,6 +476,7 @@ def record_request_stall_validation(
             "horde.result": outcome,
         },
     )
+
 
 # --- pop ---------------------------------------------------------------------
 pop_duration = _seconds_histogram(
