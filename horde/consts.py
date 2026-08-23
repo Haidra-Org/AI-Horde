@@ -8,7 +8,7 @@ from horde_sdk.generation_parameters.image.constraints import (
 )
 
 HORDE_VERSION = "5.1.8"
-HORDE_API_VERSION = "2.5"
+HORDE_API_VERSION = "2.6"
 
 WHITELISTED_SERVICE_IPS = {
     "212.227.227.178",  # Turing Bot
