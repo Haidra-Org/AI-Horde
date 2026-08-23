@@ -387,6 +387,27 @@ def _preflight_target(host: str, timeout: float, fail_hard: bool, environment) -
     logger.info("Target preflight OK: %s", heartbeat_url)
 
 
+def _remove_tag_filtered_user_classes(environment) -> None:
+    """Prevent Locust from spawning user classes whose tagged tasks were removed."""
+
+    retained = []
+    removed = []
+    for user_class in environment.user_classes:
+        if user_class.tasks:
+            retained.append(user_class)
+            continue
+        if user_class.fixed_count > 0:
+            raise RuntimeError(
+                f"{user_class.__name__} requests {user_class.fixed_count} fixed users, "
+                "but tag filtering removed all of its tasks.",
+            )
+        removed.append(user_class.__name__)
+
+    environment.user_classes[:] = retained
+    if removed:
+        logger.info("Excluding user classes with no tasks after tag filtering: %s", ", ".join(removed))
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **kw):
     opts = environment.parsed_options
@@ -486,3 +507,5 @@ def on_test_start(environment, **kw):
             "Per-class fixed counts total %d users; remaining -u budget will be distributed by weight across the unpinned User classes.",
             fixed_total,
         )
+
+    _remove_tag_filtered_user_classes(environment)
