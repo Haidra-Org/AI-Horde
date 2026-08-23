@@ -368,7 +368,7 @@ def record_request_assignment_pressure(
     if evidence not in REQUEST_ASSIGNMENT_PRESSURE_EVIDENCE:
         raise ValueError(f"Unknown assignment-pressure evidence state: {evidence}")
 
-    histogram_attributes = {
+    histogram_attributes: dict[str, str | bool] = {
         "horde.gentype": gentype,
         "horde.might_stall": might_stall,
     }
