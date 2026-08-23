@@ -7,7 +7,7 @@ from horde_sdk.generation_parameters.image.constraints import (
     KNOWN_SAMPLER_SOLVER_TYPES,
 )
 
-HORDE_VERSION = "5.1.7"
+HORDE_VERSION = "5.1.8"
 HORDE_API_VERSION = "2.5"
 
 WHITELISTED_SERVICE_IPS = {
