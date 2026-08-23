@@ -101,6 +101,12 @@ the service has not yet observed enough comparable work; it is not a promise of 
 worker's old model, bridge, or softprompt state is ignored. The signal remains false while a generation is processing
 because active progress is more relevant at that point.
 
+OpenTelemetry exports one assignment-pressure sample when the shared 60-second availability cache is populated, not
+on every client poll. `horde.request.assignment_pressure.samples` carries only the bounded generation type, evidence,
+and `might_stall` labels. Companion histograms expose dispatch opportunities, lost opportunities, returned capacity,
+active preceding dispatches, and arriving versus returned normalized work. Request, worker, model, and prompt
+identifiers are deliberately excluded, keeping both cardinality and client influence bounded.
+
 ## Common response combinations
 
 | Observed state | Suggested interpretation |

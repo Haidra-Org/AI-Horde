@@ -144,6 +144,132 @@ def test_request_estimate_validation_rejects_invalid_quantiles(telemetry_app):
         )
 
 
+def test_request_assignment_pressure_records_bounded_evidence(telemetry_app, monkeypatch):
+    from horde import metrics
+
+    recorded: dict[str, list[tuple[float, dict[str, object]]]] = {
+        "dispatch": [],
+        "lost": [],
+        "returned_capacity": [],
+        "active": [],
+        "arriving_work": [],
+        "returned_work": [],
+        "lost_share": [],
+        "samples": [],
+    }
+
+    class _HistogramRecorder:
+        def __init__(self, destination):
+            self.destination = destination
+
+        def record(self, value, attributes):
+            self.destination.append((value, attributes))
+
+    class _CounterRecorder:
+        def add(self, value, attributes):
+            recorded["samples"].append((value, attributes))
+
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_dispatch_opportunities",
+        _HistogramRecorder(recorded["dispatch"]),
+    )
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_lost_opportunities",
+        _HistogramRecorder(recorded["lost"]),
+    )
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_returned_capacity",
+        _HistogramRecorder(recorded["returned_capacity"]),
+    )
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_active_preceding",
+        _HistogramRecorder(recorded["active"]),
+    )
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_arriving_work",
+        _HistogramRecorder(recorded["arriving_work"]),
+    )
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_returned_work",
+        _HistogramRecorder(recorded["returned_work"]),
+    )
+    monkeypatch.setattr(
+        metrics,
+        "request_assignment_pressure_lost_share",
+        _HistogramRecorder(recorded["lost_share"]),
+    )
+    monkeypatch.setattr(metrics, "request_assignment_pressure_samples", _CounterRecorder())
+
+    metrics.record_request_assignment_pressure(
+        gentype="image",
+        evidence="arrival_outpaces_drain",
+        might_stall=True,
+        dispatch_opportunities=4,
+        lost_opportunities=3,
+        returned_capacity=2,
+        active_preceding_dispatches=1,
+        arriving_preceding_work=7.5,
+        returned_work=2.5,
+    )
+
+    expected_histogram_attributes = {
+        "horde.gentype": "image",
+        "horde.might_stall": True,
+    }
+    assert recorded["dispatch"] == [(4, expected_histogram_attributes)]
+    assert recorded["lost"] == [(3, expected_histogram_attributes)]
+    assert recorded["returned_capacity"] == [(2, expected_histogram_attributes)]
+    assert recorded["active"] == [(1, expected_histogram_attributes)]
+    assert recorded["arriving_work"] == [(7.5, expected_histogram_attributes)]
+    assert recorded["returned_work"] == [(2.5, expected_histogram_attributes)]
+    assert recorded["lost_share"] == [(0.75, expected_histogram_attributes)]
+    assert recorded["samples"] == [
+        (
+            1,
+            {
+                **expected_histogram_attributes,
+                "horde.evidence": "arrival_outpaces_drain",
+            },
+        ),
+    ]
+
+
+def test_request_assignment_pressure_rejects_impossible_counts(telemetry_app):
+    from horde import metrics
+
+    with pytest.raises(ValueError, match="Lost opportunities"):
+        metrics.record_request_assignment_pressure(
+            gentype="text",
+            evidence="target_opportunity_seen",
+            might_stall=False,
+            dispatch_opportunities=1,
+            lost_opportunities=2,
+            returned_capacity=0,
+            active_preceding_dispatches=0,
+            arriving_preceding_work=0,
+            returned_work=0,
+        )
+
+    with pytest.raises(ValueError, match="Unknown assignment-pressure evidence"):
+        metrics.record_request_assignment_pressure(
+            gentype="text",
+            evidence="request-id-would-be-unbounded",
+            might_stall=False,
+            dispatch_opportunities=0,
+            lost_opportunities=0,
+            returned_capacity=0,
+            active_preceding_dispatches=0,
+            arriving_preceding_work=0,
+            returned_work=0,
+        )
+
+
 @pytest.mark.parametrize(
     ("predicted_stall", "expired_without_start", "expected_result"),
     [
