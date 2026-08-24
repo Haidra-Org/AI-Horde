@@ -10,6 +10,8 @@ from horde_sdk.generation_parameters.image.constraints_document import SamplerCo
 
 from horde.apis.models import v2
 from horde.consts import (
+    CONTROL_STRENGTH_MAX,
+    CONTROL_STRENGTH_MIN,
     FLOW_SHIFT_MAX,
     FLOW_SHIFT_MIN,
     IMAGE_CONTROL_TYPES,
@@ -602,6 +604,17 @@ class ImageModels(v2.Models):
                 "control_type": fields.String(
                     required=False,
                     enum=IMAGE_CONTROL_TYPES,
+                ),
+                "control_strength": fields.Float(
+                    required=False,
+                    default=None,
+                    min=CONTROL_STRENGTH_MIN,
+                    max=CONTROL_STRENGTH_MAX,
+                    description=(
+                        "How strongly the ControlNet guidance steers the generation. Only applies "
+                        "alongside a control_type. When unset, the worker's own default of 1.0 applies. "
+                        "Requires a worker new enough to read it."
+                    ),
                 ),
                 "image_is_control": fields.Boolean(
                     default=False,

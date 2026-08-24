@@ -22,8 +22,17 @@ CAPABILITY_EXPANDED_REGEN_VERSION = 17
 """
 
 
+CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION = 18
+"""The reGen bridge version that reads the `control_strength` field
+
+A bridge older than the field applies its own default guidance weight and reports no error, so a job
+carrying the field is gated at dispatch rather than merely advertised.
+"""
+
+
 BRIDGE_CAPABILITIES = {
     "AI Horde Worker reGen": {
+        CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION: {"control_strength"},
         CAPABILITY_EXPANDED_REGEN_VERSION: {
             "extended_controlnet",
             "scheduler",

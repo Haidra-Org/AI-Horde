@@ -570,3 +570,44 @@ class TestExistingRequestsAreNotRepriced:
         }
         for sampler, expected in expected_kudos.items():
             assert kudos_model.calculate_kudos(dict(basis_payload, sampler_name=sampler)) == expected, sampler
+
+
+class TestControlStrengthPricing:
+    """A request that leaves the guidance weight unset prices exactly as it did before the field existed.
+
+    The pricer reads ``control_strength`` and falls back to ``denoising_strength`` when it is absent, so
+    the API must leave the field out of the payload rather than writing the worker-side default of 1.0
+    into it. Doing that would reprice every controlnet request that never asked for the setting.
+    """
+
+    @pytest.fixture
+    def controlnet_payload(self, basis_payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(basis_payload)
+        payload.update(
+            {
+                "source_image": True,
+                "source_processing": "img2img",
+                "control_type": "canny",
+                "denoising_strength": 0.4,
+            },
+        )
+        del payload["control_strength"]
+        return payload
+
+    def test_an_absent_field_prices_as_the_denoising_strength(
+        self,
+        kudos_model: KudosModel,
+        controlnet_payload: dict[str, Any],
+    ) -> None:
+        absent = kudos_model.calculate_kudos(dict(controlnet_payload))
+        matching = kudos_model.calculate_kudos({**controlnet_payload, "control_strength": 0.4})
+        assert absent == matching
+
+    def test_a_supplied_field_replaces_the_fallback(
+        self,
+        kudos_model: KudosModel,
+        controlnet_payload: dict[str, Any],
+    ) -> None:
+        absent = kudos_model.calculate_kudos(dict(controlnet_payload))
+        supplied = kudos_model.calculate_kudos({**controlnet_payload, "control_strength": 1.6})
+        assert supplied != absent

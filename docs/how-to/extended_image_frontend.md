@@ -505,6 +505,8 @@ stale.
 | `SchedulerBaselineMismatch` | Clear the scheduler and refresh effective model baselines. |
 | `FlowShiftInapplicable` | Hide and delete `flow_shift` for the effective models. |
 | `FlowShiftOutOfRange` | Delete it or reset it within the generated schema range. |
+| `ControlStrengthWithoutControlType` | Hide and delete `control_strength` until a control type is chosen. |
+| `ControlStrengthOutOfRange` | Delete it or reset it within the generated schema range. |
 | `ControlNetSourceMissing` | Keep the form open and require a source image. |
 | `ControlNetInpaintingMismatch` | Change `source_processing` or disable ControlNet. |
 | `ControlNetMismatch` or `ControlNetUnsupported` | Disable ControlNet for the selected models. |

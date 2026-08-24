@@ -7,11 +7,14 @@
 from datetime import datetime, timedelta
 
 from horde import request_scheduling
+from horde.bridge_reference import CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION
 
+# The newest capability tier, named rather than spelled out: a version that gains a capability is no
+# longer equivalent to the one below it, which is what this state is compared against.
 _CURRENT_WORKER_STATE = request_scheduling.build_worker_scheduling_state(
     gentype="image",
     model_names=("model",),
-    bridge_agent="AI Horde Worker reGen:17:unknown",
+    bridge_agent=f"AI Horde Worker reGen:{CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION}:unknown",
 )
 
 
@@ -217,7 +220,7 @@ def test_worker_state_compares_effective_bridge_capabilities() -> None:
     equivalent_state = request_scheduling.build_worker_scheduling_state(
         gentype="image",
         model_names=("model",),
-        bridge_agent="AI Horde Worker reGen:18:other-build",
+        bridge_agent=f"AI Horde Worker reGen:{CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION + 1}:other-build",
     )
     older_state = request_scheduling.build_worker_scheduling_state(
         gentype="image",

@@ -15,6 +15,7 @@ from horde.bridge_reference import (
 )
 from horde.classes.base.worker import Worker
 from horde.consts import (
+    CONTROL_STRENGTH_PARAM,
     EXTENDED_SCHEDULERS,
     FLOW_SHIFT_PARAM,
     KNOWN_POST_PROCESSORS,
@@ -171,6 +172,13 @@ class ImageWorker(Worker):
             return [False, "bridge_version"]
         if waiting_prompt.gen_payload.get(FLOW_SHIFT_PARAM) is not None and not check_bridge_capability(
             "flow_shift",
+            self.bridge_agent,
+        ):
+            return [False, "bridge_version"]
+        # A bridge that cannot read the field applies its own guidance weight instead of the requested
+        # one, so the job would come back rendered to a strength nobody asked for.
+        if waiting_prompt.gen_payload.get(CONTROL_STRENGTH_PARAM) is not None and not check_bridge_capability(
+            "control_strength",
             self.bridge_agent,
         ):
             return [False, "bridge_version"]

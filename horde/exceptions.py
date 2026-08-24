@@ -175,6 +175,8 @@ KNOWN_RC = [
     "SchedulerBaselineMismatch",
     "FlowShiftInapplicable",
     "FlowShiftOutOfRange",
+    "ControlStrengthWithoutControlType",
+    "ControlStrengthOutOfRange",
 ]
 
 

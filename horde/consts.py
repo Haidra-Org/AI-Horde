@@ -343,6 +343,16 @@ FLOW_SHIFT_BASELINES = frozenset(
     },
 )
 
+# The weight the ControlNet guidance is applied with. It is a property of the control map rather than of
+# the model, so it only means anything alongside a `control_type`: with no control map there is nothing
+# to weight, and the backend would render a plain generation with no sign the setting had been dropped.
+CONTROL_STRENGTH_PARAM = "control_strength"
+
+# At the bottom of the range the guidance contributes almost nothing and at the top it overwhelms the
+# prompt. Zero is excluded because a request asking for no guidance has no reason to carry the field.
+CONTROL_STRENGTH_MIN = 0.01
+CONTROL_STRENGTH_MAX = 3.0
+
 # Every `sampler_solver_type` value any sampler accepts, which is what the field can be validated
 # against on its own. No sampler accepts all of them: the per-sampler vocabulary is the real constraint
 # and is checked against horde_sdk at validation.
