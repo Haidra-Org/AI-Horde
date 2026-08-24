@@ -21,6 +21,15 @@ This procedure assumes the frontend already submits image requests, polls reques
 model-reference metadata, and generates API types from `/api/swagger.json` or maintains equivalent
 request types.
 
+The examples below illustrate data ownership, compatibility rules, and serialization boundaries. They
+are not drop-in UI components: adapt parsing, local validation, accessibility, error presentation, and
+reactive state handling to the frontend's framework and design system. The invariants described around
+the examples are normative; incidental TypeScript structure is not.
+
+In this guide, `apiOrigin` means the URL origin without an API path, for example
+`https://aihorde.net` or `http://localhost:7001`. `apiV2BaseUrl` means
+`${apiOrigin}/api/v2`. Do not append `/api/v2` to a value that already contains it.
+
 The [samplers and schedulers reference](../reference/samplers_and_schedulers.md) covers behavior and
 cost. This guide concentrates on request construction and UI state.
 
@@ -122,6 +131,10 @@ origin and full `schema_version`; the origin matters because self-hosted deploym
 ```ts
 const supportedSamplerContractMajor = "1";
 
+function apiV2BaseUrl(apiOrigin: string): string {
+  return `${apiOrigin.replace(/\/+$/, "")}/api/v2`;
+}
+
 function samplerContractCacheKey(apiOrigin: string, suffix: string): string {
   return `aihorde:sampler-constraints:${apiOrigin}:${suffix}`;
 }
@@ -144,7 +157,7 @@ function readCachedSamplerContract(apiOrigin: string): SamplerContractV1 | null 
 
 async function loadSamplerContract(apiOrigin: string): Promise<SamplerContractV1 | null> {
   try {
-    const response = await fetch(`${apiOrigin}/api/v2/status/sampler_constraints`, {
+    const response = await fetch(`${apiV2BaseUrl(apiOrigin)}/status/sampler_constraints`, {
       headers: {"Client-Agent": CLIENT_AGENT},
     });
     if (!response.ok) return readCachedSamplerContract(apiOrigin);
@@ -180,16 +193,26 @@ document has a supported `schema_version`, and the sampler picker contains the k
 
 ## Render controls from the selected sampler
 
-Show `presentation_tiers.recommended` first and put records marked `advanced` behind the frontend's
-advanced-controls affordance. A tier controls placement only. Every record in `samplers` is accepted.
+Use `presentation_tiers.recommended` as the ordered list for the primary sampler picker. Render
+remaining records according to their record-level `presentation_tier`, placing `advanced` records
+behind the frontend's advanced-controls affordance. If the two representations disagree, keep every
+sampler available, prefer the explicit recommended ordering for placement, and record the
+inconsistency as telemetry rather than treating it as a request-construction error. Tiers affect
+presentation only; every record in `samplers` is accepted.
 
 Render one numeric input for each entry in `accepted_settings`:
 
 - `minimum` and a non-null `maximum` become input bounds.
-- `integer_only: true` uses an integer input or `step="1"`.
-- `maximum: null` means that the setting has no upper bound.
+- `integer_only: true` uses integer parsing and an integer step such as `step="1"`.
+- `integer_only: false` must accept finite fractional values; a native HTML number input normally
+  needs `step="any"` or an appropriate fractional step.
+- `maximum: null` means that the API publishes no upper bound; do not invent one for request
+  validation.
 - `default: null` means that leaving the field absent delegates the limit or value to the solver.
 - `solver_type_choices` becomes a select only when the array is non-empty.
+
+Parse and validate according to the frontend's normal form conventions. The submission serializer
+remains the final defensive boundary.
 
 Use frontend labels as presentation data while retaining the API field as the form-state key:
 
@@ -202,13 +225,32 @@ const samplerSettingLabels: Record<string, string> = {
   sampler_s_tmax: "Churn end sigma",
   sampler_order: "Solver order",
 };
+
+function labelForSamplerSetting(field: string): string {
+  return samplerSettingLabels[field] ??
+    field
+      .replace(/^sampler_/, "")
+      .split("_")
+      .map((part) => part[0]?.toUpperCase() + part.slice(1))
+      .join(" ");
+}
 ```
+
+Labels are presentation overrides, not a setting allowlist. Render every key in
+`accepted_settings`; use a generated fallback label when the frontend has no curated label yet.
+Serialization continues to use the original API key.
 
 Do not serialize a displayed default until the user changes it. This lets the backend retain ownership
 of defaults and gives Reset a simple meaning: delete the value from form state. Keep drafts per sampler
 if restoring a user's previous tuning is useful, but filter the draft at submission time. A user can
 select `k_euler`, set churn, and then select `dpmpp_2m_sde`; the hidden churn value must not survive that
 change.
+
+The serializer is deliberately fail-closed: it omits malformed, non-finite, out-of-range, or
+inapplicable values rather than sending a request it already knows to be invalid. It is not the
+user-feedback layer. Validate edits when they occur and show an error beside the control; use
+submission-time omission only as protection against stale state, restored drafts, and programming
+errors.
 
 ```ts
 type SamplerDraft = Record<string, number | string | undefined>;
@@ -243,6 +285,9 @@ Verify by changing between samplers with different `accepted_settings` and inspe
 JSON. Its `sampler_*` keys must be a subset of the newly selected sampler's settings, plus
 `sampler_solver_type` only when its value occurs in `solver_type_choices`. Hiding the advanced section
 and returning `{}` from this serializer reverses the UI addition.
+
+Also enter an invalid value and confirm both behaviors: the control shows a local error, and the
+outgoing request omits the invalid field. The UI must not imply that an omitted value was submitted.
 
 ## Filter schedules and flow shift
 
@@ -282,8 +327,25 @@ with a baseline-restricted scheduler, and let the server remain the final author
 The current flow-matching baselines are `flux_1`, `flux_dev`, `flux_schnell`, and `qwen_image`. Show
 `flow_shift` only when every effective model has one of those baselines. Generate its numeric bounds
 from the generation request schema (currently 0 through 100), and omit it when the control is hidden.
-Keep this baseline set with the frontend's versioned model-feature data so an API update can change it
-in one place.
+The sampler-constraints contract does not currently publish flow-shift baseline applicability, so
+this list is intentionally frontend-owned compatibility data rather than sampler-contract data.
+Define it once in the frontend's versioned model-feature module, cover it with request-builder tests,
+and update it when the API's published generation rules change. Unknown baselines must remain
+incompatible by default.
+
+```ts
+const FLOW_SHIFT_BASELINES = new Set([
+  "flux_1",
+  "flux_dev",
+  "flux_schnell",
+  "qwen_image",
+]);
+
+function supportsFlowShift(effectiveBaselines: string[]): boolean {
+  return effectiveBaselines.length > 0 &&
+    effectiveBaselines.every((baseline) => FLOW_SHIFT_BASELINES.has(baseline));
+}
+```
 
 An explicit `scheduler` takes precedence over the legacy `karras` boolean. Preserve old saved settings
 as follows:
@@ -303,8 +365,37 @@ controls, omit both fields, and continue sending `karras` to reverse this stage.
 
 ## Submit a generation request
 
-Merge only the serialized controls into the existing `params`. This complete example selects the
-`heun` correction supported by `dpmpp_2m_sde`:
+Apply styles, presets, restored settings, and ordinary form state first. Then perform one final
+normalization pass immediately before submission. That pass must derive effective models and
+baselines, remove inapplicable scheduler and flow-shift values, and replace all existing `sampler_*`
+fields with the output of `serializeSamplerSettings`. Nothing may mutate sampler-dependent fields
+after this boundary.
+
+```ts
+function finalizeGenerationParams(
+  paramsAfterStylesAndPresets: GenerationParams,
+  contract: SamplerContractV1,
+  samplerName: string,
+  samplerDraft: SamplerDraft,
+): GenerationParams {
+  const params = {...paramsAfterStylesAndPresets};
+
+  for (const field of Object.keys(params)) {
+    if (field.startsWith("sampler_") && field !== "sampler_name") {
+      delete params[field];
+    }
+  }
+
+  params.sampler_name = samplerName;
+  Object.assign(params, serializeSamplerSettings(contract, samplerName, samplerDraft));
+  return params;
+}
+```
+
+The complete application should perform scheduler and `flow_shift` filtering in this same finalizer.
+The abbreviated function demonstrates the ownership rule for sampler-specific fields.
+
+This complete request selects the `heun` correction supported by `dpmpp_2m_sde`:
 
 ```json
 {
@@ -385,6 +476,13 @@ contains an `id` and the request completes. Restrict the picker to the previous 
 expanded choices; remove `control_type`, `image_is_control`, `return_control_map`, and `source_image` to
 return to text-to-image.
 
+`control_strength` weights the control map against the prompt. Put it in `params` alongside
+`control_type`, in the range 0.01 to 3.0. Leave it out unless the user has changed it: only AI Horde
+Worker reGen 18 and newer read the field, so a request that carries it waits for one of those workers,
+and an absent field leaves the worker's own default of 1.0 in place. The `qr_code` workflow builds its
+control map from `extra_texts` and so accepts `control_strength` without a `control_type`. Every other
+request needs the control type first, or the server rejects it with `ControlStrengthWithoutControlType`.
+
 ## Add direct control-map generation
 
 Use the interrogation API when the user wants the prepared control map itself. This path does not need
@@ -459,11 +557,48 @@ Verify the returned URL can be loaded as an image, not merely that the key exist
 `annotation` from the form picker reverses this feature and leaves all existing interrogation forms
 unchanged.
 
+## Check integration invariants
+
+Before considering the integration complete, verify that:
+
+- The sampler contract is keyed and cached separately for each API origin.
+- An unsupported contract major version never drives new controls.
+- Every rendered sampler setting comes from the selected sampler's `accepted_settings`.
+- Unknown setting keys remain renderable even without curated labels.
+- Changing samplers cannot leak hidden `sampler_*` values.
+- Styles and presets are resolved before final compatibility filtering.
+- Every effective model satisfies scheduler and flow-shift applicability.
+- Unknown model baselines fail closed for baseline-restricted features.
+- An explicit `scheduler` removes legacy `karras`; otherwise legacy behavior is preserved.
+- Generation and annotation use their distinct `control_type` enums.
+- `control_strength` is sent only alongside a control type or the `qr_code` workflow.
+- Annotation results are matched by form and payload, not array position.
+- Server errors are handled by `rc`, never by parsing `message`.
+- A contract refresh never causes an automatic semantic retry.
+
+Exercise at least these state transitions:
+
+| Case | Expected request behavior |
+| --- | --- |
+| Sampler changes from `k_euler` to `dpmpp_2m_sde` | Churn-only fields are removed. |
+| Restored draft contains `NaN` or a numeric string | The field is omitted until correctly parsed. |
+| A fractional control contains `1.25` | The value is accepted and serialized. |
+| Solver type is absent from `solver_type_choices` | `sampler_solver_type` is omitted. |
+| A style replaces the selected models | Scheduler and flow shift are re-evaluated afterward. |
+| One selected model has an unknown baseline | Baseline-restricted features are unavailable. |
+| The contract endpoint fails with a compatible cache | The cached contract is used. |
+| The contract major version is unsupported | Existing controls remain and new fields are omitted. |
+| An explicit scheduler is selected | `scheduler` is sent and `karras` is absent. |
+| Annotation forms return out of order | Results are associated by echoed payload. |
+
 ## Verify against a local stack
 
-Point the frontend's local configuration at the API branch being tested. Include `/api/v2` exactly
-once in the configured base URL. A local frontend that still points at `https://aihorde.net/api/v2`
-can look correct while reading the production contract and submitting production work.
+Point the frontend's local configuration at the API branch being tested. Determine whether the
+frontend stores an origin or a versioned API base URL. For these examples, configure `apiOrigin` as
+`http://localhost:7001`; `apiV2BaseUrl(apiOrigin)` then becomes
+`http://localhost:7001/api/v2`. If the existing frontend stores the latter directly, do not append
+`/api/v2` again. A local frontend that still points at `https://aihorde.net/api/v2` can look correct
+while reading the production contract and submitting production work.
 
 For this repository's Docker Compose stack, create the ignored `.env_docker` described in
 `README_docker.md`, then start the API and its stores:
@@ -477,8 +612,8 @@ curl http://localhost:7001/api/v2/status/sampler_constraints
 docker compose -p aihorde-extended-frontend-test up --build -d
 ```
 
-You should change the production endpoint from `https://aihorde.net/api/v2` to
-`http://localhost:7001/api/v2` in the frontend's local configuration.
+Using the naming in this guide, change `apiOrigin` from `https://aihorde.net` to
+`http://localhost:7001` in the frontend's local configuration.
 
 ## Recover from validation errors
 
@@ -505,7 +640,7 @@ stale.
 | `SchedulerBaselineMismatch` | Clear the scheduler and refresh effective model baselines. |
 | `FlowShiftInapplicable` | Hide and delete `flow_shift` for the effective models. |
 | `FlowShiftOutOfRange` | Delete it or reset it within the generated schema range. |
-| `ControlStrengthWithoutControlType` | Hide and delete `control_strength` until a control type is chosen. |
+| `ControlStrengthWithoutControlType` | Hide and delete `control_strength` until a control type is chosen or the QR workflow is in use. |
 | `ControlStrengthOutOfRange` | Delete it or reset it within the generated schema range. |
 | `ControlNetSourceMissing` | Keep the form open and require a source image. |
 | `ControlNetInpaintingMismatch` | Change `source_processing` or disable ControlNet. |
