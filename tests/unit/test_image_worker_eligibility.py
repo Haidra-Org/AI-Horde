@@ -179,3 +179,35 @@ def test_runtime_gate_honors_worker_capability_opt_outs(
     monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
 
     assert worker.can_generate_with_model_names(request, [_MODEL]) == [False, reason]
+
+
+def test_runtime_gate_rejects_control_strength_on_a_bridge_that_cannot_read_it(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Read from the job payload rather than the request params, which is what the worker is handed.
+    request, worker = _make_pair(make_user, make_user_role)
+    request.gen_payload = {**request.params, "control_type": "canny", "control_strength": 0.8}
+    monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+    monkeypatch.setattr(
+        "horde.classes.stable.worker.check_bridge_capability",
+        lambda checked_capability, _bridge_agent: checked_capability != "control_strength",
+    )
+
+    assert worker.can_generate_with_model_names(request, [_MODEL]) == [False, "bridge_version"]
+
+
+def test_runtime_gate_allows_control_strength_on_a_bridge_that_reads_it(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, worker = _make_pair(make_user, make_user_role)
+    request.gen_payload = {**request.params, "control_type": "canny", "control_strength": 0.8}
+    monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+    monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
+
+    assert worker.can_generate_with_model_names(request, [_MODEL]) == [True, None]

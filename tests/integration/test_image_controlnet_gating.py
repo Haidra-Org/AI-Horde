@@ -18,7 +18,7 @@ import pytest
 from horde_sdk.ai_horde_api.apimodels import ImageGenerateJobPopResponse
 from PIL import Image
 
-from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
+from horde.bridge_reference import CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION, CAPABILITY_EXPANDED_REGEN_VERSION
 
 TEST_MODELS = ["stable_diffusion"]
 SDXL_MODELS = ["AlbedoBase XL (SDXL)"]
@@ -27,6 +27,13 @@ SDXL_MODELS = ["AlbedoBase XL (SDXL)"]
 OLD_BRIDGE_AGENT = "AI Horde Worker reGen:13:https://github.com/Haidra-Org/horde-worker-reGen"
 # A reGen agent at the extended controlnet threshold.
 NEW_BRIDGE_AGENT = f"AI Horde Worker reGen:{CAPABILITY_EXPANDED_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
+# The agents either side of the guidance-weight threshold, which is later than the extended controlnet one.
+PRE_CONTROL_STRENGTH_AGENT = (
+    f"AI Horde Worker reGen:{CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION - 1}:https://github.com/Haidra-Org/horde-worker-reGen"
+)
+CONTROL_STRENGTH_AGENT = (
+    f"AI Horde Worker reGen:{CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION}:https://github.com/Haidra-Org/horde-worker-reGen"
+)
 
 pytestmark = [
     pytest.mark.object_storage,
@@ -173,5 +180,73 @@ def test_legacy_hough_alias_still_matches_old_bridge(client, request_headers: di
         # `hough` is a classic control type, so an old controlnet worker still fulfils it.
         assert old_results["id"] is not None, old_results
         assert old_results["payload"]["control_type"] == "hough", old_results
+    finally:
+        client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
+
+
+def test_control_strength_skips_older_bridge_but_matches_the_one_that_reads_it(
+    client,
+    request_headers: dict[str, str],
+) -> None:
+    request_body = _controlnet_async_dict("canny")
+    request_body["params"]["control_strength"] = 0.6
+    async_req = client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+
+    try:
+        old_pop = client.post("/api/v2/generate/pop", json=_pop_dict(PRE_CONTROL_STRENGTH_AGENT), headers=request_headers)
+        assert old_pop.status_code < 400, old_pop.get_data(as_text=True)
+        old_results = old_pop.get_json()
+        # The control type alone would match this agent; the guidance weight is what holds the job back.
+        assert old_results["id"] is None, old_results
+        assert old_results["skipped"].get("bridge_version", 0) >= 1, old_results
+
+        new_pop = client.post("/api/v2/generate/pop", json=_pop_dict(CONTROL_STRENGTH_AGENT), headers=request_headers)
+        assert new_pop.status_code < 400, new_pop.get_data(as_text=True)
+        new_results = new_pop.get_json()
+        assert new_results["id"] is not None, new_results
+        # Asserted against the raw response: the installed horde_sdk payload model does not declare the
+        # field yet, and it refuses undeclared ones while tests are running.
+        assert new_results["payload"]["control_strength"] == 0.6, new_results
+    finally:
+        client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)
+
+
+def test_control_strength_without_a_control_type_is_rejected(client, request_headers: dict[str, str]) -> None:
+    request_body = _controlnet_async_dict("canny")
+    del request_body["params"]["control_type"]
+    request_body["params"]["control_strength"] = 0.6
+    async_req = client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+    assert async_req.status_code == 400, async_req.get_data(as_text=True)
+    assert async_req.get_json().get("rc") == "ControlStrengthWithoutControlType", async_req.get_data(as_text=True)
+
+
+def test_control_strength_outside_the_accepted_range_is_rejected(client, request_headers: dict[str, str]) -> None:
+    request_body = _controlnet_async_dict("canny")
+    request_body["params"]["control_strength"] = 5.0
+    async_req = client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+    # The published bounds reject it before the validator is reached, which is where flow_shift's range
+    # is caught too. The validator's own range check, and its return code, cover any other route in.
+    assert async_req.status_code == 400, async_req.get_data(as_text=True)
+    assert "params.control_strength" in async_req.get_json()["errors"], async_req.get_data(as_text=True)
+
+
+def test_a_request_without_control_strength_still_matches_an_older_bridge(
+    client,
+    request_headers: dict[str, str],
+) -> None:
+    # The gate must cost nothing to every request that does not carry the field.
+    async_req = client.post("/api/v2/generate/async", json=_controlnet_async_dict("canny"), headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+
+    try:
+        pop = client.post("/api/v2/generate/pop", json=_pop_dict(PRE_CONTROL_STRENGTH_AGENT), headers=request_headers)
+        assert pop.status_code < 400, pop.get_data(as_text=True)
+        results = pop.get_json()
+        assert results["id"] is not None, results
+        # Absent rather than defaulted: the pricer reads the field and falls back when it is missing.
+        assert results["payload"].get("control_strength") is None, results
     finally:
         client.delete(f"/api/v2/generate/status/{req_id}", headers=request_headers)

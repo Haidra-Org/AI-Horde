@@ -37,6 +37,7 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.consts import (
+    CONTROL_STRENGTH_PARAM,
     EXTENDED_SCHEDULERS,
     FLOW_SHIFT_PARAM,
     LEGACY_IMAGE_CONTROL_TYPES,
@@ -1124,6 +1125,10 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 check_bridge_capability("flow_shift", worker.bridge_agent),
             ),
             or_(
+                ImageWaitingPrompt.params[CONTROL_STRENGTH_PARAM].astext.is_(None),
+                check_bridge_capability("control_strength", worker.bridge_agent),
+            ),
+            or_(
                 worker.speed >= 500000,  # 0.5 MPS/s
                 ImageWaitingPrompt.slow_workers == True,  # noqa E712
             ),
@@ -1238,6 +1243,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     can_sigma_generators = check_bridge_capability("sigma_generators", bridge_agent)
     can_solver_options = check_bridge_capability("solver_options", bridge_agent)
     can_flow_shift = check_bridge_capability("flow_shift", bridge_agent)
+    can_control_strength = check_bridge_capability("control_strength", bridge_agent)
 
     available_samplers = get_supported_samplers(bridge_agent, karras=False)
     available_karras_samplers = get_supported_samplers(bridge_agent, karras=True)
@@ -1389,6 +1395,8 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
         bv_conditions.extend(ImageWaitingPrompt.params[field].astext.is_not(None) for field in SOLVER_KNOB_PARAMS)
     if not can_flow_shift:
         bv_conditions.append(ImageWaitingPrompt.params[FLOW_SHIFT_PARAM].astext.is_not(None))
+    if not can_control_strength:
+        bv_conditions.append(ImageWaitingPrompt.params[CONTROL_STRENGTH_PARAM].astext.is_not(None))
 
     count_exprs["_bv_sampler"] = count_distinct_wp(or_(*bv_conditions))
 

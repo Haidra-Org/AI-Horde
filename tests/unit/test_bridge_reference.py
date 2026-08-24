@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from horde.bridge_reference import (
+    CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION,
     CAPABILITY_EXPANDED_REGEN_VERSION,
     check_bridge_capability,
     check_sampler_capability,
@@ -199,3 +200,32 @@ class TestSolverKnobSamplerGating:
         # These differ only in which device draws the noise, which is the worker's own concern.
         available = get_supported_samplers(_regen_agent(CAPABILITY_EXPANDED_REGEN_VERSION + 5), karras=False)
         assert not [sampler for sampler in available if sampler.endswith("_gpu")]
+
+
+class TestControlStrengthCapability:
+    """The ControlNet guidance weight only reaches bridges that read it.
+
+    A bridge older than the field applies its own weight and reports no error, so an ungated dispatch
+    returns an image guided to a strength the request did not ask for.
+    """
+
+    def test_the_capability_is_absent_before_its_version(self):
+        agent = _regen_agent(CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION - 1)
+        assert check_bridge_capability("control_strength", agent) is False
+
+    def test_the_capability_is_present_from_its_version(self):
+        agent = _regen_agent(CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION)
+        assert check_bridge_capability("control_strength", agent) is True
+
+    def test_the_capability_survives_a_later_version(self):
+        agent = _regen_agent(CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION + 5)
+        assert check_bridge_capability("control_strength", agent) is True
+
+    def test_the_older_capabilities_are_not_disturbed(self):
+        # A repeated dict key would silently keep only the last entry, taking the older tier with it.
+        agent = _regen_agent(CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION)
+        for capability in ("flow_shift", "solver_options", "scheduler", "extended_controlnet"):
+            assert check_bridge_capability(capability, agent) is True, capability
+
+    def test_a_non_regen_bridge_does_not_have_it(self):
+        assert check_bridge_capability("control_strength", "AI Horde Worker:99:https://x") is False

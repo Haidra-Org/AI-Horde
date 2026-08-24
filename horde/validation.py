@@ -13,6 +13,9 @@ from loguru import logger
 from horde import exceptions as e
 from horde.classes.base.user import User
 from horde.consts import (
+    CONTROL_STRENGTH_MAX,
+    CONTROL_STRENGTH_MIN,
+    CONTROL_STRENGTH_PARAM,
     FLOW_SHIFT_BASELINES,
     FLOW_SHIFT_MAX,
     FLOW_SHIFT_MIN,
@@ -143,6 +146,29 @@ class ParamValidator:
         if sampler_name in CFG_PP_SAMPLERS and self.params.get("cfg_scale", 7.5) > CFG_PP_ADVISED_MAX_CFG_SCALE:
             self.warnings.add(WarningMessage.CfgPPScaleTooLarge)
 
+    def validate_control_strength(self) -> None:
+        """Reject a control strength the backend has nothing to apply it to, or cannot apply as asked.
+
+        The field weights the ControlNet guidance, so a request that sets it without a `control_type`
+        has asked for something the backend has no control map to weight: it would render a plain
+        generation with no sign that the setting had been dropped. The range is checked here as well as
+        in the schema so that a payload reaching the validator by any other route is held to the same
+        bounds, which is also what gives the rejection a return code a client can branch on.
+        """
+        control_strength = self.params.get(CONTROL_STRENGTH_PARAM)
+        if control_strength is None:
+            return
+        if self.params.get("control_type") is None:
+            raise e.BadRequest(
+                "control_strength only applies alongside a control_type.",
+                rc="ControlStrengthWithoutControlType",
+            )
+        if not CONTROL_STRENGTH_MIN <= control_strength <= CONTROL_STRENGTH_MAX:
+            raise e.BadRequest(
+                f"control_strength must be between {CONTROL_STRENGTH_MIN:g} and {CONTROL_STRENGTH_MAX:g}, inclusive.",
+                rc="ControlStrengthOutOfRange",
+            )
+
     def validate_image_params(self):
         self.validate_base_params()
         for model_req_dict in [model_reference.get_model_requirements(m) for m in self.models]:
@@ -164,6 +190,7 @@ class ParamValidator:
             if "schedulers" in model_req_dict and scheduler not in model_req_dict["schedulers"]:
                 self.warnings.add(WarningMessage.SchedulerMismatch)
         self.validate_sampler_constraints()
+        self.validate_control_strength()
         if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.models):
             if self.params.get("hires_fix", False) is True:
                 raise e.BadRequest("HiRes Fix does not work with Flux currently.", rc="HiResMismatch")
