@@ -27,6 +27,25 @@ class StripeV15Resource:
         return self._data.copy()
 
 
+class StripeV15ListResource:
+    """A list response: iterating yields one page, ``auto_paging_iter()`` yields all.
+
+    Mirroring that split matters because the two are what separate a truncated
+    refresh from a complete one; a fake that returns a plain list cannot tell
+    them apart. Broader coverage of the paging itself lives in
+    ``tests/integration/test_stripe_subscriber_sync.py``.
+    """
+
+    def __init__(self, data: list[Any]) -> None:
+        self._data = data
+
+    def __iter__(self) -> Any:
+        return iter(self._data)
+
+    def auto_paging_iter(self) -> Any:
+        return iter(self._data)
+
+
 def test_store_stripe_members_accepts_v15_resources(monkeypatch) -> None:
     subscription = StripeV15Resource(
         {
@@ -40,7 +59,7 @@ def test_store_stripe_members_accepts_v15_resources(monkeypatch) -> None:
     customer = StripeV15Resource({"email": "supporter@example.com", "name": "Supporter Name"})
     fake_stripe = SimpleNamespace(
         api_key=None,
-        Subscription=SimpleNamespace(list=lambda: [subscription]),
+        Subscription=SimpleNamespace(list=lambda **params: StripeV15ListResource([subscription])),
         Product=SimpleNamespace(retrieve=lambda product_id: product),
         Customer=SimpleNamespace(retrieve=lambda customer_id: customer),
     )
