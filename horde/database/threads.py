@@ -754,6 +754,11 @@ def store_patreon_members():
     hr.horde_r_set("patreon_cache", cached_patreons)
 
 
+# The largest page Stripe will serve for a list endpoint. Asking for it keeps a
+# full supporter refresh to as few round-trips as the API allows.
+STRIPE_MAX_PAGE_SIZE = 100
+
+
 @logger.catch(reraise=True)
 def store_stripe_members():
     if stripe is None:
@@ -762,19 +767,28 @@ def store_stripe_members():
     if not os.environ.get("STRIPE_API_KEY"):
         return
     stripe.api_key = os.environ.get("STRIPE_API_KEY")
-    subscriptions = stripe.Subscription.list()
+    # Stripe serves list endpoints one page at a time and iterating the returned
+    # list object walks only the page already in hand, so a plain iteration
+    # silently drops every supporter past the first page. auto_paging_iter
+    # follows the cursor; the page size is the maximum Stripe accepts, which
+    # bounds how many round-trips a full refresh costs.
+    subscriptions = stripe.Subscription.list(limit=STRIPE_MAX_PAGE_SIZE).auto_paging_iter()
     members = []
+    # Supporters concentrate onto a handful of products, so resolving each
+    # product once per refresh keeps the request count proportional to the tiers
+    # on offer rather than to the number of subscribers.
+    product_names: dict[str, str] = {}
     for subscription in subscriptions:
         subscription_data = subscription.to_dict()
         product_id = subscription_data["items"]["data"][0]["price"]["product"]
-        product = stripe.Product.retrieve(product_id)
-        product_data = product.to_dict()
+        if product_id not in product_names:
+            product_names[product_id] = stripe.Product.retrieve(product_id).to_dict()["name"]
         metadata = subscription_data.get("metadata", {})
         customer = stripe.Customer.retrieve(subscription_data["customer"])
         customer_data = customer.to_dict()
         members.append(
             {
-                "product_name": product_data["name"],
+                "product_name": product_names[product_id],
                 "email": customer_data.get("email", "Unknown"),
                 "name": customer_data.get("name", "Unknown"),
                 "horde_id": (metadata.get("horde_id") if metadata.get("horde_id") else metadata.get("horde")),
