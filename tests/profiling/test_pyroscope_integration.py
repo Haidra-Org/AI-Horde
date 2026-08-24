@@ -8,15 +8,16 @@ from __future__ import annotations
 
 from collections import Counter
 
-import pyroscope
-from opentelemetry.sdk.trace import TracerProvider
-from pyroscope.otel import PyroscopeSpanProcessor
-
-from horde.telemetry import _TraceRatioSpanProcessor
-
 
 def test_real_pyroscope_processor_correlates_real_sdk_root_span(monkeypatch) -> None:
     """Verify the real Pyroscope processor accepts the wrapped SDK lifecycle."""
+    import pyroscope
+    from opentelemetry.sdk.trace import TracerProvider
+    from pyroscope.otel import PyroscopeSpanProcessor
+
+    from horde.telemetry import _TraceRatioSpanProcessor
+
+
     added_tags: list[tuple[str, str]] = []
     removed_tags: list[tuple[str, str]] = []
     monkeypatch.setattr(
