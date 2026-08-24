@@ -164,5 +164,5 @@ The errors returned by the AI horde are always in this json format
 | SchedulerBaselineMismatch | The requested scheduler is not defined for this model's baseline |
 | FlowShiftInapplicable | Flow shift is not applied by the selected model baseline's backend graph |
 | FlowShiftOutOfRange | Flow shift is outside the backend's accepted range |
-| ControlStrengthWithoutControlType | Control strength was sent without a control type to apply it to |
+| ControlStrengthWithoutControlType | Control strength was sent without a control type or the QR workflow to apply it to |
 | ControlStrengthOutOfRange | Control strength is outside the accepted range |

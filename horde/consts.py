@@ -344,8 +344,10 @@ FLOW_SHIFT_BASELINES = frozenset(
 )
 
 # The weight the ControlNet guidance is applied with. It is a property of the control map rather than of
-# the model, so it only means anything alongside a `control_type`: with no control map there is nothing
-# to weight, and the backend would render a plain generation with no sign the setting had been dropped.
+# the model, so it only means anything to a request that has one: either it names a `control_type`, or it
+# is the qr_code workflow, which builds a control map of its own and scales it by this weight. With no
+# control map there is nothing to weight, and the backend would render a plain generation with no sign
+# the setting had been dropped.
 CONTROL_STRENGTH_PARAM = "control_strength"
 
 # At the bottom of the range the guidance contributes almost nothing and at the top it overwhelms the

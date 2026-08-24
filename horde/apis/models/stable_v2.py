@@ -612,8 +612,8 @@ class ImageModels(v2.Models):
                     max=CONTROL_STRENGTH_MAX,
                     description=(
                         "How strongly the ControlNet guidance steers the generation. Only applies "
-                        "alongside a control_type. When unset, the worker's own default of 1.0 applies. "
-                        "Requires a worker new enough to read it."
+                        "alongside a control_type or the qr_code workflow. When unset, the worker's own "
+                        "default of 1.0 applies. Requires a worker new enough to read it."
                     ),
                 ),
                 "image_is_control": fields.Boolean(

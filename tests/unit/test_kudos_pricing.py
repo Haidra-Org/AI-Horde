@@ -611,3 +611,36 @@ class TestControlStrengthPricing:
         absent = kudos_model.calculate_kudos(dict(controlnet_payload))
         supplied = kudos_model.calculate_kudos({**controlnet_payload, "control_strength": 1.6})
         assert supplied != absent
+
+
+class TestQrCodeWorkflowPricing:
+    """The QR workflow weights a control map of its own, so its guidance weight has to reach the pricer.
+
+    The workflow builds its control map from the extra texts rather than from a source image, so the
+    payload names neither a ``source_image`` nor a ``control_type``. A request that leaves the weight
+    unset still prices as it did before the field existed.
+    """
+
+    @pytest.fixture
+    def qr_code_payload(self, basis_payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(basis_payload, workflow="qr_code")
+        del payload["control_strength"]
+        return payload
+
+    def test_an_absent_field_prices_as_a_plain_generation(
+        self,
+        kudos_model: KudosModel,
+        basis_payload: dict[str, Any],
+        qr_code_payload: dict[str, Any],
+    ) -> None:
+        absent = kudos_model.calculate_kudos(dict(qr_code_payload))
+        assert absent == kudos_model.calculate_kudos(dict(basis_payload))
+
+    def test_a_supplied_field_changes_the_price(
+        self,
+        kudos_model: KudosModel,
+        qr_code_payload: dict[str, Any],
+    ) -> None:
+        absent = kudos_model.calculate_kudos(dict(qr_code_payload))
+        supplied = kudos_model.calculate_kudos({**qr_code_payload, "control_strength": 1.6})
+        assert supplied != absent

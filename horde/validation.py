@@ -149,18 +149,21 @@ class ParamValidator:
     def validate_control_strength(self) -> None:
         """Reject a control strength the backend has nothing to apply it to, or cannot apply as asked.
 
-        The field weights the ControlNet guidance, so a request that sets it without a `control_type`
-        has asked for something the backend has no control map to weight: it would render a plain
-        generation with no sign that the setting had been dropped. The range is checked here as well as
-        in the schema so that a payload reaching the validator by any other route is held to the same
-        bounds, which is also what gives the rejection a return code a client can branch on.
+        The field weights the ControlNet guidance, so a request that sets it with neither a `control_type`
+        nor the qr_code workflow has asked for something the backend has no control map to weight: it
+        would render a plain generation with no sign that the setting had been dropped. The qr_code
+        workflow builds its own control map from the extra texts and scales it by this field, so it
+        weights the guidance without naming a control type. The range is checked here as well as in the
+        schema so that a payload reaching the validator by any other route is held to the same bounds,
+        which is also what gives the rejection a return code a client can branch on.
         """
         control_strength = self.params.get(CONTROL_STRENGTH_PARAM)
         if control_strength is None:
             return
-        if self.params.get("control_type") is None:
+        has_control_map = self.params.get("control_type") is not None or self.params.get("workflow") == "qr_code"
+        if not has_control_map:
             raise e.BadRequest(
-                "control_strength only applies alongside a control_type.",
+                "control_strength only applies alongside a control_type or the qr_code workflow.",
                 rc="ControlStrengthWithoutControlType",
             )
         if not CONTROL_STRENGTH_MIN <= control_strength <= CONTROL_STRENGTH_MAX:

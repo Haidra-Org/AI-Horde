@@ -4,10 +4,11 @@
 
 """Request-time enforcement of the ControlNet guidance weight.
 
-The field weights a control map, so it means nothing on its own: a request that sets it without a
-``control_type`` would be rendered as a plain generation with no sign that the setting was dropped.
-Both rejections carry their own return code so a client can tell a missing dependency from a value
-outside the accepted range without parsing the message.
+The field weights a control map, so it means nothing on its own: a request that sets it with neither a
+``control_type`` nor the qr_code workflow would be rendered as a plain generation with no sign that the
+setting was dropped. The qr_code workflow applies a ControlNet of its own, so it weights the guidance
+without naming a control type. Both rejections carry their own return code so a client can tell a
+missing dependency from a value outside the accepted range without parsing the message.
 """
 
 from __future__ import annotations
@@ -48,6 +49,15 @@ class TestControlStrengthDependency:
         params = {"control_type": None, "control_strength": 0.8}
         assert rejection_code(params) == "ControlStrengthWithoutControlType"
 
+    def test_the_field_is_accepted_alongside_the_qr_code_workflow(self):
+        assert rejection_code({"workflow": "qr_code", "control_strength": 0.8}) is None
+
+    def test_another_workflow_does_not_satisfy_the_dependency(self):
+        assert rejection_code({"workflow": "something_else", "control_strength": 0.8}) == "ControlStrengthWithoutControlType"
+
+    def test_the_field_with_neither_a_control_type_nor_a_workflow_is_rejected(self):
+        assert rejection_code({"control_strength": 0.8}) == "ControlStrengthWithoutControlType"
+
 
 class TestControlStrengthRange:
     @pytest.mark.parametrize("value", [CONTROL_STRENGTH_MIN, 1.0, CONTROL_STRENGTH_MAX])
@@ -57,6 +67,10 @@ class TestControlStrengthRange:
     @pytest.mark.parametrize("value", [0.0, -1.0, 3.01, 10.0])
     def test_a_value_outside_the_range_is_rejected(self, value: float):
         assert rejection_code({"control_type": "canny", "control_strength": value}) == "ControlStrengthOutOfRange"
+
+    @pytest.mark.parametrize("value", [0.0, -1.0, 3.01, 10.0])
+    def test_the_qr_code_workflow_is_held_to_the_same_range(self, value: float):
+        assert rejection_code({"workflow": "qr_code", "control_strength": value}) == "ControlStrengthOutOfRange"
 
     def test_the_dependency_is_checked_before_the_range(self):
         # An out-of-range value with no control type names the missing dependency, which is the setting

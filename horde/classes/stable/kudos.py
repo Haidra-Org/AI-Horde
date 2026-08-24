@@ -298,12 +298,17 @@ class KudosModel:
 
         has_source_image = bool(payload.get("source_image", None))
         has_control_type = bool(payload.get("control_type", None))
+        is_qr_code_workflow = payload.get("workflow") == "qr_code"
 
         if has_source_image:
             denoising_strength = payload.get("denoising_strength", 1.0)
             if has_control_type:
                 control_strength = payload.get("control_strength", payload.get("denoising_strength", 1.0))
                 denoising_strength = 1.0
+        elif is_qr_code_workflow:
+            # The QR workflow builds its own control map out of the extra texts and scales it by this
+            # weight, so the field prices the job without a control_type or a source image to go with it.
+            control_strength = payload.get("control_strength", denoising_strength)
 
         data.append(
             [
