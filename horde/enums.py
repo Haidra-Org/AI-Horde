@@ -179,3 +179,19 @@ class WarningMessage(ReturnedEnum):
         "The requested sampler applies the CFG++ correction, which expects a cfg_scale of roughly 1 to 2. "
         "The image still renders at the cfg_scale given, but is likely to be oversaturated."
     )
+
+
+class BaselineFeature(enum.StrEnum):
+    """Name one request feature whose acceptance depends on the baselines the request names.
+
+    Members are declared in the order the request path evaluates them, so a request tripping two
+    features is always refused for the same one.
+    """
+
+    FLOW_SHIFT = "flow_shift"
+    HIRES_FIX = "hires_fix"
+    TRANSPARENT = "transparent"
+    QR_CODE = "qr_code"
+    CONTROL_TYPE_UNAVAILABLE = "control_type_unavailable"
+    CONTROL_TYPE = "control_type"
+    REMIX = "remix"
