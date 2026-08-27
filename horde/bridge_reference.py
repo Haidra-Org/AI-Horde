@@ -3,10 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import functools
+from typing import Final
 
 import semver
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 
 from horde.consts import EXTENDED_SAMPLERS, KNOWN_POST_PROCESSORS, SOLVER_KNOB_SAMPLERS
+from horde.enums import BaselineFeature
 from horde.logger import logger
 
 CAPABILITY_EXPANDED_REGEN_VERSION = 17
@@ -121,6 +124,53 @@ BRIDGE_CAPABILITIES = {
         },
     },
 }
+
+_SD1_AND_SD2_BASELINES: Final[frozenset[str]] = frozenset(
+    {
+        KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1.value,
+        KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_768.value,
+        KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_512.value,
+    },
+)
+"""The baselines every ControlNet-era bridge release renders the same features on."""
+
+BRIDGE_BASELINE_FEATURES: Final[dict[str, dict[int, dict[BaselineFeature, frozenset[str]]]]] = {
+    "AI Horde Worker reGen": {
+        1: {
+            BaselineFeature.HIRES_FIX: _SD1_AND_SD2_BASELINES | {KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl.value},
+            BaselineFeature.CONTROL_TYPE: _SD1_AND_SD2_BASELINES,
+        },
+        6: {BaselineFeature.HIRES_FIX: frozenset({KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value})},
+        8: {
+            BaselineFeature.TRANSPARENT: frozenset(
+                {
+                    KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1.value,
+                    KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl.value,
+                },
+            ),
+        },
+        17: {
+            BaselineFeature.FLOW_SHIFT: frozenset(
+                {
+                    KNOWN_IMAGE_GENERATION_BASELINE.flux_1.value,
+                    KNOWN_IMAGE_GENERATION_BASELINE.flux_schnell.value,
+                    KNOWN_IMAGE_GENERATION_BASELINE.flux_dev.value,
+                    KNOWN_IMAGE_GENERATION_BASELINE.qwen_image.value,
+                },
+            ),
+        },
+    },
+    "AI Horde Worker": {
+        13: {BaselineFeature.HIRES_FIX: _SD1_AND_SD2_BASELINES},
+        15: {BaselineFeature.CONTROL_TYPE: _SD1_AND_SD2_BASELINES},
+    },
+}
+"""Which baselines each bridge release renders a baseline-dependent feature on.
+
+Cumulative by version, as `BRIDGE_CAPABILITIES` is: a worker gets the union of every version at or
+below its own. A bridge that has no entry for a feature would ignore the field and render something
+other than what was asked for, so the combination is refused rather than dispatched.
+"""
 
 BRIDGE_SAMPLERS = {  # TODO: Refactor along with schedulers
     "AI Horde Worker reGen": {
@@ -255,6 +305,34 @@ def get_bridge_capabilities(bridge_agent: str) -> frozenset[str]:
 @logger.catch(reraise=True)
 def check_bridge_capability(capability: str, bridge_agent: str) -> bool:
     return capability in get_bridge_capabilities(bridge_agent)
+
+
+@functools.lru_cache(maxsize=1024)
+@logger.catch(reraise=True)
+def bridge_supports(feature: BaselineFeature, baseline: str, bridge_agent: str | None = None) -> bool:
+    """Return whether a bridge renders one baseline-dependent feature on one baseline.
+
+    Args:
+        feature: The baseline-dependent feature to check.
+        baseline: The baseline the job would run on.
+        bridge_agent: The worker's agent, or None to ask whether any known bridge kind at any version
+            renders it, which decides whether the request is accepted.
+    """
+    if bridge_agent is None:
+        return any(
+            baseline in features.get(feature, frozenset())
+            for bridge_versions in BRIDGE_BASELINE_FEATURES.values()
+            for features in bridge_versions.values()
+        )
+    bridge_name, bridge_version = parse_bridge_agent(bridge_agent)
+    bridge_versions = BRIDGE_BASELINE_FEATURES.get(bridge_name)
+    if bridge_versions is None:
+        return False
+    for version, features in bridge_versions.items():
+        checked_semver = semver.Version.parse(str(version), True)
+        if checked_semver.compare(bridge_version) <= 0 and baseline in features.get(feature, frozenset()):
+            return True
+    return False
 
 
 @logger.catch(reraise=True)
