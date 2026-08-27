@@ -49,7 +49,11 @@ dependencies = [
     # sampler/scheduler/baseline combinations cannot produce an image. Request validation, pricing and
     # the published constraints endpoint all read it, so the vocabulary cannot drift between this API,
     # the workers, and the clients that share this package.
-    "horde_sdk>=0.29.1,<0.30.0",
+    "horde_sdk~=0.31.0",
+    # The image model reference loader (REPLICA fetch plus the pending/beta overlay) and the
+    # baseline vocabulary both come from here, so it is pinned explicitly rather than being
+    # inherited from horde_sdk.
+    "horde_model_reference>=8.4.0,<9.0.0",
     "markdownify",
     "stripe>=15,<16",
     "environs",
