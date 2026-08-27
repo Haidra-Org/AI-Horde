@@ -11,12 +11,14 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.worker import WorkerModel
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.flask import db
+from tests.unit.model_reference_seed import seed_image_reference
 
 pytestmark = pytest.mark.unit
 
@@ -26,13 +28,7 @@ _MODEL = "stable_diffusion"
 @pytest.fixture(autouse=True)
 def _stub_model_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep worker checks independent of the network-backed model reference."""
-    from horde import model_reference as model_reference_module
-
-    monkeypatch.setattr(
-        model_reference_module.model_reference,
-        "reference",
-        {_MODEL: {"baseline": "stable diffusion 1"}},
-    )
+    seed_image_reference(monkeypatch, {_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1})
 
 
 def _make_request(user: Any) -> ImageWaitingPrompt:

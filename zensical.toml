@@ -30,12 +30,15 @@ nav = [
         { "Overview" = "reference/README.md" },
         { "Kudos accounting" = "reference/kudos_accounting.md" },
         { "Samplers and schedulers" = "reference/samplers_and_schedulers.md" },
+        { "Image baseline policy" = "reference/baseline_policy.md" },
+        { "Image model reference loader" = "reference/model_reference.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
         { "Kudos ledger operations" = "how-to/kudos_ledger_operations.md" },
         { "Extended image frontend" = "how-to/extended_image_frontend.md" },
         { "Add a sampler or annotator" = "how-to/add_sampler_or_annotator.md" },
+        { "Add an image baseline" = "how-to/add_image_baseline.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
     { "Concepts" = [

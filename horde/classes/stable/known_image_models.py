@@ -4,6 +4,8 @@
 
 from datetime import datetime
 
+from horde_model_reference.model_reference_records import ImageGenerationModelRecord
+
 from horde.flask import db
 from horde.logger import logger
 
@@ -135,44 +137,47 @@ def add_known_image_model(
 
 
 @logger.catch(reraise=True)
-def add_known_image_model_from_json(json: dict[str, object], defer_commit: bool = False) -> None:
-    """Add a image model to the database from a JSON object.
+def add_known_image_model_from_record(record: ImageGenerationModelRecord, defer_commit: bool = False) -> None:
+    """Add an image model to the database from a model reference record.
+
+    Columns the table declares non-nullable but the record leaves optional get the empty value the
+    legacy JSON path stored. ``features_not_supported`` has no counterpart in the record schema.
 
     Args:
-        json (dict[str, object]): The model reference JSON object.
+        record (ImageGenerationModelRecord): The image generation model record to mirror.
         defer_commit (bool): Whether to defer committing the addition to the database.
 
     """
     add_known_image_model(
-        name=json.get("name"),
-        baseline=json.get("baseline"),
-        inpainting=json.get("inpainting"),
-        description=json.get("description"),
-        version=json.get("version"),
-        style=json.get("style"),
-        tags=json.get("tags"),
-        homepage=json.get("homepage"),
-        nsfw=json.get("nsfw"),
-        requirements=json.get("requirements"),
-        config=json.get("config"),
-        features_not_supported=json.get("features_not_supported"),
-        size_on_disk_bytes=json.get("size_on_disk_bytes"),
+        name=record.name,
+        baseline=str(record.baseline),
+        inpainting=bool(record.inpainting),
+        description=record.description,
+        version=record.version or "",
+        style=str(record.style) if record.style is not None else "",
+        tags=record.tags or [],
+        homepage=record.homepage,
+        nsfw=record.nsfw,
+        requirements=record.requirements,
+        config=record.config.model_dump(mode="json"),
+        features_not_supported=None,
+        size_on_disk_bytes=record.size_on_disk_bytes,
         defer_commit=defer_commit,
     )
 
 
 @logger.catch(reraise=True)
-def add_known_image_models_from_json(json: dict[str, dict]) -> None:
-    """Add multiple image models to the database from a JSON object.
+def add_known_image_models_from_records(records: dict[str, ImageGenerationModelRecord]) -> None:
+    """Add multiple image models to the database from model reference records.
 
     Args:
-        json (dict[str, dict]): The model reference JSON object.
+        records (dict[str, ImageGenerationModelRecord]): The image reference, keyed by model name.
     """
-    for model in json.values():
-        add_known_image_model_from_json(model, defer_commit=True)
+    for record in records.values():
+        add_known_image_model_from_record(record, defer_commit=True)
 
     db.session.commit()
-    logger.info(f"Added (or updated) {len(json)} known image models.")
+    logger.info(f"Added (or updated) {len(records)} known image models.")
 
 
 @logger.catch(reraise=True)

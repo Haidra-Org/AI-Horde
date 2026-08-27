@@ -17,11 +17,11 @@ from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import expression
 
 from horde import vars as hv
+from horde.baseline_policy import kudos_multiplier, policy
 from horde.bridge_reference import check_bridge_capability
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.stable.kudos import KudosModel
 from horde.consts import (
-    BASELINE_BATCHING_MULTIPLIERS,
     HEAVY_POST_PROCESSORS,
     KNOWN_LCM_LORA_IDS,
     KNOWN_LCM_LORA_VERSIONS,
@@ -463,18 +463,12 @@ class ImageWaitingPrompt(WaitingPrompt):
         if max_res < 576:
             max_res = 576
         model_names = self.get_model_names()
-        # SD 2.0 requires at least 768 to do its thing
-        if (
-            max_res < 768
-            and len(self.models) >= 1
-            and any(model_reference.get_model_baseline(mn) == "stable_diffusion_2" for mn in model_names)
-        ):
-            max_res = 768
-        # We allow everyone to use SDXL up to 1024
-        if max_res < 1024 and any(
-            model_reference.get_model_baseline(mn) in ["stable_diffusion_xl", "stable_cascade", "flux_1"] for mn in model_names
-        ):
-            max_res = 1024
+        # An architecture that renders poorly or not at all below its floor gets that floor regardless
+        # of queue pressure, rather than being downgraded into producing nothing usable.
+        baselines = model_reference.get_all_model_baselines(model_names)
+        baseline_floor = max((policy(baseline).resolution_floor for baseline in baselines), default=0)
+        if max_res < baseline_floor:
+            max_res = baseline_floor
         if max_res > 1024:
             max_res = 1024
         estimated_work_units = self.get_estimated_sampler_work().work_units.value
@@ -610,15 +604,12 @@ class ImageWaitingPrompt(WaitingPrompt):
         # what the same request costs when it's not a dry run. It is a flat per-request cost,
         # so the baseline multipliers do not apply to it.
         horde_tax = 1 + (5 * extra_source_images_count) + kudos_adjustment
-        if model_reference.get_model_baseline(model_name) in ["stable_diffusion_xl"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 2) + horde_tax
-        if model_reference.get_model_baseline(model_name) in ["stable_cascade"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 4) + horde_tax
-        if model_reference.get_model_baseline(model_name) in ["flux_1", "z_image_turbo"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 8) + horde_tax
-        if model_reference.get_model_baseline(model_name) in ["qwen_image"]:
-            return (self.calculate_extra_kudos_burn(kudos) * self.n * 12) + horde_tax
-        return (self.calculate_extra_kudos_burn(kudos) * self.n) + horde_tax
+        baseline_multiplier = kudos_multiplier(
+            model_reference.get_model_baseline(model_name),
+            hires_fix=bool(self.params.get("hires_fix", False)),
+            qr_code=self.params.get("workflow") == "qr_code",
+        )
+        return (self.calculate_extra_kudos_burn(kudos) * self.n * baseline_multiplier) + horde_tax
 
     def get_amount_calculation_things(self):
         return self.width * self.height
@@ -632,11 +623,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         return False
 
     def get_highest_model_batching_multiplier(self):
-        highest_multiplier = 1
-        for mn in self.get_model_names():
-            if BASELINE_BATCHING_MULTIPLIERS.get(mn, 1) > highest_multiplier:
-                highest_multiplier = BASELINE_BATCHING_MULTIPLIERS.get(mn, 1)
-        return highest_multiplier
+        baselines = model_reference.get_all_model_baselines(self.get_model_names())
+        # The job can be dispatched for any requested model, so the batch count has to suit the heaviest.
+        return max((policy(baseline).batching for baseline in baselines), default=1)
 
     def count_pp(self):
         return len(self.params.get("post_processing", []))

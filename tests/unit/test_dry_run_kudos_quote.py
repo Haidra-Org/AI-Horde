@@ -26,10 +26,12 @@ from horde.classes.stable import waiting_prompt as stable_waiting_prompt
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 
 
-def _wp(n=2, kudos=10.0, models=()):
+def _wp(n=2, kudos=10.0, models=(), params=None):
     return SimpleNamespace(
         n=n,
         models=list(models),
+        # The image quote reads the workflow features that have their own kudos multiplier.
+        params=params if params is not None else {},
         calculate_kudos=lambda: kudos,
         calculate_extra_kudos_burn=lambda k: k,
     )
@@ -73,3 +75,13 @@ class TestImageQuote:
     def test_baseline_multiplier_does_not_apply_to_the_adjustment(self, baseline):
         baseline("stable_diffusion_xl")
         assert ImageWaitingPrompt.extrapolate_dry_run_kudos(_wp(), kudos_adjustment=2) == 43
+
+    def test_the_qr_code_workflow_is_quoted_at_what_it_is_charged(self, baseline):
+        # The quote reads the same per-baseline ladder the per-generation charge does, so a workflow
+        # with its own multiplier there has it here.
+        baseline("stable_diffusion_xl")
+        assert ImageWaitingPrompt.extrapolate_dry_run_kudos(_wp(params={"workflow": "qr_code"})) == 81
+
+    def test_the_cascade_two_pass_workflow_is_quoted_at_what_it_is_charged(self, baseline):
+        baseline("stable_cascade")
+        assert ImageWaitingPrompt.extrapolate_dry_run_kudos(_wp(params={"hires_fix": True})) == 141

@@ -4,10 +4,12 @@
 
 from typing import Any
 
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from sqlalchemy.orm import Mapped, mapped_column
 
 from horde import exceptions as e
 from horde.bridge_reference import (
+    bridge_supports,
     check_bridge_capability,
     check_sampler_capability,
     is_latest_bridge_version,
@@ -23,6 +25,7 @@ from horde.consts import (
     SIGMA_GENERATOR_SCHEDULERS,
     SOLVER_KNOB_PARAMS,
 )
+from horde.enums import BaselineFeature
 from horde.flask import db
 from horde.logger import logger
 from horde.model_reference import model_reference
@@ -230,17 +233,19 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not check_bridge_capability("qr_code", self.bridge_agent):
                 return [False, "bridge_version"]
-            if "stable_diffusion_xl" in my_baselines and not self.allow_sdxl_controlnet:
+            if KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl in my_baselines and not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
         if waiting_prompt.params.get("hires_fix") and not check_bridge_capability("hires_fix", self.bridge_agent):
             return [False, "bridge_version"]
         if (
             waiting_prompt.params.get("hires_fix")
-            and "stable_cascade" in my_baselines
+            and KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade in my_baselines
             and not check_bridge_capability("stable_cascade_2pass", self.bridge_agent)
         ):
             return [False, "bridge_version"]
-        if "flux_1" in my_baselines and not check_bridge_capability(
+        # A baseline whose graph the bridge only added in a later release is undispatchable to an older
+        # worker even though it holds the model.
+        if KNOWN_IMAGE_GENERATION_BASELINE.flux_1 in my_baselines and not check_bridge_capability(
             "flux",
             self.bridge_agent,
         ):
@@ -262,6 +267,17 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
+        # A feature the worker's own release does not render on a baseline it holds is undispatchable to
+        # it, even though the request was accepted because some other release does render it.
+        requested_baseline_features = {
+            BaselineFeature.HIRES_FIX: bool(waiting_prompt.params.get("hires_fix")),
+            BaselineFeature.CONTROL_TYPE: "control_type" in waiting_prompt.params,
+            BaselineFeature.FLOW_SHIFT: waiting_prompt.params.get(FLOW_SHIFT_PARAM) is not None,
+            BaselineFeature.TRANSPARENT: bool(waiting_prompt.params.get("transparent", False)),
+        }
+        for feature, is_requested in requested_baseline_features.items():
+            if is_requested and any(not bridge_supports(feature, str(baseline), self.bridge_agent) for baseline in my_baselines):
+                return [False, "bridge_version"]
         if any(lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])) and not check_bridge_capability(
             "lora_versions",
             self.bridge_agent,

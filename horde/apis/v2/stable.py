@@ -39,7 +39,7 @@ from horde.consts import KNOWN_CONTROL_TYPES
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.database.kudos_reservations import reserve_kudos
-from horde.enums import KudosEntryType, RequestTerminalOutcome, WarningMessage
+from horde.enums import BaselineFeature, KudosEntryType, RequestTerminalOutcome, WarningMessage
 from horde.flask import cache, db, get_app
 from horde.image import calculate_image_tiles, ensure_source_image_uploaded
 from horde.limiter import limiter
@@ -62,7 +62,7 @@ from horde.telemetry import (
     pyroscope_tag,
 )
 from horde.utils import does_extra_text_reference_exist, hash_dictionary
-from horde.validation import ParamValidator
+from horde.validation import ParamValidator, raise_model_policy_violations
 from horde.vars import horde_title
 
 models = ImageModels(api)
@@ -163,10 +163,14 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("Only special users can send a special field.", "SpecialFieldNeedsSpecialUser")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
-        if self.params.get("control_type") in ["normal", "mlsd", "hough"] and any(
-            model_reference.get_model_baseline(model_name).startswith("stable diffusion 2") for model_name in self.args.models
-        ):
-            raise e.UnsupportedModel("No current model available for this particular ControlNet for SD2.x", rc="ControlNetUnsupported")
+        # Use the models the job will run on; a style may have replaced the request's list.
+        model_baselines = model_reference.get_all_model_baselines(self.models)
+        raise_model_policy_violations(
+            model_baselines,
+            self.params,
+            [BaselineFeature.CONTROL_TYPE_UNAVAILABLE],
+            source_processing=self.args.source_processing,
+        )
         if "control_type" in self.params and any(model_name in ["pix2pix"] for model_name in self.args.models):
             raise e.UnsupportedModel("You cannot use ControlNet with these models.", rc="ControlNetUnsupported")
         # if self.params.get("image_is_control"):
@@ -175,21 +179,12 @@ class ImageAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("Controlnet Requires a source image.", rc="ControlNetSourceMissing")
         if "control_type" in self.params and self.args.source_processing == "inpainting":
             raise e.BadRequest("ControlNet cannot be used with inpainting at this time", rc="ControlNetInpaintingMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("stable_diffusion_xl") for model_name in self.args.models):
-            if "control_type" in self.params:
-                raise e.BadRequest("ControlNet does not work with SDXL currently.", rc="ControlNetMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models):
-            if "control_type" in self.params:
-                raise e.BadRequest("ControlNet does not work with Stable Cascade currently.", rc="ControlNetMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.args.models):
-            if "control_type" in self.params:
-                raise e.BadRequest("ControlNet does not work with Flux currently.", rc="ControlNetMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("qwen_image") for model_name in self.args.models):
-            if "control_type" in self.params:
-                raise e.BadRequest("ControlNet does not work with Qwen currently.", rc="ControlNetMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("z_image_turbo") for model_name in self.args.models):
-            if "control_type" in self.params:
-                raise e.BadRequest("ControlNet does not work with Z-Image currently.", rc="ControlNetMismatch")
+        raise_model_policy_violations(
+            model_baselines,
+            self.params,
+            [BaselineFeature.CONTROL_TYPE],
+            source_processing=self.args.source_processing,
+        )
         if self.params.get("transparent", False) is True:
             if self.args.extra_source_images and len(self.args.extra_source_images) > 0:
                 raise e.BadRequest(
@@ -201,10 +196,12 @@ class ImageAsyncGenerate(GenerateTemplate):
                     "Generating Transparent images is not supported during controlnet workflows currently.",
                     rc="InvalidTransparencyCN",
                 )
-        if self.args.source_processing == "remix" and any(
-            not model_reference.get_model_baseline(model_name).startswith("stable_cascade") for model_name in self.args.models
-        ):
-            raise e.BadRequest("Image Remix is only available for Stable Cascade models.", rc="InvalidRemix")
+        raise_model_policy_violations(
+            model_baselines,
+            self.params,
+            [BaselineFeature.REMIX],
+            source_processing=self.args.source_processing,
+        )
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
             if self.args.source_processing != "remix":
                 raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")

@@ -35,13 +35,18 @@ procedure for one subject sit together.
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
 - How-to: [Add extended image controls to a frontend](how-to/extended_image_frontend.md)
 - How-to: [Add a sampler, scheduler, solver control, or annotator](how-to/add_sampler_or_annotator.md)
+- How-to: [Add an image baseline](how-to/add_image_baseline.md)
 - Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
+- Reference: [Image baseline policy reference](reference/baseline_policy.md)
+- Reference: [Image model reference loader reference](reference/model_reference.md)
 
 ### kudos
 
 - Explanation: [Kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
+- How-to: [Add an image baseline](how-to/add_image_baseline.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
+- Reference: [Image baseline policy reference](reference/baseline_policy.md)
 
 ### operations
 
@@ -54,4 +59,7 @@ procedure for one subject sit together.
 ### workers
 
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
+- How-to: [Add an image baseline](how-to/add_image_baseline.md)
+- Reference: [Image baseline policy reference](reference/baseline_policy.md)
+- Reference: [Image model reference loader reference](reference/model_reference.md)
 <!-- END GENERATED: topics -->
