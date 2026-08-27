@@ -84,3 +84,18 @@ _EXTENDED_SAMPLER_SETTING_FIELDS = frozenset(
         "flow_shift",
     },
 )
+
+# The baseline each model the suite is configured with renders on, used to predict which per-baseline
+# features the API will refuse. A model absent from this map carries no expectation: the suite is
+# pointed at arbitrary deployments, and guessing a baseline would turn an unknown model into a
+# spurious failure.
+_MODEL_BASELINES: dict[str, str] = {
+    "stable_diffusion": "stable_diffusion_1",
+    "AlbedoBase XL (SDXL)": "stable_diffusion_xl",
+    "Flux.1-Schnell fp8 (Compact)": "flux_1",
+    "Stable Cascade 1.0": "stable_cascade",
+}
+
+# The extra texts the qr_code workflow requires, without which the request is refused for a reason
+# that has nothing to do with the baseline.
+_QR_CODE_EXTRA_TEXTS: list[dict[str, str]] = [{"text": "https://aihorde.net", "reference": "qr_code"}]

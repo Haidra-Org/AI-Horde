@@ -8,17 +8,25 @@ import random
 import string
 import time
 from collections import deque
+from collections.abc import Sequence
 from itertools import cycle
+from typing import Any
 
 from horde_sdk.generation_parameters.image.constraints import SAMPLER_CONSTRAINTS
 from locust import HttpUser, between, tag, task
+from locust.clients import ResponseContextManager
 from locust.exception import RescheduleTask
+
+from horde.baseline_policy import baseline_violation
+from horde.enums import BaselineFeature
 
 from ..config import (
     _EXPECTED_RC_RECOVER,
     _EXTENDED_IMAGE_SAMPLERS,
     _EXTENDED_SAMPLER_SETTING_FIELDS,
     _HOT_PROMPT,
+    _MODEL_BASELINES,
+    _QR_CODE_EXTRA_TEXTS,
     _config,
 )
 from ..helpers import (
@@ -729,6 +737,174 @@ class SamplerFeatureRequester(HttpUser):
             req_id = _handle_async_generate(resp, self.environment)
             if req_id:
                 self.pending_ids.append(req_id)
+
+
+# The per-baseline features this workload sets, one payload edit each. `control_type` is left out
+# because the service requires a source image alongside it, and this workload has no cheap way to
+# attach one.
+_BASELINE_FEATURES: tuple[BaselineFeature, ...] = (
+    BaselineFeature.HIRES_FIX,
+    BaselineFeature.TRANSPARENT,
+    BaselineFeature.QR_CODE,
+    BaselineFeature.FLOW_SHIFT,
+    BaselineFeature.REMIX,
+)
+
+# Forbidden responses that say nothing about the baseline: the requestor ran out of upfront kudos, or
+# the deployment gates who may create workers.
+_NON_POLICY_FORBIDDEN_RCS: set[str] = {"KudosUpfront", "WorkerInviteOnly"}
+
+
+def _apply_baseline_feature(feature: BaselineFeature, payload: dict[str, Any]) -> None:
+    """Set one per-baseline feature on an async generate payload.
+
+    Args:
+        feature: The feature to set.
+        payload: The async generate payload, mutated in place.
+
+    Raises:
+        ValueError: The feature is not one this workload knows how to set.
+    """
+    params = payload["params"]
+    if feature == BaselineFeature.HIRES_FIX:
+        params["hires_fix"] = True
+    elif feature == BaselineFeature.TRANSPARENT:
+        params["transparent"] = True
+    elif feature == BaselineFeature.QR_CODE:
+        params["workflow"] = "qr_code"
+        params["extra_texts"] = [dict(extra_text) for extra_text in _QR_CODE_EXTRA_TEXTS]
+    elif feature == BaselineFeature.FLOW_SHIFT:
+        params["flow_shift"] = 1.1
+    elif feature == BaselineFeature.REMIX:
+        payload["source_processing"] = "remix"
+    else:
+        raise ValueError(f"Unhandled baseline feature: {feature}")
+
+
+class BaselineFeatureRequester(HttpUser):
+    """Submit per-baseline features and assert the API accepts or refuses each as the policy says.
+
+    The expectation is computed from the service's own policy table rather than a copy of it, so this
+    catches the request path reading a different baseline than the table describes, and it needs no
+    edit when a baseline row changes. Models the suite has no baseline for are skipped: guessing one
+    would turn an unfamiliar deployment into a failure.
+    """
+
+    weight = 1
+    fixed_count = 0
+    wait_time = between(1, 2)
+    max_pending: int = 8
+
+    def on_start(self) -> None:
+        self.api_key: str = _pick_requestor_key()
+        self.pending_ids: deque[str] = deque()
+        self.known_models: list[str] = [model for model in _config.get("models", []) if model in _MODEL_BASELINES]
+
+    def _cancel_oldest(self) -> None:
+        if not self.pending_ids:
+            return
+        req_id = self.pending_ids.popleft()
+        with self.client.delete(
+            f"/api/v2/generate/status/{req_id}",
+            headers=_headers(self.api_key),
+            catch_response=True,
+            name="/api/v2/generate/status/[id] [baseline-feature-cancel]",
+        ) as resp:
+            if resp.ok or resp.status_code in (404, 410):
+                resp.success()
+            else:
+                resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
+
+    def on_stop(self) -> None:
+        while self.pending_ids:
+            self._cancel_oldest()
+
+    def _build_payload(self, model: str, features: Sequence[BaselineFeature]) -> dict[str, Any]:
+        opts = self.environment.parsed_options
+        payload: dict[str, Any] = {
+            "prompt": _random_prompt(),
+            "nsfw": False,
+            "r2": True,
+            "trusted_workers": False,
+            "params": {
+                "width": opts.gen_width,
+                "height": opts.gen_height,
+                "steps": opts.gen_steps,
+                "cfg_scale": opts.gen_cfg_scale,
+                "sampler_name": "k_euler",
+            },
+            "models": [model],
+        }
+        for feature in features:
+            _apply_baseline_feature(feature, payload)
+        return payload
+
+    def _judge(self, resp: ResponseContextManager, *, expected_rc: str | None, description: str) -> None:
+        """Mark the response against the rejection the policy table predicted for it.
+
+        Args:
+            resp: The caught response to mark as a success or a failure.
+            expected_rc: The return code the policy table predicted, or None where it allows the request.
+            description: The baseline and features under test, for the failure message.
+        """
+        name = resp.request_meta.get("name", "/api/v2/generate/async")
+        body = _safe_json(resp)
+        response_time_ms = resp.elapsed.total_seconds() * 1000
+        response_length = len(resp.content or b"")
+
+        if resp.status_code == 429 or (resp.status_code == 403 and _is_expected_rc(body, _NON_POLICY_FORBIDDEN_RCS)):
+            # Refused for a reason the policy table has no say in, so it decides nothing here.
+            resp.success()
+            _record_expected(self.environment, "POST", name, response_time_ms, response_length)
+            time.sleep(min(float(resp.headers.get("Retry-After") or random.uniform(2.0, 6.0)), 10.0))
+            raise RescheduleTask()
+
+        actual_rc = (body or {}).get("rc")
+        if expected_rc is None:
+            if resp.ok:
+                resp.success()
+                req_id = (body or {}).get("id")
+                if req_id:
+                    self.pending_ids.append(req_id)
+                return
+            resp.failure(f"{description} should have been accepted; got {resp.status_code} rc={actual_rc}")
+            return
+
+        if resp.status_code == 400 and actual_rc == expected_rc:
+            resp.success()
+            _record_expected(self.environment, "POST", name, response_time_ms, response_length)
+            return
+        resp.failure(f"{description} should have been refused with rc {expected_rc}; got {resp.status_code} rc={actual_rc}")
+
+    @tag("image", "cold", "requestor", "baseline-features")
+    @task
+    def generate_baseline_feature(self) -> None:
+        if not self.known_models:
+            raise RescheduleTask()
+        if len(self.pending_ids) >= self.max_pending:
+            self._cancel_oldest()
+
+        model = random.choice(self.known_models)
+        baseline = _MODEL_BASELINES[model]
+        features = random.sample(_BASELINE_FEATURES, k=random.randint(1, 2))
+        payload = self._build_payload(model, features)
+
+        violation = baseline_violation(
+            [baseline],
+            params=payload["params"],
+            source_processing=payload.get("source_processing"),
+        )
+        expected_rc = violation[0] if violation is not None else None
+        description = f"{baseline} with {'+'.join(sorted(features))}"
+
+        with self.client.post(
+            "/api/v2/generate/async",
+            json=payload,
+            headers=_headers(self.api_key),
+            catch_response=True,
+            name=f"/api/v2/generate/async [baseline-feature/{baseline}]",
+        ) as resp:
+            self._judge(resp, expected_rc=expected_rc, description=description)
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ the concrete ``HttpUser`` classes that Locust should discover.
 
 from . import events as _events  # noqa: F401 - imported for Locust event registration side effects
 from .users import (
+    BaselineFeatureRequester,
     ExtendedWorkerSimulator,
     HotPathRequester,
     InterrogationRequester,
@@ -25,6 +26,7 @@ from .users import (
 )
 
 __all__ = [
+    "BaselineFeatureRequester",
     "ExtendedWorkerSimulator",
     "HotPathRequester",
     "InterrogationRequester",

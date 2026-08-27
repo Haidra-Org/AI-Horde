@@ -17,6 +17,7 @@ For staged load profiles, use ``locustfile_shaped.py`` instead.
 """
 
 from locustsuite import (
+    BaselineFeatureRequester,
     ExtendedWorkerSimulator,
     HotPathRequester,
     InterrogationRequester,
@@ -32,6 +33,7 @@ from locustsuite import (
 )
 
 __all__ = [
+    "BaselineFeatureRequester",
     "ExtendedWorkerSimulator",
     "HotPathRequester",
     "InterrogationRequester",

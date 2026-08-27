@@ -5,6 +5,7 @@
 """User classes exported for Locust discovery."""
 
 from .image import (
+    BaselineFeatureRequester,
     ExtendedWorkerSimulator,
     HotPathRequester,
     LegacyWorkerSimulator,
@@ -18,6 +19,7 @@ from .misuse import MisuseUser
 from .text import TextRequester, TextWorkerSimulator
 
 __all__ = [
+    "BaselineFeatureRequester",
     "ExtendedWorkerSimulator",
     "HotPathRequester",
     "InterrogationRequester",
