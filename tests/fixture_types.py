@@ -67,6 +67,13 @@ class MakeUserRole(Protocol):
 class MakeApiUser(Protocol):
     """Call signature of the ``make_api_user`` fixture factory."""
 
-    def __call__(self, *, trusted: bool = False, moderator: bool = False, kudos: int = 0) -> ApiUser:
+    def __call__(
+        self,
+        *,
+        trusted: bool = False,
+        moderator: bool = False,
+        customizer: bool = False,
+        kudos: int = 0,
+    ) -> ApiUser:
         """Create a registered user at the requested privilege and kudos level."""
         ...
