@@ -232,7 +232,7 @@ def make_api_user(app: Flask) -> MakeApiUser:
     from horde.classes.base.user import User
     from horde.utils import generate_api_key, hash_api_key
 
-    def _make(*, trusted: bool = False, moderator: bool = False, kudos: int = 0) -> ApiUser:
+    def _make(*, trusted: bool = False, moderator: bool = False, customizer: bool = False, kudos: int = 0) -> ApiUser:
         suffix = uuid.uuid4().hex[:8]
         username = f"user_{suffix}"
         raw_api_key = generate_api_key()
@@ -247,6 +247,8 @@ def make_api_user(app: Flask) -> MakeApiUser:
                 user.set_moderator(True)
             if trusted:
                 user.set_trusted(True)
+            if customizer:
+                user.set_customizer(True)
             if kudos:
                 user.modify_kudos(kudos, "admin")
             user.refresh_cache()
