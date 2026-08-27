@@ -923,7 +923,7 @@ def store_compiled_filter_regex_replacements():
 def store_known_image_models():
     """Stores the known image models in the database"""
     from horde.classes.stable.known_image_models import (
-        add_known_image_models_from_json,
+        add_known_image_models_from_records,
         delete_any_unspecified_image_models,
     )
     from horde.model_reference import model_reference
@@ -931,7 +931,7 @@ def store_known_image_models():
     with get_app().app_context():
         if model_reference.reference is not None:
             logger.debug("Storing known image models from the model reference")
-            add_known_image_models_from_json(model_reference.reference)
+            add_known_image_models_from_records(model_reference.reference)
             delete_any_unspecified_image_models(list(model_reference.reference.keys()))
 
         else:

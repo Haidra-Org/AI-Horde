@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import WorkerModel
@@ -37,6 +38,7 @@ from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.flask import db
+from tests.unit.model_reference_seed import seed_image_reference
 
 pytestmark = pytest.mark.unit
 
@@ -45,11 +47,8 @@ _HOSTED_MODEL = "stable_diffusion"
 
 @pytest.fixture(autouse=True)
 def _stub_model_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the image model reference to a minimal in-memory dict."""
-    from horde import model_reference as model_reference_module
-
-    minimal_reference = {_HOSTED_MODEL: {"baseline": "stable diffusion 1"}}
-    monkeypatch.setattr(model_reference_module.model_reference, "reference", minimal_reference)
+    """Pin the image model reference to a single model."""
+    seed_image_reference(monkeypatch, {_HOSTED_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1})
 
 
 def _make_worker(user: Any) -> ImageWorker:

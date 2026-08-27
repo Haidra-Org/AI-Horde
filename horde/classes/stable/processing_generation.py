@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import logfire
 from sqlalchemy.orm import Mapped, relationship
 
+from horde.baseline_policy import kudos_multiplier, policy
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.stable.genstats import record_image_statistic
 from horde.flask import db
@@ -79,22 +80,11 @@ class ImageProcessingGeneration(ProcessingGeneration):
 
     def get_gen_kudos(self):
         # We have pre-calculated them as they don't change per worker
-        if model_reference.get_model_baseline(self.model) in ["stable_diffusion_xl"]:
-            if self.wp.params.get("workflow") == "qr_code":
-                return self.wp.kudos * 4
-            return self.wp.kudos * 2
-        if model_reference.get_model_baseline(self.model) in ["stable_cascade"]:
-            # Stable Cascade 2pass has almost a double cost as it generates extra at a low generation
-            if self.wp.params.get("hires_fix", False):
-                return self.wp.kudos * 7
-            return self.wp.kudos * 4
-        if model_reference.get_model_baseline(self.model) in ["flux_1", "z_image_turbo"]:
-            # Flux and Qwen is double the size of SDXL and much slower, so it gives double the rewards from it.
-            return self.wp.kudos * 8
-        if model_reference.get_model_baseline(self.model) in ["qwen_image"]:
-            # Qwen is even larger than flux.
-            return self.wp.kudos * 12
-        return self.wp.kudos
+        return self.wp.kudos * kudos_multiplier(
+            model_reference.get_model_baseline(self.model),
+            hires_fix=bool(self.wp.params.get("hires_fix", False)),
+            qr_code=self.wp.params.get("workflow") == "qr_code",
+        )
 
     def log_aborted_generation(self):
         record_image_statistic(self)
@@ -232,8 +222,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
         # Pixel-work is deliberately model-neutral. Larger architectures retain a separate allowance,
         # applied only when this procgen was actually assigned that model; using every requested model
         # would over-budget ordinary assignments from a multi-model request.
-        if model_reference.get_model_baseline(self.model) in ["flux_1", "qwen_image", "z_image_turbo"]:
-            ttl *= 3
+        ttl *= policy(model_reference.get_model_baseline(self.model)).ttl
 
         ttl = max(ttl, 150)
         ttl += len(self.wp.params.get("loras", [])) * LORA_DOWNLOAD_SECONDS

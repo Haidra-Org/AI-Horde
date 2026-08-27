@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from collections.abc import Collection, Mapping
+from typing import Any
+
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde_sdk.generation_parameters.image.constraints import (
     CFG_PP_SAMPLERS,
     CONSTRAINT_VIOLATION_KIND,
@@ -11,12 +15,12 @@ from horde_sdk.generation_parameters.image.constraints import (
 from loguru import logger
 
 from horde import exceptions as e
+from horde.baseline_policy import UNSUPPORTED_MODEL_RETURN_CODE, baseline_violation
 from horde.classes.base.user import User
 from horde.consts import (
     CONTROL_STRENGTH_MAX,
     CONTROL_STRENGTH_MIN,
     CONTROL_STRENGTH_PARAM,
-    FLOW_SHIFT_BASELINES,
     FLOW_SHIFT_MAX,
     FLOW_SHIFT_MIN,
     FLOW_SHIFT_PARAM,
@@ -25,7 +29,7 @@ from horde.consts import (
     baseline_for_constraints,
     scheduler_for_request,
 )
-from horde.enums import WarningMessage
+from horde.enums import BaselineFeature, WarningMessage
 from horde.model_reference import model_reference
 
 # The request field carrying each solver knob, keyed by the knob the shared constraints table names. The
@@ -52,6 +56,39 @@ CONSTRAINT_VIOLATION_RETURN_CODES = {
 # Above this, the CFG++ correction the `*_cfg_pp` solvers apply oversaturates rather than improving
 # adherence. Advisory rather than enforced: it is a quality expectation, and the image still renders.
 CFG_PP_ADVISED_MAX_CFG_SCALE = 2.0
+
+
+def raise_model_policy_violations(
+    baselines: Collection[KNOWN_IMAGE_GENERATION_BASELINE | str],
+    params: Mapping[str, Any],
+    features: Collection[BaselineFeature],
+    *,
+    source_processing: str | None = None,
+) -> None:
+    """Raise the first policy rejection the request draws for these baselines, if any.
+
+    Features are passed per call site so the non-baseline checks around them keep their place in the
+    order a request is rejected in.
+
+    Args:
+        baselines: The baselines of the models the job may run on.
+        params: The generation payload.
+        features: The features this call site owns.
+        source_processing: The request's source processing mode, read by the remix feature.
+
+    Raises:
+        UnsupportedModel: The rejection describes a model the request named.
+        BadRequest: The rejection describes a field the request set.
+    """
+    violation = baseline_violation(baselines, params=params, source_processing=source_processing, features=features)
+    if violation is None:
+        return
+    return_code, detail = violation
+    # This one describes a model the request named rather than a field it set, so it keeps the
+    # unsupported-model status it has always carried.
+    if return_code == UNSUPPORTED_MODEL_RETURN_CODE:
+        raise e.UnsupportedModel(detail, rc=return_code)
+    raise e.BadRequest(detail, rc=return_code)
 
 
 class ParamValidator:
@@ -118,7 +155,7 @@ class ParamValidator:
 
         # A request naming several models is checked against each of their baselines: the schedule has to
         # be renderable on whichever one the job is eventually dispatched for.
-        baselines = {baseline_for_constraints(model_reference.get_model_baseline(model_name)) for model_name in self.models}
+        model_baselines = {model_reference.get_model_baseline(model_name) for model_name in self.models}
         flow_shift = self.params.get(FLOW_SHIFT_PARAM)
         if flow_shift is not None:
             if not FLOW_SHIFT_MIN <= flow_shift <= FLOW_SHIFT_MAX:
@@ -126,11 +163,10 @@ class ParamValidator:
                     f"flow_shift must be between {FLOW_SHIFT_MIN:g} and {FLOW_SHIFT_MAX:g}, inclusive.",
                     rc="FlowShiftOutOfRange",
                 )
-            if baselines - FLOW_SHIFT_BASELINES:
-                raise e.BadRequest(
-                    "flow_shift is only supported by model baselines whose backend graph applies it.",
-                    rc="FlowShiftInapplicable",
-                )
+            raise_model_policy_violations(model_baselines, self.params, [BaselineFeature.FLOW_SHIFT])
+        # The sampler constraints are keyed by the shared vocabulary, which a baseline the reference
+        # publishes ahead of this deployment is not in; None leaves them unenforced for it.
+        baselines = {baseline_for_constraints(baseline) for baseline in model_baselines}
         for baseline in baselines or {None}:
             violations = list_constraint_violations(
                 sampler=sampler_name,
@@ -194,15 +230,8 @@ class ParamValidator:
                 self.warnings.add(WarningMessage.SchedulerMismatch)
         self.validate_sampler_constraints()
         self.validate_control_strength()
-        if any(model_reference.get_model_baseline(model_name).startswith("flux_1") for model_name in self.models):
-            if self.params.get("hires_fix", False) is True:
-                raise e.BadRequest("HiRes Fix does not work with Flux currently.", rc="HiResMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("qwen_image") for model_name in self.models):
-            if self.params.get("hires_fix", False) is True:
-                raise e.BadRequest("HiRes Fix does not work with Qwen currently.", rc="HiResMismatch")
-        if any(model_reference.get_model_baseline(model_name).startswith("z_image_turbo") for model_name in self.models):
-            if self.params.get("hires_fix", False) is True:
-                raise e.BadRequest("HiRes Fix does not work with Z-Image currently.", rc="HiResMismatch")
+        model_baselines = model_reference.get_all_model_baselines(self.models)
+        raise_model_policy_violations(model_baselines, self.params, [BaselineFeature.HIRES_FIX])
         if "loras" in self.params:
             if len(self.params["loras"]) > 5:
                 raise e.BadRequest("You cannot request more than 5 loras per generation.", rc="TooManyLoras")
@@ -211,21 +240,11 @@ class ParamValidator:
                     raise e.BadRequest("explicit LoRa version requests have to be a version ID (i.e integer).", rc="BadLoraVersion")
         if "tis" in self.params and len(self.params["tis"]) > 20:
             raise e.BadRequest("You cannot request more than 20 Textual Inversions per generation.", rc="TooManyTIs")
-        if self.params.get("transparent", False) is True:
-            if any(
-                model_reference.get_model_baseline(model_name) not in ["stable_diffusion_xl", "stable diffusion 1"]
-                for model_name in self.models
-            ):
-                raise e.BadRequest(
-                    "Generating Transparent images is only possible for Stable Diffusion 1.5 and XL models.",
-                    rc="InvalidTransparencyModel",
-                )
-        if self.params.get("workflow") == "qr_code":
-            if not all(
-                model_reference.get_model_baseline(model_name) in ["stable diffusion 1", "stable_diffusion_xl"]
-                for model_name in self.models
-            ):
-                raise e.BadRequest("QR Code controlnet only works with SD 1.5 and SDXL models currently", rc="ControlNetMismatch.")
+        raise_model_policy_violations(
+            model_baselines,
+            self.params,
+            [BaselineFeature.TRANSPARENT, BaselineFeature.QR_CODE],
+        )
         if len(self.prompt.split()) > 7500:
             raise e.InvalidPromptSize()
         if any(model_name in KNOWN_POST_PROCESSORS for model_name in self.models):

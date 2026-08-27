@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from sqlalchemy.orm import Session
 
 from horde.classes.base.kudos import KudosLedger
@@ -40,6 +41,7 @@ from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.enums import UserRoleTypes
 from tests.fixture_types import MakeUser, MakeUserRole
+from tests.unit.model_reference_seed import seed_image_reference
 
 
 def _make_worker(db_session: Session, owner: User) -> WorkerTemplate:
@@ -326,11 +328,8 @@ class TestFakeGenerationSettlement:
 
     @pytest.fixture(autouse=True)
     def _stub_model_reference(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Pin the image model reference to a minimal in-memory dict."""
-        from horde import model_reference as model_reference_module
-
-        minimal_reference = {_HOSTED_MODEL: {"baseline": "stable diffusion 1"}}
-        monkeypatch.setattr(model_reference_module.model_reference, "reference", minimal_reference)
+        """Pin the image model reference to a single model."""
+        seed_image_reference(monkeypatch, {_HOSTED_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1})
 
     def test_tricked_worker_receives_no_credit_and_requester_no_debit(
         self,

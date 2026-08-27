@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde_sdk.generation_parameters.image.sampler_work import SamplerExecutionContractVersion
 
 from horde.classes.base.worker import WorkerModel
@@ -46,6 +47,7 @@ from horde.classes.stable.worker import ImageWorker
 from horde.database import functions as f
 from horde.enums import UserRoleTypes
 from horde.flask import db
+from tests.unit.model_reference_seed import seed_image_reference
 
 pytestmark = pytest.mark.unit
 
@@ -58,16 +60,13 @@ _HOSTED_MODEL = "stable_diffusion"
 
 @pytest.fixture(autouse=True)
 def _stub_model_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the image model reference to a minimal in-memory dict.
+    """Pin the image model reference to a single model.
 
     ``ImageWorker.can_generate`` and ``ImageProcessingGeneration`` consult
     ``model_reference`` (normally fetched over the network at import time). We
     substitute a tiny reference so the tests are hermetic and deterministic.
     """
-    from horde import model_reference as model_reference_module
-
-    minimal_reference = {_HOSTED_MODEL: {"baseline": "stable diffusion 1"}}
-    monkeypatch.setattr(model_reference_module.model_reference, "reference", minimal_reference)
+    seed_image_reference(monkeypatch, {_HOSTED_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1})
 
 
 def _validity_cache_key(wp: ImageWaitingPrompt) -> str:
@@ -441,9 +440,7 @@ class TestFreshCapableWorker:
 
         preceding_arrivals = f._get_preceding_arrivals(target, [worker], datetime.utcnow())
 
-        assert {arrival.request_id for arrival in preceding_arrivals} == {
-            str(candidate.id) for candidate in candidates
-        }
+        assert {arrival.request_id for arrival in preceding_arrivals} == {str(candidate.id) for candidate in candidates}
 
     def test_arrival_scan_query_count_does_not_scale_with_candidate_count(
         self,
@@ -517,6 +514,7 @@ class TestFreshCapableWorker:
         monkeypatch.setattr(f, "record_request_assignment_pressure", fail_recalculation)
 
         assert f.get_worker_availability_for_request(target) == availability
+
 
 class TestPersistedSamplerExecutionContract:
     """Forecasting reads the same recent execution capability that pop-time dispatch uses."""

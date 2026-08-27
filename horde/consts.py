@@ -189,16 +189,6 @@ HEAVY_POST_PROCESSORS = {
     "RestoreFormer",
 }
 
-# These models are very large in VRAM, so we increase the calculated MPS
-# used to figure out batches by a set multiplier to reduce how many images are batched
-# at a time when these models are used.
-BASELINE_BATCHING_MULTIPLIERS = {
-    "flux_1": 5,
-    "qwen_image": 10,
-    "z_image_turbo": 8,
-}
-
-
 # The samplers the `sampler_name` field accepts. Acceptance is not availability: a sampler is only
 # dispatchable to bridge agents whose version advertises it (see BRIDGE_SAMPLERS), so an entry here
 # that no online worker can render leaves the request queued rather than rejected.
@@ -332,17 +322,6 @@ FLOW_SHIFT_PARAM = "flow_shift"
 FLOW_SHIFT_MIN = 0.0
 FLOW_SHIFT_MAX = 100.0
 
-# horde-engine 7.0.1 applies the shift to Flux-family graphs and to Qwen's existing AuraFlow node.
-# Other graphs, including Z-Image, log a warning and ignore the value, so fail closed for those models.
-FLOW_SHIFT_BASELINES = frozenset(
-    {
-        KNOWN_IMAGE_GENERATION_BASELINE.flux_1,
-        KNOWN_IMAGE_GENERATION_BASELINE.flux_schnell,
-        KNOWN_IMAGE_GENERATION_BASELINE.flux_dev,
-        KNOWN_IMAGE_GENERATION_BASELINE.qwen_image,
-    },
-)
-
 # The weight the ControlNet guidance is applied with. It is a property of the control map rather than of
 # the model, so it only means anything to a request that has one: either it names a `control_type`, or it
 # is the qr_code workflow, which builds a control map of its own and scales it by this weight. With no
@@ -361,22 +340,21 @@ CONTROL_STRENGTH_MAX = 3.0
 KNOWN_SOLVER_TYPES = {solver_type.value for solver_type in KNOWN_SAMPLER_SOLVER_TYPES}
 
 
-def baseline_for_constraints(baseline_name):
-    """Return the shared baseline vocabulary's name for a model reference baseline, or None.
+def baseline_for_constraints(
+    baseline_name: KNOWN_IMAGE_GENERATION_BASELINE | str | None,
+) -> KNOWN_IMAGE_GENERATION_BASELINE | None:
+    """Return the shared baseline vocabulary's member for a model reference baseline, or None.
 
-    The model reference spells some baselines with spaces where the shared vocabulary uses underscores,
-    so a plain lookup would miss exactly the two families the sigma-generator schedules are defined for.
     None means the baseline is not one the shared vocabulary knows, which leaves any per-baseline
-    constraint unenforced rather than rejecting a model over a spelling.
+    sampler constraint unenforced rather than rejecting a model the reference publishes and this
+    deployment's vocabulary simply predates.
     """
     if not baseline_name:
         return None
-    for candidate in (baseline_name, baseline_name.replace(" ", "_")):
-        try:
-            return KNOWN_IMAGE_GENERATION_BASELINE(candidate)
-        except ValueError:
-            continue
-    return None
+    try:
+        return KNOWN_IMAGE_GENERATION_BASELINE(str(baseline_name))
+    except ValueError:
+        return None
 
 
 SOLVER_OPTION_PARAMS = SOLVER_KNOB_PARAMS | {FLOW_SHIFT_PARAM}
