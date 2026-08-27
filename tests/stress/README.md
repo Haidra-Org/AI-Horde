@@ -127,6 +127,15 @@ Use `--sampler-feature-requestors 1 --legacy-image-workers 1
 --extended-image-workers 1` for a deterministic smoke population. Meta users
 also fetch `/api/v2/status/sampler_constraints` as ordinary read-only traffic.
 
+`BaselineFeatureRequester` sets one or two per-baseline features (`hires_fix`,
+`transparent`, the `qr_code` workflow, `flow_shift`, and `remix`
+source-processing) on a model whose baseline it knows, and marks the response
+against the rejection `horde.baseline_policy` predicts for it. Accepting a
+request the policy table refuses, or refusing one it allows, fails the run. The
+baselines come from the `_MODEL_BASELINES` map in `locustsuite/config.py`;
+models absent from it are skipped rather than guessed at. Use
+`--baseline-feature-requestors 1` for a deterministic population.
+
 Staged load profile:
 
 ```

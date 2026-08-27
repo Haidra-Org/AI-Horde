@@ -228,6 +228,11 @@ def add_ai_horde_arguments(parser):
             "HORDE_SAMPLER_FEATURE_REQUESTORS",
             "Concurrent sampler feature requestors (zero, subset, and all extended settings)",
         ),
+        (
+            "--baseline-feature-requestors",
+            "HORDE_BASELINE_FEATURE_REQUESTORS",
+            "Concurrent baseline feature requestors (per-baseline features against the policy table)",
+        ),
         ("--meta-browsers", "HORDE_META_BROWSERS", "Concurrent MetaBrowser users (read-only meta endpoints)"),
         ("--misuse-users", "HORDE_MISUSE_USERS", "Concurrent MisuseUser users (4xx validation paths)"),
     ):
@@ -398,8 +403,7 @@ def _remove_tag_filtered_user_classes(environment) -> None:
             continue
         if user_class.fixed_count > 0:
             raise RuntimeError(
-                f"{user_class.__name__} requests {user_class.fixed_count} fixed users, "
-                "but tag filtering removed all of its tasks.",
+                f"{user_class.__name__} requests {user_class.fixed_count} fixed users, but tag filtering removed all of its tasks.",
             )
         removed.append(user_class.__name__)
 
@@ -458,6 +462,7 @@ def on_test_start(environment, **kw):
     # spawner respects it. We do this here rather than at import time so the
     # CLI arguments are guaranteed to be parsed.
     from .users import (
+        BaselineFeatureRequester,
         ExtendedWorkerSimulator,
         HotPathRequester,
         InterrogationRequester,
@@ -483,6 +488,7 @@ def on_test_start(environment, **kw):
         (InterrogationWorkerSimulator, "interrogate_workers"),
         (HotPathRequester, "hot_path_requestors"),
         (SamplerFeatureRequester, "sampler_feature_requestors"),
+        (BaselineFeatureRequester, "baseline_feature_requestors"),
         (MetaBrowser, "meta_browsers"),
         (MisuseUser, "misuse_users"),
     )
