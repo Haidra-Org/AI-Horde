@@ -31,7 +31,8 @@ git+https://github.com/Patreon/patreon-python.git
 emoji
 semver >= 3.0.2
 numpy
-horde_sdk>=0.29.1,<0.30.0
+horde_sdk~=0.31.0
+horde_model_reference>=8.4.0,<9.0.0
 markdownify
 stripe>=15,<16
 environs
