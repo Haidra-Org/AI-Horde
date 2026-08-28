@@ -44,6 +44,8 @@ that re-export the User classes Locust should discover:
   the attribution oracle observes.
 - `locustfile_hot_user_convoy.py` spawns the hot-user convoy populations.
 - `locustfile_queue_pressure.py` spawns the queue-pressure populations.
+- `locustfile_reference_churn.py` mixes control and changing image models while
+  an external driver updates the served reference.
 
 ## Prerequisites
 
@@ -135,6 +137,22 @@ request the policy table refuses, or refusing one it allows, fails the run. The
 baselines come from the `_MODEL_BASELINES` map in `locustsuite/config.py`;
 models absent from it are skipped rather than guessed at. Use
 `--baseline-feature-requestors 1` for a deterministic population.
+
+The reference-churn workload is normally launched by
+`tests/integration/test_reference_refresh_under_locust_traffic.py`. That test
+keeps ordinary control/model requests flowing while it publishes a baseline,
+publishes a model, forces a baseline-plus-model update between the replica's
+two remote reads, and simulates a model-category outage and recovery. Requests
+are queued and immediately cancelled so every iteration traverses validation;
+dry-run quotes are deliberately avoided because their kudos cache can return
+before validation. To aim the workload at a manually controlled deployment,
+set `LOCUST_REFERENCE_API_KEY`, `LOCUST_REFERENCE_CONTROL_MODEL`, and
+`LOCUST_REFERENCE_MODELS`, then run:
+
+```
+locust -f tests/stress/locustfile_reference_churn.py \
+    --host http://localhost:7001 --headless --users 4 --spawn-rate 4
+```
 
 Staged load profile:
 
