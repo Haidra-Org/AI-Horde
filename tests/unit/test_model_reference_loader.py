@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from horde_model_reference import (
     MODEL_REFERENCE_CATEGORY,
     PENDING_SOURCE_ID,
+    ImageBaselineRecord,
     StaticModelProvider,
 )
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
@@ -53,13 +55,15 @@ def canonical_image_view(monkeypatch: pytest.MonkeyPatch) -> Iterator[CanonicalV
     loader = model_reference_module.model_reference
     restore = {
         attribute: getattr(loader, attribute)
-        for attribute in ("reference", "text_reference", "stable_diffusion_names", "text_model_names", "nsfw_models")
+        for attribute in ("text_reference", "stable_diffusion_names", "text_model_names", "nsfw_models")
     }
+    previous_image_snapshot = loader._image_snapshot
 
     yield canonical
 
     for attribute, previous_value in restore.items():
         setattr(loader, attribute, previous_value)
+    loader._image_snapshot = previous_image_snapshot
     manager.unregister_provider(PENDING_SOURCE_ID)
 
 
@@ -123,6 +127,46 @@ def test_a_pending_record_with_an_unknown_baseline_reaches_the_loaded_reference(
 
     assert "future_model" in reference.stable_diffusion_names
     assert reference.get_model_baseline("future_model") == "some_future_baseline"
+
+
+def test_models_and_baselines_are_published_as_one_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    canonical_image_view: CanonicalView,
+) -> None:
+    """A model naming a newly served baseline never becomes visible without that baseline record."""
+    baseline = ImageBaselineRecord(name="future_baseline")
+    canonical_image_view[MODEL_REFERENCE_CATEGORY.image_generation] = {
+        "future_model": make_image_record("future_model", baseline.name),
+    }
+    manager = model_reference_module._get_reference_manager()
+    monkeypatch.setattr(manager, "refresh_image_baselines", lambda: True)
+    monkeypatch.setattr(manager.image_baseline_store, "export", lambda: SimpleNamespace(baselines={baseline.name: baseline}))
+
+    model_reference_module.model_reference.call_function()
+
+    assert model_reference_module.model_reference.get_model_baseline("future_model") == baseline.name
+    assert model_reference_module.model_reference.baseline_record(baseline.name) == baseline
+
+
+def test_failed_model_fetch_keeps_the_previous_complete_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refreshing the catalog alone cannot leak a half-new reference to request readers."""
+    loader = model_reference_module.model_reference
+    previous_snapshot = loader._image_snapshot
+    manager = model_reference_module._get_reference_manager()
+    future_baseline = ImageBaselineRecord(name="not_published")
+    monkeypatch.setattr(manager, "refresh_image_baselines", lambda: True)
+    monkeypatch.setattr(
+        manager.image_baseline_store,
+        "export",
+        lambda: SimpleNamespace(baselines={future_baseline.name: future_baseline}),
+    )
+    monkeypatch.setattr(manager, "query", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("fetch failed")))
+    monkeypatch.setattr(model_reference_module.requests, "get", lambda *args, **kwargs: _StubTextResponse())
+
+    loader.call_function()
+
+    assert loader._image_snapshot is previous_snapshot
+    assert loader.baseline_record(future_baseline.name) is None
 
 
 @pytest.mark.parametrize(
