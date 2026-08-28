@@ -35,10 +35,11 @@ CASCADE_MODEL = "cascade_model"
 FLUX_MODEL = "flux_model"
 ZIMAGE_MODEL = "zimage_model"
 KREA2_MODEL = "krea2_model"
+ANIMA_MODEL = "anima_model"
 # A record the pending (beta) overlay contributed. Beta carries no flag of its own: a pending model is
 # in the reference like any other, which is the whole of what "beta models need no backend change" means.
 BETA_ONLY_MODEL = "beta_only_model"
-# A baseline the catalog publishes no record for, so its capabilities are the permissive default and no
+# A baseline the catalog publishes no record for, so its capabilities are the conservative default and no
 # bridge release names it.
 FUTURE_MODEL = "future_model"
 FUTURE_BASELINE = "some_future_baseline"
@@ -54,6 +55,7 @@ SEEDED_MODELS: dict[str, KNOWN_IMAGE_GENERATION_BASELINE | str] = {
     FLUX_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.flux_1,
     ZIMAGE_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo,
     KREA2_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo,
+    ANIMA_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.anima,
     BETA_ONLY_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl,
     FUTURE_MODEL: FUTURE_BASELINE,
 }
@@ -145,7 +147,7 @@ class TestPlainRequestAcceptance:
 
 
 class TestHiResFix:
-    @pytest.mark.parametrize("model_name", [FLUX_MODEL, ZIMAGE_MODEL, KREA2_MODEL])
+    @pytest.mark.parametrize("model_name", [FLUX_MODEL, ZIMAGE_MODEL, KREA2_MODEL, ANIMA_MODEL])
     def test_hires_fix_is_rejected_on_a_baseline_whose_graph_lacks_it(
         self,
         client: FlaskClient,
@@ -197,7 +199,7 @@ class TestHiResFix:
 class TestControlNet:
     @pytest.mark.object_storage
     @pytest.mark.usefixtures("object_store_ready")
-    @pytest.mark.parametrize("model_name", [SDXL_MODEL, CASCADE_MODEL, FLUX_MODEL, ZIMAGE_MODEL, KREA2_MODEL])
+    @pytest.mark.parametrize("model_name", [SDXL_MODEL, CASCADE_MODEL, FLUX_MODEL, ZIMAGE_MODEL, KREA2_MODEL, ANIMA_MODEL])
     def test_a_control_type_is_rejected_on_a_baseline_with_no_controlnet(
         self,
         client: FlaskClient,
@@ -303,7 +305,7 @@ class TestQrCodeWorkflow:
             "ControlNetMismatch.",
         )
 
-    @pytest.mark.parametrize("model_name", [SD1_MODEL, SDXL_MODEL, FUTURE_MODEL])
+    @pytest.mark.parametrize("model_name", [SD1_MODEL, SDXL_MODEL])
     def test_the_qr_code_workflow_is_accepted_where_the_baseline_renders_it(
         self,
         client: FlaskClient,
@@ -311,6 +313,18 @@ class TestQrCodeWorkflow:
         model_name: str,
     ) -> None:
         _assert_accepted(client, request_headers, _async_dict([model_name], params=self.QR_CODE_PARAMS))
+
+    def test_the_qr_code_workflow_is_rejected_while_a_baseline_record_is_missing(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+    ) -> None:
+        _assert_rejected(
+            client,
+            request_headers,
+            _async_dict([FUTURE_MODEL], params=self.QR_CODE_PARAMS),
+            "ControlNetMismatch.",
+        )
 
 
 class TestRemix:
@@ -326,7 +340,7 @@ class TestRemix:
             "InvalidRemix",
         )
 
-    @pytest.mark.parametrize("model_name", [CASCADE_MODEL, FUTURE_MODEL])
+    @pytest.mark.parametrize("model_name", [CASCADE_MODEL])
     def test_remix_is_accepted_where_the_baseline_renders_it(
         self,
         client: FlaskClient,
@@ -334,6 +348,18 @@ class TestRemix:
         model_name: str,
     ) -> None:
         _assert_accepted(client, request_headers, _async_dict([model_name], source_processing="remix"))
+
+    def test_remix_is_rejected_while_a_baseline_record_is_missing(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+    ) -> None:
+        _assert_rejected(
+            client,
+            request_headers,
+            _async_dict([FUTURE_MODEL], source_processing="remix"),
+            "InvalidRemix",
+        )
 
 
 class TestFlowShift:

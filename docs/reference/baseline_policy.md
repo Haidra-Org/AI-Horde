@@ -86,8 +86,7 @@ Read with `policy(baseline)`, which returns the record's `horde_policy` or the p
 ## An uncatalogued baseline
 
 A baseline the catalog publishes no record for, including one the installed `horde_model_reference`
-vocabulary does not carry, is given the permissive capabilities and priced at par. It is *not* given
-engine support: no bridge version lists it, so `hires_fix`, `control_type`, `flow_shift` and
-`transparent` are refused for it while a plain txt2img request is accepted. A model published upstream
-ahead of a bridge release therefore stays requestable at par pricing, and gets its extra features when
-a release states that it renders them.
+vocabulary does not carry, is given conservative capabilities and priced at par. A plain txt2img
+request remains accepted, while baseline-dependent workflows are refused until the catalog states
+that the required weights or mechanism exist and, where applicable, a bridge release states that it
+renders them.

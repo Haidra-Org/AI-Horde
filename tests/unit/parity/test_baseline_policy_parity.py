@@ -21,7 +21,7 @@ from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde import exceptions as e
 from horde.baseline_policy import (
     ALL_BASELINE_FEATURES,
-    PERMISSIVE_CAPABILITIES,
+    UNCATALOGUED_CAPABILITIES,
     baseline_violation,
     kudos_multiplier,
     policy,
@@ -66,6 +66,7 @@ BASELINE_CASES: Final[tuple[tuple[str, str], ...]] = (
     ("qwen_image", KNOWN_IMAGE_GENERATION_BASELINE.qwen_image.value),
     ("z_image_turbo", KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo.value),
     ("krea2_turbo", KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo.value),
+    ("anima", KNOWN_IMAGE_GENERATION_BASELINE.anima.value),
     ("some_future_baseline", "some_future_baseline"),
     ("krea3_turbo", "krea3_turbo"),
 )
@@ -95,16 +96,17 @@ UNMATCHED_BY_OLD_PREFIX_TESTS: Final[frozenset[str]] = frozenset(
         KNOWN_IMAGE_GENERATION_BASELINE.flux_schnell.value,
         KNOWN_IMAGE_GENERATION_BASELINE.flux_dev.value,
         KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo.value,
+        KNOWN_IMAGE_GENERATION_BASELINE.anima.value,
     },
 )
 
-# The baselines the catalog states nothing restrictive about, either because it publishes no record
-# for them or because their record carries the permissive default.
-PERMISSIVELY_CATALOGUED: Final[frozenset[str]] = frozenset(
+# Baselines that have no record or deliberately carry the same conservative capability set. Plain
+# requests remain accepted, while feature workflows wait for explicit support.
+CONSERVATIVE_BASELINES: Final[frozenset[str]] = frozenset(
     new_value
     for _, new_value in BASELINE_CASES
     if BOOTSTRAP_BASELINE_CATALOG.baselines.get(new_value) is None
-    or BOOTSTRAP_BASELINE_CATALOG.baselines[new_value].capabilities == PERMISSIVE_CAPABILITIES
+    or BOOTSTRAP_BASELINE_CATALOG.baselines[new_value].capabilities == UNCATALOGUED_CAPABILITIES
 )
 
 # The baselines whose served policy departs from what the old ladders charged for them.
@@ -113,13 +115,8 @@ NEWLY_PRICED_BASELINES: Final[frozenset[str]] = frozenset(
         KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo.value,
         KNOWN_IMAGE_GENERATION_BASELINE.flux_schnell.value,
         KNOWN_IMAGE_GENERATION_BASELINE.flux_dev.value,
+        KNOWN_IMAGE_GENERATION_BASELINE.anima.value,
     },
-)
-
-# The rules the old code enforced by naming the baselines that passed, so anything it had not heard of
-# was refused. The catalog's permissive default accepts them instead.
-RULES_OLD_ENFORCED_BY_ALLOWLIST: Final[frozenset[str]] = frozenset(
-    {"qr_code_workflow_unsupported", "remix_unsupported"},
 )
 
 # The rules the old code enforced by naming the baselines that failed, so anything it had not heard of
@@ -129,7 +126,6 @@ RULES_OLD_ENFORCED_BY_DENYLIST: Final[frozenset[str]] = frozenset(
 )
 
 DEVIATION_D4_PREFIX_MISS: Final[str] = "D4 old prefix tests missed this baseline"
-DEVIATION_D5_PERMISSIVE_DEFAULT: Final[str] = "D5 an uncatalogued baseline keeps what the old allowlists refused"
 DEVIATION_D8_NO_BRIDGE_RENDERS_IT: Final[str] = "D8 no bridge release renders this feature on an uncatalogued baseline"
 
 
@@ -204,16 +200,6 @@ def _classify_rule_difference(
 ) -> str | None:
     """Return the adjudicated deviation a per-rule difference falls under, or None if it is new."""
     if old_rejects:
-        if rule_name not in RULES_OLD_ENFORCED_BY_ALLOWLIST:
-            return None
-        offenders = [
-            legacy
-            for legacy, _ in selection
-            if rule_name in legacy_rejecting_rules([legacy], params=params, source_processing=source_processing)
-        ]
-        offending_new_values = [new_value for legacy, new_value in selection if legacy in offenders]
-        if offending_new_values and all(new_value in PERMISSIVELY_CATALOGUED for new_value in offending_new_values):
-            return DEVIATION_D5_PERMISSIVE_DEFAULT
         return None
 
     if rule_name not in RULES_OLD_ENFORCED_BY_DENYLIST:
@@ -225,7 +211,7 @@ def _classify_rule_difference(
         return None
     if all(new_value in UNMATCHED_BY_OLD_PREFIX_TESTS for new_value in offending_new_values):
         return DEVIATION_D4_PREFIX_MISS
-    if all(new_value in UNMATCHED_BY_OLD_PREFIX_TESTS | PERMISSIVELY_CATALOGUED for new_value in offending_new_values):
+    if all(new_value in UNMATCHED_BY_OLD_PREFIX_TESTS | CONSERVATIVE_BASELINES for new_value in offending_new_values):
         return DEVIATION_D8_NO_BRIDGE_RENDERS_IT
     return None
 
@@ -294,16 +280,6 @@ class TestAdjudicatedRejectionDeviations:
         params = {"control_type": "canny"}
         assert legacy_first_rejection_rc([baseline], params=params) is None
         assert _new_rejecting_rules((baseline,), params, None)[1] == "ControlNetMismatch"
-
-    @pytest.mark.parametrize("baseline", ["some_future_baseline", KNOWN_IMAGE_GENERATION_BASELINE.infer.value])
-    def test_d5_an_uncatalogued_baseline_keeps_the_workflows_the_old_allowlists_refused(self, baseline: str) -> None:
-        assert baseline in PERMISSIVELY_CATALOGUED
-        for params, source_processing, old_rc in (
-            ({"workflow": "qr_code"}, None, "ControlNetMismatch."),
-            ({}, "remix", "InvalidRemix"),
-        ):
-            assert legacy_first_rejection_rc([baseline], params=params, source_processing=source_processing) == old_rc
-            assert _new_rejecting_rules((baseline,), params, source_processing)[1] is None
 
     @pytest.mark.parametrize("baseline", ["some_future_baseline", KNOWN_IMAGE_GENERATION_BASELINE.infer.value])
     def test_d8_an_uncatalogued_baseline_is_refused_the_features_no_bridge_renders_on_it(self, baseline: str) -> None:
@@ -464,6 +440,7 @@ class TestResolutionFloorParity:
             KNOWN_IMAGE_GENERATION_BASELINE.qwen_image.value: 1024,
             KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo.value: 1024,
             KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo.value: 1024,
+            KNOWN_IMAGE_GENERATION_BASELINE.anima.value: 1024,
         }
         mismatches: list[str] = []
         for selection in ALL_BASELINE_SELECTIONS:
@@ -649,8 +626,8 @@ class TestParamValidatorWiring:
         code = _validator_rejection_code(monkeypatch, "some_future_baseline", {"hires_fix": True})
         assert code == "HiResMismatch"
 
-    def test_an_uncatalogued_baseline_reaches_the_validator_permitted_for_a_workflow_it_can_run(
+    def test_an_uncatalogued_baseline_reaches_the_validator_with_conservative_workflows(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         code = _validator_rejection_code(monkeypatch, "some_future_baseline", {"workflow": "qr_code"})
-        assert code is None
+        assert code == "ControlNetMismatch."

@@ -63,7 +63,9 @@ Records stay typed as `ImageGenerationModelRecord` in memory:
 
 A model the reference has never heard of still resolves to a baseline, from the suffix its name
 declares: `[SDXL]`, `[Flux]`, `[Qwen]`, `[ZModel]` and `[ZImage]`, falling through to
-`stable_diffusion_1`. Customizer-role users can request such a name, and it must still be priced.
+`stable_diffusion_1`. Customizer-role users can request such a name, and it must still be priced. An
+uncatalogued baseline is accepted for plain generation but receives no baseline-dependent workflow
+capabilities by default.
 
 A refresh that fails leaves the previous reference serving traffic rather than emptying it.
 
