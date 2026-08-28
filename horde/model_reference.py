@@ -187,6 +187,16 @@ class ModelReference(PrimaryTimedFunction):
                 baseline_records = manager.image_baseline_store.export().baselines
                 source = _image_reference_source(manager)
                 image_records = manager.query(MODEL_REFERENCE_CATEGORY.image_generation, source=source).to_list()
+                missing_baselines = {str(record.baseline) for record in image_records} - baseline_records.keys()
+                if missing_baselines:
+                    # The PRIMARY may publish a baseline and then its model between our two HTTP
+                    # reads. Re-read the catalog after the model set is fixed; publication order
+                    # guarantees that the second catalog contains every legitimate model baseline.
+                    # A failed retry retains the cached catalog and its conservative uncatalogued
+                    # behavior; availability does not depend on both remote reads succeeding in the
+                    # same cycle.
+                    if manager.refresh_image_baselines():
+                        baseline_records = manager.image_baseline_store.export().baselines
                 reference = {record.name: record for record in image_records}
                 # One pointer assignment publishes the coherent pair. If either fetch or validation
                 # above fails, the previous snapshot continues serving unchanged.
