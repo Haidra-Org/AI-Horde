@@ -67,7 +67,9 @@ declares: `[SDXL]`, `[Flux]`, `[Qwen]`, `[ZModel]` and `[ZImage]`, falling throu
 uncatalogued baseline is accepted for plain generation but receives no baseline-dependent workflow
 capabilities by default.
 
-A refresh that fails leaves the previous reference serving traffic rather than emptying it.
+A refresh stages the baseline catalog and model records before publishing them as one copy-on-write
+snapshot, so request readers never see a new model paired with the previous catalog. If either side
+fails to fetch or validate, the previous complete snapshot keeps serving traffic.
 
 ## Environment
 

@@ -141,7 +141,13 @@ def _image_reference_source(manager: ModelReferenceManager) -> SourceSelector:
 
 class ModelReference(PrimaryTimedFunction):
     quorum = None
-    reference: dict[str, ImageGenerationModelRecord] | None = None
+    _image_snapshot: (
+        tuple[
+            dict[str, ImageGenerationModelRecord],
+            dict[str, ImageBaselineRecord],
+        ]
+        | None
+    ) = None
     text_reference = None
     stable_diffusion_names: set[str] = set()
     text_model_names: set[str] = set()
@@ -154,6 +160,17 @@ class ModelReference(PrimaryTimedFunction):
     testing_models = {}
     no_q_regex = re.compile(r"[.,-][a-zA-Z0-9]+?-?Q(-[Ii]nt)?[2-9]{1,2}([_.-][0-9a-zA-Z]+)*")
 
+    @property
+    def reference(self) -> dict[str, ImageGenerationModelRecord] | None:
+        """Return the model half of the currently published image-reference snapshot."""
+        return self._image_snapshot[0] if self._image_snapshot is not None else None
+
+    @reference.setter
+    def reference(self, records: dict[str, ImageGenerationModelRecord] | None) -> None:
+        """Replace the model half while retaining the catalog, primarily for test fixtures."""
+        baselines = self._image_snapshot[1] if self._image_snapshot is not None else {}
+        self._image_snapshot = (records or {}, baselines) if records is not None else None
+
     def call_function(self) -> None:
         """Retrieves to image and text model reference and stores in it a var"""
         # If it's running in SQLITE_MODE, it means it's a test and we never want to grab the quorum
@@ -161,17 +178,21 @@ class ModelReference(PrimaryTimedFunction):
         for _attempt in range(10):
             try:
                 manager = _get_reference_manager()
-                source = _image_reference_source(manager)
-                image_records = manager.query(MODEL_REFERENCE_CATEGORY.image_generation, source=source).to_list()
-                # Swapped in only once the fetch succeeded, so a failed refresh leaves the
-                # previous reference serving traffic rather than an empty one.
-                self.reference = {record.name: record for record in image_records}
-                self.stable_diffusion_names = set(self.reference)
-                self.nsfw_models = {name for name, record in self.reference.items() if record.nsfw}
-                # A baseline published after this process started is invisible until the replica cache
-                # is re-fetched, and the request path reads it on every generation.
+                # Fetch both resources into locals before publishing either. Readers then observe one
+                # copy-on-write snapshot, never a new model paired with the previous baseline catalog.
+                # Refreshing the catalog first also respects the PRIMARY's invariant that a baseline
+                # must be published before a model may name it.
                 if not manager.refresh_image_baselines():
                     logger.debug("The image baseline catalog was not refreshed; the cached one still serves.")
+                baseline_records = manager.image_baseline_store.export().baselines
+                source = _image_reference_source(manager)
+                image_records = manager.query(MODEL_REFERENCE_CATEGORY.image_generation, source=source).to_list()
+                reference = {record.name: record for record in image_records}
+                # One pointer assignment publishes the coherent pair. If either fetch or validation
+                # above fails, the previous snapshot continues serving unchanged.
+                self._image_snapshot = (reference, baseline_records)
+                self.stable_diffusion_names = set(reference)
+                self.nsfw_models = {name for name, record in reference.items() if record.nsfw}
 
                 break
             except Exception as e:
@@ -219,9 +240,10 @@ class ModelReference(PrimaryTimedFunction):
 
     def baseline_record(self, baseline: KNOWN_IMAGE_GENERATION_BASELINE | str | None) -> ImageBaselineRecord | None:
         """Return the served record for one baseline, or None where the catalog publishes no such name."""
-        if not baseline:
+        snapshot = self._image_snapshot
+        if not baseline or snapshot is None:
             return None
-        return _get_reference_manager().image_baseline_store.get(str(baseline))
+        return snapshot[1].get(str(baseline))
 
     def get_model_requirements(self, model_name: str) -> dict[str, MODEL_REQUIREMENT_VALUE]:
         """Return the model's published request requirements, or an empty mapping where it has none."""
