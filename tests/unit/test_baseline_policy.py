@@ -35,6 +35,8 @@ CASCADE = KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade
 FLUX_1 = KNOWN_IMAGE_GENERATION_BASELINE.flux_1
 QWEN = KNOWN_IMAGE_GENERATION_BASELINE.qwen_image
 Z_IMAGE = KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo
+KREA2 = KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo
+ANIMA = KNOWN_IMAGE_GENERATION_BASELINE.anima
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +76,7 @@ class TestCatalogCapabilities:
     """K1: what the served record says exists for the family."""
 
     def test_a_family_with_no_control_weights_is_rejected(self) -> None:
-        for baseline in (CASCADE, QWEN, Z_IMAGE):
+        for baseline in (CASCADE, QWEN, Z_IMAGE, KREA2, ANIMA):
             assert rejection_code({baseline}, params={"control_type": "canny"}) == "ControlNetMismatch", baseline
 
     def test_a_control_type_with_no_published_weights_is_rejected(self) -> None:
@@ -93,7 +95,7 @@ class TestCatalogCapabilities:
             assert rejection_code({baseline}, params={"transparent": True}) == "InvalidTransparencyModel", baseline
 
     def test_a_family_with_no_qr_code_weights_is_rejected(self) -> None:
-        for baseline in (SD2_768, CASCADE, FLUX_1, QWEN, Z_IMAGE):
+        for baseline in (SD2_768, CASCADE, FLUX_1, QWEN, Z_IMAGE, KREA2, ANIMA):
             # The trailing full stop is part of the code clients already match on.
             assert rejection_code({baseline}, params={"workflow": "qr_code"}) == "ControlNetMismatch.", baseline
 
@@ -152,9 +154,9 @@ class TestUncataloguedBaseline:
     def test_a_plain_request_is_accepted(self) -> None:
         assert rejection_code({UNCATALOGUED_BASELINE}, params={"steps": 30, "cfg_scale": 7.5}) is None
 
-    def test_the_workflows_the_catalog_would_have_to_forbid_are_accepted(self) -> None:
-        assert rejection_code({UNCATALOGUED_BASELINE}, params={"workflow": "qr_code"}) is None
-        assert rejection_code({UNCATALOGUED_BASELINE}, params={}, source_processing="remix") is None
+    def test_workflows_without_bridge_gates_are_conservatively_refused(self) -> None:
+        assert rejection_code({UNCATALOGUED_BASELINE}, params={"workflow": "qr_code"}) == "ControlNetMismatch."
+        assert rejection_code({UNCATALOGUED_BASELINE}, params={}, source_processing="remix") == "InvalidRemix"
 
     @pytest.mark.parametrize(
         ("params", "expected_rc"),
@@ -212,6 +214,8 @@ class TestServicePolicy:
             (FLUX_1, 5, 3, 1024),
             (QWEN, 10, 3, 1024),
             (Z_IMAGE, 8, 3, 1024),
+            (KREA2, 8, 3, 1024),
+            (ANIMA, 8, 3, 1024),
         ],
     )
     def test_each_family_is_scheduled_as_its_record_states(

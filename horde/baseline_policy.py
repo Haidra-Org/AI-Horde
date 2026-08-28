@@ -6,8 +6,8 @@
 
 Two authorities answer that and neither lives here: the served baseline record states which weights
 and mechanisms exist for a family, and `bridge_reference` states which bridge releases render a
-feature on it. A baseline with no record is permissive and priced at par, so a family published
-ahead of this deployment reaches the worker holding the model rather than being refused here.
+feature on it. A baseline with no record is conservative and priced at par: plain text-to-image
+still reaches the worker, while baseline-dependent workflows fail closed until catalogued.
 
 Critical public members:
 
@@ -33,7 +33,7 @@ from horde.model_reference import model_reference
 __all__ = [
     "ALL_BASELINE_FEATURES",
     "PAR_HORDE_POLICY",
-    "PERMISSIVE_CAPABILITIES",
+    "UNCATALOGUED_CAPABILITIES",
     "UNSUPPORTED_MODEL_RETURN_CODE",
     "baseline_violation",
     "kudos_multiplier",
@@ -46,8 +46,8 @@ ALL_BASELINE_FEATURES: Final[tuple[BaselineFeature, ...]] = tuple(BaselineFeatur
 UNSUPPORTED_MODEL_RETURN_CODE: Final[str] = "ControlNetUnsupported"
 """The one rejection that describes a model the request named rather than a field it set."""
 
-PERMISSIVE_CAPABILITIES: Final[BaselineCapabilities] = BaselineCapabilities()
-"""The capabilities a baseline the catalog has no record for is given."""
+UNCATALOGUED_CAPABILITIES: Final[BaselineCapabilities] = BaselineCapabilities()
+"""The conservative capabilities used while a baseline has no served catalog record."""
 
 PAR_HORDE_POLICY: Final[HordeBaselinePolicy] = HordeBaselinePolicy()
 """What a baseline the catalog has no record for is priced and scheduled at."""
@@ -72,7 +72,7 @@ def _feature_violation(
         source_processing: The request's source processing mode, read by the remix feature.
     """
     record = model_reference.baseline_record(baseline)
-    capabilities = record.capabilities if record is not None else PERMISSIVE_CAPABILITIES
+    capabilities = record.capabilities if record is not None else UNCATALOGUED_CAPABILITIES
 
     if feature == BaselineFeature.FLOW_SHIFT:
         flow_shift_is_set = params.get(FLOW_SHIFT_PARAM) is not None
