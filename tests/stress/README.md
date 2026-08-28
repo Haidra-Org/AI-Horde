@@ -140,14 +140,24 @@ models absent from it are skipped rather than guessed at. Use
 
 The reference-churn workload is normally launched by
 `tests/integration/test_reference_refresh_under_locust_traffic.py`. That test
-keeps ordinary control/model requests flowing while it publishes a baseline,
-publishes a model, forces a baseline-plus-model update between the replica's
-two remote reads, and simulates a model-category outage and recovery. Requests
-are queued and immediately cancelled so every iteration traverses validation;
-dry-run quotes are deliberately avoided because their kudos cache can return
-before validation. To aim the workload at a manually controlled deployment,
-set `LOCUST_REFERENCE_API_KEY`, `LOCUST_REFERENCE_CONTROL_MODEL`, and
-`LOCUST_REFERENCE_MODELS`, then run:
+drives seven temporal epochs: control traffic, baseline-only publication, a
+model on an existing baseline, an interleaved baseline-plus-model publication,
+a model-category outage, policy recovery, and model retirement. Four requesters
+and three workers perform real async/pop/submit/check/status round trips at low,
+medium, burst, and heavy load. Requester evidence independently checks the
+requested model, terminal state, worker attribution, and single-generation
+cardinality; Locust's CSV remains the transport/error oracle. The parent test
+also holds dedicated assignments across a policy update and model removal to
+prove that already-popped work still completes with its original model and
+requester-visible identity. Completion-time repricing is observed but is not a
+contract asserted by this scenario.
+
+The integration driver writes an atomic JSON epoch configuration and consumes
+the workload's JSONL evidence. A manual run therefore needs
+`LOCUST_REFERENCE_API_KEY`, `LOCUST_REFERENCE_EPOCH_CONFIG`, and
+`LOCUST_REFERENCE_EVIDENCE`; the config must contain `epoch`,
+`request_models`, and `worker_models`, with the optional batch, probability,
+delay, and pending-limit fields used by the integration test. Then run:
 
 ```
 locust -f tests/stress/locustfile_reference_churn.py \
