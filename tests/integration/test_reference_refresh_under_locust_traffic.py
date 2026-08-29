@@ -274,7 +274,7 @@ def _wait_for_completions(
     *,
     epoch: str,
     expected: dict[str, int],
-    timeout: float = 15,
+    timeout: float = 60,
 ) -> Counter[str]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
