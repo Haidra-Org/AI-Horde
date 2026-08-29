@@ -153,7 +153,13 @@ requester-visible identity. Completion-time repricing is observed but is not a
 contract asserted by this scenario.
 
 The integration driver writes an atomic JSON epoch configuration and consumes
-the workload's JSONL evidence. A manual run therefore needs
+the workload's JSONL evidence. Requesters cycle through each epoch's models, so
+per-model submission coverage is deterministic while compatible pending work is
+kept across epoch boundaries. That backlog deliberately keeps old request polls,
+worker lookups, and new-epoch traffic overlapping reference publication. Models
+retired from the next epoch are cancelled, while the parent test's dedicated held
+assignments exercise work across policy updates and model removal. A manual run
+therefore needs
 `LOCUST_REFERENCE_API_KEY`, `LOCUST_REFERENCE_EPOCH_CONFIG`, and
 `LOCUST_REFERENCE_EVIDENCE`; the config must contain `epoch`,
 `request_models`, and `worker_models`, with the optional batch, probability,

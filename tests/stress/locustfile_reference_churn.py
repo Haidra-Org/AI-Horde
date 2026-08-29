@@ -78,6 +78,7 @@ class ReferenceEpochRequester(HttpUser):
     def on_start(self) -> None:
         self.pending: dict[str, tuple[str, str]] = {}
         self.observed_epoch = ""
+        self.model_cursor = 0
 
     def _cancel(self, request_id: str) -> None:
         with self.client.delete(
@@ -96,6 +97,9 @@ class ReferenceEpochRequester(HttpUser):
         if epoch == self.observed_epoch:
             return
         active_models = set(config["request_models"])
+        # Keep compatible work alive across the boundary. The resulting overlap is
+        # deliberate: reference publication must remain coherent while requesters poll
+        # old work, workers drain it, and new-epoch traffic starts using the same models.
         for request_id, (_submitted_epoch, model) in list(self.pending.items()):
             if model not in active_models:
                 self._cancel(request_id)
@@ -121,7 +125,10 @@ class ReferenceEpochRequester(HttpUser):
         for _ in range(int(config.get("submission_batch", 1))):
             if len(self.pending) >= max_pending:
                 break
-            model = random.choice(models)
+            # Per-model completion is a correctness oracle, not a statistical one. Cycle
+            # through the epoch's models so every requester supplies balanced work while
+            # task selection, polling, generation latency, and HTTP scheduling stay random.
+            model = models[self.model_cursor % len(models)]
             with self.client.post(
                 "/api/v2/generate/async",
                 json=_request_payload(epoch, model),
@@ -141,6 +148,7 @@ class ReferenceEpochRequester(HttpUser):
                 response.success()
                 request_id = str(body["id"])
                 self.pending[request_id] = (epoch, model)
+                self.model_cursor += 1
                 _record_evidence("request_submitted", epoch=epoch, model=model, request_id=request_id)
 
     @task(8)
