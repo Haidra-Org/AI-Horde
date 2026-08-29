@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped, relationship
 
 from horde import vars as hv
 from horde.classes.base import settings
-from horde.classes.base.kudos import emit_kudos_stat_event, kudos_event
+from horde.classes.base.kudos import KudosStatEvent, emit_kudos_stat_event, kudos_event
 from horde.database.kudos_legacy_projection import (
     project_worker_contribution,
     project_worker_fulfilment,
@@ -590,6 +590,18 @@ class WorkerTemplate(db.Model):
         return False
 
     def delete(self):
+        # Worker-targeted stat events are immutable audit rows without an FK to
+        # workers, so they survive the worker itself.  Once this worker is gone
+        # there is intentionally no worker_stats/aggregate row to materialize.
+        # Consume any pending projections before deleting the worker so the
+        # applier cannot later attempt a worker_stats insert that violates its
+        # worker_id FK.  The UPDATE also serializes deletion against an applier
+        # cycle that already claimed one of these rows FOR UPDATE: whichever
+        # transaction gets the event first completes before the other proceeds.
+        db.session.query(KudosStatEvent).filter(
+            KudosStatEvent.worker_id == self.id,
+            KudosStatEvent.applied.is_(False),
+        ).update({KudosStatEvent.applied: True}, synchronize_session=False)
         for stat in self.stats:
             db.session.delete(stat)
         for performance in self.performance:

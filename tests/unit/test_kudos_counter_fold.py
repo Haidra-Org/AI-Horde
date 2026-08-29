@@ -202,6 +202,43 @@ class TestPerDimensionFold:
         assert _user_record(db_session, user.id, UserRecordTypes.USAGE, "image") == 3.99
 
 
+class TestDeletedWorkerFold:
+    """Deleting a worker cannot poison the global statistics projector."""
+
+    def test_worker_delete_consumes_pending_worker_stat_events(self, db_session, make_user):
+        worker = _make_worker(db_session, make_user(kudos=0))
+        worker_id = worker.id
+        worker.modify_kudos(100, "generated")
+        db_session.commit()
+
+        event = _stat_rows(db_session, worker_id=worker_id)[0]
+        assert event.applied is False
+
+        worker.delete()
+
+        db_session.expire_all()
+        assert db_session.query(WorkerTemplate).filter_by(id=worker_id).first() is None
+        assert db_session.query(KudosStatEvent).filter_by(id=event.id).one().applied is True
+        assert apply_pending_kudos() == 0
+
+    def test_applier_skips_historical_orphan_worker_stat_event(self, db_session, make_user):
+        worker = _make_worker(db_session, make_user(kudos=0))
+        worker_id = worker.id
+        worker.modify_kudos(100, "generated")
+        db_session.commit()
+
+        event_id = _stat_rows(db_session, worker_id=worker_id)[0].id
+        # Simulate an orphan left by an older application version or an
+        # out-of-band delete that bypassed Worker.delete().
+        db_session.query(WorkerTemplate).filter_by(id=worker_id).delete(synchronize_session=False)
+        db_session.commit()
+
+        assert apply_pending_kudos() == 1
+        db_session.expire_all()
+        assert db_session.query(KudosStatEvent).filter_by(id=event_id).one().applied is True
+        assert _worker_stat(db_session, worker_id, "generated") is None
+
+
 class TestSingleCycleAtomicity:
     """One claimed batch folds balances and every counter in one transaction."""
 

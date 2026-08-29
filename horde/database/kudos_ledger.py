@@ -19,6 +19,7 @@ claimed batch.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -64,10 +65,13 @@ from horde.metrics import (
     kudos_floor_adjustments_created,
 )
 
-# Cap how many rows one cycle folds so that catching up after applier downtime
-# cannot load an unbounded tail into memory. Rows folded this cycle are marked
-# applied, so the next cycle continues with whatever remains unapplied.
-KUDOS_APPLIER_BATCH_SIZE = 1000
+# Cap how many rows from each queue one cycle folds so that catching up after
+# applier downtime cannot load an unbounded tail into memory. Rows folded this
+# cycle are marked applied, so the next cycle continues with whatever remains
+# unapplied. Production can raise this after measuring its database; keeping the
+# default conservative preserves smaller deployments' existing lock/memory
+# footprint.
+KUDOS_APPLIER_BATCH_SIZE = max(int(os.getenv("KUDOS_APPLIER_BATCH_SIZE", "1000")), 1)
 # One scheduler tick keeps folding while a cycle drains a full batch, up to this
 # many cycles, so a backlog clears at many batches per tick instead of one. The
 # bound keeps a tick from monopolizing the projector while each cycle remains its
@@ -532,11 +536,11 @@ def _apply_user_deltas(
                     detail={KudosAuditDetail.REASON: "minimum_balance_floor"},
                 )
                 correction.applied = True
-                # Per-user detail stays at debug: the FLOOR_ADJUSTMENT posting is
-                # the durable audit record, and a batch can floor hundreds of
-                # users in one fold transaction, which per-row log writes would
-                # stretch.
-                logger.debug(f"Kudos floor adjustment created {created} kudos for user {user.id}")
+                # The FLOOR_ADJUSTMENT posting is the durable per-user audit
+                # record. Avoid a redundant log line here: a catch-up batch can
+                # floor hundreds of users, and formatting/writing one line per
+                # row materially stretches the projection transaction. Aggregate
+                # logging and metrics are emitted after the fold below.
                 floor_adjustment_count += 1
                 floor_adjustment_total += created
                 # Anon rides its floor continuously by design (unlimited
@@ -608,11 +612,29 @@ def _apply_user_stats_deltas(deltas: dict[tuple[int, str], Decimal]) -> None:
 
 
 def _apply_worker_stats_deltas(deltas: dict[tuple[object, str], Decimal]) -> None:
+    if not deltas:
+        return
+    worker_ids = {worker_id for worker_id, _action in deltas}
+    existing_worker_ids = {
+        worker_id for (worker_id,) in db.session.query(WorkerTemplate.id).filter(WorkerTemplate.id.in_(worker_ids)).all()
+    }
+    missing_worker_ids = worker_ids - existing_worker_ids
+    if missing_worker_ids:
+        # KudosStatEvent deliberately has no worker FK because it is immutable
+        # audit history and workers are hard-deleted.  Historical events may
+        # therefore reach the projector after their display target disappeared.
+        # Their owner currency/user counters still fold normally; only the
+        # deleted worker's worker_stats row has nowhere to go.
+        logger.warning(
+            "Skipping worker_stats projection for deleted workers: {}",
+            ", ".join(sorted(map(str, missing_worker_ids))),
+        )
     increment_counters(
         WorkerStats,
         [
             ({"worker_id": worker_id, "action": action}, delta)
             for (worker_id, action), delta in sorted(deltas.items(), key=lambda item: (str(item[0][0]), item[0][1]))
+            if worker_id in existing_worker_ids
         ],
     )
 
