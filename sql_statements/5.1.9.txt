@@ -29,5 +29,5 @@ COMMENT ON COLUMN kudos_stat_events.quarantined_at IS
 -- queue always has a usable claim index during a live migration.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_drainable
   ON kudos_stat_events (id)
-  WHERE NOT applied AND NOT quarantined;
+  WHERE applied IS FALSE AND quarantined IS FALSE;
 DROP INDEX CONCURRENTLY IF EXISTS ix_kudos_stat_events_unapplied;

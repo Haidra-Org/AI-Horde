@@ -109,12 +109,55 @@ def test_kudos_quarantine_migration_is_idempotent_on_the_mapped_schema(db_sessio
             for statement in sqlparse.split(migration, strip_semicolon=True):
                 connection.exec_driver_sql(statement)
 
+        # PostgreSQL partial-index implication is deliberately conservative:
+        # ``NOT applied`` and ``applied IS FALSE`` are logically equivalent for
+        # these non-null columns, but the latter query did not use an index made
+        # with the former predicate in production. Pin the application-shaped
+        # query to the drainable index rather than accepting predicate text that
+        # merely looks equivalent.
+        connection.exec_driver_sql(
+            """
+            INSERT INTO kudos_stat_events (
+                created, event_id, entry_type, user_id, amount, unit,
+                applied, quarantined
+            )
+            SELECT
+                CURRENT_TIMESTAMP, gen_random_uuid(), 'stat_record', 1, 1,
+                'count', TRUE, FALSE
+            FROM generate_series(1, 10000)
+            """,
+        )
+        connection.exec_driver_sql(
+            """
+            INSERT INTO kudos_stat_events (
+                created, event_id, entry_type, user_id, amount, unit,
+                applied, quarantined
+            )
+            VALUES (
+                CURRENT_TIMESTAMP, gen_random_uuid(), 'stat_record', 1, 1,
+                'count', FALSE, FALSE
+            )
+            """,
+        )
+        connection.exec_driver_sql("ANALYZE kudos_stat_events")
+        connection.exec_driver_sql("SET enable_seqscan = off")
+        plan = connection.exec_driver_sql(
+            """
+            EXPLAIN
+            SELECT *
+            FROM kudos_stat_events
+            WHERE applied IS FALSE AND quarantined IS FALSE
+            ORDER BY id
+            LIMIT 10000
+            FOR UPDATE SKIP LOCKED
+            """,
+        ).scalars()
+        assert any("Index Scan using ix_kudos_stat_events_drainable" in line for line in plan)
+
     indexes = {index["name"]: index for index in inspect(engine).get_indexes("kudos_stat_events")}
     assert "ix_kudos_stat_events_unapplied" not in indexes
     predicate = indexes["ix_kudos_stat_events_drainable"]["dialect_options"]["postgresql_where"].lower()
-    assert "applied" in predicate
-    assert "quarantined" in predicate
-    assert predicate.count("not") == 2 or predicate.count("is false") == 2
+    assert predicate.count("is false") == 2
 
 
 def _settle_all() -> int:
