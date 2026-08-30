@@ -68,8 +68,11 @@ MODEL_NAME_BASELINE_SUFFIXES: Final[tuple[tuple[str, KNOWN_IMAGE_GENERATION_BASE
 )
 """Baselines inferred from a customizer model name the reference has never heard of."""
 
-STALE_SNAPSHOT_SECONDS: Final[int] = 3 * 3600
-"""Snapshot age past which a process warns; the publisher refreshes hourly, so this is three missed cycles."""
+FLEET_PUBLISH_INTERVAL_SECONDS: Final[int] = 3600
+"""How old a healthy fleet snapshot may be before the elected publisher refreshes it."""
+
+STALE_SNAPSHOT_SECONDS: Final[int] = 3 * FLEET_PUBLISH_INTERVAL_SECONDS
+"""Snapshot age past which a process warns: three missed publisher cycles."""
 
 STALE_WARNING_INTERVAL_SECONDS: Final[int] = 3600
 """Minimum spacing between repeated stale-snapshot warnings from one process."""
@@ -452,6 +455,18 @@ class ModelReference:
         self._apply_snapshot(snapshot)
         return True
 
+    def publish_fleet_snapshot_if_due(self) -> bool:
+        """Publish when the served snapshot is degraded or older than the refresh interval.
+
+        Meant to be polled far more often than the interval so a newly elected publisher, or a
+        fleet limping on a degraded document, refreshes within the poll period rather than after
+        a full interval. Returns False only when a due publication failed.
+        """
+        state = self._image_state
+        if not state.degraded and state.published_at is not None and int(time.time()) - state.published_at < FLEET_PUBLISH_INTERVAL_SECONDS:
+            return True
+        return self.publish_fleet_snapshot()
+
     def _refresh_image_direct(self) -> None:
         """Retain the old direct loader only for isolated SQLite test processes."""
         for _attempt in range(10):
@@ -500,17 +515,21 @@ class ModelReference:
                 payload = response.json()
                 if not isinstance(payload, dict):
                     raise ValueError("The text model reference is not an object.")
+                # One malformed upstream entry must not freeze the whole text vocabulary, so bad
+                # entries are dropped individually; only an unusable payload keeps the previous view.
                 staged: dict[str, dict[str, object]] = {}
                 for name, record in payload.items():
                     if not isinstance(name, str) or not isinstance(record, dict):
-                        raise ValueError(f"Invalid text model reference entry: {name!r}")
+                        logger.warning(f"Skipping invalid text model reference entry: {name!r}")
+                        continue
                     parameters = record.get("parameters")
-                    if not isinstance(parameters, int | float | str):
-                        raise ValueError(f"Text model {name!r} has no numeric parameter count.")
                     try:
+                        if not isinstance(parameters, int | float | str):
+                            raise TypeError(type(parameters).__name__)
                         int(parameters)
-                    except (TypeError, ValueError) as err:
-                        raise ValueError(f"Text model {name!r} has an invalid parameter count.") from err
+                    except (TypeError, ValueError):
+                        logger.warning(f"Skipping text model {name!r}: no numeric parameter count.")
+                        continue
                     staged[name] = record
                 if not staged:
                     raise ValueError("Refusing to replace the text model reference with an empty response.")

@@ -36,8 +36,10 @@ the current `REDIS_IP`, and the host-local db6 cache is never involved.
 
 At cold start, an instance first reads Redis. When the key is absent, contenders use a fenced Redis
 lease and exactly one fetches the remote sources; the others wait for its publication. After startup,
-the AI-Horde quorum owner performs the hourly remote refresh and every instance polls Redis for a new
-revision. The per-host Redis cache is deliberately bypassed for this control-plane value.
+the AI-Horde quorum owner checks once a minute whether the served snapshot is degraded or more than
+an hour old and, if so, performs the remote refresh; every instance polls Redis for a new revision. A
+newly elected owner therefore takes over publication within a minute rather than a full interval. The
+per-host Redis cache is deliberately bypassed for this control-plane value.
 
 A remote, validation, or pending-model failure never clears or replaces the Redis value. Running
 instances retain their in-memory snapshot during Redis failure. A process without central Redis
@@ -49,9 +51,9 @@ When the whole bootstrap window passes with no snapshot published (the PRIMARY i
 Redis holds nothing), contenders get one further lease-long window in which a publication may be
 **degraded**: HMR's GitHub fallback for the canonical models, the baseline catalog packaged with
 `horde_model_reference`, and no pending models. The document carries `degraded: true`, every process
-that applies it logs an error, and the elected publisher's hourly refresh keeps failing fast (retried
-every ten seconds) until the PRIMARY answers and a healthy document replaces it. A degraded document
-is never published while any snapshot already exists.
+that applies it logs an error, and the elected publisher treats a degraded document as always due, so
+it keeps retrying (every ten seconds on failure) until the PRIMARY answers and a healthy document
+replaces it. A degraded document is never published while any snapshot already exists.
 
 Each process reports `horde.model_reference.snapshot_age` (seconds since the served document was
 published) and `horde.model_reference.snapshot_degraded` on every Redis poll, and warns hourly once
@@ -81,8 +83,9 @@ synchronous Flask/background-thread lifecycle. Startup rejects an HMR singleton 
 importer previously constructed with a different strategy, rather than silently inheriting `LAZY`.
 
 Text models remain outside this pipeline. AI-Horde continues to read the legacy standalone
-AI-Horde-text-model-reference JSON into each process at startup and hourly; HMR's text categories are
-not queried by the fleet image publisher.
+AI-Horde-text-model-reference JSON into each process at startup and hourly, dropping any entry without
+a numeric parameter count rather than rejecting the payload; HMR's text categories are not queried by
+the fleet image publisher.
 
 Adding a model to the PRIMARY needs no change here, and neither does adding a *baseline*: the baseline
 catalog is served alongside the models.

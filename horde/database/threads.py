@@ -939,12 +939,12 @@ def store_known_image_models():
 
 
 def publish_model_reference_snapshot():
-    """Have the elected AI-Horde instance refresh the fleet's Redis snapshot."""
+    """Have the elected AI-Horde instance refresh the fleet's Redis snapshot once it is due."""
     from horde.model_reference import model_reference
 
-    if not model_reference.publish_fleet_snapshot():
+    if not model_reference.publish_fleet_snapshot_if_due():
         # Let PrimaryTimedFunction use its ten-second failure retry instead of
-        # sleeping the normal one-hour success interval.
+        # waiting for the next poll.
         raise RuntimeError("The fleet image-reference snapshot was not published.")
 
 
