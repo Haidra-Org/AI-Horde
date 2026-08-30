@@ -14,6 +14,7 @@ regression surfaces as a failed statement rather than a hung suite.
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from decimal import Decimal
@@ -31,7 +32,9 @@ from horde.classes.base.kudos import (
     kudos_event,
     set_kudos_ledger_mode,
 )
+from horde.classes.base.team import Team
 from horde.classes.base.user import User
+from horde.classes.base.worker import WorkerStats, WorkerTemplate
 from horde.database.kudos_ledger import apply_pending_kudos
 from horde.database.kudos_reservations import consume_reservation, release_reservation, reserve_kudos
 from horde.enums import KudosAuditDetail, KudosEntryType, KudosLedgerMode
@@ -235,6 +238,106 @@ def test_hot_payer_reservations_never_double_spend_and_fold_exactly_once(concurr
 
         payer = db.session.get(User, payer_id)
         assert Decimal(str(payer.kudos)) == initial_balance - consumed_total
+        db.session.remove()
+
+
+def test_worker_delete_waits_for_claimed_projection_without_fk_failure(
+    concurrent_app: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delete racing an already-claimed worker projection preserves all invariants.
+
+    The applier pauses after claiming the event but before locking the worker.
+    The delete must then wait on that claimed event, allowing the applier to
+    materialize its worker statistic before the delete removes both rows. The
+    event remains immutable audit history and its surviving team attribution is
+    folded exactly once.
+    """
+    import horde.database.kudos_ledger as ledger_module
+
+    app = concurrent_app
+    with app.app_context():  # type: ignore[attr-defined]
+        owner = _new_user(Decimal("0"))
+        team = Team(name=f"conc_team_{uuid.uuid4().hex[:12]}", owner_id=owner.id)
+        db.session.add(team)
+        db.session.flush()
+        worker = WorkerTemplate(name=f"conc_worker_{uuid.uuid4().hex[:12]}", user_id=owner.id, team_id=team.id)
+        db.session.add(worker)
+        db.session.flush()
+        worker.modify_kudos(100, "generated", team_id=team.id)
+        db.session.commit()
+        worker_id = worker.id
+        team_id = team.id
+        event_id = db.session.query(KudosStatEvent.id).filter_by(worker_id=worker_id).scalar()
+        assert event_id is not None
+        db.session.remove()
+
+    projection_paused = threading.Event()
+    allow_projection = threading.Event()
+    delete_connected = threading.Event()
+    delete_pids: list[int] = []
+    errors: list[BaseException] = []
+    original_apply_worker_stats_deltas = ledger_module._apply_worker_stats_deltas
+
+    def pause_claimed_projection(deltas: dict[tuple[uuid.UUID, str], Decimal]) -> None:
+        projection_paused.set()
+        if not allow_projection.wait(timeout=_JOIN_TIMEOUT_SECONDS):
+            raise TimeoutError("Coordinator did not release the claimed worker projection")
+        original_apply_worker_stats_deltas(deltas)
+
+    monkeypatch.setattr(ledger_module, "_apply_worker_stats_deltas", pause_claimed_projection)
+
+    def apply_body() -> None:
+        apply_pending_kudos()
+
+    def delete_body() -> None:
+        delete_pids.append(int(db.session.execute(text("SELECT pg_backend_pid()")).scalar_one()))
+        delete_connected.set()
+        target = db.session.get(WorkerTemplate, worker_id)
+        assert target is not None
+        target.delete()
+
+    apply_thread = threading.Thread(target=_run_in_app_context, args=(app, apply_body, errors))
+    delete_thread = threading.Thread(target=_run_in_app_context, args=(app, delete_body, errors))
+    apply_thread.start()
+    assert projection_paused.wait(timeout=_JOIN_TIMEOUT_SECONDS)
+    delete_thread.start()
+    assert delete_connected.wait(timeout=_JOIN_TIMEOUT_SECONDS)
+
+    delete_waited_on_lock = False
+    try:
+        deadline = time.monotonic() + 3
+        with app.app_context():  # type: ignore[attr-defined]
+            while time.monotonic() < deadline:
+                wait_event_type = db.session.execute(
+                    text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": delete_pids[0]},
+                ).scalar_one_or_none()
+                db.session.rollback()
+                if wait_event_type == "Lock":
+                    delete_waited_on_lock = True
+                    break
+                time.sleep(0.05)
+            db.session.remove()
+        assert delete_waited_on_lock, "Worker deletion never waited on the applier's claimed event"
+    finally:
+        allow_projection.set()
+        apply_thread.join(timeout=_JOIN_TIMEOUT_SECONDS)
+        delete_thread.join(timeout=_JOIN_TIMEOUT_SECONDS)
+
+    assert not apply_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert errors == []
+
+    with app.app_context():  # type: ignore[attr-defined]
+        event = db.session.get(KudosStatEvent, event_id)
+        assert event is not None
+        assert event.applied is True
+        assert db.session.get(WorkerTemplate, worker_id) is None
+        assert db.session.query(WorkerStats).filter_by(worker_id=worker_id).count() == 0
+        surviving_team = db.session.get(Team, team_id)
+        assert surviving_team is not None
+        assert surviving_team.kudos == 100
         db.session.remove()
 
 

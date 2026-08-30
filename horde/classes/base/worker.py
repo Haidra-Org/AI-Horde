@@ -590,18 +590,22 @@ class WorkerTemplate(db.Model):
         return False
 
     def delete(self):
-        # Worker-targeted stat events are immutable audit rows without an FK to
-        # workers, so they survive the worker itself.  Once this worker is gone
-        # there is intentionally no worker_stats/aggregate row to materialize.
-        # Consume any pending projections before deleting the worker so the
-        # applier cannot later attempt a worker_stats insert that violates its
-        # worker_id FK.  The UPDATE also serializes deletion against an applier
-        # cycle that already claimed one of these rows FOR UPDATE: whichever
-        # transaction gets the event first completes before the other proceeds.
-        db.session.query(KudosStatEvent).filter(
-            KudosStatEvent.worker_id == self.id,
-            KudosStatEvent.applied.is_(False),
-        ).update({KudosStatEvent.applied: True}, synchronize_session=False)
+        # Worker-targeted events are immutable audit rows and may also carry a
+        # surviving team's attribution. Lock pending events without consuming
+        # them before deleting child rows. This shares the projector's lock
+        # order (event, then worker/stat rows), closes the delete-vs-upsert FK
+        # race, and leaves the projector able to fold the surviving team while
+        # skipping materialization for the now-missing worker.
+        (
+            db.session.query(KudosStatEvent.id)
+            .filter(
+                KudosStatEvent.worker_id == self.id,
+                KudosStatEvent.applied.is_(False),
+                KudosStatEvent.quarantined.is_(False),
+            )
+            .with_for_update()
+            .all()
+        )
         for stat in self.stats:
             db.session.delete(stat)
         for performance in self.performance:

@@ -21,16 +21,20 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import cast
+from typing import Final, TypedDict, cast
 
 from loguru import logger
 from sqlalchemy import DateTime, Integer, Numeric, case, column, func, update, values
 from sqlalchemy import cast as sql_cast
 
 from horde.classes.base.kudos import (
+    KUDOS_STAT_ACTION_MAX_LENGTH,
+    KUDOS_STAT_RECORD_MAX_LENGTH,
     KudosLedger,
     KudosLedgerApplierState,
     KudosReservation,
@@ -52,6 +56,7 @@ from horde.enums import (
     KudosAuditDetail,
     KudosEntryType,
     KudosLedgerMode,
+    KudosStatEventQuarantineReason,
     KudosStatRecord,
     KudosUnit,
     UserRecordTypes,
@@ -61,9 +66,13 @@ from horde.flask import db
 from horde.metrics import (
     kudos_applier_folded,
     kudos_applier_phase_duration,
+    kudos_applier_quarantined,
+    kudos_applier_quarantined_by_reason,
     kudos_floor_adjustments,
     kudos_floor_adjustments_created,
 )
+
+type _MaterializedKudosAmount = int | Decimal
 
 # Cap how many rows from each queue one cycle folds so that catching up after
 # applier downtime cannot load an unbounded tail into memory. Rows folded this
@@ -100,6 +109,88 @@ def get_applier_state() -> KudosLedgerApplierState:
     return state
 
 
+_USER_RECORD_UNITS: Final[Mapping[str, KudosUnit]] = {
+    UserRecordTypes.CONTRIBUTION.name: KudosUnit.THINGS,
+    UserRecordTypes.USAGE.name: KudosUnit.THINGS,
+    UserRecordTypes.FULFILLMENT.name: KudosUnit.COUNT,
+    UserRecordTypes.REQUEST.name: KudosUnit.COUNT,
+    UserRecordTypes.STYLE.name: KudosUnit.COUNT,
+}
+
+
+class KudosApplierHealth(TypedDict):
+    """Represents projector health fields returned to probes and operators."""
+
+    pending_rows: int
+    oldest_pending_seconds: float | None
+    quarantined_rows: int
+    oldest_quarantined_seconds: float | None
+    heartbeat_seconds: float | None
+    active_reservations: int
+    oldest_reservation_seconds: float | None
+
+
+def _stat_event_quarantine_reason(
+    row: KudosStatEvent,
+    existing_user_ids: set[int],
+) -> KudosStatEventQuarantineReason | None:
+    """Return a bounded reason code when a stat event cannot be projected safely.
+
+    Validation happens before any materialized counter write. Deterministic bad
+    data is retained as immutable audit history but removed from the hot queue;
+    infrastructure failures still raise and roll the whole cycle back.
+    """
+    action = row.stat_action
+    record = row.record
+    entry_type = row.entry_type
+    unit = row.unit
+
+    if row.user_id is not None and row.user_id not in existing_user_ids:
+        return KudosStatEventQuarantineReason.MISSING_USER
+    if action is not None and len(action) > KUDOS_STAT_ACTION_MAX_LENGTH:
+        return KudosStatEventQuarantineReason.STAT_ACTION_TOO_LONG
+    if record is not None and len(record) > KUDOS_STAT_RECORD_MAX_LENGTH:
+        return KudosStatEventQuarantineReason.RECORD_TOO_LONG
+
+    if record == KudosStatRecord.USER_KUDOS.value:
+        if row.user_id is None or action is None or unit != KudosUnit.KUDOS:
+            return KudosStatEventQuarantineReason.INVALID_USER_KUDOS
+        return None
+    if record == KudosStatRecord.WORKER_KUDOS.value:
+        if row.worker_id is None or action is None or unit != KudosUnit.KUDOS:
+            return KudosStatEventQuarantineReason.INVALID_WORKER_KUDOS
+        return None
+    if entry_type == KudosEntryType.STAT_RECORD:
+        if row.user_id is None or action is None or record is None:
+            return KudosStatEventQuarantineReason.INVALID_STAT_RECORD
+        if action not in _USER_RECORD_UNITS:
+            return KudosStatEventQuarantineReason.INVALID_STAT_RECORD
+        if unit != _USER_RECORD_UNITS[action]:
+            return KudosStatEventQuarantineReason.INVALID_STAT_RECORD_UNIT
+        return None
+    if entry_type == KudosEntryType.STAT_CONTRIBUTION:
+        if row.worker_id is None or action is None:
+            return KudosStatEventQuarantineReason.INVALID_STAT_CONTRIBUTION
+        expected_unit: KudosUnit | None = {
+            KudosAggregate.CONTRIBUTIONS.value: KudosUnit.THINGS,
+            KudosAggregate.FULFILMENTS.value: KudosUnit.COUNT,
+        }.get(action)
+        if expected_unit is None or unit != expected_unit:
+            return KudosStatEventQuarantineReason.INVALID_STAT_CONTRIBUTION
+        return None
+    if entry_type == KudosEntryType.STAT_ACTIVITY:
+        if (
+            row.user_id is None
+            or record != KudosStatRecord.LAST_ACTIVE.value
+            or unit != KudosUnit.COUNT
+            or not row.detail
+            or not row.detail.get(KudosAuditDetail.TOUCH_LAST_ACTIVE)
+        ):
+            return KudosStatEventQuarantineReason.INVALID_STAT_ACTIVITY
+        return None
+    return KudosStatEventQuarantineReason.UNKNOWN_PROJECTION
+
+
 def apply_pending_kudos(
     now: datetime | None = None,
     batch_size: int = KUDOS_APPLIER_BATCH_SIZE,
@@ -124,14 +215,14 @@ def apply_pending_kudos(
     Args:
         now: Reference time for the lag heartbeat (injectable for tests).
             Defaults to ``utcnow``.
-        batch_size: Maximum rows folded in this cycle; the next cycle continues
-            with whatever remains unapplied.
+        batch_size: Maximum rows settled in this cycle; the next cycle continues
+            with whatever remains drainable and unapplied.
 
     Returns:
-        The number of ledger rows folded this cycle plus any promotion-drain
-        postings emitted (see :func:`_drain_trusted_escrow`). A return of 0 means
-        no unapplied rows remain and no trusted escrow needs draining, so a caller
-        folding to quiescence can stop.
+        The number of rows folded or quarantined this cycle plus any
+        promotion-drain postings emitted (see :func:`_drain_trusted_escrow`). A
+        return of 0 means no drainable unapplied rows remain and no trusted
+        escrow needs draining, so a caller folding to quiescence can stop.
     """
     if now is None:
         now = datetime.utcnow()
@@ -152,26 +243,58 @@ def apply_pending_kudos(
     )
     stat_rows = (
         db.session.query(KudosStatEvent)
-        .filter(KudosStatEvent.applied.is_(False))
+        .filter(
+            KudosStatEvent.applied.is_(False),
+            KudosStatEvent.quarantined.is_(False),
+        )
         .order_by(KudosStatEvent.id.asc())
         .limit(batch_size)
         .with_for_update(skip_locked=True)
         .all()
     )
+    claimed_stat_count = len(stat_rows)
     kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "claim"})
+
+    user_target_ids = {row.user_id for row in stat_rows if row.user_id is not None}
+    existing_user_ids = {
+        user_id
+        for (user_id,) in (db.session.query(User.id).filter(User.id.in_(user_target_ids)).with_for_update(read=True, key_share=True).all())
+    }
+    valid_stat_rows: list[KudosStatEvent] = []
+    quarantined_rows: list[KudosStatEvent] = []
+    quarantine_counts: dict[KudosStatEventQuarantineReason, int] = defaultdict(int)
+    invalid_event_reasons: dict[uuid.UUID, KudosStatEventQuarantineReason] = {}
+    for row in stat_rows:
+        reason = _stat_event_quarantine_reason(row, existing_user_ids)
+        if reason is not None:
+            invalid_event_reasons.setdefault(row.event_id, reason)
+    for row in stat_rows:
+        reason = invalid_event_reasons.get(row.event_id)
+        if reason is None:
+            valid_stat_rows.append(row)
+            continue
+        # Quarantine the claimed portion of one business event together. A bad
+        # dimension must not leave its valid peer counters partially projected
+        # merely because they shared a batch with unrelated healthy events.
+        row.quarantined = True
+        row.quarantine_reason = reason
+        row.quarantined_at = datetime.utcnow()
+        quarantined_rows.append(row)
+        quarantine_counts[reason] += 1
+    stat_rows = valid_stat_rows
 
     # Worker and team folds are executed at the end of the cycle (see below), so
     # their delta maps live at cycle scope.
-    worker_deltas: dict[object, Decimal] = defaultdict(Decimal)
-    worker_contribution_deltas: dict[object, Decimal] = defaultdict(Decimal)
-    worker_fulfilment_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    worker_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+    worker_contribution_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+    worker_fulfilment_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
     # Team aggregates are derived from the worker's own postings stamped with a
     # team_id: kudos from the balance-credit posting, contributions/fulfilments
     # from the worker STAT_CONTRIBUTION postings. team_id is read independently
     # of the balance target, so a stamped worker posting feeds both.
-    team_kudos_deltas: dict[object, Decimal] = defaultdict(Decimal)
-    team_contribution_deltas: dict[object, Decimal] = defaultdict(Decimal)
-    team_fulfilment_deltas: dict[object, Decimal] = defaultdict(Decimal)
+    team_kudos_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+    team_contribution_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+    team_fulfilment_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
 
     if rows or stat_rows:
         user_balance_deltas: dict[int, Decimal] = defaultdict(Decimal)
@@ -182,15 +305,11 @@ def apply_pending_kudos(
         # atomically. Each counter reconstructs its row by grouping the batch on the
         # dimension the posting carries.
         user_stats_deltas: dict[tuple[int, str], Decimal] = defaultdict(Decimal)
-        worker_stats_deltas: dict[tuple[object, str], Decimal] = defaultdict(Decimal)
+        worker_stats_deltas: dict[tuple[uuid.UUID, str], Decimal] = defaultdict(Decimal)
         user_record_deltas: dict[tuple[int, str, str], Decimal] = defaultdict(Decimal)
         reservation_consumptions: dict[str, Decimal] = defaultdict(Decimal)
         folded_ids = [row.id for row in rows]
         folded_stat_ids = [row.id for row in stat_rows]
-        if folded_ids:
-            kudos_applier_folded.add(len(folded_ids), {"horde.kudos.row_type": "currency"})
-        if folded_stat_ids:
-            kudos_applier_folded.add(len(folded_stat_ids), {"horde.kudos.row_type": "stat"})
         for row in rows:
             if row.escrow:
                 user_escrow_deltas[row.user_id] += row.amount
@@ -301,7 +420,7 @@ def apply_pending_kudos(
     # clear, which only defers promotion/drain, never loses it.
     # A zero-size claim folds nothing by construction and settles trivially,
     # which keeps scan-only invocations working.
-    claims_settled = batch_size == 0 or (len(rows) < batch_size and len(stat_rows) < batch_size)
+    claims_settled = batch_size == 0 or (len(rows) < batch_size and claimed_stat_count < batch_size)
     drained = 0
     if claims_settled and get_kudos_ledger_mode() == KudosLedgerMode.LEDGER:
         phase_t = time.monotonic()
@@ -322,9 +441,29 @@ def apply_pending_kudos(
     state.applied_at = now
     if commit:
         db.session.commit()
+        # Success counters must follow the commit. Recording them before the
+        # projection transaction commits makes a poison row look like useful
+        # throughput every time the same batch rolls back and retries.
+        if rows:
+            kudos_applier_folded.add(len(rows), {"horde.kudos.row_type": "currency"})
+        if stat_rows:
+            kudos_applier_folded.add(len(stat_rows), {"horde.kudos.row_type": "stat"})
+        if quarantined_rows:
+            kudos_applier_quarantined.add(len(quarantined_rows))
+        for reason, count in sorted(quarantine_counts.items()):
+            kudos_applier_quarantined_by_reason.add(count, {"horde.kudos.reason": reason})
+        if quarantined_rows:
+            logger.error(
+                "Kudos applier quarantined {} invalid stat events: {}",
+                len(quarantined_rows),
+                ", ".join(f"{reason}={count}" for reason, count in sorted(quarantine_counts.items())),
+            )
     else:
         db.session.flush()
-    return len(rows) + len(stat_rows) + drained
+    # Quarantine is durable queue progress too. Including it keeps catch-up,
+    # explicit drain, and ledger->shadow transition loops moving when a claimed
+    # batch consists entirely of poison events.
+    return len(rows) + len(stat_rows) + len(quarantined_rows) + drained
 
 
 def _mark_applied(folded_ids: list[int]) -> None:
@@ -517,9 +656,9 @@ def _apply_user_deltas(
     # single statement: the fold transaction holds every touched row's lock
     # until commit, so the write count, and with it the lock-hold window other
     # writers queue behind, must not scale with the batch's account count.
-    update_rows: list[tuple[int, object, object, datetime | None]] = []
+    update_rows: list[tuple[int, _MaterializedKudosAmount, _MaterializedKudosAmount, datetime | None]] = []
     for user in users:
-        new_balance: object = user.kudos
+        new_balance: _MaterializedKudosAmount = user.kudos
         if user.id in balance_deltas:
             requested_balance = round(user.kudos + balance_deltas[user.id], 2)
             floor = user.get_min_kudos()
@@ -550,7 +689,7 @@ def _apply_user_deltas(
                 account_class = "anon" if user.is_anon() else ("pseudonymous" if user.is_pseudonymous() else "registered")
                 kudos_floor_adjustments.add(1, {"horde.account_class": account_class})
                 kudos_floor_adjustments_created.add(float(created), {"horde.account_class": account_class})
-        new_escrow: object = user.evaluating_kudos
+        new_escrow: _MaterializedKudosAmount = user.evaluating_kudos
         if user.id in escrow_deltas:
             new_escrow = round(user.evaluating_kudos + escrow_deltas[user.id], 2)
         new_last_active = user.last_active
@@ -580,7 +719,7 @@ def _apply_user_deltas(
         )
 
 
-def _apply_worker_deltas(worker_deltas: dict[object, Decimal]) -> None:
+def _apply_worker_deltas(worker_deltas: dict[uuid.UUID, Decimal]) -> None:
     if not worker_deltas:
         return
     # A pure relative increment needs no read at all: one statement adjusts
@@ -611,12 +750,21 @@ def _apply_user_stats_deltas(deltas: dict[tuple[int, str], Decimal]) -> None:
     )
 
 
-def _apply_worker_stats_deltas(deltas: dict[tuple[object, str], Decimal]) -> None:
+def _apply_worker_stats_deltas(deltas: dict[tuple[uuid.UUID, str], Decimal]) -> None:
     if not deltas:
         return
     worker_ids = {worker_id for worker_id, _action in deltas}
     existing_worker_ids = {
-        worker_id for (worker_id,) in db.session.query(WorkerTemplate.id).filter(WorkerTemplate.id.in_(worker_ids)).all()
+        worker_id
+        for (worker_id,) in (
+            db.session.query(WorkerTemplate.id)
+            .filter(WorkerTemplate.id.in_(worker_ids))
+            # Prevent a worker deletion between existence validation and the
+            # worker_stats FK insert. FOR KEY SHARE permits ordinary check-in
+            # updates but makes deletion wait for this projection transaction.
+            .with_for_update(read=True, key_share=True)
+            .all()
+        )
     }
     missing_worker_ids = worker_ids - existing_worker_ids
     if missing_worker_ids:
@@ -650,8 +798,8 @@ def _apply_user_record_deltas(deltas: dict[tuple[int, str, str], Decimal]) -> No
 
 
 def _apply_worker_contribution_deltas(
-    contribution_deltas: dict[object, Decimal],
-    fulfilment_deltas: dict[object, Decimal],
+    contribution_deltas: dict[uuid.UUID, Decimal],
+    fulfilment_deltas: dict[uuid.UUID, Decimal],
 ) -> None:
     worker_ids = set(contribution_deltas) | set(fulfilment_deltas)
     if not worker_ids:
@@ -688,9 +836,9 @@ def _apply_worker_contribution_deltas(
 
 
 def _apply_team_deltas(
-    contribution_deltas: dict[object, Decimal],
-    fulfilment_deltas: dict[object, Decimal],
-    kudos_deltas: dict[object, Decimal],
+    contribution_deltas: dict[uuid.UUID, Decimal],
+    fulfilment_deltas: dict[uuid.UUID, Decimal],
+    kudos_deltas: dict[uuid.UUID, Decimal],
 ) -> None:
     team_ids = set(contribution_deltas) | set(fulfilment_deltas) | set(kudos_deltas)
     if not team_ids:
@@ -756,18 +904,26 @@ def kudos_applier_lag(now: datetime | None = None) -> float | None:
     return (now - state.applied_at).total_seconds()
 
 
-def kudos_applier_health(now: datetime | None = None) -> dict[str, int | float | None]:
+def kudos_applier_health(now: datetime | None = None) -> KudosApplierHealth:
     """Return heartbeat and real queue-lag health for probes and operators."""
     reference = now or datetime.utcnow()
     ledger_pending_count, ledger_oldest_created = (
         db.session.query(func.count(KudosLedger.id), func.min(KudosLedger.created)).filter(KudosLedger.applied.is_(False)).one()
     )
     stat_pending_count, stat_oldest_created = (
-        db.session.query(func.count(KudosStatEvent.id), func.min(KudosStatEvent.created)).filter(KudosStatEvent.applied.is_(False)).one()
+        db.session.query(func.count(KudosStatEvent.id), func.min(KudosStatEvent.created))
+        .filter(KudosStatEvent.applied.is_(False), KudosStatEvent.quarantined.is_(False))
+        .one()
+    )
+    quarantined_count, quarantined_oldest_created = (
+        db.session.query(func.count(KudosStatEvent.id), func.min(KudosStatEvent.created)).filter(KudosStatEvent.quarantined.is_(True)).one()
     )
     oldest_candidates = [created for created in (ledger_oldest_created, stat_oldest_created) if created is not None]
     oldest_created = min(oldest_candidates) if oldest_candidates else None
     oldest_age = None if oldest_created is None else max((reference - oldest_created).total_seconds(), 0.0)
+    oldest_quarantined_age = (
+        None if quarantined_oldest_created is None else max((reference - quarantined_oldest_created).total_seconds(), 0.0)
+    )
     active_reservations, oldest_reservation_created = (
         db.session.query(func.count(KudosReservation.id), func.min(KudosReservation.created))
         .filter(KudosReservation.released_at.is_(None), KudosReservation.remaining_amount > 0)
@@ -779,6 +935,8 @@ def kudos_applier_health(now: datetime | None = None) -> dict[str, int | float |
     return {
         "pending_rows": int(ledger_pending_count) + int(stat_pending_count),
         "oldest_pending_seconds": oldest_age,
+        "quarantined_rows": int(quarantined_count),
+        "oldest_quarantined_seconds": oldest_quarantined_age,
         "heartbeat_seconds": kudos_applier_lag(reference),
         "active_reservations": int(active_reservations),
         "oldest_reservation_seconds": oldest_reservation_age,

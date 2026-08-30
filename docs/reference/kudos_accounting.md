@@ -59,7 +59,7 @@ not a fabricated history of older movements.
 | Model/table | Purpose | Ownership and lifetime | Important constraints |
 | --- | --- | --- | --- |
 | `KudosLedger` / `kudos_ledger` | Permanent currency postings | Required `users.id` foreign key with `ON DELETE RESTRICT`; authoritative history must not be orphaned | One user target; spendable vs escrow selected by `escrow`; `NUMERIC(20,2)` amount; NaN rejected; partial unapplied index |
-| `KudosStatEvent` / `kudos_stat_events` | Permanent display and counter postings | User, worker, and team IDs are immutable audit references, intentionally not ownership foreign keys because workers/teams may be hard-deleted | Exactly one of `user_id` and `worker_id`; typed unit; NaN rejected; partial unapplied index |
+| `KudosStatEvent` / `kudos_stat_events` | Permanent display and counter postings | User, worker, and team IDs are immutable audit references, intentionally not ownership foreign keys because workers/teams may be hard-deleted | Exactly one of `user_id` and `worker_id`; typed unit; NaN rejected; invalid events are quarantined outside the drainable queue |
 | `KudosReservation` / `kudos_reservations` | Payer holds for upfront work and transfers | User ownership foreign key with `ON DELETE CASCADE` | Unique `business_id`; positive original amount; non-negative remaining amount; active-user partial index |
 | `KudosBalanceSnapshot` / `kudos_balance_snapshots` | User-currency reconciliation baseline | User ownership foreign key with `ON DELETE CASCADE` | One row per snapshot/user; records balance, escrow, and visible applied totals |
 | `KudosLedgerControl` / `kudos_ledger_control` | Single-row mutation-mode control | Installation state | ID 1; `shadow` or `ledger`; non-null change time |
@@ -100,6 +100,7 @@ meaning as their currency counterparts. The remaining fields define a counter pr
 | `unit` | `kudos`, `things`, or `count`; consumers must not combine unlike units. |
 | `stat_action` | Action/bucket dimension such as `generated`, `usage`, `contributions`, or `fulfilments`. |
 | `record` | Typed projector discriminator or user-record dimension. |
+| `quarantined`, `quarantine_reason`, `quarantined_at` | Durable poison-event isolation. Every claimed statistic row sharing a malformed event's `event_id` is quarantined together and retained for review. |
 
 ### Stable enums and audit keys
 
@@ -108,6 +109,7 @@ meaning as their currency counterparts. The remaining fields define a counter pr
 | `KudosLedgerMode` | `shadow`, `ledger` |
 | `KudosUnit` | `kudos`, `things`, `count` |
 | `KudosStatRecord` | `user_kudos`, `worker_kudos`, `last_active` |
+| `KudosStatEventQuarantineReason` | Closed reason codes for deterministic statistic-event isolation |
 | `KudosAggregate` | `contributions`, `fulfilments` |
 | `KudosAuditDetail` | `reason`, `reservation_id`, `snapshot_id`, `touch_last_active` |
 
@@ -309,7 +311,8 @@ from a single database snapshot; a fold or release committing mid-read cannot hi
 | Reconciliation advisory transaction lock | Installation | Repair mode | Prevent concurrent compensation emitters |
 | Mode-gate advisory transaction lock (shared) | Mutation transaction | `get_kudos_ledger_mode` | Pin mode until the writer commits |
 | Mode-gate advisory transaction lock (exclusive) | Installation | `set_kudos_ledger_mode` | Wait for every old-mode writer before ownership changes; fair queueing keeps new pins from starving a waiting transition |
-| Event-row `FOR UPDATE SKIP LOCKED` | Bounded batch | Projector | Claim exact unapplied work without a watermark |
+| Event-row `FOR UPDATE SKIP LOCKED` | Bounded batch | Projector; worker deletion for that worker | Claim exact unapplied work without a watermark; serialize worker deletion before child-counter writes |
+| Projection-target `FOR KEY SHARE` | Claimed users/workers | Projector | Prevent target deletion between validation and foreign-key child insertion without blocking ordinary non-key updates |
 | Reservation-row `FOR UPDATE` | Business ID | Consume/release | Serialize hold depletion/release |
 | Repeatable-read transaction | Snapshot/reconciliation command | Reconciliation helpers | Observe balances and applied totals from one consistent database snapshot |
 
@@ -321,6 +324,7 @@ properties.
 ## Failure and recovery invariants
 
 - A projector cycle commits both target updates and exact applied flags, or neither.
+- Deterministically malformed statistic events are quarantined by business-event ID; unrelated events in the batch continue, while infrastructure failures still roll back the whole cycle.
 - A row is selected by `applied = false`, never by `id > watermark`.
 - A stopped projector is a lag incident, not lost work; restore it and drain in ledger mode.
 - A transfer hold remains active until both sides of the event are materialized, even when a batch splits the event.
@@ -343,8 +347,10 @@ for the executable procedure.
 
 | Field | Meaning |
 | --- | --- |
-| `pending_rows` | Combined unapplied currency and statistic event count |
-| `oldest_pending_seconds` | Age of the oldest unapplied event across both queues |
+| `pending_rows` | Combined unapplied currency and drainable, non-quarantined statistic event count |
+| `oldest_pending_seconds` | Age of the oldest drainable unapplied event across both queues |
+| `quarantined_rows` | Total statistic rows retained outside the drainable queue; permanent evidence, not unresolved-incident state |
+| `oldest_quarantined_seconds` | Age of the oldest quarantined statistic row |
 | `heartbeat_seconds` | Time since the projector last completed a cycle; may grow even when no rows are pending |
 | `active_reservations` | Count of holds with positive remaining amount and no release time |
 | `oldest_reservation_seconds` | Age of the oldest active hold |
@@ -378,6 +384,7 @@ old row or hold can indicate a poisoned path.
 | `horde/database/threads.py` | Periodic projector invocation and health metric recording |
 | `horde/enums.py` | Stable accounting discriminators and metadata keys |
 | `sql_statements/5.1.0.txt` | Idempotent production schema migration and counter uniqueness preparation |
+| `sql_statements/5.1.9.txt` | Rolling-safe statistic-event quarantine columns and documentation |
 | `tools/kudos_ledger_admin.py` | Status, drain, snapshot, reconcile/repair, promotion-statistic backfill, and mode commands |
 | `docs/how-to/kudos_ledger_operations.md` | Cutover, rollback, disaster-recovery, and rehearsal how-to |
 

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import enum
+from typing import Any
 
 
 class KudosEntryType(enum.StrEnum):
@@ -72,6 +73,21 @@ class KudosStatRecord(enum.StrEnum):
     LAST_ACTIVE = "last_active"
 
 
+class KudosStatEventQuarantineReason(enum.StrEnum):
+    """Classifies deterministic statistic-event projection failures."""
+
+    MISSING_USER = "missing_user"
+    STAT_ACTION_TOO_LONG = "stat_action_too_long"
+    RECORD_TOO_LONG = "record_too_long"
+    INVALID_USER_KUDOS = "invalid_user_kudos"
+    INVALID_WORKER_KUDOS = "invalid_worker_kudos"
+    INVALID_STAT_RECORD = "invalid_stat_record"
+    INVALID_STAT_RECORD_UNIT = "invalid_stat_record_unit"
+    INVALID_STAT_CONTRIBUTION = "invalid_stat_contribution"
+    INVALID_STAT_ACTIVITY = "invalid_stat_activity"
+    UNKNOWN_PROJECTION = "unknown_projection"
+
+
 class KudosAggregate(enum.StrEnum):
     """Worker and team aggregate names interpreted by the stats projector."""
 
@@ -137,11 +153,11 @@ class UserRoleTypes(enum.Enum):
 
 class ReturnedEnum(enum.Enum):
     @property
-    def code(self):
+    def code(self) -> str:
         return self.name
 
     @property
-    def message(self):
+    def message(self) -> Any:
         return self.value
 
 

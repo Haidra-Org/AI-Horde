@@ -1,0 +1,18 @@
+-- Durable poison-event isolation for the asynchronous kudos statistics
+-- projector. Apply this additive migration before deploying 5.1.9 code; older
+-- application versions ignore the columns, so migration-first is rolling-safe.
+SET lock_timeout = '3s';
+
+ALTER TABLE kudos_stat_events
+  ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE kudos_stat_events
+  ADD COLUMN IF NOT EXISTS quarantine_reason VARCHAR(64) NULL;
+ALTER TABLE kudos_stat_events
+  ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMP WITHOUT TIME ZONE NULL;
+
+COMMENT ON COLUMN kudos_stat_events.quarantined IS
+  'True when deterministic invalid event data cannot be materialized; excluded from projector claims but retained for audit.';
+COMMENT ON COLUMN kudos_stat_events.quarantine_reason IS
+  'Bounded machine-readable reason assigned by the projector.';
+COMMENT ON COLUMN kudos_stat_events.quarantined_at IS
+  'UTC time at which the projector quarantined the event.';
