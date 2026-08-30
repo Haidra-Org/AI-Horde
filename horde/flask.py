@@ -5,9 +5,10 @@
 import os
 import socket
 
-from flask import Flask
+from flask import Flask, redirect, request, session
 from flask_caching import Cache
 from flask_sqlalchemy import SQLAlchemy
+from oauthlib.oauth2.rfc6749.errors import MismatchingStateError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from horde.logger import logger
@@ -208,6 +209,14 @@ def _register_oauth(app):
     app.secret_key = os.getenv("secret_key")
     os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
+    @app.errorhandler(MismatchingStateError)
+    def _handle_oauth_state_mismatch(error):
+        provider = request.blueprint
+        if provider in {"discord", "github", "google"}:
+            session.pop(f"{provider}_oauth_state", None)
+        logger.warning(f"Rejected stale or mismatched {provider or 'unknown'} OAuth state: {error}")
+        return redirect("/register")
+
     google_blueprint = make_google_blueprint(
         client_id=os.getenv("GOOGLE_CLIENT_ID"),
         client_secret=os.getenv("GLOOGLE_CLIENT_SECRET"),
@@ -228,7 +237,7 @@ def _register_oauth(app):
     github_blueprint = make_github_blueprint(
         client_id=os.getenv("GITHUB_CLIENT_ID"),
         client_secret=os.getenv("GITHUB_CLIENT_SECRET"),
-        scope=["identify"],
+        scope=["read:user"],
         redirect_url="/finish_dance",
     )
     app.register_blueprint(github_blueprint, url_prefix="/github")

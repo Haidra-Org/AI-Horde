@@ -6,6 +6,7 @@ from http.cookies import SimpleCookie
 
 from flask import Blueprint, Flask
 
+from horde.flask import _register_oauth
 from horde.routes import routes_bp
 
 
@@ -41,3 +42,27 @@ def test_oauth_walkback_survives_a_different_app_instance() -> None:
     # The target is single-use, so a stale callback cannot replay it.
     replay_response = callback_client.get("/finish_dance")
     assert replay_response.headers["Location"] == "/"
+
+
+def test_stale_github_oauth_state_returns_to_registration(monkeypatch) -> None:
+    monkeypatch.setenv("secret_key", "shared-test-secret")
+    monkeypatch.setenv("GITHUB_CLIENT_ID", "github-client-id")
+    monkeypatch.setenv("GITHUB_CLIENT_SECRET", "github-client-secret")
+
+    app = Flask(__name__)
+    _register_oauth(app)
+    client = app.test_client()
+
+    login_response = client.get("/github/github", base_url="https://localhost")
+    assert login_response.status_code == 302
+    assert app.blueprints["github"].scope == ["read:user"]
+
+    stale_callback = client.get(
+        "/github/github/authorized?code=test-code&state=stale-state",
+        base_url="https://localhost",
+    )
+    assert stale_callback.status_code == 302
+    assert stale_callback.headers["Location"] == "/register"
+
+    with client.session_transaction() as oauth_session:
+        assert "github_oauth_state" not in oauth_session
