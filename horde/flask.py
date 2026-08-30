@@ -144,6 +144,16 @@ def create_app(config: dict[str, object] | None = None) -> Flask:
     from horde.apis import apiv2
     from horde.routes import routes_bp
 
+    if not app.config.get("TESTING"):
+        from horde.model_reference import model_reference
+        from horde.threads import PrimaryTimedFunction
+
+        # Redis is connected above. Block readiness until this process has the
+        # fleet's last-known-good image reference, then keep its local pointer current.
+        model_reference.initialize()
+        PrimaryTimedFunction(5, model_reference.refresh_from_redis)
+        PrimaryTimedFunction(3600, model_reference.refresh_text_reference)
+
     app.register_blueprint(apiv2)
     app.register_blueprint(routes_bp)
 

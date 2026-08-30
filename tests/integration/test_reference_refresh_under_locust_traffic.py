@@ -17,12 +17,11 @@ from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import requests
-from horde_model_reference import BaselineCapabilities, HordeBaselinePolicy, ImageBaselineRecord
+from horde_model_reference import HORDE_SOURCE_ID, BaselineCapabilities, HordeBaselinePolicy, ImageBaselineRecord
 from horde_model_reference.model_reference_records import ImageGenerationModelRecord
 from werkzeug.serving import make_server
 
@@ -45,20 +44,6 @@ EXPECTED_NEW_POLICY_TTL = 150
 HTTP_SESSION = requests.Session()
 
 
-class _StubTextResponse:
-    @staticmethod
-    def json() -> dict[str, Any]:
-        return {}
-
-
-class _QueryResult:
-    def __init__(self, records: list[ImageGenerationModelRecord]) -> None:
-        self._records = records
-
-    def to_list(self) -> list[ImageGenerationModelRecord]:
-        return self._records
-
-
 @dataclass(frozen=True)
 class _PoppedRequest:
     request_id: str
@@ -69,18 +54,17 @@ class _PoppedRequest:
 
 @dataclass
 class _RemoteReference:
-    """A controllable PRIMARY and the replica-side catalog cache fetched from it."""
+    """A controllable HMR PRIMARY backend read by the fleet snapshot publisher."""
 
     baselines: dict[str, ImageBaselineRecord]
     models: dict[str, ImageGenerationModelRecord]
-    local_baselines: dict[str, ImageBaselineRecord] = field(default_factory=dict)
     lock: threading.RLock = field(default_factory=threading.RLock)
     baseline_captured: threading.Event = field(default_factory=threading.Event)
     release_baseline_fetch: threading.Event = field(default_factory=threading.Event)
     pause_next_baseline_fetch: bool = False
     failed_model_fetches: int = 0
 
-    def refresh_baselines(self) -> bool:
+    def fetch_image_baseline_export(self) -> dict[str, object]:
         with self.lock:
             fetched = deepcopy(self.baselines)
             pause = self.pause_next_baseline_fetch
@@ -89,20 +73,18 @@ class _RemoteReference:
             self.baseline_captured.set()
             if not self.release_baseline_fetch.wait(timeout=5):
                 raise TimeoutError("The test did not release the paused baseline fetch.")
-        with self.lock:
-            self.local_baselines = fetched
-        return True
+        return BOOTSTRAP_BASELINE_CATALOG.model_copy(update={"baselines": fetched}).model_dump(mode="json")
 
-    def export_baselines(self) -> SimpleNamespace:
-        with self.lock:
-            return SimpleNamespace(baselines=deepcopy(self.local_baselines))
-
-    def query_models(self, *args: Any, **kwargs: Any) -> _QueryResult:
+    def fetch_category(self, *args: Any, **kwargs: Any) -> dict[str, object] | None:
         with self.lock:
             if self.failed_model_fetches:
                 self.failed_model_fetches -= 1
-                raise RuntimeError("simulated remote model-category failure")
-            return _QueryResult(deepcopy(list(self.models.values())))
+                return None
+            return {name: record.model_dump(mode="json") for name, record in deepcopy(self.models).items()}
+
+    @staticmethod
+    def get_statistics() -> dict[str, int]:
+        return {"github_fallbacks": 0}
 
     def publish_baseline(self, record: ImageBaselineRecord) -> None:
         with self.lock:
@@ -314,15 +296,17 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
         models={CONTROL_MODEL: make_image_record(CONTROL_MODEL, control_baseline.name)},
     )
     loader = model_reference_module.model_reference
-    previous_snapshot = loader._image_snapshot
+    previous_image_state = loader._image_state
     manager = model_reference_module._get_reference_manager()
     previous_limiter = limiter.enabled
 
-    monkeypatch.setattr(manager, "refresh_image_baselines", remote.refresh_baselines)
-    monkeypatch.setattr(manager.image_baseline_store, "export", remote.export_baselines)
-    monkeypatch.setattr(manager, "query", remote.query_models)
-    monkeypatch.setattr(model_reference_module, "_image_reference_source", lambda manager: "remote-test")
-    monkeypatch.setattr(model_reference_module.requests, "get", lambda *args, **kwargs: _StubTextResponse())
+    monkeypatch.setattr(manager, "backend", remote)
+    monkeypatch.setattr(model_reference_module, "_beta_model_categories", set)
+    monkeypatch.setattr(model_reference_module, "_image_reference_source", lambda manager: HORDE_SOURCE_ID)
+
+    def publish_reference(*, expected: bool = True) -> None:
+        published = loader.publish_fleet_snapshot()
+        assert published is expected
 
     server = make_server("127.0.0.1", 0, app, threaded=True)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -353,7 +337,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
     limiter.enabled = False
 
     try:
-        loader.call_function()
+        publish_reference()
         server_thread.start()
         locust_process = subprocess.Popen(
             [
@@ -396,7 +380,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
             horde_policy=HordeBaselinePolicy(kudos=5, kudos_qr_code=7, batching=3, ttl=2, resolution_floor=1024),
         )
         remote.publish_baseline(future_baseline)
-        loader.call_function()
+        publish_reference()
         after_baseline = _quote(host, request_headers, FUTURE_MODEL, qr_code=True)
         assert after_baseline.status_code == before_baseline.status_code
         assert FUTURE_MODEL not in (loader.reference or {})
@@ -419,7 +403,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
 
         # A model added between catalog and category reads is safe when it names an existing baseline.
         remote.publish_model(make_image_record(EXISTING_BASELINE_MODEL, control_baseline.name))
-        loader.call_function()
+        publish_reference()
         assert _quote(host, request_headers, EXISTING_BASELINE_MODEL).status_code == 202
         _write_epoch(
             epoch_config_path,
@@ -448,7 +432,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
         )
         second_model = make_image_record(FUTURE_MODEL, second_baseline.name)
         remote.pause_next_baseline_fetch = True
-        refresh_thread = threading.Thread(target=loader.call_function)
+        refresh_thread = threading.Thread(target=publish_reference)
         refresh_thread.start()
         assert remote.baseline_captured.wait(timeout=5)
         remote.publish_baseline(second_baseline)
@@ -502,8 +486,8 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
                 },
             ),
         )
-        remote.failed_model_fetches = 10
-        loader.call_function()
+        remote.failed_model_fetches = 1
+        publish_reference(expected=False)
         during_failure = _quote(host, request_headers, FUTURE_MODEL, qr_code=True)
         assert during_failure.status_code == 202
         _write_epoch(
@@ -522,7 +506,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
             expected={CONTROL_MODEL: 3, EXISTING_BASELINE_MODEL: 3, FUTURE_MODEL: 3},
         )
 
-        loader.call_function()
+        publish_reference()
         assert loader.baseline_record(second_baseline.name).horde_policy.kudos == 12
         recovered = _quote(host, request_headers, FUTURE_MODEL, qr_code=True)
         assert recovered.status_code == 400
@@ -567,7 +551,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
             expected_ttl=EXPECTED_NEW_POLICY_TTL,
         )
         remote.remove_model(HELD_MODEL)
-        loader.call_function()
+        publish_reference()
         assert HELD_MODEL not in (loader.reference or {})
         _complete_direct_request(
             host,
@@ -577,7 +561,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
         )
 
         remote.remove_model(EXISTING_BASELINE_MODEL)
-        loader.call_function()
+        publish_reference()
         assert EXISTING_BASELINE_MODEL not in (loader.reference or {})
         _write_epoch(
             epoch_config_path,
@@ -634,4 +618,4 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
         server.shutdown()
         server_thread.join(timeout=5)
         limiter.enabled = previous_limiter
-        loader._image_snapshot = previous_snapshot
+        loader._image_state = previous_image_state
