@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import oauthlib
 import requests
-from flask import Blueprint, redirect, render_template, request, send_from_directory, url_for
+from flask import Blueprint, redirect, render_template, request, send_from_directory, session, url_for
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
 from flask_dance.contrib.google import google
@@ -38,7 +38,7 @@ from horde.vars import (
 
 routes_bp = Blueprint("routes", __name__)
 
-dance_return_to = "/"
+OAUTH_RETURN_TO_SESSION_KEY = "oauth_return_to"
 TEST_BOOTSTRAP_TRUE_VALUES = {"1", "true", "yes", "on"}
 LOOPBACK_IPS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
@@ -456,22 +456,19 @@ def transfer():
 
 @routes_bp.route("/google/<return_to>")
 def google_login(return_to):
-    global dance_return_to
-    dance_return_to = "/" + return_to
+    session[OAUTH_RETURN_TO_SESSION_KEY] = "/" + return_to
     return redirect(url_for("google.login"))
 
 
 @routes_bp.route("/discord/<return_to>")
 def discord_login(return_to):
-    global dance_return_to
-    dance_return_to = "/" + return_to
+    session[OAUTH_RETURN_TO_SESSION_KEY] = "/" + return_to
     return redirect(url_for("discord.login"))
 
 
 @routes_bp.route("/github/<return_to>")
 def github_login(return_to):
-    global dance_return_to
-    dance_return_to = "/" + return_to
+    session[OAUTH_RETURN_TO_SESSION_KEY] = "/" + return_to
     return redirect(url_for("github.login"))
 
 
@@ -484,10 +481,7 @@ def github_login(return_to):
 
 @routes_bp.route("/finish_dance")
 def finish_dance():
-    global dance_return_to
-    redirect_url = dance_return_to
-    dance_return_to = "/"
-    return redirect(redirect_url)
+    return redirect(session.pop(OAUTH_RETURN_TO_SESSION_KEY, "/"))
 
 
 @routes_bp.route("/privacy")
