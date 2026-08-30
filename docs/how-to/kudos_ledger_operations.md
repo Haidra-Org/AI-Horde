@@ -108,6 +108,26 @@ postings, drain, and reconcile again. Verify: the second `reconcile` returns an 
 `applied`, delete postings, or directly overwrite balances; none of those can be undone, and they destroy the
 evidence a later reconciliation needs.
 
+Treat every new `horde.kudos.applier.quarantined` alert as an incident even when `pending_rows` is draining normally.
+`quarantined_rows` is the total retained evidence, not an unresolved-incident gauge, so it remains non-zero after
+review. Use the counter alert and newest `quarantined_at` value to identify new incidents. Inspect the retained
+evidence before deciding on a repair:
+
+```sql
+SELECT id, event_id, created, quarantine_reason, entry_type,
+       user_id, worker_id, worker_user_id, team_id,
+       unit, stat_action, record, amount
+FROM kudos_stat_events
+WHERE quarantined
+ORDER BY id;
+```
+
+Determine whether the producer emitted an invalid shape or a referenced user disappeared. Fix the producer/projector
+first. Then repair any missing materialized counters with an explicit, reviewed compensating event or reconciliation
+procedure appropriate to that counter. Retain the quarantined rows and their reason as evidence; do not merely clear
+`quarantined` or set `applied`, because either action can duplicate a partially repaired business event or silently
+discard it.
+
 For database disaster recovery, restore PostgreSQL to the selected PITR/WAL point, retain the permanent ledger and
 stat archives and the balance snapshots, start in shadow mode, reconcile, then repeat the cutover proof. Ledger
 pruning is disabled: `prune_applied_kudos_ledger` returns zero without deleting anything.

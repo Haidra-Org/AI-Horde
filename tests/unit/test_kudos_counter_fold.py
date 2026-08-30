@@ -24,14 +24,24 @@ same way:
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
-from horde.classes.base.kudos import KudosLedger, KudosStatEvent
+import pytest
+
+from horde.classes.base.kudos import KudosLedger, KudosStatEvent, emit_kudos_ledger_entry, emit_kudos_stat_event
 from horde.classes.base.team import Team
 from horde.classes.base.user import User, UserRecords, UserStats
 from horde.classes.base.worker import WorkerStats, WorkerTemplate
-from horde.database.kudos_ledger import apply_pending_kudos
-from horde.enums import KudosEntryType, UserRecordTypes, UserRoleTypes
+from horde.database.kudos_ledger import apply_pending_kudos, kudos_applier_health
+from horde.enums import (
+    KudosEntryType,
+    KudosStatEventQuarantineReason,
+    KudosStatRecord,
+    KudosUnit,
+    UserRecordTypes,
+    UserRoleTypes,
+)
 
 
 def _make_worker(db_session: Any, owner: User) -> WorkerTemplate:
@@ -205,10 +215,12 @@ class TestPerDimensionFold:
 class TestDeletedWorkerFold:
     """Deleting a worker cannot poison the global statistics projector."""
 
-    def test_worker_delete_consumes_pending_worker_stat_events(self, db_session, make_user):
-        worker = _make_worker(db_session, make_user(kudos=0))
+    def test_worker_delete_preserves_pending_team_attribution(self, db_session: Any, make_user: Any) -> None:
+        owner = make_user(kudos=0)
+        team = _make_team(db_session, owner)
+        worker = _make_worker(db_session, owner)
         worker_id = worker.id
-        worker.modify_kudos(100, "generated")
+        worker.modify_kudos(100, "generated", team_id=team.id)
         db_session.commit()
 
         event = _stat_rows(db_session, worker_id=worker_id)[0]
@@ -218,10 +230,14 @@ class TestDeletedWorkerFold:
 
         db_session.expire_all()
         assert db_session.query(WorkerTemplate).filter_by(id=worker_id).first() is None
+        assert db_session.query(KudosStatEvent).filter_by(id=event.id).one().applied is False
+        assert apply_pending_kudos() == 1
+        db_session.expire_all()
         assert db_session.query(KudosStatEvent).filter_by(id=event.id).one().applied is True
-        assert apply_pending_kudos() == 0
+        assert db_session.query(Team).filter_by(id=team.id).one().kudos == 100
+        assert _worker_stat(db_session, worker_id, "generated") is None
 
-    def test_applier_skips_historical_orphan_worker_stat_event(self, db_session, make_user):
+    def test_applier_skips_historical_orphan_worker_stat_event(self, db_session: Any, make_user: Any) -> None:
         worker = _make_worker(db_session, make_user(kudos=0))
         worker_id = worker.id
         worker.modify_kudos(100, "generated")
@@ -237,6 +253,155 @@ class TestDeletedWorkerFold:
         db_session.expire_all()
         assert db_session.query(KudosStatEvent).filter_by(id=event_id).one().applied is True
         assert _worker_stat(db_session, worker_id, "generated") is None
+
+
+class TestPoisonEventIsolation:
+    """Deterministic malformed events are retained without blocking valid work."""
+
+    @pytest.mark.parametrize("amount", [Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")])
+    def test_emitters_reject_non_finite_amounts(self, db_session: Any, make_user: Any, amount: Decimal) -> None:
+        user = make_user(kudos=0)
+
+        with pytest.raises(ValueError, match="must be finite"):
+            emit_kudos_ledger_entry(KudosEntryType.ADMIN_ADJUSTMENT, amount, user_id=user.id)
+        with pytest.raises(ValueError, match="must be finite"):
+            emit_kudos_stat_event(
+                KudosEntryType.AWARD,
+                amount,
+                user_id=user.id,
+                unit=KudosUnit.KUDOS,
+                stat_action="awarded",
+                record=KudosStatRecord.USER_KUDOS,
+            )
+
+    def test_unsupported_projection_is_quarantined_while_valid_event_folds(self, db_session: Any, make_user: Any) -> None:
+        user = make_user(kudos=1000)
+        user.modify_kudos(25, "awarded", entry_type=KudosEntryType.AWARD)
+        malformed_event_id = uuid.uuid4()
+        malformed = KudosStatEvent(
+            event_id=malformed_event_id,
+            entry_type=KudosEntryType.AWARD,
+            user_id=user.id,
+            amount=1,
+            unit=KudosUnit.COUNT,
+            stat_action="future",
+            record="future",
+            applied=False,
+        )
+        valid_peer = KudosStatEvent(
+            event_id=malformed_event_id,
+            entry_type=KudosEntryType.STAT_RECORD,
+            user_id=user.id,
+            amount=1,
+            unit=KudosUnit.COUNT,
+            stat_action=UserRecordTypes.REQUEST.name,
+            record="image",
+            applied=False,
+        )
+        db_session.add_all([malformed, valid_peer])
+        db_session.commit()
+
+        assert apply_pending_kudos() == 4
+        db_session.expire_all()
+        assert user.kudos == 1025
+        assert _user_stat(db_session, user.id, "awarded") == 25
+        quarantined = db_session.get(KudosStatEvent, malformed.id)
+        assert quarantined is not None
+        assert quarantined.applied is False
+        assert quarantined.quarantined is True
+        assert quarantined.quarantine_reason == KudosStatEventQuarantineReason.UNKNOWN_PROJECTION
+        assert quarantined.quarantined_at is not None
+        quarantined_peer = db_session.get(KudosStatEvent, valid_peer.id)
+        assert quarantined_peer is not None
+        assert quarantined_peer.quarantined is True
+        assert quarantined_peer.quarantine_reason == KudosStatEventQuarantineReason.UNKNOWN_PROJECTION
+        assert _user_record(db_session, user.id, UserRecordTypes.REQUEST, "image") is None
+        assert apply_pending_kudos() == 0
+
+    def test_missing_user_projection_is_quarantined(self, db_session: Any, make_user: Any) -> None:
+        user = make_user(kudos=0)
+        event = KudosStatEvent(
+            event_id=uuid.uuid4(),
+            entry_type=KudosEntryType.STAT_RECORD,
+            user_id=user.id,
+            amount=1,
+            unit=KudosUnit.COUNT,
+            stat_action=UserRecordTypes.REQUEST.name,
+            record="image",
+            applied=False,
+        )
+        db_session.add(event)
+        db_session.commit()
+        event_id = event.id
+        db_session.query(User).filter_by(id=user.id).delete(synchronize_session=False)
+        db_session.commit()
+
+        assert apply_pending_kudos() == 1
+        db_session.expire_all()
+        quarantined = db_session.get(KudosStatEvent, event_id)
+        assert quarantined is not None
+        assert quarantined.quarantined is True
+        assert quarantined.quarantine_reason == KudosStatEventQuarantineReason.MISSING_USER
+
+        health = kudos_applier_health()
+        assert health["pending_rows"] == 0
+        assert health["oldest_pending_seconds"] is None
+        assert health["quarantined_rows"] == 1
+        assert health["oldest_quarantined_seconds"] is not None
+
+    @pytest.mark.parametrize(
+        ("stat_action", "record", "message"),
+        [
+            ("x" * 21, "worker_kudos", "action exceeds 20"),
+            ("generated", "x" * 31, "record exceeds 30"),
+        ],
+    )
+    def test_emitter_rejects_dimensions_the_projection_tables_cannot_store(
+        self,
+        db_session: Any,
+        make_user: Any,
+        stat_action: str,
+        record: str,
+        message: str,
+    ) -> None:
+        worker = _make_worker(db_session, make_user(kudos=0))
+        with pytest.raises(ValueError, match=message):
+            emit_kudos_stat_event(
+                KudosEntryType.GENERATION,
+                1,
+                worker_id=worker.id,
+                unit=KudosUnit.KUDOS,
+                stat_action=stat_action,
+                record=record,
+            )
+
+    def test_failed_transaction_does_not_report_folded_rows(
+        self,
+        db_session: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import horde.database.kudos_ledger as ledger_module
+
+        user = make_user(kudos=1000)
+        user.modify_kudos(25, "awarded", entry_type=KudosEntryType.AWARD)
+        db_session.commit()
+        calls: list[tuple[int, dict[str, str] | None]] = []
+
+        class FoldedRecorder:
+            def add(self, amount: int, attributes: dict[str, str] | None = None) -> None:
+                calls.append((amount, attributes))
+
+        def fail_projection(_deltas: Any) -> None:
+            raise RuntimeError("projection failed")
+
+        monkeypatch.setattr(ledger_module, "kudos_applier_folded", FoldedRecorder())
+        monkeypatch.setattr(ledger_module, "_apply_user_stats_deltas", fail_projection)
+
+        with pytest.raises(RuntimeError, match="projection failed"):
+            apply_pending_kudos()
+        assert calls == []
+        db_session.rollback()
 
 
 class TestSingleCycleAtomicity:

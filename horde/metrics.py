@@ -672,6 +672,20 @@ kudos_applier_folded = logfire.metric_counter(
     unit="1",
     description="Ledger rows folded by the applier, by row_type (currency/stat)",
 )
+kudos_applier_quarantined = logfire.metric_counter(
+    "horde.kudos.applier.quarantined",
+    unit="1",
+    description="Invalid statistics events durably quarantined by the applier",
+)
+# Establish a zero baseline as soon as the process starts. Prometheus increase()
+# then observes even the first quarantine after a deployment instead of seeing a
+# new counter series whose first sample already contains the increment.
+kudos_applier_quarantined.add(0)
+kudos_applier_quarantined_by_reason = logfire.metric_counter(
+    "horde.kudos.applier.quarantined_by_reason",
+    unit="1",
+    description="Invalid statistics events durably quarantined by the applier, by reason",
+)
 kudos_applier_cycles = logfire.metric_counter(
     "horde.kudos.applier.cycles",
     unit="1",

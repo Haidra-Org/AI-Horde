@@ -24,7 +24,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from loguru import logger
 from sqlalchemy import (
@@ -46,7 +46,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import and_, column, false
 
-from horde.enums import KudosEntryType, KudosLedgerMode, KudosUnit
+from horde.enums import KudosEntryType, KudosLedgerMode, KudosStatEventQuarantineReason, KudosUnit
 from horde.flask import db
 
 if TYPE_CHECKING:
@@ -55,6 +55,8 @@ if TYPE_CHECKING:
 type KudosAmount = Decimal | int | float
 type KudosAuditMetadata = dict[str, object]
 _json_type = JSON().with_variant(JSONB(), "postgresql")
+KUDOS_STAT_ACTION_MAX_LENGTH: Final[int] = 20
+KUDOS_STAT_RECORD_MAX_LENGTH: Final[int] = 30
 
 
 @dataclass(frozen=True)
@@ -172,7 +174,11 @@ class KudosStatEvent(db.Model):  # type: ignore[name-defined,misc]
             name="kudos_stat_event_exactly_one_target",
         ),
         CheckConstraint("amount <> 'NaN'", name="kudos_stat_event_amount_not_nan"),
-        Index("ix_kudos_stat_events_unapplied", "id", postgresql_where=column("applied").is_(false())),
+        Index(
+            "ix_kudos_stat_events_unapplied",
+            "id",
+            postgresql_where=column("applied").is_(false()) & column("quarantined").is_(false()),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -199,6 +205,17 @@ class KudosStatEvent(db.Model):  # type: ignore[name-defined,misc]
     record: Mapped[str | None] = mapped_column(String(32), nullable=True)
     detail: Mapped[KudosAuditMetadata | None] = mapped_column(_json_type, nullable=True)
     applied: Mapped[bool] = mapped_column(default=False, nullable=False)
+    quarantined: Mapped[bool] = mapped_column(default=False, nullable=False)
+    quarantine_reason: Mapped[KudosStatEventQuarantineReason | None] = mapped_column(
+        Enum(
+            KudosStatEventQuarantineReason,
+            native_enum=False,
+            length=64,
+            values_callable=lambda reasons: [reason.value for reason in reasons],
+        ),
+        nullable=True,
+    )
+    quarantined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class KudosLedgerApplierState(db.Model):  # type: ignore[name-defined,misc]
@@ -382,6 +399,24 @@ def kudos_projection_is_async() -> bool:
     return get_kudos_ledger_mode() == KudosLedgerMode.LEDGER
 
 
+def _finite_decimal_amount(amount: KudosAmount) -> Decimal:
+    """Convert a kudos amount to a finite decimal value.
+
+    Args:
+        amount: Numeric amount supplied by a currency or statistic producer.
+
+    Returns:
+        A finite decimal representation of the amount.
+
+    Raises:
+        ValueError: The amount is NaN or positive/negative infinity.
+    """
+    decimal_amount = Decimal(str(amount))
+    if not decimal_amount.is_finite():
+        raise ValueError("Kudos amount must be finite")
+    return decimal_amount
+
+
 def emit_kudos_ledger_entry(
     entry_type: KudosEntryType,
     amount: KudosAmount,
@@ -409,7 +444,11 @@ def emit_kudos_ledger_entry(
         the flush lets one flush write every posting of a business event as a
         bulk INSERT instead of one round trip per posting; autoflush still makes
         the row visible to any same-session query issued before that point.
+
+    Raises:
+        ValueError: The amount is not finite.
     """
+    decimal_amount = _finite_decimal_amount(amount)
     event = _current_kudos_event.get()
     if event is None:
         event = _KudosEvent(event_id=uuid.uuid4())
@@ -418,7 +457,7 @@ def emit_kudos_ledger_entry(
         entry_type=entry_type,
         user_id=user_id,
         escrow=escrow,
-        amount=Decimal(str(amount)),
+        amount=decimal_amount,
         job_id=event.job_id,
         wp_type=event.wp_type,
         detail=detail,
@@ -464,7 +503,17 @@ def emit_kudos_stat_event(
     Returns:
         The pending statistics event, inserted at the session's next flush (see
         :func:`emit_kudos_ledger_entry` for why the flush is deferred).
+
+    Raises:
+        ValueError: The target/dimensions are invalid or the amount is not finite.
     """
+    if (user_id is None) == (worker_id is None):
+        raise ValueError("A kudos stat event must target exactly one user or worker")
+    if stat_action is not None and len(stat_action) > KUDOS_STAT_ACTION_MAX_LENGTH:
+        raise ValueError(f"Kudos stat action exceeds {KUDOS_STAT_ACTION_MAX_LENGTH} characters")
+    if record is not None and len(record) > KUDOS_STAT_RECORD_MAX_LENGTH:
+        raise ValueError(f"Kudos stat record exceeds {KUDOS_STAT_RECORD_MAX_LENGTH} characters")
+    decimal_amount = _finite_decimal_amount(amount)
     event = _current_kudos_event.get() or _KudosEvent(event_id=uuid.uuid4())
     entry = KudosStatEvent(
         event_id=event.event_id,
@@ -475,7 +524,7 @@ def emit_kudos_stat_event(
         team_id=team_id,
         job_id=event.job_id,
         wp_type=event.wp_type,
-        amount=Decimal(str(amount)),
+        amount=decimal_amount,
         unit=unit,
         stat_action=stat_action,
         record=record,

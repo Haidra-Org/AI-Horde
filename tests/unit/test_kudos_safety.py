@@ -11,6 +11,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import text
 
@@ -57,6 +58,11 @@ def test_accounting_schema_separates_currency_from_stats_and_declares_ownership(
         "users.id": "CASCADE",
     }
     assert not KudosStatEvent.__table__.foreign_keys
+    assert {
+        "quarantined",
+        "quarantine_reason",
+        "quarantined_at",
+    }.issubset(KudosStatEvent.__table__.columns.keys())
 
 
 def test_cutover_branching_stays_out_of_business_models() -> None:
@@ -80,6 +86,15 @@ def test_kudos_schema_migration_is_idempotent_on_the_mapped_schema(db_session) -
     """Exercise the deploy SQL against the exact PostgreSQL schema under test."""
     repository_root = Path(__file__).parents[2]
     migration = (repository_root / "sql_statements/5.1.0.txt").read_text(encoding="utf-8")
+    db_session.execute(text(migration))
+    db_session.commit()
+
+
+def test_kudos_quarantine_migration_is_idempotent_on_the_mapped_schema(db_session: Any) -> None:
+    """Exercise the additive poison-event migration against the mapped schema."""
+    repository_root = Path(__file__).parents[2]
+    migration = (repository_root / "sql_statements/5.1.9.txt").read_text(encoding="utf-8")
+    db_session.execute(text(migration))
     db_session.execute(text(migration))
     db_session.commit()
 
