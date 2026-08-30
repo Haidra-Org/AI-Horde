@@ -345,9 +345,12 @@ class TestPoisonEventIsolation:
 
         health = kudos_applier_health()
         assert health["pending_rows"] == 0
+        assert health["ledger_pending_rows"] == 0
+        assert health["stat_pending_rows"] == 0
         assert health["oldest_pending_seconds"] is None
         assert health["quarantined_rows"] == 1
         assert health["oldest_quarantined_seconds"] is not None
+        assert health["newest_quarantined_seconds"] is not None
 
     @pytest.mark.parametrize(
         ("stat_action", "record", "message"),

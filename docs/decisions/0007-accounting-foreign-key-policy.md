@@ -86,3 +86,8 @@ Each table gets the policy its contents' lifetime requires.
 
 - Bad: It gives up the guarantee that a currency posting always names a real user, which is the one
   referential guarantee reconciliation depends on.
+
+## More Information
+
+[ADR 14](0014-quarantine-deterministically-invalid-statistic-events.md) amends the hard-deletion behavior with the
+worker deletion/projector lock protocol and the deterministic statistic-event quarantine policy.

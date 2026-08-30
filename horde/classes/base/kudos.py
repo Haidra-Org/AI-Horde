@@ -175,7 +175,7 @@ class KudosStatEvent(db.Model):  # type: ignore[name-defined,misc]
         ),
         CheckConstraint("amount <> 'NaN'", name="kudos_stat_event_amount_not_nan"),
         Index(
-            "ix_kudos_stat_events_unapplied",
+            "ix_kudos_stat_events_drainable",
             "id",
             postgresql_where=column("applied").is_(false()) & column("quarantined").is_(false()),
         ),

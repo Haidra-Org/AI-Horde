@@ -1,6 +1,13 @@
+-- Run with psql in its default autocommit mode. Do not pass --single-transaction:
+-- CREATE/DROP INDEX CONCURRENTLY cannot run inside a transaction block. Pass
+-- -v ON_ERROR_STOP=1 so a failure stops the migration. A failed concurrent
+-- build may leave an INVALID ix_kudos_stat_events_drainable index; drop that
+-- index and rerun after correcting the cause.
+--
 -- Durable poison-event isolation for the asynchronous kudos statistics
--- projector. Apply this additive migration before deploying 5.1.9 code; older
--- application versions ignore the columns, so migration-first is rolling-safe.
+-- projector. Apply this migration before deploying 5.1.9 code; older
+-- application versions ignore the columns and index, so migration-first is
+-- rolling-safe.
 SET lock_timeout = '3s';
 
 ALTER TABLE kudos_stat_events
@@ -16,3 +23,11 @@ COMMENT ON COLUMN kudos_stat_events.quarantine_reason IS
   'Bounded machine-readable reason assigned by the projector.';
 COMMENT ON COLUMN kudos_stat_events.quarantined_at IS
   'UTC time at which the projector quarantined the event.';
+
+-- Keep retained poison evidence out of the projector's permanent hot index.
+-- Build the replacement before removing the old applied-only predicate so the
+-- queue always has a usable claim index during a live migration.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_drainable
+  ON kudos_stat_events (id)
+  WHERE NOT applied AND NOT quarantined;
+DROP INDEX CONCURRENTLY IF EXISTS ix_kudos_stat_events_unapplied;

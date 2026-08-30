@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
+import sqlparse
+from sqlalchemy import inspect, text
 
 from horde.classes.base.kudos import (
     KudosBalanceSnapshot,
@@ -94,9 +95,26 @@ def test_kudos_quarantine_migration_is_idempotent_on_the_mapped_schema(db_sessio
     """Exercise the additive poison-event migration against the mapped schema."""
     repository_root = Path(__file__).parents[2]
     migration = (repository_root / "sql_statements/5.1.9.txt").read_text(encoding="utf-8")
-    db_session.execute(text(migration))
-    db_session.execute(text(migration))
     db_session.commit()
+    engine = db_session.get_bind()
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        # Recreate the 5.1.8 production index state instead of relying on
+        # create_all(), which already reflects the post-migration model.
+        connection.exec_driver_sql("DROP INDEX IF EXISTS ix_kudos_stat_events_drainable")
+        connection.exec_driver_sql("DROP INDEX IF EXISTS ix_kudos_stat_events_unapplied")
+        connection.exec_driver_sql(
+            "CREATE INDEX ix_kudos_stat_events_unapplied ON kudos_stat_events (id) WHERE applied IS FALSE",
+        )
+        for _ in range(2):
+            for statement in sqlparse.split(migration, strip_semicolon=True):
+                connection.exec_driver_sql(statement)
+
+    indexes = {index["name"]: index for index in inspect(engine).get_indexes("kudos_stat_events")}
+    assert "ix_kudos_stat_events_unapplied" not in indexes
+    predicate = indexes["ix_kudos_stat_events_drainable"]["dialect_options"]["postgresql_where"].lower()
+    assert "applied" in predicate
+    assert "quarantined" in predicate
+    assert predicate.count("not") == 2 or predicate.count("is false") == 2
 
 
 def _settle_all() -> int:

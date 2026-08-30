@@ -328,10 +328,23 @@ class TestApplierCatchUp:
 
     def test_one_tick_drains_multiple_batches(self, db_session, make_user, monkeypatch):
         import horde.database.kudos_ledger as kudos_ledger_module
+        import horde.metrics as metrics_module
         from horde.database.threads import apply_kudos_ledger
 
         monkeypatch.setattr(kudos_ledger_module, "KUDOS_APPLIER_BATCH_SIZE", 2)
         monkeypatch.setattr(kudos_ledger_module, "KUDOS_APPLIER_MAX_CATCHUP_CYCLES", 10)
+        observation_timestamps: list[float] = []
+        lag_values: list[float] = []
+
+        class GaugeRecorder:
+            def __init__(self, values: list[float]) -> None:
+                self.values = values
+
+            def set(self, value: float, _attributes=None) -> None:
+                self.values.append(value)
+
+        monkeypatch.setattr(metrics_module, "kudos_applier_observation_timestamp", GaugeRecorder(observation_timestamps))
+        monkeypatch.setattr(metrics_module, "kudos_applier_lag_seconds", GaugeRecorder(lag_values))
         user = make_user(kudos=100)
         for _ in range(5):
             emit_kudos_ledger_entry(KudosEntryType.AWARD, 1, user_id=user.id)
@@ -342,6 +355,12 @@ class TestApplierCatchUp:
         db_session.refresh(user)
         assert user.kudos == 105
         assert _applied_count(db_session, applied=False) == 0
+        # One health observation plus one refresh after each of the three
+        # committed cycles keeps stale former-quorum gauges out of recording
+        # rules and prevents a healthy long catch-up from reporting old lag.
+        assert len(observation_timestamps) == 4
+        assert observation_timestamps == sorted(observation_timestamps)
+        assert lag_values[-3:] == [0, 0, 0]
 
     def test_catch_up_stops_at_the_cycle_bound(self, db_session, make_user, monkeypatch):
         import horde.database.kudos_ledger as kudos_ledger_module

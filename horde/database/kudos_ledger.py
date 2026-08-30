@@ -123,8 +123,13 @@ class KudosApplierHealth(TypedDict):
 
     pending_rows: int
     oldest_pending_seconds: float | None
+    ledger_pending_rows: int
+    stat_pending_rows: int
+    oldest_ledger_pending_seconds: float | None
+    oldest_stat_pending_seconds: float | None
     quarantined_rows: int
     oldest_quarantined_seconds: float | None
+    newest_quarantined_seconds: float | None
     heartbeat_seconds: float | None
     active_reservations: int
     oldest_reservation_seconds: float | None
@@ -915,15 +920,24 @@ def kudos_applier_health(now: datetime | None = None) -> KudosApplierHealth:
         .filter(KudosStatEvent.applied.is_(False), KudosStatEvent.quarantined.is_(False))
         .one()
     )
-    quarantined_count, quarantined_oldest_created = (
-        db.session.query(func.count(KudosStatEvent.id), func.min(KudosStatEvent.created)).filter(KudosStatEvent.quarantined.is_(True)).one()
+    quarantined_count, quarantined_oldest_created, quarantined_newest_at = (
+        db.session.query(
+            func.count(KudosStatEvent.id),
+            func.min(KudosStatEvent.created),
+            func.max(KudosStatEvent.quarantined_at),
+        )
+        .filter(KudosStatEvent.quarantined.is_(True))
+        .one()
     )
+    ledger_oldest_age = None if ledger_oldest_created is None else max((reference - ledger_oldest_created).total_seconds(), 0.0)
+    stat_oldest_age = None if stat_oldest_created is None else max((reference - stat_oldest_created).total_seconds(), 0.0)
     oldest_candidates = [created for created in (ledger_oldest_created, stat_oldest_created) if created is not None]
     oldest_created = min(oldest_candidates) if oldest_candidates else None
     oldest_age = None if oldest_created is None else max((reference - oldest_created).total_seconds(), 0.0)
     oldest_quarantined_age = (
         None if quarantined_oldest_created is None else max((reference - quarantined_oldest_created).total_seconds(), 0.0)
     )
+    newest_quarantined_age = None if quarantined_newest_at is None else max((reference - quarantined_newest_at).total_seconds(), 0.0)
     active_reservations, oldest_reservation_created = (
         db.session.query(func.count(KudosReservation.id), func.min(KudosReservation.created))
         .filter(KudosReservation.released_at.is_(None), KudosReservation.remaining_amount > 0)
@@ -935,8 +949,13 @@ def kudos_applier_health(now: datetime | None = None) -> KudosApplierHealth:
     return {
         "pending_rows": int(ledger_pending_count) + int(stat_pending_count),
         "oldest_pending_seconds": oldest_age,
+        "ledger_pending_rows": int(ledger_pending_count),
+        "stat_pending_rows": int(stat_pending_count),
+        "oldest_ledger_pending_seconds": ledger_oldest_age,
+        "oldest_stat_pending_seconds": stat_oldest_age,
         "quarantined_rows": int(quarantined_count),
         "oldest_quarantined_seconds": oldest_quarantined_age,
+        "newest_quarantined_seconds": newest_quarantined_age,
         "heartbeat_seconds": kudos_applier_lag(reference),
         "active_reservations": int(active_reservations),
         "oldest_reservation_seconds": oldest_reservation_age,

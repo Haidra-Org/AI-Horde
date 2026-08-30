@@ -645,27 +645,55 @@ db_pool_timeout = logfire.metric_counter(
     unit="1",
     description="SQLAlchemy QueuePool TimeoutError occurrences",
 )
-kudos_applier_lag_seconds = _seconds_histogram(
+kudos_applier_lag_seconds = logfire.metric_gauge(
     "horde.kudos.applier_lag",
-    "Seconds between now and the kudos ledger applier's last fold, per applier cycle",
+    unit="s",
+    description="Seconds between now and the kudos ledger applier's last fold",
 )
-kudos_oldest_pending_seconds = _seconds_histogram(
+kudos_applier_observation_timestamp = logfire.metric_gauge(
+    "horde.kudos.applier.observation_timestamp",
+    unit="s",
+    description="Unix timestamp of the newest quorum-owned kudos health observation",
+)
+kudos_oldest_pending_seconds = logfire.metric_gauge(
     "horde.kudos.oldest_pending",
-    "Age of the oldest unapplied kudos posting",
+    unit="s",
+    description="Age of the oldest drainable unapplied kudos posting",
 )
-kudos_pending_rows = logfire.metric_histogram(
+kudos_pending_rows = logfire.metric_gauge(
     "horde.kudos.pending_rows",
     unit="{posting}",
     description="Number of unapplied kudos postings",
 )
-kudos_active_reservations = logfire.metric_histogram(
+kudos_pending_rows_by_type = logfire.metric_gauge(
+    "horde.kudos.pending_rows_by_type",
+    unit="{posting}",
+    description="Number of drainable unapplied kudos postings, by row_type (currency/stat)",
+)
+kudos_oldest_pending_seconds_by_type = logfire.metric_gauge(
+    "horde.kudos.oldest_pending_by_type",
+    unit="s",
+    description="Age of the oldest drainable unapplied kudos posting, by row_type (currency/stat)",
+)
+kudos_quarantined_rows = logfire.metric_gauge(
+    "horde.kudos.quarantined_rows",
+    unit="{posting}",
+    description="Total statistics events retained in quarantine as permanent evidence",
+)
+kudos_newest_quarantine_seconds = logfire.metric_gauge(
+    "horde.kudos.newest_quarantine_age",
+    unit="s",
+    description="Age of the newest retained quarantine event, or zero when quarantine is empty",
+)
+kudos_active_reservations = logfire.metric_gauge(
     "horde.kudos.active_reservations",
     unit="{reservation}",
     description="Number of active kudos holds",
 )
-kudos_oldest_reservation_seconds = _seconds_histogram(
+kudos_oldest_reservation_seconds = logfire.metric_gauge(
     "horde.kudos.oldest_reservation",
-    "Age of the oldest active kudos hold",
+    unit="s",
+    description="Age of the oldest active kudos hold",
 )
 kudos_applier_folded = logfire.metric_counter(
     "horde.kudos.applier.folded",
@@ -699,6 +727,21 @@ kudos_applier_saturation = logfire.metric_counter(
     "horde.kudos.applier.saturation",
     unit="1",
     description="Applier ticks that exhausted the catch-up cycle bound with a full final batch",
+)
+kudos_applier_batch_size = logfire.metric_gauge(
+    "horde.kudos.applier.batch_size",
+    unit="{posting}",
+    description="Configured maximum currency rows and stat rows claimed per applier cycle",
+)
+kudos_applier_max_catchup_cycles = logfire.metric_gauge(
+    "horde.kudos.applier.max_catchup_cycles",
+    unit="{cycle}",
+    description="Configured maximum applier cycles run in one outer tick",
+)
+kudos_applier_cycles_per_tick = logfire.metric_histogram(
+    "horde.kudos.applier.cycles_per_tick",
+    unit="{cycle}",
+    description="Applier cycles used by a completed outer tick",
 )
 kudos_floor_adjustments = logfire.metric_counter(
     "horde.kudos.floor_adjustments",
