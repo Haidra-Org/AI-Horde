@@ -87,5 +87,3 @@ def seed_image_reference(
     }
 
     monkeypatch.setattr(model_reference_module.model_reference, "reference", reference)
-    monkeypatch.setattr(model_reference_module.model_reference, "stable_diffusion_names", set(reference))
-    monkeypatch.setattr(model_reference_module.model_reference, "nsfw_models", set(nsfw))

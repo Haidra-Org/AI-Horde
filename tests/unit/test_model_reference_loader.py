@@ -33,7 +33,11 @@ class _StubTextResponse:
 
     @staticmethod
     def json() -> dict[str, Any]:
-        return {}
+        return {"text-model": {"parameters": 7_000_000_000, "nsfw": False}}
+
+    @staticmethod
+    def raise_for_status() -> None:
+        return None
 
 
 @pytest.fixture
@@ -53,17 +57,13 @@ def canonical_image_view(monkeypatch: pytest.MonkeyPatch) -> Iterator[CanonicalV
 
     # ``call_function`` writes onto the process-wide reference, so it is captured and put back.
     loader = model_reference_module.model_reference
-    restore = {
-        attribute: getattr(loader, attribute)
-        for attribute in ("text_reference", "stable_diffusion_names", "text_model_names", "nsfw_models")
-    }
-    previous_image_snapshot = loader._image_snapshot
+    previous_image_state = loader._image_state
+    previous_text_state = loader._text_state
 
     yield canonical
 
-    for attribute, previous_value in restore.items():
-        setattr(loader, attribute, previous_value)
-    loader._image_snapshot = previous_image_snapshot
+    loader._image_state = previous_image_state
+    loader._text_state = previous_text_state
     manager.unregister_provider(PENDING_SOURCE_ID)
 
 
@@ -151,7 +151,7 @@ def test_models_and_baselines_are_published_as_one_snapshot(
 def test_failed_model_fetch_keeps_the_previous_complete_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     """Refreshing the catalog alone cannot leak a half-new reference to request readers."""
     loader = model_reference_module.model_reference
-    previous_snapshot = loader._image_snapshot
+    previous_state = loader._image_state
     manager = model_reference_module._get_reference_manager()
     future_baseline = ImageBaselineRecord(name="not_published")
     monkeypatch.setattr(manager, "refresh_image_baselines", lambda: True)
@@ -165,8 +165,62 @@ def test_failed_model_fetch_keeps_the_previous_complete_snapshot(monkeypatch: py
 
     loader.call_function()
 
-    assert loader._image_snapshot is previous_snapshot
+    assert loader._image_state is previous_state
     assert loader.baseline_record(future_baseline.name) is None
+
+
+def test_invalid_text_refresh_retains_complete_last_known_good(monkeypatch: pytest.MonkeyPatch) -> None:
+    loader = model_reference_module.ModelReference()
+    previous = {"known-text-model": {"parameters": 7_000_000_000, "nsfw": True}}
+    loader.text_reference = previous
+
+    class InvalidResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> list[object]:
+            return []
+
+    monkeypatch.setattr(model_reference_module.requests, "get", lambda *args, **kwargs: InvalidResponse())
+
+    loader.refresh_text_reference()
+
+    assert loader.text_reference == previous
+    assert loader.text_model_names == {"known-text-model"}
+    assert loader.nsfw_models == {"known-text-model"}
+
+
+def test_text_refresh_removes_retired_names_and_stale_nsfw_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    loader = model_reference_module.ModelReference()
+    loader.text_reference = {
+        "retired-text-model": {"parameters": 7_000_000_000, "nsfw": True},
+        "retained-text-model": {"parameters": 7_000_000_000, "nsfw": True},
+    }
+
+    class ReplacementResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, dict[str, object]]:
+            return {"retained-text-model": {"parameters": 7_000_000_000, "nsfw": False}}
+
+    monkeypatch.setattr(model_reference_module.requests, "get", lambda *args, **kwargs: ReplacementResponse())
+
+    loader.refresh_text_reference()
+
+    assert loader.text_model_names == {"retained-text-model"}
+    assert loader.nsfw_models == set()
+
+
+def test_empty_initial_text_state_is_safe() -> None:
+    loader = model_reference_module.ModelReference()
+
+    assert loader.get_text_model_names() == set()
+    assert loader.get_text_model_multiplier("unknown-text-model") == 1
 
 
 @pytest.mark.parametrize(

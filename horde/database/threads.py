@@ -929,13 +929,23 @@ def store_known_image_models():
     from horde.model_reference import model_reference
 
     with get_app().app_context():
-        if model_reference.reference is not None:
+        if model_reference.reference:
             logger.debug("Storing known image models from the model reference")
             add_known_image_models_from_records(model_reference.reference)
             delete_any_unspecified_image_models(list(model_reference.reference.keys()))
 
         else:
             logger.debug("No known image models to store from the model reference")
+
+
+def publish_model_reference_snapshot():
+    """Have the elected AI-Horde instance refresh the fleet's Redis snapshot."""
+    from horde.model_reference import model_reference
+
+    if not model_reference.publish_fleet_snapshot():
+        # Let PrimaryTimedFunction use its ten-second failure retry instead of
+        # sleeping the normal one-hour success interval.
+        raise RuntimeError("The fleet image-reference snapshot was not published.")
 
 
 def refresh_passkeys():

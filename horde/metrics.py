@@ -636,6 +636,16 @@ job_failures = logfire.metric_counter(
     unit="1",
     description="PrimaryTimedFunction invocations that raised",
 )
+model_reference_snapshot_age_seconds = logfire.metric_gauge(
+    "horde.model_reference.snapshot_age",
+    unit="s",
+    description="Seconds since the fleet image-reference snapshot this process serves was published",
+)
+model_reference_snapshot_degraded = logfire.metric_gauge(
+    "horde.model_reference.snapshot_degraded",
+    unit="1",
+    description="1 while the served image-reference snapshot was built from fallback sources instead of the PRIMARY",
+)
 ip_check_duration = _seconds_histogram(
     "horde.countermeasures.ip_check.duration",
     "Duration of is_ip_safe external check",
