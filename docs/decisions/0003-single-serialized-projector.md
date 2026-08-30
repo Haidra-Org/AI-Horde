@@ -77,3 +77,9 @@ per tick while each transaction stays small.
 Track the highest folded ID and claim above it.
 
 - Bad: a lower ID that commits later is permanently skipped, and the skip is silent.
+
+## More Information
+
+[ADR 14](0014-quarantine-deterministically-invalid-statistic-events.md) amends the statistic queue membership and
+failure policy by removing deterministically invalid events from the drainable queue while retaining them as audit
+evidence.

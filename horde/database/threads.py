@@ -4,6 +4,7 @@
 
 import json
 import os
+import time
 from datetime import date, datetime, timedelta
 
 import logfire
@@ -499,7 +500,7 @@ def prune_compiled_stats():
 
 
 @logger.catch(reraise=True)
-def apply_kudos_ledger():
+def apply_kudos_ledger() -> None:
     """Fold the unapplied kudos ledger rows into the materialized balances.
 
     Runs on the quorum node as the single writer of the balance columns, and
@@ -517,24 +518,44 @@ def apply_kudos_ledger():
     from horde.database.kudos_ledger import kudos_applier_health
     from horde.metrics import (
         kudos_active_reservations,
+        kudos_applier_batch_size,
         kudos_applier_cycles,
+        kudos_applier_cycles_per_tick,
         kudos_applier_lag_seconds,
+        kudos_applier_max_catchup_cycles,
+        kudos_applier_observation_timestamp,
         kudos_applier_saturation,
+        kudos_newest_quarantine_seconds,
         kudos_oldest_pending_seconds,
+        kudos_oldest_pending_seconds_by_type,
         kudos_oldest_reservation_seconds,
         kudos_pending_rows,
+        kudos_pending_rows_by_type,
+        kudos_quarantined_rows,
     )
 
     with get_app().app_context():
         health = kudos_applier_health()
-        kudos_pending_rows.record(health["pending_rows"])
-        kudos_active_reservations.record(health["active_reservations"])
-        if health["heartbeat_seconds"] is not None:
-            kudos_applier_lag_seconds.record(health["heartbeat_seconds"])
-        if health["oldest_pending_seconds"] is not None:
-            kudos_oldest_pending_seconds.record(health["oldest_pending_seconds"])
-        if health["oldest_reservation_seconds"] is not None:
-            kudos_oldest_reservation_seconds.record(health["oldest_reservation_seconds"])
+        kudos_pending_rows.set(health["pending_rows"])
+        kudos_pending_rows_by_type.set(health["ledger_pending_rows"], {"horde.kudos.row_type": "currency"})
+        kudos_pending_rows_by_type.set(health["stat_pending_rows"], {"horde.kudos.row_type": "stat"})
+        kudos_oldest_pending_seconds_by_type.set(
+            health["oldest_ledger_pending_seconds"] or 0,
+            {"horde.kudos.row_type": "currency"},
+        )
+        kudos_oldest_pending_seconds_by_type.set(
+            health["oldest_stat_pending_seconds"] or 0,
+            {"horde.kudos.row_type": "stat"},
+        )
+        kudos_quarantined_rows.set(health["quarantined_rows"])
+        kudos_newest_quarantine_seconds.set(health["newest_quarantined_seconds"] or 0)
+        kudos_active_reservations.set(health["active_reservations"])
+        kudos_applier_lag_seconds.set(health["heartbeat_seconds"] or 0)
+        kudos_oldest_pending_seconds.set(health["oldest_pending_seconds"] or 0)
+        kudos_oldest_reservation_seconds.set(health["oldest_reservation_seconds"] or 0)
+        kudos_applier_batch_size.set(kudos_ledger.KUDOS_APPLIER_BATCH_SIZE)
+        kudos_applier_max_catchup_cycles.set(kudos_ledger.KUDOS_APPLIER_MAX_CATCHUP_CYCLES)
+        kudos_applier_observation_timestamp.set(time.time())
         cycles_used = 0
         folded_rows = 0
         with logfire.span("horde.kudos.applier.tick") as tick_span:
@@ -543,6 +564,15 @@ def apply_kudos_ledger():
                 cycles_used += 1
                 folded_rows += folded
                 kudos_applier_cycles.add(1)
+                # A long catch-up tick still proves which process currently
+                # owns and advances the projector. Former quorum processes keep
+                # their last synchronous-gauge values, so recording rules join
+                # them to this freshest timestamp before selecting health.
+                kudos_applier_observation_timestamp.set(time.time())
+                # apply_pending_kudos committed a fresh heartbeat. Do not leave
+                # the pre-tick lag value looking stale throughout a multi-minute
+                # catch-up loop that is demonstrably making progress.
+                kudos_applier_lag_seconds.set(0)
                 if folded < kudos_ledger.KUDOS_APPLIER_BATCH_SIZE:
                     break
             else:
@@ -556,6 +586,7 @@ def apply_kudos_ledger():
                 )
             tick_span.set_attribute("horde.kudos.folded_rows", folded_rows)
             tick_span.set_attribute("horde.kudos.cycles", cycles_used)
+            kudos_applier_cycles_per_tick.record(cycles_used)
 
 
 # How many performance samples per worker back the materialized ``workers.speed``

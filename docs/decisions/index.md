@@ -25,6 +25,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Separate sampler trajectory, estimated work, and execution ceilings](0011-separate-sampler-trajectory-estimate-and-ceiling.md) | accepted | 2026-08-18 |
 | [Publish versioned sampler contracts from one authoritative registry](0012-publish-versioned-sampler-contracts.md) | accepted | 2026-08-18 |
 | [Treat image job TTL as a conservative prefetch lease](0013-image-job-ttl-is-a-prefetch-lease.md) | accepted | 2026-08-18 |
+| [Quarantine deterministically invalid statistic events without stopping the projector](0014-quarantine-deterministically-invalid-statistic-events.md) | accepted | 2026-08-30 |
 
 ## Relationships
 
@@ -45,6 +46,7 @@ flowchart TD
     r0011["0011: Separate sampler trajectory, estimate…"]
     r0012["0012: Publish versioned sampler contracts f…"]
     r0013["0013: Treat image job TTL as a conservative…"]
+    r0014["0014: Quarantine deterministically invalid…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005
@@ -53,6 +55,7 @@ flowchart TD
     r0002 --> r0007
     r0003 --> r0001
     r0003 --> r0005
+    r0003 --> r0014
     r0004 --> r0001
     r0004 --> r0003
     r0005 --> r0003
@@ -60,10 +63,13 @@ flowchart TD
     r0005 --> r0010
     r0006 --> r0005
     r0007 --> r0002
+    r0007 --> r0014
     r0008 --> r0003
     r0008 --> r0005
     r0008 --> r0006
     r0010 --> r0005
     r0012 --> r0011
     r0013 --> r0011
+    r0014 --> r0003
+    r0014 --> r0007
 ```

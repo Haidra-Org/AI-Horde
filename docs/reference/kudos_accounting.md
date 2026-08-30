@@ -349,16 +349,23 @@ for the executable procedure.
 | --- | --- |
 | `pending_rows` | Combined unapplied currency and drainable, non-quarantined statistic event count |
 | `oldest_pending_seconds` | Age of the oldest drainable unapplied event across both queues |
+| `ledger_pending_rows` | Drainable unapplied currency posting count |
+| `stat_pending_rows` | Drainable unapplied statistic event count |
+| `oldest_ledger_pending_seconds` | Age of the oldest drainable currency posting |
+| `oldest_stat_pending_seconds` | Age of the oldest drainable statistic event |
 | `quarantined_rows` | Total statistic rows retained outside the drainable queue; permanent evidence, not unresolved-incident state |
 | `oldest_quarantined_seconds` | Age of the oldest quarantined statistic row |
+| `newest_quarantined_seconds` | Age of the most recently quarantined statistic row; operationally useful for identifying a new incident |
 | `heartbeat_seconds` | Time since the projector last completed a cycle; may grow even when no rows are pending |
 | `active_reservations` | Count of holds with positive remaining amount and no release time |
 | `oldest_reservation_seconds` | Age of the oldest active hold |
 
 The background task runs every three seconds and keeps folding within a tick while full batches drain, up to a bounded
 number of catch-up cycles, so a backlog clears at many batches per tick while each fold stays a small transaction.
-Health is sampled once per tick, before the fold loop, so the recorded metrics describe the live inflow rather than
-the near-empty post-drain queue. These metrics are recorded on the quorum node only; the per-node
+Health is sampled once per tick, before the fold loop, and exported as current-value gauges. The combined queue and
+oldest-age gauges have currency/stat splits, while the quarantine gauges distinguish permanent evidence from the age
+of the newest incident. Phase histograms, cycles-per-tick and configured batch/catch-up gauges explain capacity limits.
+These metrics are recorded on the quorum node only; the per-node
 `/api/v2/status/heartbeat` endpoint deliberately excludes them, because a load balancer health check fed a
 shared-database signal would remove every node from rotation at once. Operators should alert on queue age and
 reservation age from the quorum telemetry, not only row count: a steady queue can be healthy under load, while one
@@ -384,7 +391,7 @@ old row or hold can indicate a poisoned path.
 | `horde/database/threads.py` | Periodic projector invocation and health metric recording |
 | `horde/enums.py` | Stable accounting discriminators and metadata keys |
 | `sql_statements/5.1.0.txt` | Idempotent production schema migration and counter uniqueness preparation |
-| `sql_statements/5.1.9.txt` | Rolling-safe statistic-event quarantine columns and documentation |
+| `sql_statements/5.1.9.txt` | Rolling-safe quarantine columns plus a concurrent drainable-queue partial-index replacement; run with psql autocommit |
 | `tools/kudos_ledger_admin.py` | Status, drain, snapshot, reconcile/repair, promotion-statistic backfill, and mode commands |
 | `docs/how-to/kudos_ledger_operations.md` | Cutover, rollback, disaster-recovery, and rehearsal how-to |
 
