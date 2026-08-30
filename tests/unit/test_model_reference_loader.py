@@ -277,3 +277,28 @@ def test_record_mirrors_onto_the_database_columns(monkeypatch: pytest.MonkeyPatc
     assert captured["size_on_disk_bytes"] == 1234
     assert captured["config"] == record.config.model_dump(mode="json")
     assert captured["defer_commit"] is True
+
+
+def test_text_refresh_skips_invalid_entries_but_keeps_the_rest(monkeypatch: pytest.MonkeyPatch) -> None:
+    loader = model_reference_module.ModelReference()
+
+    class MixedResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "valid-text-model": {"parameters": 7_000_000_000, "nsfw": False},
+                "no-parameters": {"nsfw": True},
+                "bad-parameters": {"parameters": "seven billion"},
+                "not-an-object": "x",
+            }
+
+    monkeypatch.setattr(model_reference_module.requests, "get", lambda *args, **kwargs: MixedResponse())
+
+    loader.refresh_text_reference()
+
+    assert loader.text_model_names == {"valid-text-model"}
+    assert loader.nsfw_models == set()

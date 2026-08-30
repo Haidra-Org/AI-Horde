@@ -645,3 +645,30 @@ def test_stale_snapshot_warns_once_per_interval_and_reports_its_age(fake_redis, 
     assert len(ages) == 2
     assert all(age >= stale_age for age in ages)
     assert len([message for message in warnings if "seconds old" in message]) == 1
+
+
+def test_publisher_skips_a_fresh_healthy_snapshot(monkeypatch) -> None:
+    process = ModelReference()
+    process._apply_snapshot(_snapshot("fresh-model"))
+    monkeypatch.setattr(
+        process,
+        "publish_fleet_snapshot",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("a fresh snapshot must not be re-fetched")),
+    )
+
+    assert process.publish_fleet_snapshot_if_due() is True
+
+
+@pytest.mark.parametrize("reason", ["degraded", "expired", "absent"])
+def test_publisher_refreshes_a_degraded_expired_or_absent_snapshot(monkeypatch, reason: str) -> None:
+    process = ModelReference()
+    if reason == "degraded":
+        process._apply_snapshot(_snapshot("degraded-model").model_copy(update={"degraded": True}))
+    elif reason == "expired":
+        stale_at = int(time.time()) - model_reference_module.FLEET_PUBLISH_INTERVAL_SECONDS - 1
+        process._apply_snapshot(_snapshot("expired-model").model_copy(update={"published_at": stale_at}))
+    published: list[bool] = []
+    monkeypatch.setattr(process, "publish_fleet_snapshot", lambda **kwargs: published.append(True) or True)
+
+    assert process.publish_fleet_snapshot_if_due() is True
+    assert published == [True]

@@ -56,7 +56,7 @@ def start_background_threads():
     PrimaryTimedFunction(10, threads.increment_extra_priority, quorum=quorum)
     PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)
     PrimaryTimedFunction(10, threads.store_compiled_filter_regex_replacements, quorum=quorum)
-    PrimaryTimedFunction(3600, threads.publish_model_reference_snapshot, quorum=quorum)
+    PrimaryTimedFunction(60, threads.publish_model_reference_snapshot, quorum=quorum)
     PrimaryTimedFunction(300, threads.store_known_image_models, quorum=quorum)
     set_cached_passkeys(CachedPasskeys(5, threads.refresh_passkeys))
 
