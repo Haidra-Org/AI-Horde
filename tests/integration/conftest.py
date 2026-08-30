@@ -297,3 +297,16 @@ def api_key(app: Flask) -> str:
         user.refresh_cache()
 
     return provisioned_api_key
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_image_reference() -> None:
+    """Load the live image reference once for the whole end-to-end run.
+
+    ``create_app(TESTING=True)`` skips the Redis bootstrap, so the direct loader fills the
+    process-wide reference these tests advertise and request models from.
+    """
+    from horde.model_reference import model_reference
+
+    if not model_reference.reference:
+        model_reference.call_function()
