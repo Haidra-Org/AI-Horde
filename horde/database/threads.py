@@ -524,6 +524,7 @@ def apply_kudos_ledger() -> None:
         kudos_applier_lag_seconds,
         kudos_applier_max_catchup_cycles,
         kudos_applier_observation_timestamp,
+        kudos_applier_quarantined,
         kudos_applier_saturation,
         kudos_newest_quarantine_seconds,
         kudos_oldest_pending_seconds,
@@ -532,6 +533,7 @@ def apply_kudos_ledger() -> None:
         kudos_pending_rows,
         kudos_pending_rows_by_type,
         kudos_quarantined_rows,
+        kudos_transfers_idempotent_replays,
     )
 
     with get_app().app_context():
@@ -556,6 +558,14 @@ def apply_kudos_ledger() -> None:
         kudos_applier_batch_size.set(kudos_ledger.KUDOS_APPLIER_BATCH_SIZE)
         kudos_applier_max_catchup_cycles.set(kudos_ledger.KUDOS_APPLIER_MAX_CATCHUP_CYCLES)
         kudos_applier_observation_timestamp.set(time.time())
+        # Rare-event counters are exported lazily: an interval with no
+        # recordings ships nothing, so a counter that has never incremented has
+        # no series at all and increase()-based panels and alerts cannot see
+        # its first event (the one-time startup baseline in horde.metrics does
+        # not survive the export path either). A zero add per tick keeps the
+        # series warm without changing its value.
+        kudos_applier_quarantined.add(0)
+        kudos_transfers_idempotent_replays.add(0)
         cycles_used = 0
         folded_rows = 0
         with logfire.span("horde.kudos.applier.tick") as tick_span:

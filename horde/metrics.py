@@ -715,9 +715,10 @@ kudos_applier_quarantined = logfire.metric_counter(
     unit="1",
     description="Invalid statistics events durably quarantined by the applier",
 )
-# Establish a zero baseline as soon as the process starts. Prometheus increase()
-# then observes even the first quarantine after a deployment instead of seeing a
-# new counter series whose first sample already contains the increment.
+# A one-time zero add does not materialize the series downstream: intervals
+# with no recordings export nothing, so the applier tick re-adds zero every
+# cycle (horde.database.threads) to keep the series warm and make the first
+# quarantine visible to increase()-based queries.
 kudos_applier_quarantined.add(0)
 kudos_applier_quarantined_by_reason = logfire.metric_counter(
     "horde.kudos.applier.quarantined_by_reason",
