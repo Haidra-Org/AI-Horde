@@ -486,6 +486,18 @@ class User(db.Model):
         )
         return cls.id == subquery
 
+    # ``oauth_id`` is unique, so a wiped account cannot keep a shared placeholder there; the marker
+    # is followed by the account's own id. Every reader that must skip wiped accounts uses ``is_wiped``.
+    WIPED_OAUTH_ID_PREFIX = "<wiped>"
+
+    @hybrid_property
+    def is_wiped(self) -> bool:
+        return self.oauth_id.startswith(self.WIPED_OAUTH_ID_PREFIX)
+
+    @is_wiped.expression
+    def is_wiped(cls):
+        return cls.oauth_id.like(f"{cls.WIPED_OAUTH_ID_PREFIX}%")
+
     @hybrid_property
     def deleted(self) -> bool:
         user_role = UserRole.query.filter_by(user_id=self.id, user_role=UserRoleTypes.DELETED).first()
@@ -514,7 +526,7 @@ class User(db.Model):
     def wipe(self):
         logger.info(f"User Wiped {self.get_unique_alias()}")
         self.username = "<wiped>"
-        self.oauth_id = "<wiped>"
+        self.oauth_id = f"{self.WIPED_OAUTH_ID_PREFIX}{self.id}"
         self.contact = "<wiped>"
         for worker in self.workers:
             worker.delete()

@@ -291,7 +291,7 @@ def find_user_by_username(username):
     if user_id == 0 and not ALLOW_ANONYMOUS:
         return None
     # This approach handles someone cheekily putting # in their username
-    return db.session.query(User).filter_by(id=user_id).filter(User.oauth_id != "<wiped>").first()
+    return db.session.query(User).filter_by(id=user_id).filter(~User.is_wiped).first()
 
 
 def find_user_by_id(user_id):
@@ -300,13 +300,13 @@ def find_user_by_id(user_id):
         return None
     if user_id == 0 and not ALLOW_ANONYMOUS:
         return None
-    return db.session.query(User).filter_by(id=user_id).filter(User.oauth_id != "<wiped>").first()
+    return db.session.query(User).filter_by(id=user_id).filter(~User.is_wiped).first()
 
 
 def find_user_by_contact(contact):
     # Counting the same query separately doubles the work for a lookup that only
     # needs to know whether more than one row matched, so fetch two rows instead.
-    matched_users = db.session.query(User).filter_by(contact=contact).filter(User.oauth_id != "<wiped>").limit(2).all()
+    matched_users = db.session.query(User).filter_by(contact=contact).filter(~User.is_wiped).limit(2).all()
     if len(matched_users) == 0:
         return None
     selected_user = matched_users[0]
@@ -318,7 +318,7 @@ def find_user_by_contact(contact):
 def find_user_by_api_key(api_key):
     if api_key == 0000000000 and not ALLOW_ANONYMOUS:
         return None
-    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).filter(User.oauth_id != "<wiped>").first()
+    user = db.session.query(User).filter_by(api_key=hash_api_key(api_key)).filter(~User.is_wiped).first()
     return user
 
 
@@ -2282,7 +2282,7 @@ def retrieve_regex_replacements(filter_type):
 
 def get_all_users(sort="kudos", offset=0):
     user_order_by = User.created.asc() if sort == "age" else User.kudos.desc()
-    return db.session.query(User).filter(User.oauth_id != "<wiped>").order_by(user_order_by).offset(offset).limit(25).all()
+    return db.session.query(User).filter(~User.is_wiped).order_by(user_order_by).offset(offset).limit(25).all()
 
 
 def get_style_by_uuid(style_uuid: str, is_collection=None):
