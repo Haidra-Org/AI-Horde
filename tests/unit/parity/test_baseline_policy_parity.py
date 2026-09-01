@@ -316,29 +316,18 @@ class TestAdjudicatedRejectionDeviations:
 
 class TestReturnCodeSurface:
     def test_the_rejections_carry_exactly_the_return_codes_clients_match_on(self) -> None:
-        rejecting_requests = {
-            "FlowShiftInapplicable": (KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo.value, {"flow_shift": 3.0}, None),
-            "HiResMismatch": (KNOWN_IMAGE_GENERATION_BASELINE.qwen_image.value, {"hires_fix": True}, None),
-            "InvalidTransparencyModel": (
-                KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value,
-                {"transparent": True},
-                None,
-            ),
-            "ControlNetMismatch": (KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value, {"workflow": "qr_code"}, None),
-            "ControlNetUnsupported": (
-                KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_768.value,
-                {"control_type": "mlsd"},
-                None,
-            ),
-            "ControlNetMismatch": (
-                KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl.value,
-                {"control_type": "canny"},
-                None,
-            ),
-            "InvalidRemixModel": (KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1.value, {}, "remix"),
-        }
-        for expected_rc, (baseline, params, source_processing) in rejecting_requests.items():
-            assert _new_rejecting_rules((baseline,), params, source_processing)[1] == expected_rc
+        # (expected return code, baseline, params, source_processing); the same code can cover several shapes.
+        rejecting_requests = [
+            ("FlowShiftInapplicable", KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo.value, {"flow_shift": 3.0}, None),
+            ("HiResMismatch", KNOWN_IMAGE_GENERATION_BASELINE.qwen_image.value, {"hires_fix": True}, None),
+            ("InvalidTransparencyModel", KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value, {"transparent": True}, None),
+            ("ControlNetMismatch", KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value, {"workflow": "qr_code"}, None),
+            ("ControlNetUnsupported", KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_768.value, {"control_type": "mlsd"}, None),
+            ("ControlNetMismatch", KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_xl.value, {"control_type": "canny"}, None),
+            ("InvalidRemixModel", KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1.value, {}, "remix"),
+        ]
+        for expected_rc, baseline, params, source_processing in rejecting_requests:
+            assert _new_rejecting_rules((baseline,), params, source_processing)[1] == expected_rc, (baseline, params)
 
 
 class TestKudosLadderParity:
@@ -626,8 +615,6 @@ class TestParamValidatorWiring:
         code = _validator_rejection_code(monkeypatch, "some_future_baseline", {"hires_fix": True})
         assert code == "HiResMismatch"
 
-    def test_an_uncatalogued_baseline_reaches_the_validator_with_conservative_workflows(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_an_uncatalogued_baseline_reaches_the_validator_with_conservative_workflows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         code = _validator_rejection_code(monkeypatch, "some_future_baseline", {"workflow": "qr_code"})
         assert code == "ControlNetMismatch"
