@@ -148,6 +148,10 @@ class KudosLedger(db.Model):  # type: ignore[name-defined,misc]
             "user_id",
             postgresql_where=column("applied").is_(false()),
         ),
+        # available_kudos() sums a payer's unapplied debits on every admission. The plain user_id index holds the
+        # payer's entire history, so this covers only the pending rows. Existing deployments add it with
+        # sql_statements/5.1.11.txt.
+        Index("ix_kudos_ledger_unapplied_by_user", "user_id", postgresql_where=column("applied").is_(false())),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

@@ -1,0 +1,25 @@
+-- Run with psql in its default autocommit mode. Do not pass --single-transaction:
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block. Pass
+-- -v ON_ERROR_STOP=1 so a failure stops the migration. A failed concurrent build
+-- leaves an INVALID index; drop it and rerun after correcting the cause.
+--
+-- available_kudos() (request admission) sums a payer's unapplied debits:
+--   SELECT ... FROM kudos_ledger WHERE user_id = ? AND applied IS FALSE AND ...
+-- The plain user_id index covers the payer's whole history, so a busy payer
+-- (the anonymous account above all) walked millions of applied rows to find a
+-- handful of pending ones. This partial index covers exactly the pending rows
+-- and stays small. Index-only: no application change depends on it, so it can
+-- be applied before or after deploying 5.1.11.
+SET lock_timeout = '3s';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_ledger_unapplied_by_user
+  ON kudos_ledger (user_id)
+  WHERE applied IS FALSE;
+
+-- The partial "unapplied"/"drainable" indexes gain an entry for every inserted
+-- row and lose it only when vacuum removes the flipped tuple; a period of slow
+-- vacuuming leaves them mostly dead entries that every claim scan and health
+-- aggregate must walk. Rebuild them online if pg_relation_size() is out of all
+-- proportion to the live pending row count.
+-- REINDEX INDEX CONCURRENTLY ix_kudos_ledger_unapplied;
+-- REINDEX INDEX CONCURRENTLY ix_kudos_stat_events_drainable;
