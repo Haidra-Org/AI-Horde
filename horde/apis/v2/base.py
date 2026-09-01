@@ -1123,7 +1123,7 @@ class Workers(Resource):
 
     def get_worker_info_list(self, details_privilege):
         workers_ret = []
-        for worker in database.get_active_workers():
+        for worker in database.get_active_workers_for_details():
             workers_ret.append(worker.get_details(details_privilege))
         return workers_ret
 

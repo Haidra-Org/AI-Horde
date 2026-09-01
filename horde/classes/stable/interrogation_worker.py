@@ -4,8 +4,6 @@
 
 from typing import Any
 
-from sqlalchemy import func
-
 from horde.classes.base.kudos import emit_kudos_stat_event
 from horde.classes.base.worker import (
     WorkerPerformance,
@@ -143,13 +141,9 @@ class InterrogationWorker(WorkerTemplate):
         # if things_per_sec / thing_divisor > things_per_sec_suspicion_threshold:
         #     self.report_suspicion(reason = Suspicions.UNREASONABLY_FAST, formats=[round(things_per_sec / thing_divisor,2)])
 
-    def get_form_names(self):
-        form_names = (
-            db.session.query(func.distinct(WorkerInterrogationForm.form).label("name"))
-            .filter(WorkerInterrogationForm.worker_id == self.id)
-            .all()
-        )
-        return [f.name for f in form_names]
+    def get_form_names(self) -> list[str]:
+        """Return the distinct form names this worker advertises, from the ``forms`` relationship."""
+        return list(dict.fromkeys(worker_form.form for worker_form in self.forms))
 
     def set_forms(self, forms):
         # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
@@ -162,14 +156,13 @@ class InterrogationWorker(WorkerTemplate):
             form = WorkerInterrogationForm(worker_id=self.id, form=form_name)
             db.session.add(form)
         db.session.commit()
+        # The bulk delete above bypasses the loaded ``forms`` collection (expire_on_commit=False); drop it so the
+        # next read reloads the committed rows.
+        db.session.expire(self, ["forms"])
 
-    def get_annotation_type_names(self):
-        annotation_type_names = (
-            db.session.query(func.distinct(WorkerAnnotationType.annotation_type).label("name"))
-            .filter(WorkerAnnotationType.worker_id == self.id)
-            .all()
-        )
-        return [a.name for a in annotation_type_names]
+    def get_annotation_type_names(self) -> list[str]:
+        """Return the distinct annotation type names this worker advertises, from the ``annotation_types`` relationship."""
+        return list(dict.fromkeys(worker_annotation_type.annotation_type for worker_annotation_type in self.annotation_types))
 
     def set_annotation_types(self, annotation_types):
         # A legacy alchemist advertises no annotation types; treat absent as an empty set.
@@ -186,6 +179,8 @@ class InterrogationWorker(WorkerTemplate):
             entry = WorkerAnnotationType(worker_id=self.id, annotation_type=annotation_type)
             db.session.add(entry)
         db.session.commit()
+        # Same as set_forms: the bulk delete bypasses the loaded collection.
+        db.session.expire(self, ["annotation_types"])
 
     def get_performance(self):
         performances = [p.performance for p in self.performance]

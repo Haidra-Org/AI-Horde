@@ -615,12 +615,13 @@ class WorkerTemplate(db.Model):
         db.session.delete(self)
         db.session.commit()
 
-    def get_kudos_details(self):
-        kudos_details = db.session.query(WorkerStats).filter_by(worker_id=self.id).all()
-        ret_dict = {}
-        for kd in kudos_details:
-            ret_dict[kd.action] = kd.value
-        return ret_dict
+    def get_kudos_details(self) -> dict[str, int]:
+        """Return the per-action kudos totals of this worker, keyed by ``WorkerStats.action``.
+
+        Reads the ``stats`` relationship rather than issuing its own query, so callers that eager-load it
+        (``get_active_workers_for_details``) pay no per-worker round-trip.
+        """
+        return {worker_stat.action: worker_stat.value for worker_stat in self.stats}
 
     def import_kudos_details(self, kudos_details):
         for key in kudos_details:
@@ -792,6 +793,9 @@ class Worker(WorkerTemplate):
             model = WorkerModel(worker_id=self.id, model=model_name)
             db.session.add(model)
         db.session.commit()
+        # The bulk delete above bypasses the loaded ``models`` collection; with expire_on_commit=False it would
+        # otherwise keep serving the pre-change rows for the rest of this session.
+        db.session.expire(self, ["models"])
         self.refresh_model_cache()
 
     def parse_models(self, models):
@@ -860,7 +864,9 @@ class Worker(WorkerTemplate):
         """We display these in the workers list json"""
         ret_dict = super().get_details(details_privilege)
         ret_dict["nsfw"] = self.nsfw
-        ret_dict["models"] = self.get_model_names()
+        # The relationship, not the per-worker redis model cache: details are built in bulk from eager-loaded rows,
+        # and set_models() expires the collection after rewriting it, so it is always the committed list.
+        ret_dict["models"] = [worker_model.model for worker_model in self.models]
         return ret_dict
 
     def delete(self):

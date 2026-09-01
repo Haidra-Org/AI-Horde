@@ -34,7 +34,9 @@ def start_background_threads():
 
     quorum = Quorum(1, threads.get_quorum)
     PrimaryTimedFunction(1, threads.store_prioritized_wp_queue, quorum=quorum)
-    PrimaryTimedFunction(30, threads.store_worker_list, quorum=quorum)
+    # /v2/workers is served straight from this cache and workers change their advertised models/parameters often,
+    # so keep the snapshot near-realtime. The job is a few set-based queries (see threads.store_worker_list).
+    PrimaryTimedFunction(2, threads.store_worker_list, quorum=quorum)
     PrimaryTimedFunction(10, threads.store_available_models, quorum=quorum)
     if not args.check_prompts:
         PrimaryTimedFunction(60, threads.check_waiting_prompts, quorum=quorum)

@@ -264,6 +264,148 @@ class TestCacheBuilders:
         names = [w.get("name") for w in json.loads(cached)]
         assert "Thread Cache Scribe" in names
 
+    def test_store_worker_list_matches_per_worker_details_with_bounded_queries(self, client, app, make_api_user):
+        """The job serializes an eager-loaded worker set, so the number of SELECTs it issues must not grow with the
+        number of active workers (it was ~8 lazy round-trips per worker, ~10s per run in production), and both caches
+        must still hold exactly what ``get_details(0)`` / ``get_details(2)`` produce."""
+        from datetime import date, datetime
+
+        from sqlalchemy import event
+
+        from horde.classes.base.user import User
+        from horde.database import functions
+        from horde.database.threads import store_worker_list
+        from horde.flask import db
+
+        def _json_serial(obj):
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            raise TypeError(f"Type {type(obj)} not serializable")
+
+        def _register(worker_user, name):
+            resp = client.post(
+                "/api/v2/generate/text/pop",
+                json={
+                    "name": name,
+                    "models": [TEXT_MODEL],
+                    "bridge_agent": AGENT,
+                    "amount": 10,
+                    "max_context_length": 4096,
+                    "max_length": 512,
+                },
+                headers=_headers(worker_user.api_key),
+            )
+            assert resp.status_code == 200, resp.get_data(as_text=True)
+
+        def _run_counting_statements() -> int:
+            statements = []
+
+            def _record(conn, cursor, statement, parameters, context, executemany):
+                if statement.lstrip().upper().startswith("SELECT"):
+                    statements.append(statement)
+
+            with app.app_context():
+                engine = db.engine
+            event.listen(engine, "before_cursor_execute", _record)
+            try:
+                store_worker_list()
+            finally:
+                event.remove(engine, "before_cursor_execute", _record)
+            return len(statements)
+
+        # One owner exposes their workers publicly, one does not, so both branches of
+        # the owner/messages visibility rule are exercised.
+        public_owner = make_api_user(trusted=True, kudos=100)
+        private_owner = make_api_user(trusted=True, kudos=100)
+        with app.app_context():
+            db.session.query(User).filter_by(id=public_owner.id).one().set_public_workers(True)
+            db.session.commit()
+
+        _register(public_owner, "Bounded Scribe 1")
+        selects_with_one_worker = _run_counting_statements()
+
+        _register(public_owner, "Bounded Scribe 2")
+        _register(private_owner, "Bounded Scribe 3")
+        _register(private_owner, "Bounded Scribe 4")
+        selects_with_four_workers = _run_counting_statements()
+
+        assert selects_with_four_workers <= selects_with_one_worker, (
+            f"store_worker_list issued {selects_with_four_workers} SELECTs for 4 workers "
+            f"vs {selects_with_one_worker} for 1: per-worker lazy loads are back"
+        )
+
+        cached_public = {w["name"]: w for w in json.loads(_redis_get("worker_cache"))}
+        cached_privileged = {w["name"]: w for w in json.loads(_redis_get("worker_cache_privileged"))}
+        with app.app_context():
+            workers = functions.get_active_workers()
+            expected_public = {w.name: json.loads(json.dumps(w.get_details(0), default=_json_serial)) for w in workers}
+            expected_privileged = {w.name: json.loads(json.dumps(w.get_details(2), default=_json_serial)) for w in workers}
+
+        ours = {f"Bounded Scribe {i}" for i in range(1, 5)}
+        assert ours <= set(cached_public) and ours <= set(cached_privileged)
+        for name in ours:
+            assert cached_public[name] == expected_public[name], name
+            assert cached_privileged[name] == expected_privileged[name], name
+        # Public/private owners are both present so the owner/messages visibility rule is covered by the comparison.
+        assert "owner" in cached_public["Bounded Scribe 1"]
+        assert "owner" not in cached_public["Bounded Scribe 3"]
+
+    def test_store_available_models_query_count_is_bounded(self, client, api_key, make_api_user):
+        """``store_available_models`` scans every queued prompt and every model; the SELECTs it issues must not grow
+        with the queue (it was two lazy loads per queued prompt plus two lookups per model, ~20s per run in production)."""
+        from sqlalchemy import event
+
+        from horde.database.threads import store_available_models
+        from horde.flask import db
+
+        def _run_counting_selects() -> int:
+            select_statements = []
+
+            def _record(conn, cursor, statement, parameters, context, executemany):
+                if statement.lstrip().upper().startswith("SELECT"):
+                    select_statements.append(statement)
+
+            with client.application.app_context():
+                engine = db.engine
+            event.listen(engine, "before_cursor_execute", _record)
+            try:
+                store_available_models()
+            finally:
+                event.remove(engine, "before_cursor_execute", _record)
+            return len(select_statements)
+
+        # A registered (idle) worker so the model is listed with a worker count; registering happens via an empty pop.
+        worker_user = make_api_user(trusted=True, kudos=100)
+        client.post(
+            "/api/v2/generate/text/pop",
+            json={
+                "name": "Models Cache Scribe",
+                "models": [TEXT_MODEL],
+                "bridge_agent": AGENT,
+                "amount": 10,
+                "max_context_length": 4096,
+                "max_length": 512,
+            },
+            headers=_headers(worker_user.api_key),
+        )
+
+        _queue_text_wp(client, api_key)
+        selects_with_one_prompt = _run_counting_selects()
+
+        for _ in range(3):
+            _queue_text_wp(client, api_key)
+        selects_with_four_prompts = _run_counting_selects()
+
+        assert selects_with_four_prompts <= selects_with_one_prompt, (
+            f"store_available_models issued {selects_with_four_prompts} SELECTs for 4 queued prompts "
+            f"vs {selects_with_one_prompt} for 1: per-prompt lazy loads are back"
+        )
+
+        cached_models = {m["name"]: m for m in json.loads(_redis_get("models_cache"))}
+        assert TEXT_MODEL in cached_models
+        assert cached_models[TEXT_MODEL]["count"] >= 1
+        assert cached_models[TEXT_MODEL]["jobs"] == 4
+
 
 class TestAssignMonthlyKudos:
     def test_runs_without_crashing_on_populated_db(self, client, api_key, make_api_user):

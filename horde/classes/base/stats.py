@@ -69,6 +69,16 @@ def get_things_per_min(thing_type="image"):
     return things_per_min
 
 
+def get_model_avgs() -> dict[str, float]:
+    """Return the average recorded performance of every model, keyed by model name, rounded to one decimal.
+
+    One grouped query for the whole table; models with no recorded performance are absent from the result.
+    ``get_available_models`` used to ask ``get_model_avg`` per model, which was two round-trips per model.
+    """
+    model_avg_rows = db.session.query(ModelPerformance.model, func.avg(ModelPerformance.performance)).group_by(ModelPerformance.model).all()
+    return {model_name: round(model_avg, 1) for model_name, model_avg in model_avg_rows}
+
+
 def get_model_avg(model_name):
     model_performances_count = db.session.query(ModelPerformance).filter_by(model=model_name).count()
     if model_performances_count == 0:

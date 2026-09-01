@@ -27,7 +27,7 @@ from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
-from horde.classes.base.worker import Worker, WorkerMessage, WorkerModel, WorkerPerformance
+from horde.classes.base.worker import Worker, WorkerMessage, WorkerModel, WorkerPerformance, WorkerTemplate
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
@@ -157,6 +157,41 @@ def get_active_workers(worker_type=None):
         active_workers += (
             db.session.query(InterrogationWorker)
             .filter(InterrogationWorker.last_check_in > datetime.utcnow() - timedelta(seconds=300))
+            .all()
+        )
+    return active_workers
+
+
+def get_active_workers_for_details() -> list[WorkerTemplate]:
+    """Return every active worker with all relationships ``get_details()`` reads already loaded.
+
+    Use this instead of ``get_active_workers()`` whenever the result is serialized in bulk (the worker list cache,
+    the ``/v2/workers`` fallback). ``get_details(2)`` reads the owner, the owner's roles, the team, messages, kudos
+    stats, suspicions and the advertised models (or forms/annotation types for interrogation workers); lazily that
+    is ~8 SELECTs per worker, each paying the round-trip to the database host. Loaded with ``selectinload`` it is one
+    SELECT per relationship per worker type regardless of how many workers are active.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=300)
+    active_workers: list[WorkerTemplate] = []
+    for worker_class in (ImageWorker, TextWorker, InterrogationWorker):
+        shared_relationship_loads = [
+            selectinload(worker_class.user).selectinload(User.roles),
+            selectinload(worker_class.team),
+            selectinload(worker_class.messages),
+            selectinload(worker_class.stats),
+            selectinload(worker_class.suspicions),
+        ]
+        if worker_class is InterrogationWorker:
+            type_specific_relationship_loads = [
+                selectinload(InterrogationWorker.forms),
+                selectinload(InterrogationWorker.annotation_types),
+            ]
+        else:
+            type_specific_relationship_loads = [selectinload(worker_class.models)]
+        active_workers += (
+            db.session.query(worker_class)
+            .filter(worker_class.last_check_in > cutoff)
+            .options(*shared_relationship_loads, *type_specific_relationship_loads)
             .all()
         )
     return active_workers
@@ -431,6 +466,9 @@ def get_available_models(filter_model_name: str = None):
         # e.g., `aphrodite%2FNeverSleep%2FNoromaid-13b-v0.3` will become `aphrodite/NeverSleep/Noromaid-13b-v0.3`.
         filter_model_name = urllib.parse.unquote(filter_model_name)
 
+    # Fetched once for every model rather than per model: each per-model lookup was two round-trips to the database.
+    model_avg_performances = stats.get_model_avgs()
+
     for model_type, worker_class, wp_class, procgen_class in [
         ("image", ImageWorker, ImageWaitingPrompt, ImageProcessingGeneration),
         ("text", TextWorker, TextWaitingPrompt, TextProcessingGeneration),
@@ -479,7 +517,7 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]["queued"] = 0
             models_dict[model_name]["jobs"] = 0
             models_dict[model_name]["eta"] = 0
-            models_dict[model_name]["performance"] = stats.get_model_avg(model_name)
+            models_dict[model_name]["performance"] = model_avg_performances.get(model_name, 0)
             models_dict[model_name]["workers"] = []
 
         known_models = [filter_model_name] if filter_model_name else list(model_reference.stable_diffusion_names)
@@ -507,7 +545,7 @@ def get_available_models(filter_model_name: str = None):
             models_dict[model_name]["jobs"] = 0
             models_dict[model_name]["type"] = model_type
             models_dict[model_name]["eta"] = 0
-            models_dict[model_name]["performance"] = stats.get_model_avg(model_name)
+            models_dict[model_name]["performance"] = model_avg_performances.get(model_name, 0)
             models_dict[model_name]["workers"] = []
         if filter_model_name:
             things_per_model, jobs_per_model = count_things_for_specific_model(
@@ -926,6 +964,8 @@ def retrieve_totals(ignore_cache=False):
 def get_organized_wps_by_model(wp_class):
     org = {}
     # TODO: Offload the sorting to the DB through join() + SELECT statements
+    # ``models`` and ``processing_gens`` are read for every returned prompt (get_model_names / count_processing_gens);
+    # loaded lazily that was two round-trips per queued prompt on every store_available_models run.
     all_wps = (
         db.session.query(wp_class)
         .filter(
@@ -933,6 +973,7 @@ def get_organized_wps_by_model(wp_class):
             wp_class.faulted == False,  # noqa E712
             wp_class.n >= 1,
         )
+        .options(selectinload(wp_class.models), selectinload(wp_class.processing_gens))
         .all()
     )  # TODO this can likely be improved
     for wp in all_wps:

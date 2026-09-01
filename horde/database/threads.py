@@ -38,7 +38,7 @@ from horde.database.functions import (
     compile_regex_filter,
     count_totals,
     find_user_by_contact,
-    get_active_workers,
+    get_active_workers_for_details,
     get_all_users_passkeys,
     get_available_models,
     prune_expired_stats,
@@ -141,7 +141,12 @@ def store_prioritized_wp_queue():
 
 @logger.catch(reraise=True)
 def store_worker_list():
-    """Stores the retrieved worker details as json for 300 seconds horde-wide"""
+    """Stores the retrieved worker details as json horde-wide.
+
+    Runs every few seconds on the quorum node (see ``horde.database.__init__``); the 300s redis TTL is only a safety
+    margin in case the primary thread dies. The workers come from ``get_active_workers_for_details`` so serializing
+    them is a handful of set-based queries rather than ~8 lazy round-trips per worker.
+    """
 
     def json_serial(obj):
         """JSON serializer for objects not serializable by default json code"""
@@ -152,9 +157,7 @@ def store_worker_list():
     with get_app().app_context():
         serialized_workers = []
         serialized_workers_privileged = []
-        # This is too slow. Needs heavy caching currently
-        # TODO: Figure out a way to get only the info I need from the DB query and format it into json by hand?
-        for worker in get_active_workers():
+        for worker in get_active_workers_for_details():
             serialized_workers.append(worker.get_details())
             serialized_workers_privileged.append(worker.get_details(2))
         json_workers = json.dumps(serialized_workers, default=json_serial)
