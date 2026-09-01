@@ -7,12 +7,12 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import DateTime, Numeric, Uuid, cast, column, exists, func, select, update, values
 
 from horde.classes.base.kudos import KudosLedger, KudosReservation
 from horde.database.kudos_db import acquire_payer_lock
@@ -176,6 +176,51 @@ def consume_reservation(business_id: str, amount: float | Decimal) -> Decimal:
     if reservation.remaining_amount == 0:
         reservation.released_at = datetime.utcnow()
     return consumed
+
+
+def consume_reservations(consumptions: Mapping[str, Decimal | int | float]) -> Decimal:
+    """Release up to the given amount from each hold after its debit is projected, keyed by business id.
+
+    Same per-hold semantics as ``consume_reservation`` (missing or already released holds consume nothing; a hold
+    drained to zero is stamped released), but one locked read and one set-based write for the whole batch instead
+    of one locked SELECT per hold. The applier calls this once per cycle.
+
+    Returns:
+        Decimal: The total amount consumed across all holds.
+    """
+    if not consumptions:
+        return Decimal("0.00")
+    reservations = (
+        db.session.query(KudosReservation)
+        .filter(KudosReservation.business_id.in_(list(consumptions)), KudosReservation.released_at.is_(None))
+        .order_by(KudosReservation.business_id.asc())
+        .with_for_update()
+        .all()
+    )
+    now = datetime.utcnow()
+    total_consumed = Decimal("0.00")
+    update_rows: list[tuple[uuid.UUID, Decimal, datetime | None]] = []
+    for reservation in reservations:
+        consumed = min(reservation.remaining_amount, _decimal(consumptions[reservation.business_id]))
+        remaining_amount = reservation.remaining_amount - consumed
+        update_rows.append((reservation.id, remaining_amount, now if remaining_amount == 0 else None))
+        total_consumed += consumed
+    if not update_rows:
+        return total_consumed
+    written = values(
+        column("id", Uuid),
+        column("remaining_amount", Numeric),
+        column("released_at", DateTime),
+        name="reservation_consumptions",
+    ).data(update_rows)
+    reservations_table = KudosReservation.__table__
+    db.session.execute(
+        update(reservations_table)
+        .where(reservations_table.c.id == written.c.id)
+        # Explicit casts: a VALUES batch whose released_at entries are all NULL would otherwise be typed as text.
+        .values(remaining_amount=cast(written.c.remaining_amount, Numeric), released_at=cast(written.c.released_at, DateTime)),
+    )
+    return total_consumed
 
 
 def release_reservation(business_id: str) -> Decimal:

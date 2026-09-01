@@ -98,42 +98,89 @@ def add_known_image_model(
         defer_commit (bool): Whether to defer committing the addition to the database.
     """
 
-    model: KnownImageModel | None = db.session.query(KnownImageModel).filter(KnownImageModel.name == name).first()
-
-    if model:
-        model.baseline = baseline
-        model.inpainting = inpainting
-        model.description = description
-        model.version = version
-        model.style = style
-        model.tags = tags
-        model.homepage = homepage
-        model.nsfw = nsfw
-        model.requirements = requirements
-        model.config = config
-        model.features_not_supported = features_not_supported
-        model.size_on_disk_bytes = size_on_disk_bytes
-    else:
-        logger.info(f"Attempting to add new known image model: {name}")
-        model = KnownImageModel(
-            name=name,
-            baseline=baseline,
-            inpainting=inpainting,
-            description=description,
-            version=version,
-            style=style,
-            tags=tags,
-            homepage=homepage,
-            nsfw=nsfw,
-            requirements=requirements,
-            config=config,
-            features_not_supported=features_not_supported,
-            size_on_disk_bytes=size_on_disk_bytes,
-        )
-        db.session.add(model)
+    _upsert_known_image_model(
+        _known_image_model_by_name(name),
+        name=name,
+        baseline=baseline,
+        inpainting=inpainting,
+        description=description,
+        version=version,
+        style=style,
+        tags=tags,
+        homepage=homepage,
+        nsfw=nsfw,
+        requirements=requirements,
+        config=config,
+        features_not_supported=features_not_supported,
+        size_on_disk_bytes=size_on_disk_bytes,
+    )
 
     if not defer_commit:
         db.session.commit()
+
+
+def _known_image_model_by_name(model_name: str) -> KnownImageModel | None:
+    """Return the known image model called ``model_name``, or None."""
+    return db.session.query(KnownImageModel).filter(KnownImageModel.name == model_name).first()
+
+
+def _upsert_known_image_model(
+    existing_model: KnownImageModel | None,
+    *,
+    name: str,
+    baseline: str,
+    inpainting: bool,
+    description: str,
+    version: str,
+    style: str,
+    tags: list[str],
+    homepage: str,
+    nsfw: bool,
+    requirements: dict,
+    config: dict,
+    features_not_supported: list[str] | None,
+    size_on_disk_bytes: int,
+) -> KnownImageModel:
+    """Mutate ``existing_model`` to the given fields, or add a new ``KnownImageModel`` to the session when it is None.
+
+    Never commits: the caller owns the transaction, so a bulk load commits once for the whole reference.
+
+    Returns:
+        KnownImageModel: The updated or newly added model.
+    """
+    if existing_model:
+        existing_model.baseline = baseline
+        existing_model.inpainting = inpainting
+        existing_model.description = description
+        existing_model.version = version
+        existing_model.style = style
+        existing_model.tags = tags
+        existing_model.homepage = homepage
+        existing_model.nsfw = nsfw
+        existing_model.requirements = requirements
+        existing_model.config = config
+        existing_model.features_not_supported = features_not_supported
+        existing_model.size_on_disk_bytes = size_on_disk_bytes
+        return existing_model
+
+    logger.info(f"Attempting to add new known image model: {name}")
+    new_model = KnownImageModel(
+        name=name,
+        baseline=baseline,
+        inpainting=inpainting,
+        description=description,
+        version=version,
+        style=style,
+        tags=tags,
+        homepage=homepage,
+        nsfw=nsfw,
+        requirements=requirements,
+        config=config,
+        features_not_supported=features_not_supported,
+        size_on_disk_bytes=size_on_disk_bytes,
+    )
+    db.session.add(new_model)
+    return new_model
 
 
 @logger.catch(reraise=True)
@@ -148,7 +195,19 @@ def add_known_image_model_from_record(record: ImageGenerationModelRecord, defer_
         defer_commit (bool): Whether to defer committing the addition to the database.
 
     """
-    add_known_image_model(
+    _upsert_known_image_model_from_record(record, _known_image_model_by_name(record.name))
+
+    if not defer_commit:
+        db.session.commit()
+
+
+def _upsert_known_image_model_from_record(
+    record: ImageGenerationModelRecord,
+    existing_model: KnownImageModel | None,
+) -> KnownImageModel:
+    """Mutate ``existing_model`` to mirror ``record``, or add a new ``KnownImageModel`` for it. Never commits."""
+    return _upsert_known_image_model(
+        existing_model,
         name=record.name,
         baseline=str(record.baseline),
         inpainting=bool(record.inpainting),
@@ -162,7 +221,6 @@ def add_known_image_model_from_record(record: ImageGenerationModelRecord, defer_
         config=record.config.model_dump(mode="json"),
         features_not_supported=None,
         size_on_disk_bytes=record.size_on_disk_bytes,
-        defer_commit=defer_commit,
     )
 
 
@@ -173,8 +231,14 @@ def add_known_image_models_from_records(records: dict[str, ImageGenerationModelR
     Args:
         records (dict[str, ImageGenerationModelRecord]): The image reference, keyed by model name.
     """
+    # One lookup for the whole reference rather than one SELECT per record.
+    record_names = [record.name for record in records.values()]
+    existing_models_by_name = {
+        known_model.name: known_model
+        for known_model in db.session.query(KnownImageModel).filter(KnownImageModel.name.in_(record_names)).all()
+    }
     for record in records.values():
-        add_known_image_model_from_record(record, defer_commit=True)
+        _upsert_known_image_model_from_record(record, existing_models_by_name.get(record.name))
 
     db.session.commit()
     logger.info(f"Added (or updated) {len(records)} known image models.")

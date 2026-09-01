@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import joinedload, noload
+from sqlalchemy.orm import joinedload, noload, selectinload
 
 import horde.classes.base.stats as stats
 from horde.bridge_reference import (
@@ -58,7 +58,13 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
     wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == TextWaitingPrompt.id).exists()
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
-        .options(noload(TextWaitingPrompt.processing_gens))
+        .options(
+            noload(TextWaitingPrompt.processing_gens),
+            # can_generate() reads these for every candidate; loaded lazily that is three SELECTs per candidate per pop.
+            selectinload(TextWaitingPrompt.models),
+            selectinload(TextWaitingPrompt.tricked_workers),
+            selectinload(TextWaitingPrompt.workers),
+        )
         .filter(
             TextWaitingPrompt.n > 0,
             TextWaitingPrompt.max_length <= worker.max_length,

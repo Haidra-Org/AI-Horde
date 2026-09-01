@@ -1050,6 +1050,25 @@ class User(db.Model):
         return records_dict
 
     @logger.catch(reraise=True)
+    def get_active_generation_ids_by_type(self) -> dict[str, list[str]]:
+        """Return the ids of this user's live requests grouped by ``wp_type``.
+
+        Reads only the two columns needed; iterating the ``waiting_prompts`` relationship would load whole rows
+        (prompt, params, gen_payload, ...) for every live request of the account. The anonymous account's ids are
+        not exposed: it gets an empty list under the first type only.
+        """
+        # Imported here: horde.classes.base.waiting_prompt transitively imports this module at import time.
+        from horde.classes.base.waiting_prompt import WaitingPrompt
+
+        active_generations: dict[str, list[str]] = {}
+        id_and_type_rows = db.session.query(WaitingPrompt.id, WaitingPrompt.wp_type).filter(WaitingPrompt.user_id == self.id).all()
+        for waiting_prompt_id, wp_type in id_and_type_rows:
+            active_generations.setdefault(wp_type, [])
+            if self.is_anon():
+                break
+            active_generations[wp_type].append(str(waiting_prompt_id))
+        return active_generations
+
     def get_details(self, details_privilege=0):
         ret_dict = {
             "username": self.get_unique_alias(),
@@ -1098,14 +1117,7 @@ class User(db.Model):
             ret_dict["contact"] = self.contact
             ret_dict["vpn"] = self.vpn
             ret_dict["special"] = self.special
-            ret_dict["active_generations"] = {}
-            for wp in self.waiting_prompts:
-                if wp.wp_type not in ret_dict["active_generations"]:
-                    ret_dict["active_generations"][wp.wp_type] = []
-                # We don't return anon list of gens
-                if self.is_anon():
-                    break
-                ret_dict["active_generations"][wp.wp_type].append(str(wp.id))
+            ret_dict["active_generations"] = self.get_active_generation_ids_by_type()
         if details_privilege >= 2:
             mk_dict = {
                 "amount": self.calculate_monthly_kudos(),

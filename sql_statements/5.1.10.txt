@@ -1,0 +1,42 @@
+-- Run with psql in its default autocommit mode. Do not pass --single-transaction:
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block. Pass
+-- -v ON_ERROR_STOP=1 so a failure stops the migration. A failed concurrent build
+-- leaves an INVALID index; drop it and rerun after correcting the cause.
+--
+-- Partial indexes for two predicates the kudos applier evaluates on every tick.
+-- They are the ones declared on the models in horde/classes/base/kudos.py; both
+-- cover only pending or quarantined rows, so they stay small however large the
+-- tables grow, and they build online. No application change depends on them, so
+-- they can be applied before or after deploying 5.1.10.
+SET lock_timeout = '3s';
+
+-- kudos_applier_health(): count / min(created) / max(quarantined_at) WHERE quarantined IS TRUE.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_quarantined
+  ON kudos_stat_events (created, quarantined_at)
+  WHERE quarantined IS TRUE;
+
+-- Evaluation drain: SELECT DISTINCT user_id WHERE entry_type = ? AND applied IS FALSE.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_ledger_unapplied_users
+  ON kudos_ledger (entry_type, user_id)
+  WHERE applied IS FALSE;
+
+-- Autovacuum for the queue tables. Every row is inserted unapplied, so every row
+-- enters the partial "unapplied" indexes and leaves them only once vacuum removes the
+-- tuple that was flipped to applied. Until then the applier's claim scan and the
+-- health aggregates walk dead index entries. The default trigger (a fraction of the
+-- whole table) scales with total history rather than with the queue's churn, so
+-- trigger on a fixed number of dead rows instead. Storage parameters only: no rewrite,
+-- and only a brief ShareUpdateExclusiveLock. Tune the thresholds against
+-- pg_stat_user_tables.n_dead_tup for the deployment's write rate.
+ALTER TABLE kudos_ledger SET (
+  autovacuum_vacuum_scale_factor = 0.0,
+  autovacuum_vacuum_threshold = 100000,
+  autovacuum_analyze_scale_factor = 0.0,
+  autovacuum_analyze_threshold = 200000
+);
+ALTER TABLE kudos_stat_events SET (
+  autovacuum_vacuum_scale_factor = 0.0,
+  autovacuum_vacuum_threshold = 250000,
+  autovacuum_analyze_scale_factor = 0.0,
+  autovacuum_analyze_threshold = 500000
+);

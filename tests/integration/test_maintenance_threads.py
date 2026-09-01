@@ -266,8 +266,8 @@ class TestCacheBuilders:
 
     def test_store_worker_list_matches_per_worker_details_with_bounded_queries(self, client, app, make_api_user):
         """The job serializes an eager-loaded worker set, so the number of SELECTs it issues must not grow with the
-        number of active workers (it was ~8 lazy round-trips per worker, ~10s per run in production), and both caches
-        must still hold exactly what ``get_details(0)`` / ``get_details(2)`` produce."""
+        number of active workers, and both caches must still hold exactly what ``get_details(0)`` / ``get_details(2)``
+        produce."""
         from datetime import date, datetime
 
         from sqlalchemy import event
@@ -352,7 +352,7 @@ class TestCacheBuilders:
 
     def test_store_available_models_query_count_is_bounded(self, client, api_key, make_api_user):
         """``store_available_models`` scans every queued prompt and every model; the SELECTs it issues must not grow
-        with the queue (it was two lazy loads per queued prompt plus two lookups per model, ~20s per run in production)."""
+        with the queue."""
         from sqlalchemy import event
 
         from horde.database.threads import store_available_models

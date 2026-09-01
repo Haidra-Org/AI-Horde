@@ -20,6 +20,7 @@ except ImportError:
     stripe = None
 
 from sqlalchemy import case, func, or_, update
+from sqlalchemy.orm import selectinload
 
 from horde import vars as hv
 from horde.argparser import args
@@ -96,7 +97,8 @@ def assign_monthly_kudos():
             or_conditions.append(User.id.in_(patron_ids))
         if stripe_ids:
             or_conditions.append(User.id.in_(stripe_ids))
-        users = db.session.query(User).filter(or_(*or_conditions))
+        # receive_monthly_kudos() reads role properties per user; load every user's roles in one query.
+        users = db.session.query(User).options(selectinload(User.roles)).filter(or_(*or_conditions))
         all_users = users.all()
         logger.info(
             f"Found {len(all_users)} users with Monthly Kudos Assignment: {[u.id for u in all_users]}",
@@ -145,7 +147,7 @@ def store_worker_list():
 
     Runs every few seconds on the quorum node (see ``horde.database.__init__``); the 300s redis TTL is only a safety
     margin in case the primary thread dies. The workers come from ``get_active_workers_for_details`` so serializing
-    them is a handful of set-based queries rather than ~8 lazy round-trips per worker.
+    them is a handful of set-based queries rather than several lazy loads per worker.
     """
 
     def json_serial(obj):

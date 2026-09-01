@@ -7,8 +7,10 @@ from datetime import datetime
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import selectinload
 
 from horde import vars as hv
+from horde.classes.base.worker import Worker
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
 from horde.utils import get_db_uuid, is_profane, sanitize_string
@@ -62,7 +64,9 @@ class Team(db.Model):
     def get_all_models(self):
         all_models = {}
         for worker in self.workers:
-            for model_name in worker.get_model_names():
+            # The relationship rather than the per-worker redis model cache: teams are listed in bulk from
+            # eager-loaded rows (get_all_teams), and set_models() expires the collection after rewriting it.
+            for model_name in [worker_model.model for worker_model in worker.models]:
                 all_models[model_name] = all_models.get(model_name, 0) + 1
         model_list = []
         for model in all_models:
@@ -131,8 +135,21 @@ class Team(db.Model):
         return ret_dict
 
 
-def get_all_teams():
-    return db.session.query(Team).all()
+def get_all_teams() -> list[Team]:
+    """Return every team with the relationships ``Team.get_details`` reads already loaded.
+
+    ``get_details`` walks each team's workers, their owners and their models; loaded lazily that is three SELECTs
+    per team on every ``GET /v2/teams``.
+    """
+    return (
+        db.session.query(Team)
+        .options(
+            selectinload(Team.owner),
+            selectinload(Team.workers).selectinload(Worker.user),
+            selectinload(Team.workers).selectinload(Worker.models),
+        )
+        .all()
+    )
 
 
 def find_team_by_id(team_id):

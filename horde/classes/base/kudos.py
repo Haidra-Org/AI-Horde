@@ -44,7 +44,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import and_, column, false
+from sqlalchemy.sql import and_, column, false, true
 
 from horde.enums import KudosEntryType, KudosLedgerMode, KudosStatEventQuarantineReason, KudosUnit
 from horde.flask import db
@@ -139,6 +139,15 @@ class KudosLedger(db.Model):  # type: ignore[name-defined,misc]
         # the id-ordered claim scan; it shrinks to near-empty once the applier
         # catches up, so the scan stays cheap.
         Index("ix_kudos_ledger_unapplied", "id", postgresql_where=column("applied").is_(false())),
+        # The applier's evaluation drain asks, every cycle, for the distinct users holding an unapplied posting
+        # of one entry type. This covers that predicate directly; without it the scan walks the whole unapplied
+        # set and its heap. Existing deployments add it with sql_statements/5.1.10.txt.
+        Index(
+            "ix_kudos_ledger_unapplied_users",
+            "entry_type",
+            "user_id",
+            postgresql_where=column("applied").is_(false()),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -178,6 +187,15 @@ class KudosStatEvent(db.Model):  # type: ignore[name-defined,misc]
             "ix_kudos_stat_events_drainable",
             "id",
             postgresql_where=column("applied").is_(false()) & column("quarantined").is_(false()),
+        ),
+        # kudos_applier_health() aggregates the quarantined rows (count, oldest created, newest quarantined_at)
+        # every applier tick. Quarantine is rare, so this stays tiny, and without it that aggregate has no usable
+        # index on an unboundedly growing table. Existing deployments add it with sql_statements/5.1.10.txt.
+        Index(
+            "ix_kudos_stat_events_quarantined",
+            "created",
+            "quarantined_at",
+            postgresql_where=column("quarantined").is_(true()),
         ),
     )
 

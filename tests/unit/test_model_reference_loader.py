@@ -251,10 +251,11 @@ def test_record_mirrors_onto_the_database_columns(monkeypatch: pytest.MonkeyPatc
 
     captured: dict[str, Any] = {}
 
-    def _capture(**kwargs: Any) -> None:
+    def _capture(existing_model: Any, **kwargs: Any) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr(known_image_models, "add_known_image_model", _capture)
+    monkeypatch.setattr(known_image_models, "_known_image_model_by_name", lambda model_name: None)
+    monkeypatch.setattr(known_image_models, "_upsert_known_image_model", _capture)
 
     record = ImageGenerationModelRecord(
         name="mirrored_model",
@@ -276,7 +277,6 @@ def test_record_mirrors_onto_the_database_columns(monkeypatch: pytest.MonkeyPatc
     assert captured["features_not_supported"] is None
     assert captured["size_on_disk_bytes"] == 1234
     assert captured["config"] == record.config.model_dump(mode="json")
-    assert captured["defer_commit"] is True
 
 
 def test_text_refresh_skips_invalid_entries_but_keeps_the_rest(monkeypatch: pytest.MonkeyPatch) -> None:

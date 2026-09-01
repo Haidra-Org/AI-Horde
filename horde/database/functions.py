@@ -168,7 +168,7 @@ def get_active_workers_for_details() -> list[WorkerTemplate]:
     Use this instead of ``get_active_workers()`` whenever the result is serialized in bulk (the worker list cache,
     the ``/v2/workers`` fallback). ``get_details(2)`` reads the owner, the owner's roles, the team, messages, kudos
     stats, suspicions and the advertised models (or forms/annotation types for interrogation workers); lazily that
-    is ~8 SELECTs per worker, each paying the round-trip to the database host. Loaded with ``selectinload`` it is one
+    is one SELECT per relationship per worker, each a database round-trip. Loaded with ``selectinload`` it is one
     SELECT per relationship per worker type regardless of how many workers are active.
     """
     cutoff = datetime.utcnow() - timedelta(seconds=300)
@@ -466,7 +466,7 @@ def get_available_models(filter_model_name: str = None):
         # e.g., `aphrodite%2FNeverSleep%2FNoromaid-13b-v0.3` will become `aphrodite/NeverSleep/Noromaid-13b-v0.3`.
         filter_model_name = urllib.parse.unquote(filter_model_name)
 
-    # Fetched once for every model rather than per model: each per-model lookup was two round-trips to the database.
+    # Fetched once for every model rather than per model: each per-model lookup is two queries.
     model_avg_performances = stats.get_model_avgs()
 
     for model_type, worker_class, wp_class, procgen_class in [
@@ -965,7 +965,7 @@ def get_organized_wps_by_model(wp_class):
     org = {}
     # TODO: Offload the sorting to the DB through join() + SELECT statements
     # ``models`` and ``processing_gens`` are read for every returned prompt (get_model_names / count_processing_gens);
-    # loaded lazily that was two round-trips per queued prompt on every store_available_models run.
+    # loaded lazily that is two SELECTs per queued prompt.
     all_wps = (
         db.session.query(wp_class)
         .filter(
@@ -1078,7 +1078,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == ImageWaitingPrompt.id).exists()
     final_wp_list = (
         db.session.query(ImageWaitingPrompt)
-        .options(noload(ImageWaitingPrompt.processing_gens))
+        .options(
+            noload(ImageWaitingPrompt.processing_gens),
+            # can_generate() reads these for every candidate; loaded lazily that is three SELECTs per candidate per pop.
+            selectinload(ImageWaitingPrompt.models),
+            selectinload(ImageWaitingPrompt.tricked_workers),
+            selectinload(ImageWaitingPrompt.workers),
+        )
         .filter(
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.active == True,  # noqa E712

@@ -50,7 +50,7 @@ from horde.classes.base.user import User, UserRecords, UserRole, UserStats, User
 from horde.classes.base.worker import WorkerStats, WorkerTemplate
 from horde.database.kudos_counters import increment_counters
 from horde.database.kudos_db import try_acquire_applier_lock
-from horde.database.kudos_reservations import consume_reservation, release_event_reservations
+from horde.database.kudos_reservations import consume_reservations, release_event_reservations
 from horde.enums import (
     KudosAggregate,
     KudosAuditDetail,
@@ -374,8 +374,7 @@ def apply_pending_kudos(
             _mark_stat_events_applied(folded_stat_ids)
         kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "mark_applied"})
         phase_t = time.monotonic()
-        for business_id, amount in sorted(reservation_consumptions.items()):
-            consume_reservation(business_id, amount)
+        consume_reservations(reservation_consumptions)
         # Transfer holds remain active until the entire event has materialized.
         # A batch is allowed to split an event, so release only event ids with no
         # unapplied posting left after this batch's marker update.
