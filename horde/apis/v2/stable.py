@@ -1042,8 +1042,10 @@ class Interrogate(Resource):
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
-        # The upload is network I/O; do it before the interrogation row exists so no transaction is open across
-        # it and an upload failure leaves nothing to clean up. The row is keyed by the same id the upload used.
+        # The upload is network I/O. End the read transaction validate() opened so nothing is held across it, and
+        # do it before the interrogation row exists so an upload failure leaves nothing to clean up. The row is
+        # keyed by the same id the upload used.
+        db.session.commit()
         interrogation_id = get_db_uuid()
         self.source_image, img, self.r2stored = ensure_source_image_uploaded(
             self.args.source_image,
