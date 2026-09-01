@@ -324,7 +324,7 @@ class TestReturnCodeSurface:
                 {"transparent": True},
                 None,
             ),
-            "ControlNetMismatch.": (KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value, {"workflow": "qr_code"}, None),
+            "ControlNetMismatch": (KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade.value, {"workflow": "qr_code"}, None),
             "ControlNetUnsupported": (
                 KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_2_768.value,
                 {"control_type": "mlsd"},
@@ -335,7 +335,7 @@ class TestReturnCodeSurface:
                 {"control_type": "canny"},
                 None,
             ),
-            "InvalidRemix": (KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1.value, {}, "remix"),
+            "InvalidRemixModel": (KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1.value, {}, "remix"),
         }
         for expected_rc, (baseline, params, source_processing) in rejecting_requests.items():
             assert _new_rejecting_rules((baseline,), params, source_processing)[1] == expected_rc
@@ -611,7 +611,7 @@ class TestParamValidatorWiring:
             KNOWN_IMAGE_GENERATION_BASELINE.stable_cascade,
             {"workflow": "qr_code"},
         )
-        assert code == "ControlNetMismatch."
+        assert code == "ControlNetMismatch"
 
     def test_the_qr_code_workflow_is_accepted_on_sd1(self, monkeypatch: pytest.MonkeyPatch) -> None:
         code = _validator_rejection_code(
@@ -630,4 +630,4 @@ class TestParamValidatorWiring:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         code = _validator_rejection_code(monkeypatch, "some_future_baseline", {"workflow": "qr_code"})
-        assert code == "ControlNetMismatch."
+        assert code == "ControlNetMismatch"

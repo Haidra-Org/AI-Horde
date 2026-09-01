@@ -141,7 +141,7 @@ The errors returned by the AI horde are always in this json format
 | BetaComparisonFault | You need to request at least 2 images for SDXL to allow for comparison |
 | BadCFGDecimals | cfg_scale must be rounded to 2 decimal places |
 | BadCFGNumber | cfg_scale must be a valid number |
-| BannedClientAgent | Banned client Agent |
+| BadClientAgent | Banned client Agent |
 | SpecialMissingPayload | Special models have to include a special payload |
 | SpecialForbidden | This model can only be requested by a specific username |
 | SpecialMissingUsername | Special models must always include the username, in the form of 'horde_special::user#id' |
@@ -166,3 +166,32 @@ The errors returned by the AI horde are always in this json format
 | FlowShiftOutOfRange | Flow shift is outside the backend's accepted range |
 | ControlStrengthWithoutControlType | Control strength was sent without a control type or the QR workflow to apply it to |
 | ControlStrengthOutOfRange | Control strength is outside the accepted range |
+| CannotDeleteMod | A moderator account cannot be deleted; contact an admin |
+| CannotWipeActiveUser | An account that was active in the last 30 days cannot be wiped yet |
+| DeletedUser | This account has been scheduled for deletion and is disabled |
+| ExcessiveStopSequence | The total length of the stop sequences exceeds the allowed limit |
+| InvalidControlType | The annotation form requires a known control_type in its payload |
+| InvalidExtraSourceImages | This request type does not accept extra source images |
+| InvalidExtraTexts | This request type does not accept extra texts |
+| InvalidPromptEncoding | The prompt contains characters that cannot be encoded (unpaired UTF-16 surrogates) |
+| InvalidRemixModel | Image remix is not available for this model baseline |
+| InvalidTransparencyCN | Transparent images cannot be generated in ControlNet workflows |
+| InvalidTransparencyImg2Img | Transparent images cannot be generated in img2img workflows |
+| InvalidTransparencyModel | Transparent images cannot be generated for this model baseline |
+| MessagesOnlyOwnWorkers | Messages can only be sent to your own workers |
+| MissingExtraTexts | This workflow requires the extra texts to be provided |
+| MissingFullSamplerOrder | A custom sampler order must list every sampler |
+| MoreThanMinExtraSourceImage | Only trusted users and patrons can send more than one extra source image |
+| NonServiceForbidden | Only service accounts can set a proxy passkey |
+| NotUserOrMod | Only the user themselves or a moderator can delete a user |
+| NulByteInPayload | The request payload may not contain NUL bytes |
+| SharedKeyAssignedStyles | This shared key is restricted to specific styles |
+| StylesAnonForbidden | Anonymous users cannot create styles |
+| StylesRequiresCustomizer | Only customizers and trusted users can create styles |
+| ThingNotFound | No item exists with the given ID |
+| TokenOverflow | More tokens were requested than the context length allows |
+| TooManyExtraSourceImages | At most 5 extra source images can be sent |
+| TooManyStopSequences | Too many stop sequences were specified |
+| TooManyWorkers | Untrusted users can have at most 3 distinct workers |
+| TooManyWorkersTrusted | Trusted users cannot onboard more than 20 workers without contacting the team |
+| UserNotDeleted | The user is not deleted and cannot be undeleted |

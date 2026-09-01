@@ -96,7 +96,7 @@ def _feature_violation(
     if feature == BaselineFeature.QR_CODE:
         if params.get("workflow") == "qr_code" and not capabilities.qr_code:
             # The trailing full stop is part of the code clients already match on.
-            return ("ControlNetMismatch.", f"QR Code controlnet does not work with {baseline} models currently.")
+            return ("ControlNetMismatch", f"QR Code controlnet does not work with {baseline} models currently.")
         return None
 
     if feature == BaselineFeature.CONTROL_TYPE_UNAVAILABLE:
@@ -114,7 +114,7 @@ def _feature_violation(
         return None
 
     if source_processing == "remix" and not capabilities.remix:
-        return ("InvalidRemix", f"Image Remix is not available for {baseline} models.")
+        return ("InvalidRemixModel", f"Image Remix is not available for {baseline} models.")
     return None
 
 

@@ -510,7 +510,7 @@ def test_remote_reference_churn_stays_coherent_under_locust_traffic(
         assert loader.baseline_record(second_baseline.name).horde_policy.kudos == 12
         recovered = _quote(host, request_headers, FUTURE_MODEL, qr_code=True)
         assert recovered.status_code == 400
-        assert recovered.json()["rc"] == "ControlNetMismatch."
+        assert recovered.json()["rc"] == "ControlNetMismatch"
         _complete_direct_request(
             host,
             request_headers,

@@ -205,17 +205,17 @@ class ImageAsyncGenerate(GenerateTemplate):
         )
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
             if self.args.source_processing != "remix":
-                raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
+                raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages")
         if self.params.get("extra_texts") is not None and len(self.params.get("extra_texts")) > 0:
             if self.params.get("workflow") not in ["qr_code"]:
-                raise e.BadRequest("This request type does not accept extra texts.", rc="InvalidExtraTexts.")
+                raise e.BadRequest("This request type does not accept extra texts.", rc="InvalidExtraTexts")
         if self.params.get("workflow") == "qr_code":
             # QR-code pipeline cannot do batching currently
             self.args["disable_batching"] = True
             if self.params.get("extra_texts") is None or len(self.params.get("extra_texts")) == 0:
-                raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
+                raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts")
             if not does_extra_text_reference_exist(self.params.get("extra_texts"), "qr_code"):
-                raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts.")
+                raise e.BadRequest("This request requires you pass the required extra texts for this workflow.", rc="MissingExtraTexts")
         if self.params.get("init_as_image") and self.params.get("return_control_map"):
             raise e.UnsupportedModel(
                 "Invalid ControlNet parameters - cannot send inital map and return the same map",
@@ -242,7 +242,7 @@ class ImageAsyncGenerate(GenerateTemplate):
                 "This Client-Agent appears badly designed and is causing too many warnings. "
                 "First ensure it provides a proper name and contact details. "
                 "Then contact us on Discord to discuss the issue it's creating.",
-                rc="BannedClientAgent",
+                rc="BadClientAgent",
             )
 
     # We split this into its own function, so that it may be overriden

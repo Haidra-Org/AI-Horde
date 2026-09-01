@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Tazlin
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
-
 import inspect
+import re
 
 from werkzeug import exceptions as wze
 
@@ -71,3 +71,22 @@ class TestKnownRC:
 
     def test_no_duplicates(self):
         assert len(KNOWN_RC) == len(set(KNOWN_RC)), "KNOWN_RC contains duplicate entries"
+
+    def test_every_return_code_in_the_source_is_known(self):
+        """A return code is part of the API contract: every literal the source can emit must be in KNOWN_RC."""
+        import re
+        from pathlib import Path
+
+        source_root = Path(__file__).resolve().parents[2] / "horde"
+        literal = re.compile(r'(?:rc=|"rc": ?)"([A-Za-z0-9_.]+)"|return \("([A-Za-z0-9_.]+)",')
+        emitted = {
+            match.group(1) or match.group(2)
+            for source_file in source_root.rglob("*.py")
+            for match in literal.finditer(source_file.read_text(encoding="utf-8"))
+        }
+        assert emitted, "no return-code literals found; the scan pattern is broken"
+        assert emitted <= set(KNOWN_RC), f"return codes emitted but not in KNOWN_RC: {sorted(emitted - set(KNOWN_RC))}"
+
+    def test_return_codes_are_bare_identifiers(self):
+        for rc in KNOWN_RC:
+            assert re.fullmatch(r"[A-Za-z0-9_]+", rc), f"return code is not a bare identifier: {rc!r}"

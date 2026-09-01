@@ -302,7 +302,7 @@ class TestQrCodeWorkflow:
             client,
             request_headers,
             _async_dict([CASCADE_MODEL], params=self.QR_CODE_PARAMS),
-            "ControlNetMismatch.",
+            "ControlNetMismatch",
         )
 
     @pytest.mark.parametrize("model_name", [SD1_MODEL, SDXL_MODEL])
@@ -323,7 +323,7 @@ class TestQrCodeWorkflow:
             client,
             request_headers,
             _async_dict([FUTURE_MODEL], params=self.QR_CODE_PARAMS),
-            "ControlNetMismatch.",
+            "ControlNetMismatch",
         )
 
 
@@ -337,7 +337,7 @@ class TestRemix:
             client,
             request_headers,
             _async_dict([SD1_MODEL], source_processing="remix"),
-            "InvalidRemix",
+            "InvalidRemixModel",
         )
 
     @pytest.mark.parametrize("model_name", [CASCADE_MODEL])
@@ -358,7 +358,7 @@ class TestRemix:
             client,
             request_headers,
             _async_dict([FUTURE_MODEL], source_processing="remix"),
-            "InvalidRemix",
+            "InvalidRemixModel",
         )
 
 
@@ -427,7 +427,7 @@ class TestStyleSubstitutedModels:
                 client,
                 request_headers,
                 _async_dict([CASCADE_MODEL], style=style_id, source_processing="remix"),
-                "InvalidRemix",
+                "InvalidRemixModel",
             )
         finally:
             client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)

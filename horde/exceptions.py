@@ -177,6 +177,12 @@ KNOWN_RC = [
     "FlowShiftOutOfRange",
     "ControlStrengthWithoutControlType",
     "ControlStrengthOutOfRange",
+    "InvalidPromptEncoding",
+    "ControlNetInpaintingMismatch",
+    "InvalidControlType",
+    "ThingNotFound",
+    "TooManyWorkers",
+    "TooManyWorkersTrusted",
 ]
 
 

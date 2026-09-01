@@ -186,7 +186,7 @@ class TextAsyncGenerate(GenerateTemplate):
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
-            raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages.")
+            raise e.BadRequest("This request type does not accept extra source images.", rc="InvalidExtraSourceImages")
 
     def get_hashed_params_dict(self):
         gen_payload = self.params.copy()

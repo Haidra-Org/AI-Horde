@@ -152,10 +152,10 @@ LEGACY_RULE_RETURN_CODES: Final[dict[str, str]] = {
     "flow_shift_inapplicable": "FlowShiftInapplicable",
     "hires_fix_unsupported": "HiResMismatch",
     "transparency_unsupported": "InvalidTransparencyModel",
-    "qr_code_workflow_unsupported": "ControlNetMismatch.",
+    "qr_code_workflow_unsupported": "ControlNetMismatch",
     "control_type_unsupported": "ControlNetUnsupported",
     "controlnet_unsupported": "ControlNetMismatch",
-    "remix_unsupported": "InvalidRemix",
+    "remix_unsupported": "InvalidRemixModel",
 }
 
 

@@ -97,7 +97,7 @@ class TestCatalogCapabilities:
     def test_a_family_with_no_qr_code_weights_is_rejected(self) -> None:
         for baseline in (SD2_768, CASCADE, FLUX_1, QWEN, Z_IMAGE, KREA2, ANIMA):
             # The trailing full stop is part of the code clients already match on.
-            assert rejection_code({baseline}, params={"workflow": "qr_code"}) == "ControlNetMismatch.", baseline
+            assert rejection_code({baseline}, params={"workflow": "qr_code"}) == "ControlNetMismatch", baseline
 
     def test_the_families_with_qr_code_weights_are_accepted(self) -> None:
         assert rejection_code({SD1, SDXL}, params={"workflow": "qr_code"}) is None
@@ -105,10 +105,10 @@ class TestCatalogCapabilities:
     def test_only_a_family_with_a_remix_mechanism_accepts_remix(self) -> None:
         assert rejection_code({CASCADE}, params={}, source_processing="remix") is None
         for baseline in (SD1, SDXL, FLUX_1):
-            assert rejection_code({baseline}, params={}, source_processing="remix") == "InvalidRemix", baseline
+            assert rejection_code({baseline}, params={}, source_processing="remix") == "InvalidRemixModel", baseline
 
     def test_a_multi_model_request_needs_every_baseline_to_remix(self) -> None:
-        assert rejection_code({CASCADE, SD1}, params={}, source_processing="remix") == "InvalidRemix"
+        assert rejection_code({CASCADE, SD1}, params={}, source_processing="remix") == "InvalidRemixModel"
 
     def test_a_family_flow_matching_is_meaningless_for_is_rejected(self) -> None:
         for baseline in (SD1, SDXL, Z_IMAGE):
@@ -155,8 +155,8 @@ class TestUncataloguedBaseline:
         assert rejection_code({UNCATALOGUED_BASELINE}, params={"steps": 30, "cfg_scale": 7.5}) is None
 
     def test_workflows_without_bridge_gates_are_conservatively_refused(self) -> None:
-        assert rejection_code({UNCATALOGUED_BASELINE}, params={"workflow": "qr_code"}) == "ControlNetMismatch."
-        assert rejection_code({UNCATALOGUED_BASELINE}, params={}, source_processing="remix") == "InvalidRemix"
+        assert rejection_code({UNCATALOGUED_BASELINE}, params={"workflow": "qr_code"}) == "ControlNetMismatch"
+        assert rejection_code({UNCATALOGUED_BASELINE}, params={}, source_processing="remix") == "InvalidRemixModel"
 
     @pytest.mark.parametrize(
         ("params", "expected_rc"),

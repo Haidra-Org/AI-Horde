@@ -351,11 +351,11 @@ class GenerateTemplate(Resource):
                 raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
             if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
                 if len(self.args.extra_source_images) > 5:
-                    raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages.")
+                    raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages")
                 if len(self.args.extra_source_images) > 1 and not self.user.trusted and not patrons.is_patron(self.user.id):
                     raise e.BadRequest(
                         "Only trusted users and patrons can send more than 1 extra source images.",
-                        rc="MoreThanMinExtraSourceImage.",
+                        rc="MoreThanMinExtraSourceImage",
                     )
             if self.user.education or self.user.trusted or self.user.service:
                 if not self.proxied_request:
@@ -1940,7 +1940,7 @@ class UserSingle(Resource):
         if not user:
             raise e.UserNotFound(user_id)
         if requesting_user.is_anon():
-            raise e.AnonForbidden(rc="AnonForbiddenUser")
+            raise e.AnonForbidden(rc="AnonForbiddenUserMod")
         if user.moderator:
             raise e.Forbidden(
                 "You cannot delete a user that is a moderator. Please contact an admin.",
