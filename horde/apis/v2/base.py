@@ -163,6 +163,15 @@ def check_for_mod(api_key, operation, whitelisted_users=None):
 
 # I have to put it outside the class as I can't figure out how to extend the argparser
 # and also pass it to the @api.expect decorator inside the class
+def _is_storable_text(value: str) -> bool:
+    """Return whether ``value`` can be encoded as UTF-8; JSON may carry unpaired surrogates the database rejects."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def commit_request_cancellation(wp) -> bool:
     """Commit a request's cancellation; return False when the request vanished meanwhile.
 
@@ -353,6 +362,11 @@ class GenerateTemplate(Resource):
                     lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
             self.username = self.user.get_unique_alias()
             # logger.warning(datetime.utcnow())
+            if not _is_storable_text(self.args["prompt"]):
+                raise e.BadRequest(
+                    "Prompt contains characters that cannot be encoded (unpaired UTF-16 surrogates).",
+                    rc="InvalidPromptEncoding",
+                )
             if self.args["prompt"] == "":
                 raise e.MissingPrompt(self.username)
             wp_count_t0 = time.monotonic()
