@@ -61,7 +61,7 @@ from horde.telemetry import (
     get_traceparent,
     pyroscope_tag,
 )
-from horde.utils import does_extra_text_reference_exist, hash_dictionary
+from horde.utils import does_extra_text_reference_exist, get_db_uuid, hash_dictionary
 from horde.validation import ParamValidator, raise_model_policy_violations
 from horde.vars import horde_title
 
@@ -284,6 +284,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             traceparent=get_traceparent(),
         )
         generate_init_wp_build_duration.record(time.monotonic() - _tb, {})
+        self.upload_source_images()
         _tk = time.monotonic()
         try:
             _, total_threads = database.count_active_workers("image")
@@ -390,9 +391,11 @@ class ImageAsyncGenerate(GenerateTemplate):
         attributes["horde.img2img"] = "true" if getattr(self.args, "source_image", None) else "false"
         return attributes
 
-    def activate_waiting_prompt(self):
+    def upload_source_images(self):
         self.source_image = None
         self.source_mask = None
+        if self.args.dry_run:
+            return
         upload_t0 = time.monotonic()
         try:
             if self.args.source_image:
@@ -425,6 +428,8 @@ class ImageAsyncGenerate(GenerateTemplate):
         finally:
             if self.args.source_image or self.args.extra_source_images:
                 generate_source_upload_duration.record(time.monotonic() - upload_t0)
+
+    def activate_waiting_prompt(self):
         self.wp.activate(
             downgrade_wp_priority=self.downgrade_wp_priority,
             source_image=self.source_image,
@@ -1037,8 +1042,21 @@ class Interrogate(Resource):
         # For now this is checked on validate()
         self.safe_ip = True
         self.validate()
-        # logger.warning(datetime.utcnow())
+        # The upload is network I/O; do it before the interrogation row exists so no transaction is open across
+        # it and an upload failure leaves nothing to clean up. The row is keyed by the same id the upload used.
+        interrogation_id = get_db_uuid()
+        self.source_image, img, self.r2stored = ensure_source_image_uploaded(
+            self.args.source_image,
+            str(interrogation_id),
+        )
+        self.image_tiles = calculate_image_tiles(img)
+        if self.image_tiles > 255:
+            raise e.ImageValidationFailed(
+                f"Image is too large ({self.image_tiles} tiles) and would cause horde alchemists to run out of VRAM trying to process it.",
+                rc="SourceImageResolutionExceeded",
+            )
         self.interrogation = Interrogation(
+            id=interrogation_id,
             user_id=self.user.id,
             trusted_workers=self.args.trusted_workers,
             slow_workers=self.args.slow_workers,
@@ -1046,23 +1064,6 @@ class Interrogate(Resource):
             safe_ip=self.safe_ip,
             webhook=self.args.webhook,
         )
-        # If anything goes wrong when uploading an image, we don't want to leave garbage around
-        try:
-            self.source_image, img, self.r2stored = ensure_source_image_uploaded(
-                self.args.source_image,
-                str(self.interrogation.id),
-            )
-            self.image_tiles = calculate_image_tiles(img)
-            if self.image_tiles > 255:
-                raise e.ImageValidationFailed(
-                    f"Image is too large ({self.image_tiles} tiles) and would cause horde "
-                    "alchemists to run out of VRAM trying to process it.",
-                    rc="SourceImageResolutionExceeded",
-                )
-        except Exception as err:
-            db.session.delete(self.interrogation)
-            db.session.commit()
-            raise err
         self.interrogation.set_source_image(self.source_image, self.r2stored, self.image_tiles)
         self.interrogation.set_forms(self.forms)
         ret_dict = {"id": self.interrogation.id}

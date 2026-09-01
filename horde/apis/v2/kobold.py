@@ -115,6 +115,7 @@ class TextAsyncGenerate(GenerateTemplate):
             proxied_account=self.args["proxied_account"],
             webhook=self.args.webhook,
         )
+        self.upload_source_images()
         _, total_threads = database.count_active_workers("text")
         highest_multiplier = 0
         if len(self.models) == 0:

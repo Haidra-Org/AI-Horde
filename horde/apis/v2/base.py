@@ -493,9 +493,17 @@ class GenerateTemplate(Resource):
             webhook=self.args.webhook,
             traceparent=get_traceparent(),
         )
+        self.upload_source_images()
 
-    # We split this into its own function, so that it may be overriden and extended
-    def activate_waiting_prompt(self):
+    def upload_source_images(self):
+        """Upload the request's source images to object storage and replace them in the args with their references.
+
+        Runs at the end of ``initiate_waiting_prompt``, before any kudos reservation: the uploads are network I/O
+        that must not happen while the payer's advisory lock and the request's transaction are held. Dry runs
+        upload nothing. A request that fails after this point leaves its uploads behind, as before.
+        """
+        if self.args.dry_run:
+            return
         if self.args.extra_source_images:
             for iiter, eimg in enumerate(self.args.extra_source_images):
                 (
@@ -503,6 +511,9 @@ class GenerateTemplate(Resource):
                     _,
                     _,
                 ) = ensure_source_image_uploaded(eimg["image"], f"{self.wp.id}_exra_src_{iiter}", force_r2=True)
+
+    # We split this into its own function, so that it may be overriden and extended
+    def activate_waiting_prompt(self):
         self.wp.activate(
             self.downgrade_wp_priority,
             extra_source_images=self.args.extra_source_images,

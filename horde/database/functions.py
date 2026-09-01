@@ -2070,7 +2070,12 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         except (KeyError, TypeError, ValueError):
             logger.debug(f"Ignoring malformed worker availability cache for request {waiting_prompt.id}")
 
-    eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
+    with logfire.span("horde.db.eligible_workers", wp_id=str(waiting_prompt.id)):
+        eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
+    # The eligibility scan is the last read this function needs inside a transaction. End it here so the
+    # scheduling work below (pure Python plus redis) does not keep the request's transaction open; the loaded
+    # worker rows stay usable because the session does not expire on commit.
+    db.session.commit()
     eligible_worker_states = tuple(
         EligibleWorkerState(
             worker_id=str(worker.id),
@@ -2090,24 +2095,25 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
     if waiting_prompt.n > 0:
         assignment_pressure = AssignmentPressure("none_eligible", 0, 0, 0, False)
         if eligible_worker_states:
-            observed_at = datetime.utcnow()
-            active_dispatches = _get_active_worker_dispatches(
-                waiting_prompt,
-                [worker_state.worker_id for worker_state in eligible_worker_states],
-            )
-            assignment_pressure = get_request_assignment_pressure(
-                observed_at=observed_at,
-                target_request_id=str(waiting_prompt.id),
-                target_user_id=str(waiting_prompt.user_id),
-                target_created_at=waiting_prompt.created,
-                target_extra_priority=int(waiting_prompt.extra_priority),
-                eligible_worker_states={
-                    worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states
-                },
-                eligible_worker_threads=thread_count,
-                active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
-                preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
-            )
+            with logfire.span("horde.scheduling.assignment_pressure", eligible_workers=len(eligible_worker_states)):
+                observed_at = datetime.utcnow()
+                active_dispatches = _get_active_worker_dispatches(
+                    waiting_prompt,
+                    [worker_state.worker_id for worker_state in eligible_worker_states],
+                )
+                assignment_pressure = get_request_assignment_pressure(
+                    observed_at=observed_at,
+                    target_request_id=str(waiting_prompt.id),
+                    target_user_id=str(waiting_prompt.user_id),
+                    target_created_at=waiting_prompt.created,
+                    target_extra_priority=int(waiting_prompt.extra_priority),
+                    eligible_worker_states={
+                        worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states
+                    },
+                    eligible_worker_threads=thread_count,
+                    active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
+                    preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
+                )
         might_stall = assignment_pressure.might_stall
         try:
             record_request_assignment_pressure(
