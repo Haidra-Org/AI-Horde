@@ -2072,10 +2072,6 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
 
     with logfire.span("horde.db.eligible_workers", wp_id=str(waiting_prompt.id)):
         eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
-    # The eligibility scan is the last read this function needs inside a transaction. End it here so the
-    # scheduling work below (pure Python plus redis) does not keep the request's transaction open; the loaded
-    # worker rows stay usable because the session does not expire on commit.
-    db.session.commit()
     eligible_worker_states = tuple(
         EligibleWorkerState(
             worker_id=str(worker.id),
