@@ -350,6 +350,16 @@ class TestCacheBuilders:
         assert "owner" in cached_public["Bounded Scribe 1"]
         assert "owner" not in cached_public["Bounded Scribe 3"]
 
+    def test_store_worker_performances_populates_both_caches(self, client):
+        from horde.database.threads import store_worker_performances
+
+        store_worker_performances()  # must not raise
+
+        for key in ("worker_performances_avg_cache", "text_worker_performances_avg_cache"):
+            cached = _redis_get(key)
+            assert cached is not None, f"{key} was not populated"
+            float(cached)
+
     def test_store_available_models_query_count_is_bounded(self, client, api_key, make_api_user):
         """``store_available_models`` scans every queued prompt and every model; the SELECTs it issues must not grow
         with the queue."""

@@ -44,6 +44,7 @@ from horde.database.functions import (
     get_available_models,
     prune_expired_stats,
     query_prioritized_wps,
+    refresh_worker_performances_cache,
     retrieve_regex_replacements,
 )
 from horde.database.kudos_reservations import release_reservations_for_business_ids
@@ -144,6 +145,18 @@ def store_prioritized_wp_queue():
                 hr.horde_r_setex(f"{wp_type}_wp_queue_positions", timedelta(seconds=5), json.dumps(queue_positions))
             except (TypeError, OverflowError) as err:
                 logger.error(f"Failed serializing with error: {err}")
+
+
+@logger.catch(reraise=True)
+def store_worker_performances():
+    """Store the fleet-wide average worker performance per request type horde-wide.
+
+    Request handlers read this through ``get_request_avg``; the cache lives for 30 seconds and, on a miss, the
+    handler computes it itself. Refreshing it here from the quorum node keeps that computation off the request
+    path, where every process used to redo it each time its own copy of the cache expired.
+    """
+    with get_app().app_context():
+        refresh_worker_performances_cache()
 
 
 @logger.catch(reraise=True)
