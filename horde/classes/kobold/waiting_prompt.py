@@ -142,7 +142,7 @@ class TextWaitingPrompt(WaitingPrompt):
             # For empty model lists, we assume they're going to run into a 13B model
             return round(self.max_length * 13 * context_multiplier / 100, 2)
         if not model_reference.is_known_text_model(model_name):
-            return self.wp.max_length * (2.7 / 100) * context_multiplier
+            return self.max_length * (2.7 / 100) * context_multiplier
         model_multiplier = model_reference.get_text_model_multiplier(model_name)
         parameter_bonus = (max(model_multiplier, 13) / 13) ** 0.20
         self.kudos = round(

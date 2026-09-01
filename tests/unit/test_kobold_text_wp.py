@@ -90,3 +90,17 @@ class TestKudos:
         monkeypatch.setenv("HORDE_REQUIRE_MATCHED_TARGETING", "1")
         wp = _wp(workers=["w"])
         assert TextWaitingPrompt.calculate_kudos(wp) == 0.1
+
+
+class TestCalculateKudos:
+    def test_unknown_model_quotes_from_the_prompt_itself(self, monkeypatch):
+        """The unknown-model branch prices the request from its own max_length; the object has no ``wp``."""
+        from horde.classes.kobold import waiting_prompt as text_wp_module
+
+        monkeypatch.setattr(text_wp_module.model_reference, "is_known_text_model", lambda model_name: False)
+        wp = _wp(max_length=100, max_context_length=1024, models=(SimpleNamespace(model="not-in-reference"),))
+
+        kudos = TextWaitingPrompt.calculate_kudos(wp)
+
+        context_multiplier = 1.2 + (2.2**0)
+        assert kudos == pytest.approx(100 * (2.7 / 100) * context_multiplier)
