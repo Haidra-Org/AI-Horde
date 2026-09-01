@@ -15,6 +15,7 @@ from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
 from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
+from sqlalchemy.orm.exc import StaleDataError
 
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
@@ -162,6 +163,23 @@ def check_for_mod(api_key, operation, whitelisted_users=None):
 
 # I have to put it outside the class as I can't figure out how to extend the argparser
 # and also pass it to the @api.expect decorator inside the class
+def commit_request_cancellation(wp) -> bool:
+    """Commit a request's cancellation; return False when the request vanished meanwhile.
+
+    A client can cancel at the same instant the request completes or expires and its row is
+    removed. The ORM then reports the pending UPDATE matched no row. That is not an error for
+    the caller: the request is gone either way, and the status computed before the commit is
+    still the right answer.
+    """
+    try:
+        db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        logger.info(f"Request with ID {wp.id} was removed while being cancelled; treating it as already finished.")
+        return False
+    return True
+
+
 class GenerateTemplate(Resource):
     gentype = "template"
     proxied_request = False

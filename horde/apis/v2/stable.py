@@ -23,6 +23,7 @@ from horde.apis.v2.base import (
     JobPopTemplate,
     JobSubmitTemplate,
     api,
+    commit_request_cancellation,
 )
 from horde.classes.base import settings
 from horde.classes.base.style import StyleCollection
@@ -611,7 +612,8 @@ class ImageAsyncStatus(Resource):
         )
         wp.n = 0
         wp.jobs = wp_status["finished"]
-        db.session.commit()
+        if not commit_request_cancellation(wp):
+            return (wp_status, 200)
         if cancellation_claimed:
             record_request_cancellation_forecast(request_id=str(wp.id), cancelled_at=cancelled_at)
         return (wp_status, 200)
