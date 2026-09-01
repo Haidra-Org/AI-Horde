@@ -58,6 +58,11 @@ from horde.request_scheduling import record_request_expiry_forecast
 from horde.stripe_subs import stripe_subs
 from horde.vars import horde_instance_id
 
+# The quorum owner renews its claim every second (the Quorum thread's interval). The claim must outlive a
+# few missed renewals, since each renewal is a fanned-out redis write across the network: too short a TTL
+# lets every other node briefly claim the quorum whenever one write is slow.
+QUORUM_CLAIM_TTL = timedelta(seconds=5)
+
 
 @logger.catch(reraise=True)
 def get_quorum():
@@ -67,7 +72,7 @@ def get_quorum():
         return None
     quorum = hr.horde_r.get("horde_quorum")
     if not quorum:
-        hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
+        hr.horde_r_setex("horde_quorum", QUORUM_CLAIM_TTL, horde_instance_id)
         logger.critical(
             f"Quorum changed to port {args.port} with ID {horde_instance_id}",
         )
@@ -75,10 +80,10 @@ def get_quorum():
         # one iteration to ensure no other node raced us to the quorum
         return None
     if quorum == horde_instance_id:
-        hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
+        hr.horde_r_setex("horde_quorum", QUORUM_CLAIM_TTL, horde_instance_id)
         logger.trace(f"Quorum retained in port {args.port} with ID {horde_instance_id}")
     elif args.quorum:
-        hr.horde_r_setex("horde_quorum", timedelta(seconds=2), horde_instance_id)
+        hr.horde_r_setex("horde_quorum", QUORUM_CLAIM_TTL, horde_instance_id)
         logger.debug(
             f"Forcing Pickingh Quorum n port {args.port} with ID {horde_instance_id}",
         )

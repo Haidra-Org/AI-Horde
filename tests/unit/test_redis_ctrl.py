@@ -41,3 +41,15 @@ def test_urls_carry_socket_timeouts(url_factory):
     assert url.path.lstrip("/").isdigit()
     assert float(query["socket_timeout"][0]) == redis_ctrl.redis_socket_timeout_seconds
     assert float(query["socket_connect_timeout"][0]) == redis_ctrl.redis_socket_connect_timeout_seconds
+
+
+def test_fan_out_clients_are_created_once_per_server(monkeypatch):
+    monkeypatch.setenv("REDIS_SERVERS", '["10.0.0.1", "10.0.0.2"]')
+    monkeypatch.setattr(redis_ctrl, "is_redis_up", lambda hostname, port=6379: True)
+    monkeypatch.setattr(redis_ctrl, "_redis_db_server_clients", {})
+
+    first = redis_ctrl.get_all_redis_db_servers()
+    second = redis_ctrl.get_all_redis_db_servers()
+
+    assert [c.connection_pool.connection_kwargs["host"] for c in first] == ["10.0.0.1", "10.0.0.2"]
+    assert all(a is b for a, b in zip(first, second, strict=True))

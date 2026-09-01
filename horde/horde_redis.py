@@ -48,8 +48,21 @@ class HordeRedis:
             time.sleep(10)
             self.all_horde_redis = get_all_redis_db_servers()
 
+    def _servers_primary_first(self) -> list:
+        """Return the fan-out targets with the primary first.
+
+        Every read goes to the primary, and the background-job quorum heartbeat is one of the fanned-out writes,
+        so a stalled secondary must never delay the primary's write.
+        """
+        if self.horde_r is None:
+            return list(self.all_horde_redis)
+        primary_host = self.horde_r.connection_pool.connection_kwargs.get("host")
+        primary = [server for server in self.all_horde_redis if server.connection_pool.connection_kwargs.get("host") == primary_host]
+        secondaries = [server for server in self.all_horde_redis if server.connection_pool.connection_kwargs.get("host") != primary_host]
+        return primary + secondaries
+
     def horde_r_set(self, key, value):
-        for hr in self.all_horde_redis:
+        for hr in self._servers_primary_first():
             try:
                 hr.set(key, value)
             except Exception as err:
@@ -58,7 +71,7 @@ class HordeRedis:
             self.horde_local_r.setex(key, timedelta(10), value)
 
     def horde_r_setex(self, key, expiry, value):
-        for hr in self.all_horde_redis:
+        for hr in self._servers_primary_first():
             try:
                 hr.setex(key, expiry, value)
             except Exception as err:
@@ -136,7 +149,7 @@ class HordeRedis:
         return json.loads(value)
 
     def horde_r_delete(self, key):
-        for hr in self.all_horde_redis:
+        for hr in self._servers_primary_first():
             try:
                 hr.delete(key)
             except Exception as err:

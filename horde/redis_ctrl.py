@@ -99,6 +99,18 @@ def get_redis_db_server(server_ip):
     return _redis_client(server_ip, horde_db, decode_responses=True)
 
 
+_redis_db_server_clients: dict[str, redis.Redis] = {}
+
+
+def _redis_db_server_client(server_ip: str) -> redis.Redis:
+    """Return the shared client for ``server_ip``, creating it once; a client reconnects on its own."""
+    client = _redis_db_server_clients.get(server_ip)
+    if client is None:
+        client = get_redis_db_server(server_ip)
+        _redis_db_server_clients[server_ip] = client
+    return client
+
+
 def get_all_redis_db_servers():
     """An array of all the redis servers in the cluster
     We use this to always store the entries in all servers
@@ -108,7 +120,7 @@ def get_all_redis_db_servers():
         working_redis = []
         for rs in json.loads(os.getenv("REDIS_SERVERS")):
             if is_redis_up(rs):
-                working_redis.append(get_redis_db_server(rs))
+                working_redis.append(_redis_db_server_client(rs))
             else:
                 logger.warning(f"redis server '{rs} appears unreachable. Will not be used set in the cluster")
         return working_redis
