@@ -180,11 +180,12 @@ def commit_request_cancellation(wp) -> bool:
     the caller: the request is gone either way, and the status computed before the commit is
     still the right answer.
     """
+    request_id = wp.id
     try:
         db.session.commit()
     except StaleDataError:
         db.session.rollback()
-        logger.info(f"Request with ID {wp.id} was removed while being cancelled; treating it as already finished.")
+        logger.info(f"Request with ID {request_id} was removed while being cancelled; treating it as already finished.")
         return False
     return True
 
