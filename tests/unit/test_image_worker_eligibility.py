@@ -14,6 +14,7 @@ import pytest
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 
 from horde.classes.base.user import UserRoleTypes
+from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
@@ -207,3 +208,32 @@ def test_runtime_gate_allows_control_strength_on_a_bridge_that_reads_it(
     monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
 
     assert worker.can_generate_with_model_names(request, [_MODEL]) == [True, None]
+
+
+def test_runtime_gate_judges_baseline_features_on_the_requested_models_only(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker also holding a family no release renders hires-fix on still serves an SD1 hires-fix job."""
+    flux_model = "flux-model"
+    seed_image_reference(
+        monkeypatch,
+        {
+            _MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1,
+            flux_model: KNOWN_IMAGE_GENERATION_BASELINE.flux_1,
+        },
+    )
+    request, worker = _make_pair(make_user, make_user_role)
+    db.session.add(WorkerModel(worker_id=worker.id, model=flux_model))
+    db.session.commit()
+    request.params["hires_fix"] = True
+    worker.bridge_agent = "AI Horde Worker reGen:18.4.1:https://github.com/Haidra-Org/horde-worker-reGen"
+    monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+
+    assert worker.can_generate_with_model_names(request, [_MODEL, flux_model]) == [True, None]
+
+    request.models = [WPModels(model=flux_model, wp_id=request.id)]
+    db.session.commit()
+    assert worker.can_generate_with_model_names(request, [_MODEL, flux_model]) == [False, "bridge_version"]

@@ -267,8 +267,12 @@ class ImageWorker(Worker):
                 return [False, "bridge_version"]
             if not self.allow_sdxl_controlnet:
                 return [False, "controlnet"]
-        # A feature the worker's own release does not render on a baseline it holds is undispatchable to
-        # it, even though the request was accepted because some other release does render it.
+        # A feature the worker's own release does not render on the baseline the job would run on is
+        # undispatchable to it, even though the request was accepted because some other release does render it.
+        # Only the models that can serve this request are judged: a worker advertising many families must not
+        # lose an SD1 hires-fix job because it also holds a flux model.
+        candidate_model_names = set(requested_models) & set(my_model_names) if requested_models else set(my_model_names)
+        candidate_baselines = model_reference.get_all_model_baselines(candidate_model_names)
         requested_baseline_features = {
             BaselineFeature.HIRES_FIX: bool(waiting_prompt.params.get("hires_fix")),
             BaselineFeature.CONTROL_TYPE: "control_type" in waiting_prompt.params,
@@ -276,7 +280,7 @@ class ImageWorker(Worker):
             BaselineFeature.TRANSPARENT: bool(waiting_prompt.params.get("transparent", False)),
         }
         for feature, is_requested in requested_baseline_features.items():
-            if is_requested and any(not bridge_supports(feature, str(baseline), self.bridge_agent) for baseline in my_baselines):
+            if is_requested and any(not bridge_supports(feature, str(baseline), self.bridge_agent) for baseline in candidate_baselines):
                 return [False, "bridge_version"]
         if any(lora.get("is_version") for lora in waiting_prompt.params.get("loras", [])) and not check_bridge_capability(
             "lora_versions",
