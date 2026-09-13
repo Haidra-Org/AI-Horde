@@ -7,6 +7,13 @@ from flask_restx import fields
 from horde.apis.models import v2
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
+from horde.classes.kobold.request_fit import (
+    DEFAULT_MAX_CONTEXT_LENGTH,
+    DEFAULT_MAX_LENGTH,
+    MAX_CONTEXT_LENGTH_LIMIT,
+    MAX_LENGTH_LIMIT,
+    ContextFit,
+)
 from horde.vars import horde_title
 
 
@@ -26,6 +33,13 @@ class TextParsers(v2.Parsers):
             required=False,
             default=[],
             help="The acceptable models with which to generate.",
+            location="json",
+        )
+        self.generate_parser.add_argument(
+            "context_fit",
+            type=str,
+            required=False,
+            help="What to do when the prompt does not fit the requested max_context_length.",
             location="json",
         )
         self.job_pop_parser.add_argument(
@@ -189,14 +203,14 @@ class TextModels(v2.Models):
         # param itself accepts, and a style's own params model advertises that same range.
         kobold_max_context_length = fields.Integer(
             min=80,
-            default=2048,
-            max=1_048_576,
+            default=DEFAULT_MAX_CONTEXT_LENGTH,
+            max=MAX_CONTEXT_LENGTH_LIMIT,
             description="Maximum number of tokens to send to the model.",
         )
         kobold_max_length = fields.Integer(
             min=16,
-            max=4096,
-            default=80,
+            max=MAX_LENGTH_LIMIT,
+            default=DEFAULT_MAX_LENGTH,
             description="Number of tokens to generate.",
         )
         self.root_model_generation_payload_kobold = api.inherit(
@@ -379,6 +393,18 @@ class TextModels(v2.Models):
                         "strings keyed by field name. Only accepted together with 'style', and only for fields "
                         "that style declares. Each value, and all of them together, are limited to the same "
                         f"length as a prompt ({MAX_TEMPLATE_FIELD_WORDS} words)."
+                    ),
+                ),
+                "context_fit": fields.String(
+                    required=False,
+                    default=ContextFit.IGNORE.value,
+                    enum=[setting.value for setting in ContextFit],
+                    description=(
+                        "What to do when the prompt does not fit the requested max_context_length. "
+                        f"'{ContextFit.IGNORE.value}' sends it anyway and the worker cuts the front of it away, "
+                        f"'{ContextFit.REJECT.value}' refuses the request, and "
+                        f"'{ContextFit.GROW.value}' raises max_context_length until the prompt fits and charges "
+                        "for the larger context."
                     ),
                 ),
                 "extra_slow_workers": fields.Boolean(

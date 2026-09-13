@@ -415,3 +415,100 @@ class TestTextStyleTemplateFields:
 
             assert response.status_code == 400, response.get_data(as_text=True)
             assert response.get_json()["rc"] == "TemplateFieldMissing"
+
+
+class TestContextFit:
+    """Sizing the prompt against the context the request asked for."""
+
+    over_long_prompt = "filler text " * 400
+    """Around 1600 estimated tokens, well past the 1024 context the cases below ask for."""
+
+    def test_ignore_is_the_default_and_sends_an_over_long_prompt(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        with queued_request(
+            client,
+            request_headers,
+            prompt=self.over_long_prompt,
+            params={"max_length": 240, "max_context_length": 1024},
+        ):
+            payload = pop_payload(client, request_headers)
+
+            assert payload["max_context_length"] == 1024
+
+    def test_reject_refuses_a_prompt_that_does_not_fit(self, client, request_headers: dict[str, str]) -> None:
+        response = post_request(
+            client,
+            request_headers,
+            prompt=self.over_long_prompt,
+            context_fit="reject",
+            params={"max_length": 240, "max_context_length": 1024},
+        )
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "PromptExceedsContext"
+
+    def test_reject_accepts_a_prompt_that_fits(self, client, request_headers: dict[str, str]) -> None:
+        with queued_request(
+            client,
+            request_headers,
+            context_fit="reject",
+            params={"max_length": 80, "max_context_length": 1024},
+        ):
+            payload = pop_payload(client, request_headers)
+
+            assert payload["max_context_length"] == 1024
+
+    def test_grow_raises_the_context_to_a_power_of_two(self, client, request_headers: dict[str, str]) -> None:
+        with queued_request(
+            client,
+            request_headers,
+            prompt=self.over_long_prompt,
+            context_fit="grow",
+            params={"max_length": 240, "max_context_length": 1024},
+        ):
+            payload = pop_payload(client, request_headers)
+
+            assert payload["max_context_length"] == 2048
+
+    def test_growth_stops_at_the_styles_ceiling(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "text grow ceiling",
+            parameter_policy={"override": "all", "ceilings": {"max_context_length": 1024}},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            response = post_request(
+                client,
+                request_headers,
+                prompt=self.over_long_prompt,
+                style=style_id,
+                context_fit="grow",
+                params={"max_length": 240, "max_context_length": 1024},
+            )
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "PromptExceedsContext"
+
+    def test_an_unknown_setting_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        response = post_request(client, request_headers, context_fit="shrink")
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    @pytest.mark.parametrize("context_fit", ["ignore", "reject", "grow"])
+    def test_a_request_that_fits_is_unaffected_by_its_setting(
+        self,
+        client,
+        request_headers: dict[str, str],
+        context_fit: str,
+    ) -> None:
+        with queued_request(
+            client,
+            request_headers,
+            context_fit=context_fit,
+            params={"max_length": 80, "max_context_length": 2048},
+        ):
+            payload = pop_payload(client, request_headers)
+
+            assert payload["max_context_length"] == 2048

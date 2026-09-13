@@ -26,6 +26,19 @@ from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
     get_compiled_textgen_stats_totals,
 )
+from horde.classes.kobold.request_fit import (
+    DEFAULT_MAX_CONTEXT_LENGTH,
+    DEFAULT_MAX_LENGTH,
+    MAX_CONTEXT_LENGTH_LIMIT,
+    MAX_CONTEXT_LENGTH_PARAMETER,
+    MAX_LENGTH_PARAMETER,
+    ContextFit,
+    context_growth_upper_bound,
+    estimate_prompt_tokens,
+    fit_context_length,
+    parse_context_fit,
+    prompt_fits_context,
+)
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.database import functions as database
@@ -182,7 +195,9 @@ class TextAsyncGenerate(GenerateTemplate):
     def validate(self):
         self.prompt = self.args.prompt
         self.apikey = self.args.apikey
+        self.context_fit = parse_context_fit(self.args.context_fit)
         self.apply_style()
+        self.apply_context_fit()
         super().validate()
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
@@ -224,6 +239,57 @@ class TextAsyncGenerate(GenerateTemplate):
             self.style_kudos = True
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
+
+    def apply_context_fit(self):
+        """Size the request's context against the prompt that will actually be sent.
+
+        Runs after any style has been applied, since a style's template changes how long the prompt
+        is. Under ``ignore`` an over-long prompt is sent unchanged and the worker cuts the front of it
+        away, which is how every text request has behaved.
+        """
+        if self.context_fit is ContextFit.IGNORE:
+            return
+
+        max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
+        max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
+        estimated_prompt_tokens = estimate_prompt_tokens(self.prompt)
+        # Checked first so a prompt that already fits does not query the worker pool.
+        if prompt_fits_context(
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            max_length=max_length,
+            max_context_length=max_context_length,
+        ):
+            return
+
+        fitted_context_length = fit_context_length(
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            max_length=max_length,
+            max_context_length=max_context_length,
+            context_fit=self.context_fit,
+            upper_bound=self.get_context_growth_upper_bound(),
+        )
+        if fitted_context_length == max_context_length:
+            return
+
+        # Copied before writing, since self.params may still be the parsed request body; the quote,
+        # the hash and the waiting prompt all read the params back off self.
+        self.params = dict(self.params)
+        self.params[MAX_CONTEXT_LENGTH_PARAMETER] = fitted_context_length
+        logger.debug(f"Context grown from {max_context_length} to {fitted_context_length} to fit the prompt.")
+
+    def get_context_growth_upper_bound(self):
+        """Return the largest context this request may grow to.
+
+        Returns:
+            int: The limit, which only growth is held to.
+        """
+        if self.context_fit is not ContextFit.GROW:
+            return MAX_CONTEXT_LENGTH_LIMIT
+
+        return context_growth_upper_bound(
+            policy=self.style_parameter_policy,
+            highest_worker_max_context_length=database.get_highest_text_worker_max_context_length(self.models),
+        )
 
 
 class TextAsyncStatus(Resource):
