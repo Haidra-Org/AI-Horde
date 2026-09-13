@@ -572,5 +572,6 @@ class TextModels(v2.Models):
                 ),
                 "use_count": fields.Integer(description="The amount of times this style has been used in generations."),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
+                "shared_key": fields.Nested(self.response_model_sharedkey_details, skip_none=True, allow_null=True),
             },
         )

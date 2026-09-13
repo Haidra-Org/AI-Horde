@@ -176,3 +176,27 @@ class TestTextStylePartialPatch:
             details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
             assert details["params"]["temperature"] == 0.7
             assert details["models"] == TEXT_MODELS
+
+    def test_a_patch_can_assign_a_shared_key(self, client, request_headers: dict[str, str]) -> None:
+        key_response = client.put(
+            "/api/v2/sharedkeys",
+            json={"kudos": 100, "name": "text style shared key"},
+            headers=request_headers,
+        )
+        assert key_response.status_code == 200, key_response.get_data(as_text=True)
+        shared_key_id = key_response.get_json()["id"]
+
+        try:
+            with created_style(client, request_headers, style_body("patch shared key")) as style_id:
+                patch_response = client.patch(
+                    f"/api/v2/styles/text/{style_id}",
+                    json={"sharedkey": shared_key_id},
+                    headers=request_headers,
+                )
+                assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+                details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+                assert details["shared_key"] is not None
+                assert details["shared_key"]["id"] == shared_key_id
+        finally:
+            client.delete(f"/api/v2/sharedkeys/{shared_key_id}", headers=request_headers)
