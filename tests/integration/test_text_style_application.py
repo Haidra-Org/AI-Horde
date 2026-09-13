@@ -270,6 +270,21 @@ class TestTextStyleQuote:
 
             assert styled_quote == unstyled_quote + STYLE_KUDOS_SURCHARGE
 
+    def test_your_own_style_adds_no_surcharge(self, client, request_headers: dict[str, str]) -> None:
+        # The surcharge pays the style's author, so a request generating under its own author's style
+        # has nobody to pay and is quoted at what its params come to.
+        unstyled_quote = dry_run_kudos(client, request_headers, params=dict(STYLE_PARAMS))
+
+        with created_style(client, request_headers, style_body("text apply own style")) as style_id:
+            styled_quote = dry_run_kudos(
+                client,
+                request_headers,
+                style=style_id,
+                params={"max_length": 480, "temperature": 1.1},
+            )
+
+            assert styled_quote == unstyled_quote
+
 
 class TestTextStyleParameterPolicy:
     """Which of a request's params a style's parameter policy lets through."""
@@ -624,6 +639,6 @@ class TestTextStyleApplicationCompatibility:
                 p="a horde of cute stable robots repairing a mainframe",
             )
             assert quote["resolved"]["params"] == {**STYLE_PARAMS, "n": 2}
-            # Generating under a style adds a flat surcharge that a plain request does not pay, and it
-            # is added for the style's owner too. The rest of the price comes from the style's params.
-            assert quote["kudos"] == unstyled.get_json()["kudos"] + STYLE_KUDOS_SURCHARGE
+            # The style here belongs to the requester, so no surcharge applies and the whole price
+            # comes from the style's params.
+            assert quote["kudos"] == unstyled.get_json()["kudos"]
