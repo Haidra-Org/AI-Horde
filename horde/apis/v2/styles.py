@@ -19,6 +19,7 @@ from horde.database import functions as database
 from horde.flask import cache, db
 from horde.limiter import limiter
 from horde.logger import logger
+from horde.style_contract_document import published_style_contract
 from horde.utils import ensure_clean
 
 ## Styles
@@ -294,6 +295,36 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
             logger.info(f"Moderator {self.user.moderator} deleted style {self.existing_style.id}")
         self.existing_style.delete()
         return ({"message": "OK"}, 200)
+
+
+class StyleContract(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+
+    decorators = [limiter.exempt]
+
+    @logger.catch(reraise=True)
+    @api.expect(get_parser)
+    @api.response(200, "Contract Published", models.response_model_style_contract)
+    def get(self):
+        """What a style may declare, and what becomes of the braces in its prompt
+
+        Everything a style of either type is validated against, published so a client can offer only
+        the params a policy may name, write a prompt template that comes out of formatting as it was
+        meant to, and know what it may set on a request running under someone else's style. A client
+        pins 'schema_version' and re-reads this when it moves.
+        """
+        # The contract is a pure function of the installed code, so it is compiled once per process and
+        # held rather than cached between them: a response cache could only ever return what this
+        # process already has, and would outlive the build that filled it.
+        return published_style_contract(), 200
 
 
 ## Collections

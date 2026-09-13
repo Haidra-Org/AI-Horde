@@ -13,6 +13,7 @@ from horde.classes.base.prompt_moderation import (
     PromptModerationOutcome,
     PromptModerationReason,
 )
+from horde.classes.base.style_application import PROTECTED_TEXT_PLACEHOLDER_PATTERN
 from horde.classes.base.style_contract import (
     RESERVED_TEMPLATE_FIELD_NAMES,
     TEMPLATE_FIELD_DESCRIPTION_MAX_LENGTH,
@@ -1312,6 +1313,70 @@ class Models:
                     default=False,
                     description="When true, a request using this style has to supply this field.",
                 ),
+            },
+        )
+        self.model_style_contract_protected_pattern = api.model(
+            "StyleContractProtectedPattern",
+            {
+                "pattern": fields.String(
+                    description="A regular expression matching template text that is left exactly as written.",
+                    example=PROTECTED_TEXT_PLACEHOLDER_PATTERN.pattern,
+                ),
+                "description": fields.String(description="What the matching text is for."),
+            },
+        )
+        self.model_style_contract_type = api.model(
+            "StyleContractStyleType",
+            {
+                "placeholders": fields.List(
+                    fields.String(example="p"),
+                    description="The placeholders the horde fills in this type's prompt template, written without braces.",
+                ),
+                "declared_fields_are_placeholders": fields.Boolean(
+                    description=(
+                        "Whether a placeholder declared in 'template_fields' is filled from the request's own 'template_fields' object."
+                    ),
+                ),
+                "protected_patterns": fields.List(
+                    fields.Nested(self.model_style_contract_protected_pattern),
+                    description="Template text this type leaves alone, empty for a type that protects nothing.",
+                ),
+                "brace_handling": fields.String(description="What the braces in this type's prompt template mean."),
+                "overridable_parameters": fields.List(
+                    fields.String(example="steps"),
+                    description="Every param a policy of this type may put in 'overridable'.",
+                ),
+                "ceiling_parameters": fields.Raw(
+                    example={"steps": {"minimum": 1, "maximum": 500}},
+                    description=(
+                        "The params a policy of this type may cap, each with the lowest and highest value its "
+                        "ceiling may be set to. A null bound means the param has none."
+                    ),
+                ),
+                "context_fit_modes": fields.List(
+                    fields.String(example="grow"),
+                    description=("How a request of this type may be sized against its prompt, or null for a type that cannot be sized."),
+                ),
+                "style_write_rate_limits": fields.List(
+                    fields.String(example="20/hour"),
+                    description=(
+                        "Every limit a client creating a style of this type is held to; all of them apply at "
+                        "once. A whitelisted service address is allowed more."
+                    ),
+                ),
+            },
+        )
+        self.response_model_style_contract = api.model(
+            "StyleContract",
+            {
+                "schema_version": fields.Integer(
+                    description=(
+                        "What version of this contract is being served. It is raised whenever what is published "
+                        "changes meaning, so a client can pin it and re-read the contract when it moves."
+                    ),
+                ),
+                "text": fields.Nested(self.model_style_contract_type, description="What a text style may declare."),
+                "image": fields.Nested(self.model_style_contract_type, description="What an image style may declare."),
             },
         )
 
