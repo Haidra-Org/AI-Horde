@@ -175,6 +175,20 @@ def pop_payload(client: FlaskClient, request_headers: dict[str, str]) -> dict[st
     return popped["payload"]
 
 
+def post_dry_run(client: FlaskClient, request_headers: dict[str, str], **body: Any) -> TestResponse:
+    """Ask for a quote on a text request and return the raw response.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the requesting user's API key.
+        **body: The request body, on top of a prompt, the model list and the dry run flag.
+
+    Returns:
+        The response, so a case can assert on the resolved request as well as on the quote.
+    """
+    return post_request(client, request_headers, dry_run=True, **body)
+
+
 def dry_run_kudos(client: FlaskClient, request_headers: dict[str, str], **body: Any) -> float:
     """Ask for a quote on a text request and return it.
 
@@ -186,13 +200,7 @@ def dry_run_kudos(client: FlaskClient, request_headers: dict[str, str], **body: 
     Returns:
         The quoted kudos.
     """
-    request_body: dict[str, Any] = {
-        "prompt": "a horde of cute stable robots repairing a mainframe",
-        "models": TEXT_MODELS,
-        "dry_run": True,
-    }
-    request_body.update(body)
-    response = client.post("/api/v2/generate/text/async", json=request_body, headers=request_headers)
+    response = post_dry_run(client, request_headers, **body)
     assert response.status_code == 200, response.get_data(as_text=True)
     return response.get_json()["kudos"]
 
@@ -512,3 +520,97 @@ class TestContextFit:
             payload = pop_payload(client, request_headers)
 
             assert payload["max_context_length"] == 2048
+
+
+class TestTextDryRunResolvedRequest:
+    """What a dry run returns alongside the quote."""
+
+    def test_a_request_without_a_style_resolves_to_itself(self, client, request_headers: dict[str, str]) -> None:
+        response = post_dry_run(
+            client,
+            request_headers,
+            prompt="describe a lighthouse",
+            params={"max_length": 80},
+        )
+
+        assert response.status_code == 200, response.get_data(as_text=True)
+        resolved = response.get_json()["resolved"]
+        assert resolved["prompt"] == "describe a lighthouse"
+        assert resolved["style"] is None
+        assert resolved["models"] == TEXT_MODELS
+        assert resolved["context_fit"] == "ignore"
+        assert resolved["estimated_prompt_tokens"] == 7
+
+    def test_a_styled_request_reports_the_style_it_ran_under(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("text resolved style")) as style_id:
+            response = post_dry_run(client, request_headers, style=style_id, params={"max_length": 480})
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            resolved = response.get_json()["resolved"]
+            assert resolved["style"]["id"] == style_id
+            assert resolved["style"]["name"] == "text resolved style"
+            assert resolved["prompt"].startswith("### Instruction:")
+            assert resolved["params"]["max_length"] == STYLE_PARAMS["max_length"]
+
+    def test_the_grown_context_is_reported_and_charged_for(self, client, request_headers: dict[str, str]) -> None:
+        # A quote is cached against the params it was computed from, and both requests here send the
+        # same params, so the grown one has to skip that cache to be quoted at its grown context.
+        ungrown = post_dry_run(
+            client,
+            request_headers,
+            prompt=TestContextFit.over_long_prompt,
+            params={"max_length": 240, "max_context_length": 1024},
+        )
+        grown = post_dry_run(
+            client,
+            request_headers,
+            prompt=TestContextFit.over_long_prompt,
+            context_fit="grow",
+            params={"max_length": 240, "max_context_length": 1024},
+        )
+
+        assert ungrown.status_code == 200, ungrown.get_data(as_text=True)
+        assert grown.status_code == 200, grown.get_data(as_text=True)
+        assert grown.get_json()["resolved"]["params"]["max_context_length"] == 2048
+        assert grown.get_json()["kudos"] > ungrown.get_json()["kudos"]
+
+    def test_a_queued_request_carries_no_resolved_request(self, client, request_headers: dict[str, str]) -> None:
+        response = post_request(client, request_headers)
+
+        assert response.status_code == 202, response.get_data(as_text=True)
+        queued = response.get_json()
+        assert "resolved" not in queued
+        client.delete(f"/api/v2/generate/text/status/{queued['id']}", headers=request_headers)
+
+
+class TestTextStyleApplicationCompatibility:
+    """A style that declares no policy or template fields applies exactly as it did before."""
+
+    def test_the_prompt_the_params_and_the_quote_are_unchanged(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        # The baseline sends exactly the style's params and a temperature no other case uses, so the
+        # two are quoted under different cache keys. Temperature does not affect the price, which
+        # comes from max_length, max_context_length and the model.
+        unstyled = post_dry_run(client, request_headers, params={**STYLE_PARAMS, "n": 2, "temperature": 0.9})
+        assert unstyled.status_code == 200, unstyled.get_data(as_text=True)
+
+        with created_style(client, request_headers, style_body("text compatibility")) as style_id:
+            styled = post_dry_run(
+                client,
+                request_headers,
+                style=style_id,
+                params={"max_length": 512, "max_context_length": 4096, "temperature": 1.5, "n": 2},
+            )
+            assert styled.status_code == 200, styled.get_data(as_text=True)
+            quote = styled.get_json()
+
+            assert quote["resolved"]["prompt"] == STYLE_PROMPT.format(
+                p="a horde of cute stable robots repairing a mainframe",
+            )
+            assert quote["resolved"]["params"] == {**STYLE_PARAMS, "n": 2}
+            # Generating under a style adds a flat surcharge that a plain request does not pay, and it
+            # is added for the style's owner too. The rest of the price comes from the style's params.
+            assert quote["kudos"] == unstyled.get_json()["kudos"] + STYLE_KUDOS_SURCHARGE

@@ -673,6 +673,28 @@ class Models:
                 "warnings": fields.List(fields.Nested(self.response_model_warning)),
             },
         )
+        self.response_model_resolved_style = api.model(
+            "ResolvedRequestStyle",
+            {
+                "id": fields.String(description="The UUID of the style that was applied."),
+                "name": fields.String(description="The name of the style that was applied."),
+            },
+        )
+        # Both gentypes report the same four keys and each adds what only it has.
+        self.response_model_resolved_request = api.model(
+            "ResolvedRequest",
+            {
+                "prompt": fields.String(description="The prompt as it will be sent, after any style templating."),
+                "params": fields.Raw(description="The params the request will run under, after the style and its ceilings."),
+                "models": fields.List(fields.String(description="A model this request will accept.")),
+                "style": fields.Nested(
+                    self.response_model_resolved_style,
+                    allow_null=True,
+                    skip_none=True,
+                    description="The style that was applied, or null when none was.",
+                ),
+            },
+        )
         self.response_model_generation_payload = api.model(
             "ModelPayload",
             {

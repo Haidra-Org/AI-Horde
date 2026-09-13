@@ -25,6 +25,9 @@ TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
 DEFAULT_IMAGE_SIZE = 512
 """The size a request runs at when neither it nor its style sets one."""
 
+STYLE_KUDOS_SURCHARGE = 2
+"""What a request pays on top of its params for generating under a style."""
+
 TEMPLATE_FIELDS = [
     {"name": "caption", "description": "What the picture shows", "required": True},
     {"name": "tags", "description": "Comma-separated tags", "required": False},
@@ -134,6 +137,20 @@ def post_request(client: FlaskClient, request_headers: dict[str, str], **body: A
     }
     request_body.update(body)
     return client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+
+
+def post_dry_run(client: FlaskClient, request_headers: dict[str, str], **body: Any) -> TestResponse:
+    """Ask for a quote on an image request and return the raw response.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the requesting user's API key.
+        **body: The request body, on top of a prompt, the model list and the dry run flag.
+
+    Returns:
+        The response, so a case can assert on the resolved request as well as on the quote.
+    """
+    return post_request(client, request_headers, dry_run=True, **body)
 
 
 @contextmanager
@@ -496,3 +513,91 @@ class TestImageStyleTemplateFields:
 
             assert response.status_code == 400, response.get_data(as_text=True)
             assert response.get_json()["rc"] == "TemplateFieldMissing"
+
+
+class TestImageDryRunResolvedRequest:
+    """What a dry run returns alongside the quote."""
+
+    def test_a_request_without_a_style_resolves_to_itself(self, client, request_headers: dict[str, str]) -> None:
+        response = post_dry_run(
+            client,
+            request_headers,
+            prompt="robots###blurry",
+            params={"width": 512, "height": 512, "steps": 8},
+        )
+
+        assert response.status_code == 200, response.get_data(as_text=True)
+        resolved = response.get_json()["resolved"]
+        assert resolved["prompt"] == "robots"
+        assert resolved["negative_prompt"] == "blurry"
+        assert resolved["style"] is None
+        assert resolved["models"] == ["stable_diffusion"]
+        assert resolved["params"]["width"] == 512
+
+    def test_a_prompt_without_a_separator_has_no_negative_half(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        response = post_dry_run(client, request_headers, prompt="robots", params={"steps": 8})
+
+        assert response.status_code == 200, response.get_data(as_text=True)
+        resolved = response.get_json()["resolved"]
+        assert resolved["prompt"] == "robots"
+        assert resolved["negative_prompt"] is None
+
+    def test_a_styled_request_reports_the_style_it_ran_under(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("image resolved style")) as style_id:
+            response = post_dry_run(
+                client,
+                request_headers,
+                prompt="robots###organic",
+                style=style_id,
+                params={"steps": 30},
+            )
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            resolved = response.get_json()["resolved"]
+            assert resolved["style"]["id"] == style_id
+            assert resolved["style"]["name"] == "image resolved style"
+            assert resolved["prompt"] == "robots, impasto impressionism"
+            assert resolved["negative_prompt"] == "no blur, organic"
+            assert resolved["params"]["steps"] == STYLE_PARAMS["steps"]
+
+    def test_a_queued_request_carries_no_resolved_request(self, client, request_headers: dict[str, str]) -> None:
+        response = post_request(client, request_headers)
+
+        assert response.status_code == 202, response.get_data(as_text=True)
+        queued = response.get_json()
+        assert "resolved" not in queued
+        client.delete(f"/api/v2/generate/status/{queued['id']}", headers=request_headers)
+
+    def test_a_style_that_declares_neither_is_quoted_as_it_was_before(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        # The baseline sends exactly the style's params and models, and a cfg_scale no other case
+        # uses, so the two are quoted under different cache keys. The style's params are used as they
+        # are apart from n, so the only difference left is the flat surcharge, which is added for the
+        # style's owner too.
+        unstyled = post_dry_run(
+            client,
+            request_headers,
+            models=TEST_MODELS,
+            params={**STYLE_PARAMS, "cfg_scale": 7.5},
+        )
+        assert unstyled.status_code == 200, unstyled.get_data(as_text=True)
+
+        with created_style(client, request_headers, style_body("image compatibility")) as style_id:
+            styled = post_dry_run(
+                client,
+                request_headers,
+                style=style_id,
+                params={"width": 1024, "height": 1024, "steps": 30},
+            )
+            assert styled.status_code == 200, styled.get_data(as_text=True)
+            quote = styled.get_json()
+
+            assert quote["resolved"]["params"] == {**STYLE_PARAMS, "n": 1}
+            assert quote["kudos"] == unstyled.get_json()["kudos"] + STYLE_KUDOS_SURCHARGE

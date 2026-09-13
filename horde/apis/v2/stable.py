@@ -73,6 +73,9 @@ parsers = ImageParsers()
 STYLE_SIZE_FALLBACK_PARAMETERS = ("width", "height")
 """The params an image style that sets neither of them takes from the request."""
 
+PROMPT_SEPARATOR = "###"
+"""What splits an image prompt into the part to generate from and the part to keep away from."""
+
 
 class ImageAsyncGenerate(GenerateTemplate):
     gentype = "image"
@@ -117,7 +120,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             logger.error(print_args)
             return {"message": "Internal Server Error"}, 500
         if self.args.dry_run:
-            ret_dict = {"kudos": round(self.kudos)}
+            ret_dict = {"kudos": round(self.kudos), "resolved": self.get_resolved_request()}
             return ret_dict, 200
         ret_dict = {
             "id": self.wp.id,
@@ -136,6 +139,20 @@ class ImageAsyncGenerate(GenerateTemplate):
             "It will expire in 20 minutes unless a worker appears. "
             "Please confider reducing its size of the request or choosing a different model."
         )
+
+    def get_resolved_request(self):
+        """Return the request as the horde resolved it, with what only an image request carries.
+
+        Returns:
+            dict: The shared keys, with the prompt split at the separator into the positive and
+                negative halves when it carries one.
+        """
+        resolved_request = super().get_resolved_request()
+        positive_prompt, separator, negative_prompt = resolved_request["prompt"].partition(PROMPT_SEPARATOR)
+        if separator:
+            resolved_request["prompt"] = positive_prompt
+            resolved_request["negative_prompt"] = negative_prompt
+        return resolved_request
 
     def validate(self):
         self.prompt = self.args.prompt
