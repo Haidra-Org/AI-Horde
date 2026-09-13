@@ -14,6 +14,7 @@ import pytest
 from horde import exceptions as e
 from horde.classes.base.style_application import (
     MAX_TEMPLATE_FIELD_WORDS,
+    format_text_style_prompt,
     merge_client_parameters,
     resolve_template_field_values,
 )
@@ -271,3 +272,92 @@ class TestTemplateFields:
             )
 
         assert rejection.value.rc == "InvalidPromptSize"
+
+
+class TestTextPromptFormatting:
+    """What a text style's template turns into once the request's values are in it."""
+
+    def test_the_prompt_and_the_declared_fields_are_filled_in(self) -> None:
+        formatted = format_text_style_prompt(
+            template="### Instruction:\n{p}\n\nTags: {tags}\n",
+            prompt="describe a lighthouse",
+            field_values={"tags": "dusk, storm"},
+        )
+
+        assert formatted == "### Instruction:\ndescribe a lighthouse\n\nTags: dusk, storm\n"
+
+    def test_a_placeholder_nothing_fills_becomes_nothing(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{p} [{tags}]",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "a lighthouse []"
+
+    def test_an_instruct_placeholder_is_kept(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{{[INPUT]}}{p}{{[OUTPUT]}}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "{{[INPUT]}}a lighthouse{{[OUTPUT]}}"
+
+    def test_an_instruct_placeholder_beside_the_prompt_leaves_both_alone(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{{[INPUT]}}{p}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "{{[INPUT]}}a lighthouse"
+
+    def test_the_same_instruct_placeholder_twice_is_kept_both_times(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{{[INPUT]}}{p}{{[INPUT]}}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "{{[INPUT]}}a lighthouse{{[INPUT]}}"
+
+    def test_a_lowercase_token_is_not_kept(self) -> None:
+        # Only the uppercase form is an instruct placeholder; everything else formats as it always has,
+        # so the doubled braces collapse and the inner text is left where it was.
+        formatted = format_text_style_prompt(
+            template="{{[input]}}{p}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "{[input]}a lighthouse"
+
+    def test_a_malformed_token_is_not_kept(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{{[IN PUT]}}{p}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "{[IN PUT]}a lighthouse"
+
+    def test_doubled_braces_elsewhere_still_become_one(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{{literal}} {p} {{[INPUT]}}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == "{literal} a lighthouse {{[INPUT]}}"
+
+    def test_a_supplied_value_that_looks_like_a_marker_is_left_as_it_is(self) -> None:
+        # The marker standing in for an instruct placeholder is drawn per call, so a value cannot be
+        # written to land on one and be turned into a placeholder.
+        formatted = format_text_style_prompt(
+            template="{{[INPUT]}}{p}",
+            prompt="{{[OUTPUT]}} and {p} and {tags}",
+            field_values={},
+        )
+
+        assert formatted == "{{[INPUT]}}{{[OUTPUT]}} and {p} and {tags}"

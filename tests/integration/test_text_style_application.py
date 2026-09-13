@@ -425,6 +425,19 @@ class TestTextStyleTemplateFields:
             assert response.get_json()["rc"] == "TemplateFieldMissing"
 
 
+class TestTextStyleInstructPlaceholders:
+    """What happens to the placeholders a text backend fills in itself."""
+
+    def test_they_reach_the_request_as_written(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("text instruct placeholders", prompt="{{[INPUT]}}{p}{{[OUTPUT]}}")
+        with created_style(client, request_headers, body) as style_id:
+            response = post_dry_run(client, request_headers, prompt="describe a lighthouse", style=style_id)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            resolved = response.get_json()["resolved"]
+            assert resolved["prompt"] == "{{[INPUT]}}describe a lighthouse{{[OUTPUT]}}"
+
+
 class TestContextFit:
     """Sizing the prompt against the context the request asked for."""
 

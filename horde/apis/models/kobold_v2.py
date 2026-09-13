@@ -576,6 +576,8 @@ class TextModels(v2.Models):
                         "The prompt template which will be sent to Stable Diffusion to generate an image. "
                         "The user's prompt will be injected into this."
                         " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
+                        " A '{{[NAME]}}' token, with uppercase letters and underscores between the brackets, is left in"
+                        " the prompt exactly as written, as described in docs/reference/style_contract.md."
                     ),
                     default="{p}",
                     min_length=3,
@@ -641,6 +643,8 @@ class TextModels(v2.Models):
                         "The prompt template which will be sent to Stable Diffusion to generate an image. "
                         "The user's prompt will be injected into this."
                         " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
+                        " A '{{[NAME]}}' token, with uppercase letters and underscores between the brackets, is left in"
+                        " the prompt exactly as written, as described in docs/reference/style_contract.md."
                     ),
                     min_length=7,
                 ),

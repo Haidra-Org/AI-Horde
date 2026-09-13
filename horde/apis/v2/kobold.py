@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import random
-from collections import defaultdict
 from datetime import datetime
 
 from flask import request
@@ -22,6 +21,7 @@ from horde.apis.v2.base import (
 )
 from horde.classes.base import settings
 from horde.classes.base.style import StyleCollection
+from horde.classes.base.style_application import format_text_style_prompt
 from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
     get_compiled_textgen_stats_totals,
@@ -250,10 +250,10 @@ class TextAsyncGenerate(GenerateTemplate):
             self.existing_style = colstyles[0]
         self.models = self.existing_style.get_model_names()
         resolved_template_fields = self.apply_style_contract(self.existing_style)
-        # We need to use defaultdict to avoid getting keyerrors in case the style author added
-        # Erroneous keys in the string
-        self.prompt = self.existing_style.prompt.format_map(
-            defaultdict(str, resolved_template_fields.values, p=self.prompt),
+        self.prompt = format_text_style_prompt(
+            template=self.existing_style.prompt,
+            prompt=self.prompt,
+            field_values=resolved_template_fields.values,
         )
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
