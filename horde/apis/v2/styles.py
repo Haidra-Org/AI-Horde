@@ -160,7 +160,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
     def validate(self):
         self.sharedkey = None
         if self.args.sharedkey:
-            self.shared_key = database.find_sharedkey(self.args.sharedkey)
+            self.sharedkey = database.find_sharedkey(self.args.sharedkey)
             if self.sharedkey is None:
                 raise e.BadRequest("This shared key does not exist", "SharedKeyInvalid")
             shared_key_validity = self.sharedkey.is_valid()
