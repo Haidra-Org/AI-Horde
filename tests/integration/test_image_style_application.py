@@ -579,8 +579,7 @@ class TestImageDryRunResolvedRequest:
     ) -> None:
         # The baseline sends exactly the style's params and models, and a cfg_scale no other case
         # uses, so the two are quoted under different cache keys. The style's params are used as they
-        # are apart from n, so the only difference left is the flat surcharge, which is added for the
-        # style's owner too.
+        # are apart from n, and the style belongs to the requester, so the two come to the same price.
         unstyled = post_dry_run(
             client,
             request_headers,
@@ -600,4 +599,51 @@ class TestImageDryRunResolvedRequest:
             quote = styled.get_json()
 
             assert quote["resolved"]["params"] == {**STYLE_PARAMS, "n": 1}
-            assert quote["kudos"] == unstyled.get_json()["kudos"] + STYLE_KUDOS_SURCHARGE
+            assert quote["kudos"] == unstyled.get_json()["kudos"]
+
+
+class TestImageStyleQuote:
+    """What a quote for a styled request comes to."""
+
+    def test_another_users_style_adds_a_surcharge(
+        self,
+        client,
+        request_headers: dict[str, str],
+        make_api_user,
+    ) -> None:
+        # The baseline sends exactly the style's params and models, with a cfg_scale no other case
+        # uses so the two are quoted under different cache keys. cfg_scale does not change the price,
+        # which comes from the size, the steps and the model, so the only difference left is the
+        # surcharge.
+        unstyled = post_dry_run(
+            client,
+            request_headers,
+            models=TEST_MODELS,
+            params={**STYLE_PARAMS, "cfg_scale": 6.5},
+        )
+        assert unstyled.status_code == 200, unstyled.get_data(as_text=True)
+
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("image apply surcharge")) as style_id:
+            styled = post_dry_run(client, request_headers, style=style_id)
+            assert styled.status_code == 200, styled.get_data(as_text=True)
+
+            assert styled.get_json()["kudos"] == unstyled.get_json()["kudos"] + STYLE_KUDOS_SURCHARGE
+
+    def test_your_own_style_adds_no_surcharge(self, client, request_headers: dict[str, str]) -> None:
+        # The surcharge pays the style's author, so a request generating under its own author's style
+        # has nobody to pay and is quoted at what its params come to.
+        unstyled = post_dry_run(
+            client,
+            request_headers,
+            models=TEST_MODELS,
+            params={**STYLE_PARAMS, "cfg_scale": 5.5},
+        )
+        assert unstyled.status_code == 200, unstyled.get_data(as_text=True)
+
+        with created_style(client, request_headers, style_body("image apply own style")) as style_id:
+            styled = post_dry_run(client, request_headers, style=style_id)
+            assert styled.status_code == 200, styled.get_data(as_text=True)
+
+            assert styled.get_json()["kudos"] == unstyled.get_json()["kudos"]
