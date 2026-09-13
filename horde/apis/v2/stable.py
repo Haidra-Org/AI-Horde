@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import copy
 import random
 import time
 from collections import defaultdict
@@ -28,6 +27,7 @@ from horde.apis.v2.base import (
 )
 from horde.classes.base import settings
 from horde.classes.base.style import StyleCollection
+from horde.classes.base.style_contract import RESERVED_TEMPLATE_FIELD_NAMES
 from horde.classes.base.user import User
 from horde.classes.stable.genstats import (
     get_compiled_imagegen_stats_models,
@@ -69,6 +69,9 @@ from horde.vars import horde_title
 
 models = ImageModels(api)
 parsers = ImageParsers()
+
+STYLE_SIZE_FALLBACK_PARAMETERS = ("width", "height")
+"""The params an image style that sets neither of them takes from the request."""
 
 
 class ImageAsyncGenerate(GenerateTemplate):
@@ -454,6 +457,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.existing_style = colstyles[0]
             self.existing_style.use_count += 1
         self.models = self.existing_style.get_model_names()
+        requested_params = self.params
+        resolved_template_fields = self.apply_style_contract(self.existing_style)
         self.negprompt = ""
         if "###" in self.prompt:
             self.prompt, self.negprompt = self.prompt.split("###", 1)
@@ -463,23 +468,18 @@ class ImageAsyncGenerate(GenerateTemplate):
         # Erroneous keys in the string
         # We have to do this sort of replacement to prevent randomized comfyUI strings from getting confused
         # With the {p}/{np} prompt replacement areas
-        self.prompt = (
-            self.existing_style.prompt.replace("{", "{{")
-            .replace("}", "}}")
-            .replace("{{p}}", "{p}")
-            .replace("{{np}}", "{np}")
-            .format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
+        style_template = self.existing_style.prompt.replace("{", "{{").replace("}", "}}")
+        for placeholder in (*RESERVED_TEMPLATE_FIELD_NAMES, *resolved_template_fields.declared_names):
+            style_template = style_template.replace("{{" + placeholder + "}}", "{" + placeholder + "}")
+        self.prompt = style_template.format_map(
+            defaultdict(str, resolved_template_fields.values, p=self.prompt, np=self.negprompt),
         )
-        # self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt, np=self.negprompt))
-        requested_n = self.params.get("n", 1)
-        user_params = self.params
-        self.params = copy.deepcopy(self.existing_style.params)
-        self.params["n"] = requested_n
-        # This allows a style without specified width/height to receive these variables from the user.
-        default_params = {"width", "height"}
-        for default_param in default_params:
-            if default_param not in self.params and default_param in user_params:
-                self.params[default_param] = user_params[default_param]
+        if self.style_parameter_policy is None:
+            # A style that sets neither width nor height takes them from the request, as it always
+            # has. A style that declares a policy decides through the policy instead.
+            for size_parameter in STYLE_SIZE_FALLBACK_PARAMETERS:
+                if size_parameter not in self.params and size_parameter in requested_params:
+                    self.params[size_parameter] = requested_params[size_parameter]
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
         # We don't reward kudos to ourselves

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import copy
 import json
 import os
 import time
@@ -28,6 +29,11 @@ from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
 from horde.classes.base.news import News
+from horde.classes.base.style_application import (
+    merge_client_parameters,
+    resolve_template_field_values,
+)
+from horde.classes.base.style_contract import load_parameter_policy, load_template_fields
 from horde.classes.base.team import Team, find_team_by_id, find_team_by_name, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -266,6 +272,7 @@ class GenerateTemplate(Resource):
         self.params = {}
         self.warnings = set()
         self.style_kudos = False
+        self.style_parameter_policy = None
         if self.args.params:
             self.params = self.args.params
         self.models = []
@@ -358,6 +365,11 @@ class GenerateTemplate(Resource):
             raise e.MaintenanceMode("Generate")
         if self.args.webhook and not self.args.webhook.startswith("https://"):
             raise e.BadRequest("webhooks need to point to an https endpoint.")
+        if self.get_supplied_template_fields() and self.args.get("style") is None:
+            raise e.BadRequest(
+                "'template_fields' can only be used together with a style, since a style declares them.",
+                rc="TemplateFieldsRequireStyle",
+            )
         with get_app().app_context():
             find_user_t0 = time.monotonic()
             # If this is set, it means we've already found an active shared key through an applied style.
@@ -693,6 +705,44 @@ class GenerateTemplate(Resource):
         # If there's an attached shared key to the style, and it's not empty or expired, we use it.
         if self.existing_style.sharedkey and self.existing_style.sharedkey.is_valid()[0] is True:
             self.sharedkey = self.existing_style.sharedkey
+
+    def get_supplied_template_fields(self):
+        """Return the template field values this request carried.
+
+        Returns:
+            dict: The values keyed by field name, or None when the request carried none.
+        """
+        return self.args.get("template_fields")
+
+    def apply_style_contract(self, style):
+        """Merge the request's params into a style's and check the template fields it supplied.
+
+        Writes the merged params back to ``self.params`` and keeps the style's parameter policy on
+        ``self.style_parameter_policy``, which a gentype uses to tell a style that declares one from a
+        style that does not.
+
+        Args:
+            style: The style being applied.
+
+        Returns:
+            horde.classes.base.style_application.ResolvedTemplateFields: The style's placeholders and
+                the values to fill them with.
+
+        Raises:
+            horde.exceptions.BadRequest: If the request set a param the style does not allow it to set
+                or one above a ceiling, or supplied a template field the style does not declare.
+        """
+        self.style_parameter_policy = load_parameter_policy(style.parameter_policy)
+        resolved_template_fields = resolve_template_field_values(
+            declared_fields=load_template_fields(style.template_fields),
+            supplied_fields=self.get_supplied_template_fields(),
+        )
+        self.params = merge_client_parameters(
+            style_parameters=copy.deepcopy(style.params),
+            client_parameters=self.params,
+            policy=self.style_parameter_policy,
+        )
+        return resolved_template_fields
 
 
 class SyncGenerate(GenerateTemplate):
