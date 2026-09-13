@@ -273,6 +273,10 @@ class GenerateTemplate(Resource):
         self.warnings = set()
         self.style_kudos = False
         self.style_parameter_policy = None
+        # validate() sets these again once the style has been applied. A dry run answered from the
+        # kudos cache never reaches it, and reports the request as it arrived.
+        self.prompt = self.args.prompt
+        self.existing_style = None
         if self.args.params:
             self.params = self.args.params
         self.models = []
@@ -280,7 +284,7 @@ class GenerateTemplate(Resource):
             self.models = self.args.models.copy()
         params_hash = self.get_hashed_params_dict()
         cached_payload_kudos_calc = hr.horde_r_get(f"payload_kudos_{params_hash}")
-        if cached_payload_kudos_calc and self.args.dry_run:
+        if cached_payload_kudos_calc and self.args.dry_run and self.dry_run_answerable_from_cache():
             self.kudos = float(cached_payload_kudos_calc)
             return
         self.workers = []
@@ -325,6 +329,36 @@ class GenerateTemplate(Resource):
                 generate_activate_wp_duration.record(time.monotonic() - ta, {"horde.gentype": self.gentype})
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
+
+    def dry_run_answerable_from_cache(self):
+        """Report whether a cached quote can answer this dry run without resolving the request.
+
+        The cache key is built from the params alone, so it can only stand in for a request whose
+        answer depends on nothing else. A style or template fields also make the answer depend on the
+        prompt, and the resolved body then has to be computed.
+
+        Returns:
+            bool: Whether the cached quote is the whole answer.
+        """
+        return self.args.get("style") is None and not self.get_supplied_template_fields()
+
+    def get_resolved_request(self):
+        """Return the request as the horde resolved it, for the dry run response.
+
+        Extend this where a gentype resolves something the other does not.
+
+        Returns:
+            dict: The prompt after templating, the params, the models, and the style that was applied.
+        """
+        resolved_style = None
+        if self.existing_style is not None:
+            resolved_style = {"id": str(self.existing_style.id), "name": self.existing_style.name}
+        return {
+            "prompt": self.prompt,
+            "params": self.params,
+            "models": self.models,
+            "style": resolved_style,
+        }
 
     # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):

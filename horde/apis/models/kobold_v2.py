@@ -420,6 +420,37 @@ class TextModels(v2.Models):
             "GenerationSubmittedKobold",
             self.input_model_request_generation,
         )
+        self.response_model_resolved_request = api.inherit(
+            "ResolvedRequestKobold",
+            self.response_model_resolved_request,
+            {
+                "estimated_prompt_tokens": fields.Integer(
+                    description=(
+                        "The estimated token count of the prompt. The horde runs no tokenizer, so this is a "
+                        "conservative estimate from the character count."
+                    ),
+                ),
+                "context_fit": fields.String(
+                    enum=[setting.value for setting in ContextFit],
+                    description="The context_fit setting that was applied.",
+                ),
+            },
+        )
+        # skip_none is off here: a null inside the resolved request, where no style was applied, is
+        # part of the answer and has to be returned rather than dropped.
+        resolved_request_field = fields.Nested(
+            self.response_model_resolved_request,
+            allow_null=True,
+            skip_none=False,
+            description="The request as the horde resolved it. Only returned for a dry run.",
+        )
+        # The queued response marshals through this model too and leaves 'resolved' unset: it then
+        # marshals to null and the endpoint's skip_none drops it, so the 202 body is unchanged.
+        self.response_model_async = api.inherit(
+            "RequestAsyncKobold",
+            self.response_model_async,
+            {"resolved": resolved_request_field},
+        )
         self.response_model_contrib_details = api.inherit(
             "ContributionsDetailsKobold",
             self.response_model_contrib_details,

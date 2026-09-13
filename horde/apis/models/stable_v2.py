@@ -953,6 +953,32 @@ class ImageModels(v2.Models):
                 ),
             },
         )
+        self.response_model_resolved_request = api.inherit(
+            "ResolvedRequestStable",
+            self.response_model_resolved_request,
+            {
+                "negative_prompt": fields.String(
+                    description=(
+                        "The part of the prompt to keep away from, or null when the prompt carries no separator."
+                    ),
+                ),
+            },
+        )
+        # skip_none is off here: a null inside the resolved request, where no style was applied or the
+        # prompt has no negative half, is part of the answer and has to be returned rather than dropped.
+        resolved_request_field = fields.Nested(
+            self.response_model_resolved_request,
+            allow_null=True,
+            skip_none=False,
+            description="The request as the horde resolved it. Only returned for a dry run.",
+        )
+        # The queued response marshals through this model too and leaves 'resolved' unset: it then
+        # marshals to null and the endpoint's skip_none drops it, so the 202 body is unchanged.
+        self.response_model_async = api.inherit(
+            "RequestAsyncStable",
+            self.response_model_async,
+            {"resolved": resolved_request_field},
+        )
         self.response_model_team_details = api.inherit(
             "TeamDetailsStable",
             self.response_model_team_details,

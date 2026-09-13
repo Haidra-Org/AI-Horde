@@ -91,6 +91,9 @@ class TextAsyncGenerate(GenerateTemplate):
         Asynchronous requests live for 20 minutes before being considered stale and being deleted.
         """
         self.args = parsers.generate_parser.parse_args()
+        # Parsed here rather than in validate(), which a dry run answered from the kudos cache never
+        # reaches: the cache cannot answer for a request that sizes its own context.
+        self.context_fit = parse_context_fit(self.args.context_fit)
         try:
             super().post()
         except KeyError as e:
@@ -100,7 +103,7 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e
             return {"message": "Internal Server Error"}, 500
         if self.args.dry_run:
-            ret_dict = {"kudos": round(self.kudos)}
+            ret_dict = {"kudos": round(self.kudos), "resolved": self.get_resolved_request()}
             return ret_dict, 200
         ret_dict = {
             "id": self.wp.id,
@@ -192,10 +195,30 @@ class TextAsyncGenerate(GenerateTemplate):
             "Consider reducing the amount of tokens to generate."
         )
 
+    def dry_run_answerable_from_cache(self):
+        """Report whether a cached quote can answer this dry run.
+
+        Returns:
+            bool: Whether the cached quote is the whole answer. A request that sizes its context
+                against its prompt is not answerable from a key built out of the params.
+        """
+        return super().dry_run_answerable_from_cache() and self.context_fit is ContextFit.IGNORE
+
+    def get_resolved_request(self):
+        """Return the request as the horde resolved it, with what only a text request carries.
+
+        Returns:
+            dict: The shared keys, plus the prompt's estimated token count and the context sizing
+                that was applied.
+        """
+        resolved_request = super().get_resolved_request()
+        resolved_request["estimated_prompt_tokens"] = estimate_prompt_tokens(self.prompt)
+        resolved_request["context_fit"] = self.context_fit.value
+        return resolved_request
+
     def validate(self):
         self.prompt = self.args.prompt
         self.apikey = self.args.apikey
-        self.context_fit = parse_context_fit(self.args.context_fit)
         self.apply_style()
         self.apply_context_fit()
         super().validate()
