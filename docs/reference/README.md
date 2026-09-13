@@ -23,4 +23,5 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | [Samplers and schedulers reference](samplers_and_schedulers.md) | What sampler_name and scheduler select, why deterministic samplers agree once converged, measured steps-to-converge and cost, and the combinations known to fail. |
 | [Image baseline policy reference](baseline_policy.md) | The two authorities a baseline-dependent request is checked against, what each one decides, and what applies to a baseline with no record. |
 | [Image model reference loader reference](model_reference.md) | Where the image model reference comes from, how beta (pending) models are merged over it, the environment that configures both, and what the loader exposes. |
+| [Style contract reference](style_contract.md) | What an image or text style may declare about the params a request may set and the placeholders its prompt accepts, and how a text request is sized against the prompt it ends up sending. |
 <!-- END GENERATED: documents -->

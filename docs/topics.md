@@ -40,6 +40,7 @@ procedure for one subject sit together.
 - Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader reference](reference/model_reference.md)
+- Reference: [Style contract reference](reference/style_contract.md)
 
 ### kudos
 
@@ -64,6 +65,7 @@ procedure for one subject sit together.
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
+- Reference: [Style contract reference](reference/style_contract.md)
 
 ### workers
 
