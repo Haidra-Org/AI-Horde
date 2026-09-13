@@ -9,14 +9,60 @@ import time
 from horde import vars as hv
 from horde.bridge_reference import (
     is_backed_validated,
+    parse_bridge_agent,
 )
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.logger import logger
-from horde.metrics import submit_genstats_record_duration, submit_state_handling_duration
+from horde.metrics import (
+    submit_genstats_record_duration,
+    submit_state_handling_duration,
+    text_empty_generations,
+)
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
+
+UNKNOWN_ATTRIBUTE_VALUE = "unknown"
+"""Placeholder for a metric attribute the submission did not include."""
+
+
+def is_empty_text_generation(generation: str | None) -> bool:
+    """Report whether a submitted text generation has no visible characters.
+
+    Args:
+        generation: The text the worker submitted, if any.
+
+    Returns:
+        True when the submission is missing, empty, or whitespace only.
+    """
+    if generation is None:
+        return True
+    return not generation.strip()
+
+
+def build_empty_generation_attributes(model: str | None, bridge_agent: str | None, state: str) -> dict[str, str]:
+    """Build the metric attributes for an empty text generation.
+
+    The bridge agent is reduced to its name so the counter is not split across
+    every version and worker URL of the same bridge.
+
+    Args:
+        model: The model the worker reported serving.
+        bridge_agent: The worker's raw agent string, e.g. ``"KoboldCppEmbedWorker:2:https://..."``.
+        state: The state the worker submitted the generation under.
+
+    Returns:
+        The attribute mapping to pass to the empty-generation counter.
+    """
+    bridge_name = UNKNOWN_ATTRIBUTE_VALUE
+    if bridge_agent is not None:
+        bridge_name, _ = parse_bridge_agent(bridge_agent)
+    return {
+        "model": model if model is not None else UNKNOWN_ATTRIBUTE_VALUE,
+        "bridge_agent": bridge_name,
+        "state": state,
+    }
 
 
 class TextProcessingGeneration(ProcessingGeneration):
@@ -86,6 +132,30 @@ class TextProcessingGeneration(ProcessingGeneration):
             f" from by worker: {self.worker.name} ({self.worker.id})",
         )
 
+    def _record_empty_generation(self, state: str, things_per_sec: float, kudos: float) -> None:
+        """Log and count a text generation that arrived with no visible text.
+
+        The submission is still stored and still paid for; this only records the
+        event so the behaviour can be measured before any payment rule changes.
+
+        Args:
+            state: The state the worker submitted the generation under.
+            things_per_sec: The generation speed the worker reported.
+            kudos: The kudos the submission was awarded.
+        """
+        prompt_characters = len(self.wp.prompt) if self.wp.prompt is not None else 0
+        logger.warning(
+            f"Empty text generation submitted: procgen {self.id} of wp {self.wp_id} "
+            f"by worker {self.worker.name} ({self.worker.id}) "
+            f"agent '{self.worker.bridge_agent}' model '{self.model}' state '{state}' "
+            f"max_length={self.wp.max_length} max_context_length={self.wp.max_context_length} "
+            f"prompt_characters={prompt_characters} things_per_sec={things_per_sec} kudos={kudos}",
+        )
+        text_empty_generations.add(
+            1,
+            build_empty_generation_attributes(self.model, self.worker.bridge_agent, state),
+        )
+
     def set_generation(self, generation, things_per_sec, **kwargs):
         # We don't check the state in the super() function as image gen sets it early here
         # as well, so it can abort before doing R2 operations
@@ -111,7 +181,13 @@ class TextProcessingGeneration(ProcessingGeneration):
             db.session.commit()
         submit_state_handling_duration.record(time.monotonic() - state_t0, {"horde.gentype": "text"})
 
+        # Checked before super() so the raw submission is examined, but reported
+        # after it so the log can include the kudos awarded.
+        submission_is_empty = is_empty_text_generation(generation)
+
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
+        if submission_is_empty:
+            self._record_empty_generation(state, things_per_sec, kudos)
         genstats_t0 = time.monotonic()
         record_text_statistic(self)
         submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "text"})

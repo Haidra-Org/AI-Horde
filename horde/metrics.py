@@ -275,6 +275,11 @@ request_outcomes = logfire.metric_counter(
     unit="1",
     description="Terminal request outcomes used to interpret lifecycle latency",
 )
+text_empty_generations = logfire.metric_counter(
+    "horde.text.empty_generations",
+    unit="1",
+    description="Text generations submitted with empty or whitespace-only text, split by model, bridge agent and state",
+)
 
 # These instruments form the shadow-validation contract for scheduling
 # estimators. Candidate code records paired forecasts and observations through
