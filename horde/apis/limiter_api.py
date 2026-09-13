@@ -34,10 +34,17 @@ def get_request_path():
     return f"{get_remoteaddr()}@{request.method}@{request.path}"
 
 
+REQUEST_90MIN_LIMIT_PER_IP = "90/minute"
+"""What an ordinary address is held to where this rate applies. A whitelisted service address gets more."""
+
+REQUEST_2SEC_LIMIT_PER_IP = "2/second"
+"""What an ordinary address is held to where this rate applies. A whitelisted service address gets more."""
+
+
 def get_request_90min_limit_per_ip():
     if get_remoteaddr() in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr()):
         return "300/minute"
-    return "90/minute"
+    return REQUEST_90MIN_LIMIT_PER_IP
 
 
 def get_request_90hour_limit_per_ip():
@@ -49,7 +56,7 @@ def get_request_90hour_limit_per_ip():
 def get_request_2sec_limit_per_ip():
     if get_remoteaddr() in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr()):
         return "10/second"
-    return "2/second"
+    return REQUEST_2SEC_LIMIT_PER_IP
 
 
 def get_request_api_key():

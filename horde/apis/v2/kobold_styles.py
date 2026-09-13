@@ -31,6 +31,9 @@ from horde.validation import ParamValidator
 TEXT_CEILING_PARAMETER_NAMES = ("max_length", "max_context_length", "n")
 """The params a text style's policy may cap. The range each ceiling may take comes from the params model."""
 
+TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT = "20/hour"
+"""How many text styles one address may write in an hour. The per-second limit applies on top of it."""
+
 
 def text_style_contract_vocabulary() -> StyleContractVocabulary:
     """Return what a text style's parameter policy may talk about.
@@ -131,7 +134,7 @@ class TextStyle(TextStyleContractArgs, StyleTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value="20/hour",
+            limit_value=TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT,
             key_func=lim.get_request_path,
         ),
         limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
