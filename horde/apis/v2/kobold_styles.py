@@ -11,10 +11,16 @@ from horde.apis.v2.kobold import models, parsers
 from horde.apis.v2.styles import (
     SingleStyleTemplate,
     SingleStyleTemplateGet,
+    StyleContractArgs,
     StyleTemplate,
     api,
 )
 from horde.classes.base.style import Style
+from horde.classes.base.style_contract import (
+    ParameterCeilingBound,
+    StyleContractVocabulary,
+    build_vocabulary,
+)
 from horde.database import functions as database
 from horde.flask import cache
 from horde.limiter import limiter
@@ -22,9 +28,46 @@ from horde.logger import logger
 from horde.utils import ensure_clean
 from horde.validation import ParamValidator
 
+TEXT_CEILING_PARAMETER_NAMES = ("max_length", "max_context_length", "n")
+"""The params a text style's policy may cap. The range each ceiling may take comes from the params model."""
+
+
+def text_style_contract_vocabulary() -> StyleContractVocabulary:
+    """Return what a text style's parameter policy may talk about.
+
+    The params model is the vocabulary clients already generate against, so anything outside it would
+    be a key the request path never sees.
+
+    Returns:
+        The params a text style may hand over, and the ones it may cap with their ranges.
+    """
+    payload_fields = models.input_model_generation_payload.resolved
+    return build_vocabulary(
+        parameter_names=payload_fields,
+        ceiling_bounds={
+            parameter_name: ParameterCeilingBound(
+                minimum=payload_fields[parameter_name].minimum,
+                maximum=payload_fields[parameter_name].maximum,
+            )
+            for parameter_name in TEXT_CEILING_PARAMETER_NAMES
+        },
+    )
+
+
+class TextStyleContractArgs(StyleContractArgs):
+    """Supplies the text params vocabulary to the shared contract argument handling."""
+
+    def style_contract_vocabulary(self) -> StyleContractVocabulary:
+        """Return what a text style's parameter policy may talk about.
+
+        Returns:
+            The text vocabulary.
+        """
+        return text_style_contract_vocabulary()
+
 
 ## Styles
-class TextStyle(StyleTemplate):
+class TextStyle(TextStyleContractArgs, StyleTemplate):
     gentype = "text"
 
     get_parser = reqparse.RequestParser()
@@ -70,12 +113,14 @@ class TextStyle(StyleTemplate):
     @logger.catch(reraise=True)
     @cache.cached(timeout=1, query_string=True)
     @api.expect(get_parser)
+    # skip_none is off on every route that serves a style: parameter_policy and template_fields
+    # are always present in the response, as null when the style declares neither, so a client
+    # sees the same shape either way.
     @api.marshal_with(
         models.response_model_style,
         code=200,
         description="Lists text styles information",
         as_list=True,
-        skip_none=True,
     )
     def get(self):
         """Retrieves information about all text styles
@@ -145,6 +190,7 @@ class TextStyle(StyleTemplate):
             params=self.args.params if self.args.params is not None else {},
             sharedkey_id=self.sharedkey.id if self.sharedkey else None,
         )
+        self.apply_type_specific_args(new_style)
         new_style.create()
         new_style.set_models(self.models)
         new_style.set_tags(self.tags)
@@ -169,7 +215,7 @@ class TextStyle(StyleTemplate):
         param_validator.validate_text_prompt(self.args.prompt)
 
 
-class SingleTextStyle(SingleStyleTemplate):
+class SingleTextStyle(TextStyleContractArgs, SingleStyleTemplate):
     gentype = "text"
 
     @cache.cached(timeout=30)
@@ -179,7 +225,6 @@ class SingleTextStyle(SingleStyleTemplate):
         code=200,
         description="Lists text styles information",
         as_list=False,
-        skip_none=True,
     )
     def get(self, style_id):
         """Displays information about a single text style."""
@@ -255,7 +300,6 @@ class SingleImageStyleByName(SingleStyleTemplateGet):
         code=200,
         description="Lists text style information by name",
         as_list=False,
-        skip_none=True,
     )
     def get(self, style_name):
         """Seeks a text style by name and displays its information."""

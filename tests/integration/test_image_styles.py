@@ -4,14 +4,113 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
 import pytest
+from flask.testing import FlaskClient
+from werkzeug.test import TestResponse
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
+
+STYLE_PROMPT = "{p}, impasto impressionism###no blur, {np}"
+
+POLICY = {
+    "override": "listed",
+    "overridable": ["width", "height"],
+    "ceilings": {"width": 1024, "height": 1024},
+}
+
+TEMPLATE_FIELDS = [
+    {"name": "caption", "description": "What the picture shows", "required": True},
+    {"name": "tags", "description": "Comma-separated tags", "required": False},
+]
 
 pytestmark = [
     pytest.mark.object_storage,
     pytest.mark.usefixtures("object_store_ready"),
 ]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _no_rate_limit() -> Iterator[None]:
+    """Turn the per-path rate limit off for this module.
+
+    Creating a style is capped at two calls a second and twenty an hour, which these cases would run
+    through.
+
+    Yields:
+        Nothing. The previous setting is put back afterwards.
+    """
+    from horde.limiter import limiter
+
+    previous = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = previous
+
+
+def style_body(name: str, **overrides: Any) -> dict[str, Any]:
+    """Build the body that creates an image style.
+
+    Args:
+        name: The style name, which is unique per user.
+        **overrides: Keys to add to or replace in the body.
+
+    Returns:
+        The creation body.
+    """
+    body: dict[str, Any] = {
+        "name": name,
+        "info": "A style used by the image style endpoint tests.",
+        "prompt": STYLE_PROMPT,
+        "params": {"width": 512, "height": 512, "steps": 8, "cfg_scale": 7, "sampler_name": "k_euler"},
+        "models": TEST_MODELS,
+        "public": False,
+        "nsfw": False,
+    }
+    body.update(overrides)
+    return body
+
+
+@contextmanager
+def created_style(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    body: dict[str, Any],
+) -> Iterator[str]:
+    """Create an image style for the duration of the block and delete it at the end.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the API key of the user the style belongs to.
+        body: The creation body.
+
+    Yields:
+        The id of the new style.
+    """
+    response = client.post("/api/v2/styles/image", json=body, headers=request_headers)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    style_id = response.get_json()["id"]
+    try:
+        yield style_id
+    finally:
+        client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+
+def post_style(client: FlaskClient, request_headers: dict[str, str], body: dict[str, Any]) -> TestResponse:
+    """Attempt to create an image style and return the raw response.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the API key of the user the style would belong to.
+        body: The creation body.
+
+    Returns:
+        The response, for a case that expects a rejection.
+    """
+    return client.post("/api/v2/styles/image", json=body, headers=request_headers)
 
 
 def test_styled_image_gen(client, request_headers: dict[str, str]) -> None:
@@ -169,3 +268,142 @@ def test_image_style_patch_only_changes_the_fields_it_carries(client, request_he
         assert sorted(details["models"]) == sorted(TEST_MODELS)
     finally:
         client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+
+class TestImageStyleContract:
+    """An image style declaring a parameter policy or template fields."""
+
+    def test_the_declarations_are_stored_and_served(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract create image", parameter_policy=POLICY, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            response = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            details = response.get_json()
+            assert details["parameter_policy"] == POLICY
+            assert details["template_fields"] == TEMPLATE_FIELDS
+            assert details["updated"] is not None
+
+    def test_a_style_declaring_neither_serves_both_keys_as_null(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        with created_style(client, request_headers, style_body("contract absent image")) as style_id:
+            details = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()
+
+            assert details["parameter_policy"] is None
+            assert details["template_fields"] is None
+            assert details["prompt"] == STYLE_PROMPT
+
+    def test_a_ceiling_on_steps_is_accepted(self, client, request_headers: dict[str, str]) -> None:
+        policy = {"override": "all", "ceilings": {"steps": 30}}
+        body = style_body("contract steps ceiling", parameter_policy=policy)
+        with created_style(client, request_headers, body) as style_id:
+            details = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()
+
+            assert details["parameter_policy"]["ceilings"] == {"steps": 30}
+
+    def test_a_patch_replaces_the_declarations(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract patch image", parameter_policy=POLICY, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            replacement_policy = {"override": "all", "ceilings": {"width": 768}}
+            replacement_fields = [{"name": "caption", "description": "A one-line caption", "required": False}]
+            patch_response = client.patch(
+                f"/api/v2/styles/image/{style_id}",
+                json={"parameter_policy": replacement_policy, "template_fields": replacement_fields},
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()
+            assert details["parameter_policy"] == replacement_policy
+            assert details["template_fields"] == replacement_fields
+
+    def test_a_patch_that_omits_them_leaves_them_alone(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract patch omitted image", parameter_policy=POLICY, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            patch_response = client.patch(
+                f"/api/v2/styles/image/{style_id}",
+                json={"info": "Only the description changes in this patch."},
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()
+            assert details["parameter_policy"] == POLICY
+            assert details["template_fields"] == TEMPLATE_FIELDS
+
+
+class TestImageStyleContractRejections:
+    """Declarations the image style endpoints refuse."""
+
+    def test_overridable_outside_listed_mode_is_misplaced(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract misplaced image", parameter_policy={"override": "all", "overridable": ["width"]})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "StylePolicyOverridableMisplaced"
+
+    def test_an_unknown_overridable_parameter_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract unknown param image",
+            parameter_policy={"override": "listed", "overridable": ["max_length"]},
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_the_request_count_cannot_be_made_overridable(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract overridable n image", parameter_policy={"override": "listed", "overridable": ["n"]})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    @pytest.mark.parametrize("ceiling", [63, 3073])
+    def test_a_ceiling_outside_the_parameter_range_is_rejected(
+        self,
+        client,
+        request_headers: dict[str, str],
+        ceiling: int,
+    ) -> None:
+        body = style_body(f"contract ceiling image {ceiling}", parameter_policy={"ceilings": {"width": ceiling}})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_ceiling_on_a_parameter_an_image_style_cannot_cap_is_rejected(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        # max_length belongs to text requests, and cfg_scale is an image param no image style may cap.
+        for parameter_name in ("max_length", "cfg_scale"):
+            body = style_body(
+                f"contract ceiling image {parameter_name}",
+                parameter_policy={"ceilings": {parameter_name: 8}},
+            )
+            response = post_style(client, request_headers, body)
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_reserved_template_field_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract reserved field image",
+            template_fields=[{"name": "np", "description": "The negative prompt the horde already fills"}],
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_repeated_template_field_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract repeated field image",
+            template_fields=[
+                {"name": "caption", "description": "The first declaration"},
+                {"name": "caption", "description": "The second declaration"},
+            ],
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)

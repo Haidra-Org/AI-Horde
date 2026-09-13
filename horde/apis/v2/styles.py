@@ -7,7 +7,14 @@ from flask_restx import Resource, reqparse
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde.apis.v2.base import api, models, parsers
-from horde.classes.base.style import StyleCollection
+from horde.classes.base.style import Style, StyleCollection
+from horde.classes.base.style_contract import (
+    StyleContractVocabulary,
+    parse_parameter_policy,
+    parse_template_fields,
+    serialize_parameter_policy,
+    serialize_template_fields,
+)
 from horde.database import functions as database
 from horde.flask import cache, db
 from horde.limiter import limiter
@@ -17,9 +24,92 @@ from horde.utils import ensure_clean
 ## Styles
 
 
+class StyleContractArgs:
+    """Validates and stores the parameter policy and template fields a style endpoint accepts.
+
+    Both declarations are validated the same way for every style type; only the vocabulary a policy is
+    measured against differs. A style resource mixes this in alongside the shared style resource and
+    supplies that vocabulary.
+
+    Subclass Integration:
+        Implement [`style_contract_vocabulary`]
+        [horde.apis.v2.styles.StyleContractArgs.style_contract_vocabulary] with the params the
+        requests of that style type accept.
+    """
+
+    def style_contract_vocabulary(self) -> StyleContractVocabulary:
+        """Return what this style type lets a policy talk about.
+
+        Returns:
+            The vocabulary a policy sent to this endpoint is validated against.
+
+        Raises:
+            NotImplementedError: If the style type did not supply one.
+        """
+        raise NotImplementedError("A style type accepting a parameter policy has to supply its vocabulary.")
+
+    def parse_type_specific_args(self) -> None:
+        """Validate this request's policy and template field declarations onto the resource.
+
+        Sets ``parameter_policy`` and ``template_fields`` to the JSON to store, or to None when the
+        request declares neither and an existing style's declarations are to be left alone.
+
+        Raises:
+            horde.exceptions.BadRequest: If either declaration is malformed or out of bounds.
+        """
+        self.parameter_policy = None
+        self.template_fields = None
+
+        if self.args.parameter_policy is not None:
+            self.parameter_policy = serialize_parameter_policy(
+                parse_parameter_policy(self.args.parameter_policy, vocabulary=self.style_contract_vocabulary()),
+            )
+
+        if self.args.template_fields is not None:
+            self.template_fields = serialize_template_fields(parse_template_fields(self.args.template_fields))
+
+    def apply_type_specific_args(self, style: Style) -> bool:
+        """Write the declarations this request carried onto a style.
+
+        Args:
+            style: The style being created or modified.
+
+        Returns:
+            Whether either declaration was written.
+        """
+        written = False
+
+        if self.args.parameter_policy is not None:
+            style.parameter_policy = self.parameter_policy
+            written = True
+
+        if self.args.template_fields is not None:
+            style.template_fields = self.template_fields
+            written = True
+
+        return written
+
+
 class StyleTemplate(Resource):
     gentype = "template"
     args = None
+
+    def parse_type_specific_args(self):
+        """Validate the request arguments only this kind of style accepts.
+
+        A style type with no arguments of its own has nothing to validate.
+        """
+
+    def apply_type_specific_args(self, style):
+        """Write the type-specific arguments this request carried onto a style.
+
+        Args:
+            style: The style being created or modified.
+
+        Returns:
+            bool: Whether anything was written.
+        """
+        return False
 
     def get(self):
         if self.args.sort not in ["popular", "age"]:
@@ -60,6 +150,7 @@ class StyleTemplate(Resource):
                 raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
         if self.user.deleted:
             raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+        self.parse_type_specific_args()
 
 
 class SingleStyleTemplateGet(Resource):
@@ -81,6 +172,23 @@ class SingleStyleTemplateGet(Resource):
 
 
 class SingleStyleTemplate(SingleStyleTemplateGet):
+    def parse_type_specific_args(self):
+        """Validate the request arguments only this kind of style accepts.
+
+        A style type with no arguments of its own has nothing to validate.
+        """
+
+    def apply_type_specific_args(self, style):
+        """Write the type-specific arguments this request carried onto a style.
+
+        Args:
+            style: The style being modified.
+
+        Returns:
+            bool: Whether anything was written.
+        """
+        return False
+
     def patch(self, style_id):
         self.params = {}
         self.warnings = set()
@@ -136,6 +244,8 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         if self.args.params is not None:
             self.existing_style.params = self.args.params
             style_modified = True
+        if self.apply_type_specific_args(self.existing_style):
+            style_modified = True
         if len(self.models) > 0:
             style_modified = True
         if len(self.tags) > 0:
@@ -166,6 +276,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
             shared_key_validity = self.sharedkey.is_valid()
             if shared_key_validity[0] is False:
                 raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
+        self.parse_type_specific_args()
 
     def delete(self, style_id):
         self.args = parsers.apikey_parser.parse_args()

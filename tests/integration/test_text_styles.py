@@ -16,10 +16,22 @@ from typing import Any
 
 import pytest
 from flask.testing import FlaskClient
+from werkzeug.test import TestResponse
 
 TEXT_MODELS = ["elinas/chronos-70b-v2"]
 
 STYLE_PROMPT = "### Instruction:\n{p}\n\n### Response:\n"
+
+POLICY = {
+    "override": "listed",
+    "overridable": ["max_length", "max_context_length"],
+    "ceilings": {"max_length": 512, "max_context_length": 4096},
+}
+
+TEMPLATE_FIELDS = [
+    {"name": "caption", "description": "What the picture shows", "required": True},
+    {"name": "tags", "description": "Comma-separated tags", "required": False},
+]
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -86,6 +98,20 @@ def created_style(
         yield style_id
     finally:
         client.delete(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+
+
+def post_style(client: FlaskClient, request_headers: dict[str, str], body: dict[str, Any]) -> TestResponse:
+    """Attempt to create a text style and return the raw response.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the API key of the user the style would belong to.
+        body: The creation body.
+
+    Returns:
+        The response, for a case that expects a rejection.
+    """
+    return client.post("/api/v2/styles/text", json=body, headers=request_headers)
 
 
 class TestTextStyleCreate:
@@ -200,3 +226,169 @@ class TestTextStylePartialPatch:
                 assert details["shared_key"]["id"] == shared_key_id
         finally:
             client.delete(f"/api/v2/sharedkeys/{shared_key_id}", headers=request_headers)
+
+
+class TestTextStyleContract:
+    """A text style declaring a parameter policy or template fields."""
+
+    def test_the_declarations_are_stored_and_served(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract create", parameter_policy=POLICY, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            response = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            details = response.get_json()
+            assert details["parameter_policy"] == POLICY
+            assert details["template_fields"] == TEMPLATE_FIELDS
+            assert details["updated"] is not None
+
+    def test_a_style_declaring_neither_serves_both_keys_as_null(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        with created_style(client, request_headers, style_body("contract absent")) as style_id:
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+
+            # Both keys are always present, so a client never has to tell an absent key from a null one.
+            assert details["parameter_policy"] is None
+            assert details["template_fields"] is None
+            assert details["prompt"] == STYLE_PROMPT
+
+    def test_the_params_a_policy_can_cap_are_served(self, client, request_headers: dict[str, str]) -> None:
+        # Without these a client cannot size a request against the style it is about to use.
+        with created_style(client, request_headers, style_body("contract sizes")) as style_id:
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+
+            assert details["params"]["max_length"] == 80
+            assert details["params"]["max_context_length"] == 1024
+
+    def test_a_ceiling_on_the_request_count_is_accepted(self, client, request_headers: dict[str, str]) -> None:
+        # The number of takes always comes from the request, so a text style can cap it under any mode.
+        policy = {"override": "none", "ceilings": {"n": 4}}
+        with created_style(client, request_headers, style_body("contract takes ceiling", parameter_policy=policy)) as style_id:
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+
+            assert details["parameter_policy"]["ceilings"] == {"n": 4}
+
+    def test_a_patch_replaces_the_declarations(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract patch", parameter_policy=POLICY, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            replacement_policy = {"override": "all", "ceilings": {"max_length": 256}}
+            replacement_fields = [{"name": "caption", "description": "A one-line caption", "required": False}]
+            patch_response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json={"parameter_policy": replacement_policy, "template_fields": replacement_fields},
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+            assert details["parameter_policy"] == replacement_policy
+            assert details["template_fields"] == replacement_fields
+
+    def test_a_patch_that_omits_them_leaves_them_alone(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract patch omitted", parameter_policy=POLICY, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            patch_response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json={"info": "Only the description changes in this patch."},
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+            assert details["parameter_policy"] == POLICY
+            assert details["template_fields"] == TEMPLATE_FIELDS
+
+
+class TestTextStyleContractRejections:
+    """Declarations the text style endpoints refuse."""
+
+    def test_overridable_outside_listed_mode_is_misplaced(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract misplaced", parameter_policy={"override": "all", "overridable": ["max_length"]})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "StylePolicyOverridableMisplaced"
+
+    def test_listed_mode_without_a_list_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract listed without list", parameter_policy={"override": "listed"})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_an_unknown_overridable_parameter_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract unknown param", parameter_policy={"override": "listed", "overridable": ["max_tokens"]})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_the_request_count_cannot_be_made_overridable(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("contract overridable n", parameter_policy={"override": "listed", "overridable": ["n"]})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    @pytest.mark.parametrize("ceiling", [15, 4097])
+    def test_a_ceiling_outside_the_parameter_range_is_rejected(
+        self,
+        client,
+        request_headers: dict[str, str],
+        ceiling: int,
+    ) -> None:
+        body = style_body(f"contract ceiling {ceiling}", parameter_policy={"ceilings": {"max_length": ceiling}})
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_ceiling_on_a_parameter_a_text_style_cannot_cap_is_rejected(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        # width belongs to image requests, and temperature is a text param no text style may cap.
+        for parameter_name in ("width", "temperature"):
+            body = style_body(f"contract ceiling {parameter_name}", parameter_policy={"ceilings": {parameter_name: 2}})
+            response = post_style(client, request_headers, body)
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_reserved_template_field_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract reserved field",
+            template_fields=[{"name": "p", "description": "The prompt the horde already fills"}],
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_malformed_template_field_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract malformed field",
+            template_fields=[{"name": "Caption Text", "description": "Not a lower snake_case identifier"}],
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_repeated_template_field_is_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract repeated field",
+            template_fields=[
+                {"name": "caption", "description": "The first declaration"},
+                {"name": "caption", "description": "The second declaration"},
+            ],
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_more_template_fields_than_the_limit_are_rejected(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "contract too many fields",
+            template_fields=[{"name": f"field_{index}", "description": "ok"} for index in range(17)],
+        )
+        response = post_style(client, request_headers, body)
+
+        assert response.status_code == 400, response.get_data(as_text=True)
