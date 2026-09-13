@@ -465,17 +465,17 @@ class Parsers:
             help="Extra generate params to send to the worker.",
             location="json",
         )
+        # The patch parser sets no defaults: a PATCH only sends the fields it changes, so an omitted
+        # argument has to arrive as None instead of the value a newly created style gets.
         self.style_parser_patch.add_argument(
             "public",
             type=bool,
-            default=True,
             required=False,
             location="json",
         )
         self.style_parser_patch.add_argument(
             "nsfw",
             type=bool,
-            default=False,
             required=False,
             location="json",
         )
@@ -493,7 +493,7 @@ class Parsers:
             help="Tags describing this style. Can be used for style discovery.",
             location="json",
         )
-        self.style_parser.add_argument(
+        self.style_parser_patch.add_argument(
             "sharedkey",
             type=str,
             required=False,

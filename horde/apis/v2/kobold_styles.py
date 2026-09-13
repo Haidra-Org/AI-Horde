@@ -207,6 +207,10 @@ class SingleTextStyle(SingleStyleTemplate):
         return super().patch(style_id)
 
     def validate(self):
+        # The shared patch handler reads self.sharedkey, which only the base validation sets. The
+        # image subclass already chains up; without this, every text style patch raised
+        # AttributeError before reaching the database.
+        super().validate()
         if (
             self.style_name is not None
             and database.get_style_by_name(f"{self.user.get_unique_alias()}::style::{self.style_name}")

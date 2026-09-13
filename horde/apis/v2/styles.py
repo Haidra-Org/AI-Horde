@@ -84,7 +84,10 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
     def patch(self, style_id):
         self.params = {}
         self.warnings = set()
-        self.args = parsers.style_parser.parse_args()
+        # The patch parser rather than the creation one: its arguments have no defaults, so a field
+        # the request left out arrives as None and is left alone instead of being reset to the value
+        # a newly created style gets.
+        self.args = parsers.style_parser_patch.parse_args()
         if self.args.params:
             self.params = self.args.params
         # For styles, we just store the models in the params
@@ -116,7 +119,8 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
             self.style_name = ensure_clean(self.args.name, "style name")
             style_modified = True
         self.validate()
-        self.existing_style.name = self.style_name
+        if self.style_name is not None:
+            self.existing_style.name = self.style_name
         if self.args.info is not None:
             self.existing_style.info = ensure_clean(self.args.info, "style info")
             style_modified = True

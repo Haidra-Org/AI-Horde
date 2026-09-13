@@ -133,3 +133,39 @@ def test_styled_image_gen(client, request_headers: dict[str, str]) -> None:
         raise err
 
     client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+
+def test_image_style_patch_only_changes_the_fields_it_carries(client, request_headers: dict[str, str]) -> None:
+    """A patch that carries one field leaves every other field of the style as it was."""
+    style_dict = {
+        "name": "partial patch image",
+        "info": "A style used to check that a patch leaves the rest alone.",
+        "public": False,
+        "nsfw": True,
+        "prompt": "{p}, impasto impressionism###no blur, {np}",
+        "params": {"width": 512, "height": 512, "steps": 8, "cfg_scale": 7, "sampler_name": "k_euler"},
+        "models": TEST_MODELS,
+    }
+
+    style_req = client.post("/api/v2/styles/image", json=style_dict, headers=request_headers)
+    assert style_req.status_code < 400, style_req.get_data(as_text=True)
+    style_id = style_req.get_json()["id"]
+
+    try:
+        patch_req = client.patch(
+            f"/api/v2/styles/image/{style_id}",
+            json={"info": "Only the description changes in this patch."},
+            headers=request_headers,
+        )
+        assert patch_req.status_code < 400, patch_req.get_data(as_text=True)
+
+        details = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()
+        assert details["info"] == "Only the description changes in this patch."
+        assert details["name"] == "partial patch image"
+        assert details["prompt"] == "{p}, impasto impressionism###no blur, {np}"
+        assert details["public"] is False
+        assert details["nsfw"] is True
+        assert details["params"] == style_dict["params"]
+        assert sorted(details["models"]) == sorted(TEST_MODELS)
+    finally:
+        client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)

@@ -116,3 +116,63 @@ class TestTextStyleCreate:
             assert details["params"]["temperature"] == 0.7
             # A param the style never set is not invented for it.
             assert "top_k" not in details["params"]
+
+
+class TestTextStylePartialPatch:
+    """A patch changes only the fields it carries and leaves the rest of the style alone."""
+
+    patch_body = {"info": "Only the description changes in this patch."}
+
+    def test_a_patch_without_a_prompt_keeps_the_prompt(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("partial patch prompt")) as style_id:
+            patch_response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json=self.patch_body,
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+            assert details["prompt"] == STYLE_PROMPT
+            assert details["info"] == self.patch_body["info"]
+
+    def test_a_patch_without_a_name_keeps_the_name(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("partial patch name")) as style_id:
+            patch_response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json=self.patch_body,
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+            assert details["name"] == "partial patch name"
+
+    def test_a_patch_without_public_or_nsfw_keeps_them(self, client, request_headers: dict[str, str]) -> None:
+        # Both values are the opposite of the creation parser's defaults, so a patch that reset them
+        # to those defaults would fail this case.
+        body = style_body("partial patch flags", public=False, nsfw=True)
+        with created_style(client, request_headers, body) as style_id:
+            patch_response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json=self.patch_body,
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+            assert details["public"] is False
+            assert details["nsfw"] is True
+
+    def test_a_patch_without_params_or_models_keeps_them(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("partial patch params")) as style_id:
+            patch_response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json=self.patch_body,
+                headers=request_headers,
+            )
+            assert patch_response.status_code == 200, patch_response.get_data(as_text=True)
+
+            details = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers).get_json()
+            assert details["params"]["temperature"] == 0.7
+            assert details["models"] == TEXT_MODELS
