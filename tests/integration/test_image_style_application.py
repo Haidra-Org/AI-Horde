@@ -18,8 +18,17 @@ from typing import Any
 
 import pytest
 from flask.testing import FlaskClient
+from werkzeug.test import TestResponse
 
 TEST_MODELS = ["Fustercluck", "AlbedoBase XL (SDXL)"]
+
+DEFAULT_IMAGE_SIZE = 512
+"""The size a request runs at when neither it nor its style sets one."""
+
+TEMPLATE_FIELDS = [
+    {"name": "caption", "description": "What the picture shows", "required": True},
+    {"name": "tags", "description": "Comma-separated tags", "required": False},
+]
 
 STYLE_PARAMS: dict[str, Any] = {
     "width": 512,
@@ -103,6 +112,30 @@ def created_style(
         client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)
 
 
+def post_request(client: FlaskClient, request_headers: dict[str, str], **body: Any) -> TestResponse:
+    """Send an image request and return the raw response.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the requesting user's API key.
+        **body: The request body, on top of a prompt and the model list.
+
+    Returns:
+        The response, so a case can assert on a rejection as well as on a queued request.
+    """
+    request_body: dict[str, Any] = {
+        "prompt": "a horde of cute stable robots repairing a mainframe",
+        "models": ["stable_diffusion"],
+        "nsfw": True,
+        "censor_nsfw": False,
+        "r2": True,
+        "shared": True,
+        "trusted_workers": True,
+    }
+    request_body.update(body)
+    return client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+
+
 @contextmanager
 def queued_request(
     client: FlaskClient,
@@ -119,17 +152,7 @@ def queued_request(
     Yields:
         The id of the queued request.
     """
-    request_body: dict[str, Any] = {
-        "prompt": "a horde of cute stable robots repairing a mainframe",
-        "models": ["stable_diffusion"],
-        "nsfw": True,
-        "censor_nsfw": False,
-        "r2": True,
-        "shared": True,
-        "trusted_workers": True,
-    }
-    request_body.update(body)
-    response = client.post("/api/v2/generate/async", json=request_body, headers=request_headers)
+    response = post_request(client, request_headers, **body)
     assert response.status_code == 202, response.get_data(as_text=True)
     request_id = response.get_json()["id"]
     try:
@@ -264,3 +287,212 @@ class TestImageStylePrompt:
                 payload = pop_payload(client, request_headers)
 
                 assert payload["prompt"] == "robots, {red|green} rococo###blurry"
+
+
+class TestImageStyleParameterPolicy:
+    """Which of a request's params an image style's parameter policy lets through."""
+
+    def test_override_none_ignores_the_request_params(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("image policy none", parameter_policy={"override": "none"})
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params={"steps": 30}):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["ddim_steps"] == STYLE_PARAMS["steps"]
+
+    def test_override_all_takes_the_request_params(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("image policy all", parameter_policy={"override": "all"})
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(
+                client,
+                request_headers,
+                style=style_id,
+                params={"steps": 30, "width": 768, "height": 768},
+            ):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["ddim_steps"] == 30
+                assert payload["width"] == 768
+                assert payload["height"] == 768
+
+    def test_override_listed_takes_only_the_listed_params(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "image policy listed",
+            parameter_policy={"override": "listed", "overridable": ["steps"]},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params={"steps": 30}):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["ddim_steps"] == 30
+                assert payload["width"] == STYLE_PARAMS["width"]
+
+    def test_a_param_the_style_does_not_list_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "image policy listed refusal",
+            parameter_policy={"override": "listed", "overridable": ["steps"]},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            response = post_request(client, request_headers, style=style_id, params={"width": 768})
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleParameterNotOverridable"
+
+    def test_a_param_above_the_ceiling_is_refused_rather_than_trimmed(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        body = style_body(
+            "image policy ceiling",
+            parameter_policy={"override": "all", "ceilings": {"steps": 20}},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            response = post_request(client, request_headers, style=style_id, params={"steps": 30})
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleParameterAboveCeiling"
+
+    def test_a_param_at_the_ceiling_is_accepted(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "image policy ceiling boundary",
+            parameter_policy={"override": "all", "ceilings": {"steps": 20}},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params={"steps": 20}):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["ddim_steps"] == 20
+
+    def test_the_request_count_is_capped_even_under_none(self, client, request_headers: dict[str, str]) -> None:
+        # The number of takes always comes from the request, so a ceiling on it applies under a mode
+        # that lets no other param through.
+        body = style_body("image policy takes ceiling", parameter_policy={"override": "none", "ceilings": {"n": 1}})
+        with created_style(client, request_headers, body) as style_id:
+            response = post_request(client, request_headers, style=style_id, params={"n": 3})
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleParameterAboveCeiling"
+
+    def test_a_style_with_a_policy_does_not_pass_the_size_through(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        # Without a policy a style that sets no size takes the request's. With one, the policy decides,
+        # so a mode that lets nothing through leaves the request on the horde's default size.
+        body = style_body(
+            "image policy sizeless",
+            params={"steps": 8, "cfg_scale": 7, "sampler_name": "k_euler_a"},
+            parameter_policy={"override": "none"},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params={"width": 512, "height": 768}):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["width"] == DEFAULT_IMAGE_SIZE
+                assert payload["height"] == DEFAULT_IMAGE_SIZE
+
+    def test_a_policy_that_lets_the_size_through_uses_the_requests(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        body = style_body(
+            "image policy sizeless listed",
+            params={"steps": 8, "cfg_scale": 7, "sampler_name": "k_euler_a"},
+            parameter_policy={"override": "listed", "overridable": ["width", "height"]},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params={"width": 512, "height": 768}):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["width"] == 512
+                assert payload["height"] == 768
+
+
+class TestImageStyleTemplateFields:
+    """Filling the placeholders an image style declares."""
+
+    prompt_with_fields = "{p}, {caption} in {tags} style###{np}"
+
+    def test_the_fields_are_formatted_into_the_prompt(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("image fields", prompt=self.prompt_with_fields, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(
+                client,
+                request_headers,
+                prompt="robots###blurry",
+                style=style_id,
+                template_fields={"caption": "a lighthouse", "tags": "impasto"},
+            ):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["prompt"] == "robots, a lighthouse in impasto style###blurry"
+
+    def test_an_optional_field_left_out_formats_to_nothing(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "image fields optional",
+            prompt=self.prompt_with_fields,
+            template_fields=TEMPLATE_FIELDS,
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(
+                client,
+                request_headers,
+                prompt="robots###blurry",
+                style=style_id,
+                template_fields={"caption": "a lighthouse"},
+            ):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["prompt"] == "robots, a lighthouse in  style###blurry"
+
+    def test_braces_the_style_does_not_declare_reach_the_worker_as_written(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        body = style_body(
+            "image fields braces",
+            prompt="{p}, {caption} {red|green} rococo###{np}",
+            template_fields=TEMPLATE_FIELDS,
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(
+                client,
+                request_headers,
+                prompt="robots###blurry",
+                style=style_id,
+                template_fields={"caption": "a lighthouse"},
+            ):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["prompt"] == "robots, a lighthouse {red|green} rococo###blurry"
+
+    def test_fields_without_a_style_are_refused(self, client, request_headers: dict[str, str]) -> None:
+        response = post_request(client, request_headers, template_fields={"caption": "a lighthouse"})
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "TemplateFieldsRequireStyle"
+
+    def test_a_field_the_style_does_not_declare_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("image fields unknown", prompt=self.prompt_with_fields, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            response = post_request(
+                client,
+                request_headers,
+                style=style_id,
+                template_fields={"caption": "a lighthouse", "mood": "bleak"},
+            )
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "TemplateFieldUnknown"
+
+    def test_a_required_field_left_out_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body("image fields missing", prompt=self.prompt_with_fields, template_fields=TEMPLATE_FIELDS)
+        with created_style(client, request_headers, body) as style_id:
+            response = post_request(client, request_headers, style=style_id, template_fields={"tags": "impasto"})
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "TemplateFieldMissing"

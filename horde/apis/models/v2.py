@@ -231,6 +231,14 @@ class Parsers:
         )
         self.generate_parser.add_argument("webhook", type=str, required=False, location="json")
         self.generate_parser.add_argument("style", type=str, required=False, location="json")
+        # Both gentypes accept these, since a style of either type can declare the placeholders they fill.
+        self.generate_parser.add_argument(
+            "template_fields",
+            type=dict,
+            required=False,
+            help="Values for the placeholders the requested style's prompt accepts, keyed by field name.",
+            location="json",
+        )
 
         # The parser for RequestPop
         self.job_pop_parser = reqparse.RequestParser()

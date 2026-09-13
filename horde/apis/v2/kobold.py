@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import copy
 import random
 from collections import defaultdict
 from datetime import datetime
@@ -212,12 +211,12 @@ class TextAsyncGenerate(GenerateTemplate):
             self.existing_style.use_count += 1
             self.existing_style = colstyles[0]
         self.models = self.existing_style.get_model_names()
+        resolved_template_fields = self.apply_style_contract(self.existing_style)
         # We need to use defaultdict to avoid getting keyerrors in case the style author added
         # Erroneous keys in the string
-        self.prompt = self.existing_style.prompt.format_map(defaultdict(str, p=self.prompt))
-        requested_n = self.params.get("n", 1)
-        self.params = copy.deepcopy(self.existing_style.params)
-        self.params["n"] = requested_n
+        self.prompt = self.existing_style.prompt.format_map(
+            defaultdict(str, resolved_template_fields.values, p=self.prompt),
+        )
         self.nsfw = self.existing_style.nsfw
         self.existing_style.use_count += 1
         if self.existing_style.user != self.user:

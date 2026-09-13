@@ -9,6 +9,7 @@ from flask_restx import fields
 from horde_sdk.generation_parameters.image.constraints_document import SamplerConstraintsDocument
 
 from horde.apis.models import v2
+from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
 from horde.consts import (
     CONTROL_STRENGTH_MAX,
@@ -926,6 +927,16 @@ class ImageModels(v2.Models):
                     min_length=3,
                     example="00000000-0000-0000-0000-000000000000",
                     description=("A horde style ID or name to use for this generation"),
+                ),
+                "template_fields": fields.Raw(
+                    required=False,
+                    example={"caption": "a lighthouse in a storm"},
+                    description=(
+                        "Values for the placeholders the requested style's prompt accepts, as a flat object of "
+                        "strings keyed by field name. Only accepted together with 'style', and only for fields "
+                        "that style declares. Each value, and all of them together, are limited to the same "
+                        f"length as a prompt ({MAX_TEMPLATE_FIELD_WORDS} words)."
+                    ),
                 ),
             },
         )
