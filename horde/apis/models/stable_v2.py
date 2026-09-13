@@ -9,6 +9,7 @@ from flask_restx import fields
 from horde_sdk.generation_parameters.image.constraints_document import SamplerConstraintsDocument
 
 from horde.apis.models import v2
+from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
 from horde.consts import (
     CONTROL_STRENGTH_MAX,
     CONTROL_STRENGTH_MIN,
@@ -1297,6 +1298,21 @@ class ImageModels(v2.Models):
                     min_length=7,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                # allow_null so a style with no policy returns the key as null rather than as an empty
+                # object, giving clients one shape either way.
+                "parameter_policy": fields.Nested(
+                    self.model_style_parameter_policy,
+                    skip_none=True,
+                    allow_null=True,
+                    required=False,
+                    description="Which params a request using this style may set, and the limits on them.",
+                ),
+                "template_fields": fields.List(
+                    fields.Nested(self.model_style_template_field, skip_none=True),
+                    required=False,
+                    allow_null=True,
+                    description=f"The placeholders this style's prompt accepts from the request, at most {MAX_TEMPLATE_FIELDS} of them.",
+                ),
                 "public": fields.Boolean(
                     default=True,
                     description=(
@@ -1356,6 +1372,21 @@ class ImageModels(v2.Models):
                     min_length=7,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                # allow_null so a style with no policy returns the key as null rather than as an empty
+                # object, giving clients one shape either way.
+                "parameter_policy": fields.Nested(
+                    self.model_style_parameter_policy,
+                    skip_none=True,
+                    allow_null=True,
+                    required=False,
+                    description="Which params a request using this style may set, and the limits on them.",
+                ),
+                "template_fields": fields.List(
+                    fields.Nested(self.model_style_template_field, skip_none=True),
+                    required=False,
+                    allow_null=True,
+                    description=f"The placeholders this style's prompt accepts from the request, at most {MAX_TEMPLATE_FIELDS} of them.",
+                ),
                 "public": fields.Boolean(
                     default=True,
                     description=(
@@ -1439,7 +1470,10 @@ class ImageModels(v2.Models):
                 ),
                 "use_count": fields.Integer(description="The amount of times this style has been used in generations."),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
+                "updated": fields.DateTime(
+                    description="When this style was last modified, so a client can tell whether a cached copy is stale.",
+                ),
                 "examples": fields.List(fields.Nested(self.response_model_style_example, skip_none=True)),
-                "shared_key": fields.Nested(self.response_model_sharedkey_details, skip_none=True),
+                "shared_key": fields.Nested(self.response_model_sharedkey_details, skip_none=True, allow_null=True),
             },
         )

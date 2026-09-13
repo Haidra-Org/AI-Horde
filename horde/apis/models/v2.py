@@ -13,6 +13,13 @@ from horde.classes.base.prompt_moderation import (
     PromptModerationOutcome,
     PromptModerationReason,
 )
+from horde.classes.base.style_contract import (
+    RESERVED_TEMPLATE_FIELD_NAMES,
+    TEMPLATE_FIELD_DESCRIPTION_MAX_LENGTH,
+    TEMPLATE_FIELD_DESCRIPTION_MIN_LENGTH,
+    TEMPLATE_FIELD_NAME_MAX_LENGTH,
+    StyleParameterOverride,
+)
 from horde.enums import WarningMessage
 from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
@@ -500,6 +507,23 @@ class Parsers:
             help="The UUID of a shared key which will be used to generate with this style if active.",
             location="json",
         )
+        # Both style types accept these two, but what a policy may talk about differs between them, so
+        # each type validates the value against the params model of its own requests.
+        for style_parser in (self.style_parser, self.style_parser_patch):
+            style_parser.add_argument(
+                "parameter_policy",
+                type=dict,
+                required=False,
+                help="Which generate params a request under this style may set, and the ceilings it may not exceed.",
+                location="json",
+            )
+            style_parser.add_argument(
+                "template_fields",
+                type=list,
+                required=False,
+                help="The placeholders this style's prompt accepts from the request.",
+                location="json",
+            )
 
 
 class Models:
@@ -1192,6 +1216,71 @@ class Models:
                 ),
                 "max_text_tokens": fields.Integer(
                     description="The maximum amount of text tokens this key can generate per job. -1 means unlimited.",
+                ),
+            },
+        )
+
+        # Both style types carry these two declarations in the same shape. Which params a policy may
+        # hand over or cap depends on the style's type, so 'overridable' and 'ceilings' are documented
+        # generically here and checked against that type's params model when a style is created.
+        self.model_style_parameter_policy = api.model(
+            "StyleParameterPolicy",
+            {
+                "override": fields.String(
+                    required=False,
+                    default=StyleParameterOverride.NONE.value,
+                    enum=[mode.value for mode in StyleParameterOverride],
+                    description=(
+                        "Which of the request's params are kept when this style is applied. "
+                        f"'{StyleParameterOverride.NONE.value}' uses the style's params as they are, "
+                        f"'{StyleParameterOverride.LISTED.value}' accepts the params in 'overridable', and "
+                        f"'{StyleParameterOverride.ALL.value}' accepts any of them. The ceilings apply either way."
+                    ),
+                ),
+                "overridable": fields.List(
+                    fields.String(description="A param of this style the request may set.", example="steps"),
+                    required=False,
+                    description=(
+                        f"The params the request may set. Only read under the '{StyleParameterOverride.LISTED.value}' "
+                        "override mode; sending it under any other mode is rejected."
+                    ),
+                ),
+                "ceilings": fields.Raw(
+                    required=False,
+                    example={"steps": 30},
+                    description=(
+                        "The largest value a request under this style may set, per param. A request above a ceiling "
+                        "is refused rather than trimmed. Which params can be capped depends on the style's type."
+                    ),
+                ),
+            },
+        )
+        self.model_style_template_field = api.model(
+            "StyleTemplateField",
+            {
+                "name": fields.String(
+                    required=True,
+                    example="caption",
+                    min_length=1,
+                    max_length=TEMPLATE_FIELD_NAME_MAX_LENGTH,
+                    description=(
+                        "The placeholder in this style's prompt the request fills, written without braces. "
+                        "Lowercase letters, digits and underscores, starting with a letter. "
+                        f"{' and '.join(sorted(repr(reserved) for reserved in RESERVED_TEMPLATE_FIELD_NAMES))} "
+                        "are filled by the horde and cannot be declared."
+                    ),
+                ),
+                "description": fields.String(
+                    required=True,
+                    example="What the picture shows",
+                    min_length=TEMPLATE_FIELD_DESCRIPTION_MIN_LENGTH,
+                    max_length=TEMPLATE_FIELD_DESCRIPTION_MAX_LENGTH,
+                    description="What this style expects in the placeholder.",
+                ),
+                "required": fields.Boolean(
+                    required=False,
+                    default=False,
+                    description="When true, a request using this style has to supply this field.",
                 ),
             },
         )

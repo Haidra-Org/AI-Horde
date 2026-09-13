@@ -5,6 +5,7 @@
 from flask_restx import fields
 
 from horde.apis.models import v2
+from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
 from horde.vars import horde_title
 
 
@@ -183,23 +184,27 @@ class TextModels(v2.Models):
                 ),
             },
         )
+        # Defined once and reused: a style's ceiling on either param has to sit inside the range the
+        # param itself accepts, and a style's own params model advertises that same range.
+        kobold_max_context_length = fields.Integer(
+            min=80,
+            default=2048,
+            max=1_048_576,
+            description="Maximum number of tokens to send to the model.",
+        )
+        kobold_max_length = fields.Integer(
+            min=16,
+            max=4096,
+            default=80,
+            description="Number of tokens to generate.",
+        )
         self.root_model_generation_payload_kobold = api.inherit(
             "ModelPayloadRootKobold",
             self.root_model_generation_payload_style_kobold,
             {
                 "n": fields.Integer(example=1, min=1, max=20),
-                "max_context_length": fields.Integer(
-                    min=80,
-                    default=2048,
-                    max=1_048_576,
-                    description="Maximum number of tokens to send to the model.",
-                ),
-                "max_length": fields.Integer(
-                    min=16,
-                    max=4096,
-                    default=80,
-                    description="Number of tokens to generate.",
-                ),
+                "max_context_length": kobold_max_context_length,
+                "max_length": kobold_max_length,
                 # "soft_prompt": fields.String(
                 #     description=(
                 #         "Soft prompt to use when generating. If set to the empty string or any other string containing "
@@ -458,10 +463,27 @@ class TextModels(v2.Models):
         )
 
         # Styles
+        # The two params a policy can cap are declared on ModelPayloadRootKobold, which a style's params
+        # do not inherit, so a style setting them marshalled them away and a client could not size a
+        # request against the style. They are redeclared here rather than moved to the shared parent, so
+        # ModelPayloadRootKobold keeps the declaration that carries the request defaults. No defaults
+        # here: a style that does not set a param leaves it unset, and skip_none on the nested params
+        # field then drops the key, as it does for every other param without a default.
         self.input_model_style_params = api.inherit(
             "ModelStyleInputParamsKobold",
             self.root_model_generation_payload_style_kobold,
-            {},
+            {
+                "max_context_length": fields.Integer(
+                    min=kobold_max_context_length.minimum,
+                    max=kobold_max_context_length.maximum,
+                    description=kobold_max_context_length.description,
+                ),
+                "max_length": fields.Integer(
+                    min=kobold_max_length.minimum,
+                    max=kobold_max_length.maximum,
+                    description=kobold_max_length.description,
+                ),
+            },
         )
         self.input_model_style = api.model(
             "ModelStyleInputKobold",
@@ -491,6 +513,21 @@ class TextModels(v2.Models):
                     min_length=3,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                # allow_null so a style with no policy returns the key as null rather than as an empty
+                # object, giving clients one shape either way.
+                "parameter_policy": fields.Nested(
+                    self.model_style_parameter_policy,
+                    skip_none=True,
+                    allow_null=True,
+                    required=False,
+                    description="Which params a request using this style may set, and the limits on them.",
+                ),
+                "template_fields": fields.List(
+                    fields.Nested(self.model_style_template_field, skip_none=True),
+                    required=False,
+                    allow_null=True,
+                    description=f"The placeholders this style's prompt accepts from the request, at most {MAX_TEMPLATE_FIELDS} of them.",
+                ),
                 "public": fields.Boolean(
                     default=True,
                     description=(
@@ -540,6 +577,21 @@ class TextModels(v2.Models):
                     min_length=7,
                 ),
                 "params": fields.Nested(self.input_model_style_params, skip_none=True),
+                # allow_null so a style with no policy returns the key as null rather than as an empty
+                # object, giving clients one shape either way.
+                "parameter_policy": fields.Nested(
+                    self.model_style_parameter_policy,
+                    skip_none=True,
+                    allow_null=True,
+                    required=False,
+                    description="Which params a request using this style may set, and the limits on them.",
+                ),
+                "template_fields": fields.List(
+                    fields.Nested(self.model_style_template_field, skip_none=True),
+                    required=False,
+                    allow_null=True,
+                    description=f"The placeholders this style's prompt accepts from the request, at most {MAX_TEMPLATE_FIELDS} of them.",
+                ),
                 "public": fields.Boolean(
                     default=True,
                     description=(
@@ -572,6 +624,9 @@ class TextModels(v2.Models):
                 ),
                 "use_count": fields.Integer(description="The amount of times this style has been used in generations."),
                 "creator": fields.String(description="The alias of the user to whom this style belongs to.", example="db0#1"),
+                "updated": fields.DateTime(
+                    description="When this style was last modified, so a client can tell whether a cached copy is stale.",
+                ),
                 "shared_key": fields.Nested(self.response_model_sharedkey_details, skip_none=True, allow_null=True),
             },
         )
