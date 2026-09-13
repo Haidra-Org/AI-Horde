@@ -34,6 +34,7 @@ nav = [
         { "Image model reference loader" = "reference/model_reference.md" },
         { "Prompt provenance" = "reference/prompt_provenance.md" },
         { "Moderation operations" = "reference/moderation_operations.md" },
+        { "Style contract" = "reference/style_contract.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
