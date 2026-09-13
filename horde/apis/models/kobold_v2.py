@@ -573,9 +573,9 @@ class TextModels(v2.Models):
                 "prompt": fields.String(
                     required=False,
                     description=(
-                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
-                        "The user's prompt will be injected into this."
-                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
+                        "The prompt template which wraps the request's prompt before it is sent to the text model."
+                        " This argument MUST include a '{p}' which specifies the part where the request's prompt"
+                        " will be injected, and every template field this style declares is filled in by name."
                         " A '{{[NAME]}}' token, with uppercase letters and underscores between the brackets, is left in"
                         " the prompt exactly as written, as described in docs/reference/style_contract.md."
                     ),
@@ -640,9 +640,9 @@ class TextModels(v2.Models):
                 "prompt": fields.String(
                     required=False,
                     description=(
-                        "The prompt template which will be sent to Stable Diffusion to generate an image. "
-                        "The user's prompt will be injected into this."
-                        " This argument MUST include a '{p}' which specifies the part where the user's prompt will be injected."
+                        "The prompt template which wraps the request's prompt before it is sent to the text model."
+                        " This argument MUST include a '{p}' which specifies the part where the request's prompt"
+                        " will be injected, and every template field this style declares is filled in by name."
                         " A '{{[NAME]}}' token, with uppercase letters and underscores between the brackets, is left in"
                         " the prompt exactly as written, as described in docs/reference/style_contract.md."
                     ),
