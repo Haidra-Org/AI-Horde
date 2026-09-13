@@ -162,6 +162,26 @@ def get_active_workers(worker_type=None):
     return active_workers
 
 
+def get_highest_text_worker_max_context_length(model_names: list[str] | None = None) -> int | None:
+    """Return the largest ``max_context_length`` an online text worker advertises.
+
+    Online means the window ``get_active_workers()`` uses: a worker that has checked in recently. A
+    request grown past this would have no worker able to serve it and would wait until it expires.
+
+    Args:
+        model_names: The models the request accepts. When empty or omitted, every online text worker
+            counts.
+
+    Returns:
+        The largest advertised context, or None when no online text worker serves those models.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=300)
+    query = db.session.query(func.max(TextWorker.max_context_length)).filter(TextWorker.last_check_in > cutoff)
+    if model_names:
+        query = query.filter(TextWorker.models.any(WorkerModel.model.in_(model_names)))
+    return query.scalar()
+
+
 def get_active_workers_for_details() -> list[WorkerTemplate]:
     """Return every active worker with all relationships ``get_details()`` reads already loaded.
 
