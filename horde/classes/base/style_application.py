@@ -9,14 +9,19 @@ decides which of the request's params are kept, under the style's ``parameter_po
 every value the request still controls to the ceilings that policy sets.
 [`resolve_template_field_values`][horde.classes.base.style_application.resolve_template_field_values]
 checks the values a request supplies for the placeholders its style declares.
+[`format_text_style_prompt`][horde.classes.base.style_application.format_text_style_prompt] fills a
+text style's template with both.
 
-Both are pure: they take the style's declarations and the request's body and return what to build the
-waiting prompt from, or raise. The request path does the database reads, the prompt formatting, which
-differs between image and text, and anything else the style replaces.
+All three are pure: they take the style's declarations and the request's body and return what to build
+the waiting prompt from, or raise. The request path does the database reads, the image side of prompt
+formatting, and anything else the style replaces.
 """
 
 from __future__ import annotations
 
+import re
+import secrets
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +47,16 @@ MAX_TEMPLATE_FIELD_WORDS = 7500
 The limit the horde places on a prompt (``ParamValidator.validate_image_params``): a template field is
 prompt text and reaches the model the same way.
 """
+
+PROTECTED_TEXT_PLACEHOLDER_PATTERN = re.compile(r"\{\{\[[A-Z_]+\]\}\}")
+"""Instruct placeholders a text backend fills in itself, such as ``{{[INPUT]}}`` and ``{{[OUTPUT]}}``.
+
+The name between the brackets is uppercase letters and underscores. Anything else, including a
+lowercase name, is ordinary template text and formats under the usual rules.
+"""
+
+SHIELD_MARKER_NONCE_BYTES = 8
+"""Length of the random part of the marker that stands in for a protected placeholder."""
 
 
 @dataclass(frozen=True)
@@ -198,3 +213,83 @@ def resolve_template_field_values(
             )
 
     return ResolvedTemplateFields(declared_names=declared_names, values=field_values)
+
+
+def format_text_style_prompt(
+    *,
+    template: str,
+    prompt: str,
+    field_values: Mapping[str, str],
+) -> str:
+    """Fill a text style's prompt template with the request's prompt and its template field values.
+
+    The whole rule for a text template:
+
+    - ``{p}`` becomes the request's own prompt.
+    - Each placeholder the style declares becomes the value the request supplied for it.
+    - A placeholder nothing fills becomes the empty string rather than failing the request.
+    - ``{{`` and ``}}`` are a literal brace each, as in any Python format string.
+    - A token of the form ``{{[NAME]}}``, with uppercase letters and underscores between the brackets,
+      is kept exactly as it was written.
+
+    The last rule exists because those tokens are instruct placeholders the text backend fills in when
+    it builds its own prompt, and formatting them as braces would strip them out of a template written
+    against that backend.
+
+    Args:
+        template: The style's prompt template.
+        prompt: The request's own prompt.
+        field_values: The values the request supplied for the placeholders the style declares.
+
+    Returns:
+        The prompt the worker is handed.
+    """
+    # This rule is what the style contract endpoint publishes and what docs/reference/style_contract.md
+    # sets out. Changing any part of it means raising the contract's schema version and rewriting both.
+    shielded_template, protected_placeholders = _shield_protected_placeholders(template)
+    formatted_prompt = shielded_template.format_map(defaultdict(str, field_values, p=prompt))
+    return _restore_protected_placeholders(formatted_prompt, protected_placeholders)
+
+
+def _shield_protected_placeholders(template: str) -> tuple[str, dict[str, str]]:
+    """Replace each protected placeholder with a marker that formatting leaves alone.
+
+    The marker carries a random part drawn per call, so text coming in from the request cannot pose as
+    one and have itself turned into a placeholder on the way out.
+
+    Args:
+        template: The style's prompt template.
+
+    Returns:
+        The template with every protected placeholder replaced, and the placeholder each marker stands
+        for, empty when the template holds none.
+    """
+    if not PROTECTED_TEXT_PLACEHOLDER_PATTERN.search(template):
+        return template, {}
+
+    nonce = secrets.token_hex(SHIELD_MARKER_NONCE_BYTES)
+    protected_placeholders: dict[str, str] = {}
+
+    def _marker_for(match: re.Match[str]) -> str:
+        marker = f"{nonce}{len(protected_placeholders)}{nonce}"
+        protected_placeholders[marker] = match.group(0)
+        return marker
+
+    return PROTECTED_TEXT_PLACEHOLDER_PATTERN.sub(_marker_for, template), protected_placeholders
+
+
+def _restore_protected_placeholders(formatted_prompt: str, protected_placeholders: Mapping[str, str]) -> str:
+    """Put each protected placeholder back where its marker sits.
+
+    Args:
+        formatted_prompt: The formatted prompt, still carrying the markers.
+        protected_placeholders: The placeholder each marker stands for.
+
+    Returns:
+        The prompt with every marker replaced by the placeholder it stood for.
+    """
+    restored_prompt = formatted_prompt
+    for marker, placeholder in protected_placeholders.items():
+        restored_prompt = restored_prompt.replace(marker, placeholder)
+
+    return restored_prompt
