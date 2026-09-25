@@ -445,6 +445,7 @@ class GenerateTemplate(Resource):
                         }
                         upload_prompt(prompt_dict)
                         self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
+                        logger.info(f"IP Address {self.user_ip} from user {self.username} going into timeout!")
                         CounterMeasures.report_suspicion(self.user_ip)
                     if self.proxied_request:
                         sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
