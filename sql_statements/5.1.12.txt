@@ -48,3 +48,24 @@ CREATE TABLE IF NOT EXISTS prompt_moderation_reviews (
   reviewed_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
   note VARCHAR(2000) NOT NULL DEFAULT ''
 );
+
+-- worker_suspicions remains the resettable current score. No foreign keys here: deleting a
+-- worker or resetting its suspicion must not delete the history moderators review.
+CREATE TABLE IF NOT EXISTS worker_suspicion_events (
+  id BIGSERIAL PRIMARY KEY,
+  created TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
+  worker_id UUID NOT NULL,
+  worker_name VARCHAR(100) NOT NULL,
+  user_id INTEGER NOT NULL,
+  suspicion_id INTEGER NOT NULL,
+  amount INTEGER NOT NULL DEFAULT 1,
+  detail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_worker_suspicion_events_created
+  ON worker_suspicion_events (created);
+CREATE INDEX IF NOT EXISTS ix_worker_suspicion_events_worker_id
+  ON worker_suspicion_events (worker_id, id);
+CREATE INDEX IF NOT EXISTS ix_worker_suspicion_events_user_id
+  ON worker_suspicion_events (user_id, id);
+CREATE INDEX IF NOT EXISTS ix_worker_suspicion_events_reason_id
+  ON worker_suspicion_events (suspicion_id, id);

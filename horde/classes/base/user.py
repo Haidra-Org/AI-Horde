@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 import dateutil.relativedelta
@@ -367,6 +368,14 @@ class UserSharedKey(db.Model):
                 )
 
         return True, None
+
+
+class PromotionStatus(StrEnum):
+    """Outcome of the automatic trust promotion decision for one account."""
+
+    PROMOTE = "promote"
+    BLOCKED_BY_SUSPICION = "blocked_by_suspicion"
+    NOT_A_CANDIDATE = "not_a_candidate"
 
 
 class User(db.Model):
@@ -897,20 +906,38 @@ class User(db.Model):
         self.modify_kudos(kudos, "styled", commit=False, entry_type=KudosEntryType.STYLE_REWARD)
         db.session.commit()
 
+    def promotion_status(self, threshold: int | float | None) -> PromotionStatus:
+        """Decide automatic promotion to trusted without applying it.
+
+        This is the only statement of the promotion criteria. ``check_for_trust``
+        promotes on PROMOTE, and the moderation overview buckets its review queues
+        by the same result, so the two can only agree.
+
+        Args:
+            threshold: Evaluating-kudos level that opens promotion, or None when
+                automatic promotion is disabled.
+
+        Returns:
+            PROMOTE when every criterion holds, BLOCKED_BY_SUSPICION when suspicion
+            alone withholds it, NOT_A_CANDIDATE otherwise.
+        """
+        if threshold is None or self.evaluating_kudos <= threshold:
+            return PromotionStatus.NOT_A_CANDIDATE
+        if self.trusted or self.is_anon():
+            return PromotionStatus.NOT_A_CANDIDATE
+        # An account has to exist for at least 1 week to become trusted automatically
+        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+            return PromotionStatus.NOT_A_CANDIDATE
+        if self.is_suspicious():
+            return PromotionStatus.BLOCKED_BY_SUSPICION
+        return PromotionStatus.PROMOTE
+
     def check_for_trust(self) -> None:
         """After a user passes the evaluation threshold (?? kudos)
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         """
-        threshold = get_kudos_trust_threshold()
-        if threshold is None or self.evaluating_kudos <= threshold:
-            return
-        if self.is_suspicious():
-            return
-        if self.is_anon():
-            return
-        # An account has to exist for at least 1 week to become trusted automatically
-        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+        if self.promotion_status(get_kudos_trust_threshold()) is not PromotionStatus.PROMOTE:
             return
         # The escrow-to-balance movement is applier-owned: the fold rule is that a
         # trusted user's evaluation escrow always drains to the spendable balance,

@@ -178,6 +178,8 @@ KNOWN_RC = [
     "InvalidModerationTimeRange",
     "InvalidModerationNote",
     "ModerationEventNotFound",
+    "InvalidWorkerID",
+    "InvalidSuspicionID",
     "SchedulerBaselineMismatch",
     "FlowShiftInapplicable",
     "FlowShiftOutOfRange",

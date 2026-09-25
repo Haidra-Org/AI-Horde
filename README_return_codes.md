@@ -180,9 +180,11 @@ The errors returned by the AI horde are always in this json format
 | InvalidOperationsLimit | The page size for a moderator operations listing is out of range |
 | InvalidPromptEncoding | The prompt contains characters that cannot be encoded (unpaired UTF-16 surrogates) |
 | InvalidRemixModel | Image remix is not available for this model baseline |
+| InvalidSuspicionID | No suspicion reason exists with the given ID |
 | InvalidTransparencyCN | Transparent images cannot be generated in ControlNet workflows |
 | InvalidTransparencyImg2Img | Transparent images cannot be generated in img2img workflows |
 | InvalidTransparencyModel | Transparent images cannot be generated for this model baseline |
+| InvalidWorkerID | The worker ID is not a UUID |
 | MessagesOnlyOwnWorkers | Messages can only be sent to your own workers |
 | MissingExtraTexts | This workflow requires the extra texts to be provided |
 | MissingFullSamplerOrder | A custom sampler order must list every sampler |

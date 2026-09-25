@@ -41,9 +41,12 @@ def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             predicate = sharedkey_index.get("dialect_options", {}).get("postgresql_where")
             assert predicate is not None
             assert "sharedkey_id IS NOT NULL" in str(predicate)
-            assert {"prompt_moderation_events", "prompt_moderation_reviews"} <= set(
+            assert {"prompt_moderation_events", "prompt_moderation_reviews", "worker_suspicion_events"} <= set(
                 sqlalchemy.inspect(connection).get_table_names(),
             )
+            assert "ix_worker_suspicion_events_user_id" in {
+                index["name"] for index in sqlalchemy.inspect(connection).get_indexes("worker_suspicion_events")
+            }
     finally:
         engine.dispose()
         drop_schema(pg_dsn, schema_name)
