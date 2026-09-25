@@ -9,7 +9,7 @@ import math
 import os
 import random
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import logfire
 from horde_sdk.generation_parameters.image.sampler_work import SamplerWorkEstimate, SamplerWorkUnitCount
@@ -203,6 +203,30 @@ class ImageWaitingPrompt(WaitingPrompt):
                 "comfy_pipeline": f"{pipline_name}.json",
             }
         return ret_payload
+
+    def get_submitted_request(self) -> dict[str, Any]:
+        """Extend the base request with the image fields, restoring the seed the row keeps in its own columns.
+
+        Source images are reported as the object storage references they were replaced with on upload,
+        not the base64 payload the client sent.
+        """
+        ret_dict = super().get_submitted_request()
+        if self.seed is not None:
+            ret_dict["params"]["seed"] = str(self.seed)
+        if self.seed_variation is not None:
+            ret_dict["params"]["seed_variation"] = self.seed_variation
+        ret_dict.update(
+            {
+                "nsfw": self.nsfw,
+                "censor_nsfw": self.censor_nsfw,
+                "source_image": self.source_image,
+                "source_processing": self.source_processing,
+                "source_mask": self.source_mask,
+                "r2": self.r2,
+                "shared": self.shared,
+            },
+        )
+        return ret_dict
 
     def get_share_metadata(self):
         """This is uploaded along with the image to the shared R2, when this WP shared"""

@@ -4,6 +4,7 @@
 
 import math
 import os
+from typing import Any
 
 from sqlalchemy.sql import expression
 
@@ -73,6 +74,11 @@ class TextWaitingPrompt(WaitingPrompt):
             f"New text2text prompt with ID {self.id} by {self.user.get_unique_alias()}{proxied_account}: "
             f"max_length:{self.max_length} * n:{self.n} == {self.total_usage} Total Tokens",
         )
+
+    def get_submitted_request(self) -> dict[str, Any]:
+        ret_dict = super().get_submitted_request()
+        ret_dict["softprompt"] = self.softprompt
+        return ret_dict
 
     def calculate_extra_kudos_burn(self, kudos):
         # This represents the cost of using the resources of the horde

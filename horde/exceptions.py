@@ -64,6 +64,7 @@ KNOWN_RC = [
     "NotAdmin",
     "NotModerator",
     "NotOwner",
+    "NotRequestOwner",
     "NotPrivileged",
     "AnonForbidden",
     "AnonForbiddenWorker",
@@ -377,6 +378,13 @@ class NotOwner(wze.Forbidden):
     def __init__(self, username, worker_name, rc="NotOwner"):
         self.specific = "You're not an admin. Sod off!"
         self.log = f"User '{username}'' tried to modify worker they do not own '{worker_name}'. Aborting!"
+        self.rc = rc
+
+
+class NotRequestOwner(wze.Forbidden):
+    def __init__(self, req_id, rc="NotRequestOwner"):
+        self.specific = "Only the API key that submitted this request can retrieve its parameters."
+        self.log = f"Key mismatch when retrieving the parameters of request {req_id}."
         self.rc = rc
 
 
