@@ -264,6 +264,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             worker_ids=self.workers,
             models=self.models,
             prompt=self.prompt,
+            submitted_prompt=self.submitted_prompt,
             user_id=self.user.id,
             params=self.params,
             nsfw=self.args.nsfw,
@@ -655,7 +656,8 @@ class ImageAsyncRequest(Resource):
         Unlike the status and check endpoints, the request ID alone is not enough: the apikey header
         must be the key which submitted the request.
         The response has the same shape as the generation input, holding the values the horde recorded
-        after filling in defaults and applying any prompt filter or style.
+        after filling in parameter defaults. The prompt is the original submission, before styles or
+        moderation, and is omitted for legacy rows. Styled requests are not an exact replay.
         """
         self.args = self.get_parser.parse_args()
         wp = database.get_wp_by_id(id)
@@ -671,7 +673,7 @@ class ImageAsyncRequest(Resource):
         # The dict is fully materialized; release the pooled connection before
         # marshalling and the response write, as the status endpoints do.
         db.session.remove()
-        return (submitted_request, 200)
+        return (submitted_request, 200, {"Cache-Control": "private, no-store"})
 
 
 class ImageAsyncCheck(Resource):
