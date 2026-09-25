@@ -4,6 +4,7 @@
 
 from flask_restx import fields, reqparse
 
+from horde.classes.base.prompt_moderation import PromptModerationReason, PromptReviewStatus
 from horde.enums import WarningMessage
 from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
@@ -1772,6 +1773,63 @@ class Models:
                     min_length=7,
                     max_length=40,
                 ),
+            },
+        )
+        self.response_model_prompt_moderation_event = api.model(
+            "PromptModerationEvent",
+            {
+                "id": fields.Integer(description="Evidence identifier, also the pagination cursor."),
+                "created": fields.String(description="UTC capture time in ISO 8601."),
+                "user_id": self.response_model_user_details["id"],
+                "request_id": fields.String(description="Waiting request ID, absent for a rejected submission."),
+                "job_id": fields.String(description="Reported job ID, present only for worker reports."),
+                "worker_id": self.response_model_generation_result["worker_id"],
+                "proxied_account": fields.String(description="Service-account subject, when one was supplied."),
+                "reason": fields.String(
+                    description="Why the evidence was retained.",
+                    enum=[reason.value for reason in PromptModerationReason],
+                ),
+                "outcome": fields.String(description="What happened to the request.", enum=["rejected", "censored"]),
+                "submitted_prompt": fields.String(description="Original submission, absent when provenance is unknown."),
+                "moderation_prompt": fields.String(description="Moderation input after style expansion, when known."),
+                "effective_prompt": fields.String(description="Last pipeline value; may be absent."),
+                "text_truncated": fields.Boolean(description="A prompt stage exceeded the evidence length limit."),
+                "status": fields.String(
+                    description="Current review disposition.",
+                    enum=[status.value for status in PromptReviewStatus],
+                ),
+                "reviewer_id": fields.Integer(description="Moderator who set the current disposition."),
+                "reviewed_at": fields.String(description="UTC review time in ISO 8601."),
+                "note": fields.String(description="Latest review note."),
+            },
+        )
+        self.response_model_prompt_moderation_events = api.model(
+            "PromptModerationEvents",
+            {
+                "events": fields.List(fields.Nested(self.response_model_prompt_moderation_event)),
+                "next_cursor": fields.Integer(description="Pass as before_id to read the next page."),
+            },
+        )
+        self.input_model_prompt_moderation_review = api.model(
+            "PromptModerationReviewInput",
+            {
+                "status": fields.String(
+                    required=True,
+                    description="New disposition; pending reopens the event.",
+                    enum=[status.value for status in PromptReviewStatus],
+                ),
+                "note": fields.String(description="Review note, at most 2000 characters."),
+            },
+        )
+        self.response_model_prompt_moderation_review = api.model(
+            "PromptModerationReview",
+            {
+                "id": fields.Integer(description="Reviewed evidence identifier."),
+                "status": fields.String(
+                    description="Saved disposition.",
+                    enum=[status.value for status in PromptReviewStatus],
+                ),
+                "reviewer_id": fields.Integer(description="Moderator the disposition is attributed to."),
             },
         )
         self.input_model_add_ip_timeout = api.model(

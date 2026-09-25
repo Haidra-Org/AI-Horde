@@ -40,6 +40,7 @@ style is applied or the replacement filter rewrites the text.
 | -------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
 | `WaitingPrompt.prompt`           | Effective generation input, including styles and moderation         | Generation, worker, and scheduling code          |
 | `WaitingPrompt.submitted_prompt` | Parsed submission string, before styles or moderation               | Authenticated request owner, evidence capture    |
+| Event `moderation_prompt`        | Input to moderation after style expansion                           | Moderator evidence review                        |
 
 `submitted_prompt` is captured in `GenerateTemplate._post_inner` before the subclass `validate()` runs, because that
 is where styles and moderation are applied. Each constructor path receives the captured string explicitly: the waiting
@@ -85,3 +86,7 @@ client reproducing a styled request needs the style it originally specified.
   carry the rejected prompt, and database backups still contain originals.
 - **New copy or retry paths must capture their own submission.** Directly constructed waiting prompts without
   provenance remain valid legacy rows; never copy one request's original onto another request's effective prompt.
+
+## Related
+
+- [Prompt moderation evidence reference](prompt_moderation_evidence.md)

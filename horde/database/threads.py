@@ -489,6 +489,17 @@ def prune_stats():
         prune_expired_stats()
 
 
+@logger.catch(reraise=True)
+def prune_moderation_history() -> None:
+    """Expire bounded batches of retained moderation evidence and review state."""
+    from horde.database.prompt_moderation import prune_moderation_evidence
+
+    with get_app().app_context():
+        deleted = prune_moderation_evidence()
+        if deleted:
+            logger.info(f"Pruned {deleted} expired moderation evidence rows")
+
+
 # The compiled_* stats tables accumulate a new snapshot on each compile run (totals every minute,
 # models daily) and are otherwise never pruned. Reads only ever use the latest snapshot, so we only
 # need to retain a short rolling window.

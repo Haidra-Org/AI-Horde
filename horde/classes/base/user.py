@@ -1279,6 +1279,39 @@ class User(db.Model):
             return None
 
     def record_problem_job(self, procgen, ipaddr, worker, prompt):
+        """Capture worker-reported evidence and update existing problem-job counters.
+
+        Args:
+            procgen: Reported generation and its waiting request.
+            ipaddr: Request origin used by existing notification thresholds.
+            worker: Worker making the report.
+            prompt: Effective worker input, not original submission provenance.
+
+        Side Effects:
+            Persists evidence independently, updates problem-job accounting, and
+            sends the existing threshold-based notifications with evidence references.
+        """
+        from horde.classes.base.waiting_prompt import SubmittedPromptPurpose
+        from horde.database.prompt_moderation import PromptEvidence, PromptModerationReason, record_prompt_evidence
+
+        # Capture every worker-reported problem job before notification thresholds
+        # or account exceptions return. The pre-moderation stage is unavailable here;
+        # never invent it from either the raw submission or the effective prompt.
+        moderation_event_id = record_prompt_evidence(
+            PromptEvidence(
+                user_id=self.id,
+                reason=PromptModerationReason.WORKER_CSAM,
+                submitted_prompt=procgen.wp.read_privileged_submitted_prompt(
+                    purpose=SubmittedPromptPurpose.MODERATION_EVIDENCE,
+                ),
+                moderation_prompt=None,
+                effective_prompt=prompt,
+                request_id=str(procgen.wp.id),
+                job_id=str(procgen.id),
+                worker_id=str(worker.id),
+                proxied_account=procgen.wp.proxied_account,
+            ),
+        )
         # We do not report the admin as they do dev work often.
         if self.id == 1:
             return
@@ -1303,6 +1336,10 @@ class User(db.Model):
         loras = ""
         if "loras" in procgen.wp.params:
             loras = f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
+        moderation_reference = (
+            f"Moderation event: {moderation_event_id or 'unavailable (evidence write failed)'}. "
+            f"Review: {hv.horde_url}/api/v2/operations/moderation/prompts?user_id={self.id}"
+        )
         # Manual exception for pawky as they won't add proxied_accounts for a while
         # And I'm tired of seeing reports from their user instead of from IPs
         # TODO: Remove id check once pawkygame adds proxied_accounts
@@ -1321,7 +1358,7 @@ class User(db.Model):
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                     f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
                     f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}.{loras}",
+                    f"{moderation_reference}{loras}",
                 )
                 hr.horde_r_setex(f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
@@ -1336,7 +1373,7 @@ class User(db.Model):
                     f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
                     f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                     f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}.{loras}",
+                    f"{moderation_reference}{loras}",
                 )
                 hr.horde_r_setex(f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1)
                 return
@@ -1351,7 +1388,7 @@ class User(db.Model):
                 f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}.{loras}",
+                f"{moderation_reference}{loras}",
             )
             hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
             return
@@ -1365,7 +1402,7 @@ class User(db.Model):
                 f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
                 f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
                 f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}.{loras}",
+                f"{moderation_reference}{loras}",
             )
             hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)
             return

@@ -17,6 +17,7 @@ from horde.classes.base.kudos import (  # noqa 401
     KudosReservation,
     KudosStatEvent,
 )
+from horde.classes.base.prompt_moderation import PromptModerationEvent, PromptModerationReview  # noqa: F401
 from horde.classes.base.settings import HordeSettings
 from horde.classes.base.style import Style
 from horde.classes.base.team import Team  # noqa 401
