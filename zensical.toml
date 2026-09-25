@@ -32,6 +32,7 @@ nav = [
         { "Samplers and schedulers" = "reference/samplers_and_schedulers.md" },
         { "Image baseline policy" = "reference/baseline_policy.md" },
         { "Image model reference loader" = "reference/model_reference.md" },
+        { "Prompt provenance" = "reference/prompt_provenance.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },

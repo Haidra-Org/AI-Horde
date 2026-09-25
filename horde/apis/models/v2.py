@@ -30,11 +30,14 @@ SUBMISSION_ONLY_FIELDS = frozenset({"dry_run", "allow_downgrade", "replacement_f
 def derive_submitted_request_model(api, name, input_model, overrides=None):
     """Build the response model for a stored request from its generation input model.
 
-    The stored request is reported in the same shape it was submitted in, so a client can reuse it as-is.
+    Parameters are normalized, but prompt provenance is the original submission. This is not an exact replay.
     Submission-only fields are dropped, and ``overrides`` replaces the fields whose stored form differs from
     the submitted one.
     """
     fields_by_name = {key: value for key, value in input_model.items() if key not in SUBMISSION_ONLY_FIELDS}
+    fields_by_name["prompt"] = fields.String(
+        description="Original submitted prompt before styles/moderation; omitted when unavailable on legacy requests.",
+    )
     fields_by_name.update(overrides or {})
     return api.model(name, fields_by_name)
 

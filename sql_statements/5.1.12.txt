@@ -1,8 +1,20 @@
--- Run with psql, -v ON_ERROR_STOP=1 so a failure stops the migration.
--- Run outside a transaction: CREATE INDEX CONCURRENTLY cannot run inside BEGIN/COMMIT.
+-- Run with psql -v ON_ERROR_STOP=1 so a failure stops the migration.
+-- Do not pass --single-transaction: CREATE INDEX CONCURRENTLY cannot run inside a
+-- transaction block. A failed concurrent build leaves an INVALID index to drop before
+-- rerunning. Every statement is idempotent.
+--
+-- Apply before deploying the application; db.create_all() does not add a column to an
+-- existing table. Do not drop anything here while an instance might still run the new code.
 --
 -- Shared-key activity summaries filter requests by their funding key. Build the lookup index
 -- without blocking ordinary generation writes, before deploying the activity endpoint.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_sharedkey_id
   ON waiting_prompts (sharedkey_id)
   WHERE sharedkey_id IS NOT NULL;
+
+-- No default, so the add is metadata-only and existing rows stay unknown. Provenance is
+-- never backfilled from the effective prompt. The lock timeout fails rather than queueing
+-- an ACCESS EXCLUSIVE lock behind a long transaction.
+SET lock_timeout = '5s';
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS submitted_prompt TEXT;
+RESET lock_timeout;
