@@ -5,6 +5,7 @@
 import horde.apis.v2.base as base
 import horde.apis.v2.kobold as kobold
 import horde.apis.v2.kobold_styles as kobold_styles
+import horde.apis.v2.moderation as moderation
 import horde.apis.v2.stable as stable
 import horde.apis.v2.stable_styles as stable_styles
 import horde.apis.v2.styles as styles
@@ -57,6 +58,8 @@ api.add_resource(base.TeamSingle, "/teams/<string:team_id>")
 api.add_resource(base.OperationsIP, "/operations/ipaddr")
 api.add_resource(base.OperationsIPSingle, "/operations/ipaddr/<string:ipaddr>")
 api.add_resource(base.OperationsBlockWorkerIP, "/operations/block_worker_ipaddr/<string:worker_id>")
+api.add_resource(moderation.OperationsPromptEvents, "/operations/moderation/prompts")
+api.add_resource(moderation.OperationsPromptReview, "/operations/moderation/prompts/<int:event_id>")
 api.add_resource(stable.Interrogate, "/interrogate/async")
 api.add_resource(stable.InterrogationStatus, "/interrogate/status/<string:id>")
 api.add_resource(stable.InterrogatePop, "/interrogate/pop")

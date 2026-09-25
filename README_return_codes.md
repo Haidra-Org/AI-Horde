@@ -174,6 +174,10 @@ The errors returned by the AI horde are always in this json format
 | InvalidControlType | The annotation form requires a known control_type in its payload |
 | InvalidExtraSourceImages | This request type does not accept extra source images |
 | InvalidExtraTexts | This request type does not accept extra texts |
+| InvalidModerationNote | A moderation review note is at most 2000 characters and may not contain NUL bytes |
+| InvalidModerationTimeRange | The moderation evidence time bounds are not a valid range |
+| InvalidOperationsCursor | The pagination cursor for a moderator operations listing is not positive |
+| InvalidOperationsLimit | The page size for a moderator operations listing is out of range |
 | InvalidPromptEncoding | The prompt contains characters that cannot be encoded (unpaired UTF-16 surrogates) |
 | InvalidRemixModel | Image remix is not available for this model baseline |
 | InvalidTransparencyCN | Transparent images cannot be generated in ControlNet workflows |
@@ -182,6 +186,7 @@ The errors returned by the AI horde are always in this json format
 | MessagesOnlyOwnWorkers | Messages can only be sent to your own workers |
 | MissingExtraTexts | This workflow requires the extra texts to be provided |
 | MissingFullSamplerOrder | A custom sampler order must list every sampler |
+| ModerationEventNotFound | No moderation event exists with the given ID |
 | MoreThanMinExtraSourceImage | Only trusted users and patrons can send more than one extra source image |
 | NonServiceForbidden | Only service accounts can set a proxy passkey |
 | NotUserOrMod | Only the user themselves or a moderator can delete a user |

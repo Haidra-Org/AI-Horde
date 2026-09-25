@@ -18,3 +18,33 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_sharedkey_id
 SET lock_timeout = '5s';
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS submitted_prompt TEXT;
 RESET lock_timeout;
+
+-- No account or request foreign keys: a rejected submission has no waiting row, and
+-- evidence must outlive request expiry and account deletion.
+CREATE TABLE IF NOT EXISTS prompt_moderation_events (
+  id BIGSERIAL PRIMARY KEY,
+  created TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
+  user_id INTEGER NOT NULL,
+  request_id VARCHAR(36),
+  job_id VARCHAR(36) UNIQUE,
+  worker_id VARCHAR(36),
+  proxied_account TEXT,
+  reason VARCHAR(32) NOT NULL,
+  outcome VARCHAR(16) NOT NULL,
+  submitted_prompt TEXT,
+  moderation_prompt TEXT,
+  effective_prompt TEXT,
+  text_truncated BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_created ON prompt_moderation_events (created);
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_user_id ON prompt_moderation_events (user_id, id);
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_reason_id ON prompt_moderation_events (reason, id);
+
+-- Review disposition is separate so that recording it never edits captured evidence.
+CREATE TABLE IF NOT EXISTS prompt_moderation_reviews (
+  event_id BIGINT PRIMARY KEY REFERENCES prompt_moderation_events (id) ON DELETE CASCADE,
+  status VARCHAR(16) NOT NULL,
+  reviewer_id INTEGER NOT NULL,
+  reviewed_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
+  note VARCHAR(2000) NOT NULL DEFAULT ''
+);

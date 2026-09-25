@@ -33,6 +33,7 @@ nav = [
         { "Image baseline policy" = "reference/baseline_policy.md" },
         { "Image model reference loader" = "reference/model_reference.md" },
         { "Prompt provenance" = "reference/prompt_provenance.md" },
+        { "Prompt moderation evidence" = "reference/prompt_moderation_evidence.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },

@@ -17,7 +17,7 @@ procedure for one subject sit together.
 - `accounting`: how a value movement is recorded, projected, and audited.
 - `generation`: what a generation request asks for, and how those choices shape the result.
 - `kudos`: the kudos economy: what is earned, charged, and priced.
-- `moderation`: how prompts are filtered and what the submitter can read back.
+- `moderation`: how prompts are filtered, what the submitter can read back, what evidence is retained, and what moderators can review.
 - `operations`: procedures an operator runs against a deployment.
 - `requests`: how generation requests progress, match workers, and expose status.
 - `workers`: how worker capabilities and availability affect request execution.
@@ -52,15 +52,18 @@ procedure for one subject sit together.
 ### moderation
 
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
+- Reference: [Prompt moderation evidence reference](reference/prompt_moderation_evidence.md)
 
 ### operations
 
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
+- Reference: [Prompt moderation evidence reference](reference/prompt_moderation_evidence.md)
 
 ### requests
 
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
+- Reference: [Prompt moderation evidence reference](reference/prompt_moderation_evidence.md)
 
 ### workers
 
