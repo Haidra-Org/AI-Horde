@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 import dateutil.relativedelta
-from sqlalchemy import Enum, UniqueConstraint, exists
+from sqlalchemy import Enum, UniqueConstraint, and_, exists, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, relationship
@@ -151,6 +153,38 @@ class KudosTransferLog(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
+@dataclass
+class SharedKeyUsageSummary:
+    """Represents aggregate outstanding work for one generation type.
+
+    Attributes:
+        requests: Number of requests with queued or processing generations.
+        queued: Number of generations waiting for assignment.
+        processing: Number of generations assigned to workers.
+        finished: Number of completed generations within outstanding requests.
+        oldest_queued_age: Age in seconds of the oldest request still waiting for assignment.
+    """
+
+    requests: int = 0
+    queued: int = 0
+    processing: int = 0
+    finished: int = 0
+    oldest_queued_age: int = 0
+
+
+@dataclass
+class SharedKeyActiveUsage:
+    """Represents aggregate shared-key activity without request identifiers or contents.
+
+    Attributes:
+        image: Outstanding image work.
+        text: Outstanding text work.
+    """
+
+    image: SharedKeyUsageSummary = field(default_factory=SharedKeyUsageSummary)
+    text: SharedKeyUsageSummary = field(default_factory=SharedKeyUsageSummary)
+
+
 class UserSharedKey(db.Model):
     __tablename__ = "user_sharedkeys"
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
@@ -178,7 +212,15 @@ class UserSharedKey(db.Model):
     max_text_tokens = db.Column(db.Integer, default=-1, nullable=False)
 
     @logger.catch(reraise=True)
-    def get_details(self):
+    def get_details(self, *, include_active_usage: bool = False) -> dict[str, Any]:
+        """Return shared-key metadata and optionally its owner's activity summary.
+
+        Args:
+            include_active_usage: Whether to include activity. The caller must authenticate the owner first.
+
+        Returns:
+            Shared-key details ready for API serialization.
+        """
         ret_dict = {
             "username": self.user.get_unique_alias(),
             "id": self.id,
@@ -190,7 +232,72 @@ class UserSharedKey(db.Model):
             "max_image_steps": self.max_image_steps,
             "max_text_tokens": self.max_text_tokens,
         }
+        if include_active_usage:
+            ret_dict["active_usage"] = asdict(self.get_active_usage())
         return ret_dict
+
+    def get_active_usage(self) -> SharedKeyActiveUsage:
+        """Return outstanding work counts without request identifiers or contents.
+
+        Only activated, unexpired, non-terminal requests with queued or processing work count.
+        Finished generations are counted only within those requests.
+
+        Returns:
+            Image and text activity summaries, with zeroes when no work is outstanding.
+
+        Performance:
+            One statement reads counters for this key's requests and their generations, using the
+            sharedkey_id and processing_gens.wp_id indexes. It does not load ORM relationships or
+            request contents. Counts and remaining slots use the same database snapshot.
+        """
+        from horde.classes.base.processing_generation import ProcessingGeneration
+        from horde.classes.base.waiting_prompt import WaitingPrompt
+
+        now = datetime.utcnow()
+        request_counts = (
+            db.session.query(
+                WaitingPrompt.wp_type,
+                WaitingPrompt.n,
+                WaitingPrompt.jobs,
+                WaitingPrompt.created,
+                func.count(ProcessingGeneration.id).filter(ProcessingGeneration.generation.is_not(None)).label("finished"),
+                func.count(ProcessingGeneration.id)
+                .filter(ProcessingGeneration.generation.is_(None), ProcessingGeneration.faulted.is_(False))
+                .label("processing"),
+            )
+            .outerjoin(
+                ProcessingGeneration,
+                and_(ProcessingGeneration.wp_id == WaitingPrompt.id, ProcessingGeneration.fake.is_(False)),
+            )
+            .filter(
+                WaitingPrompt.sharedkey_id == self.id,
+                WaitingPrompt.active.is_(True),
+                WaitingPrompt.faulted.is_(False),
+                WaitingPrompt.terminal_outcome.is_(None),
+                WaitingPrompt.expiry > now,
+            )
+            # The request primary key determines its type, slot counts and creation time.
+            .group_by(WaitingPrompt.id)
+            .all()
+        )
+        usage = SharedKeyActiveUsage()
+        for request_count in request_counts:
+            queued = max(request_count.n, 0)
+            # Match status accounting: retries may leave more slots than unfinished jobs.
+            if request_count.jobs > 0:
+                unfinished_jobs = max(request_count.jobs - request_count.finished - request_count.processing, 0)
+                queued = min(queued, unfinished_jobs)
+            if queued == 0 and request_count.processing == 0:
+                continue
+            summary = usage.image if request_count.wp_type == "image" else usage.text
+            summary.requests += 1
+            summary.queued += queued
+            summary.processing += request_count.processing
+            summary.finished += request_count.finished
+            if queued > 0:
+                request_age = int((now - request_count.created).total_seconds())
+                summary.oldest_queued_age = max(summary.oldest_queued_age, request_age)
+        return usage
 
     def consume_kudos(self, kudos, commit=True):
         if self.kudos == 0:
@@ -1063,7 +1170,7 @@ class User(db.Model):
 
     @logger.catch(reraise=True)
     def get_active_generation_ids_by_type(self) -> dict[str, list[str]]:
-        """Return the ids of this user's live requests grouped by ``wp_type``.
+        """Return the ids of this user's direct live requests grouped by ``wp_type``.
 
         Reads only the two columns needed; iterating the ``waiting_prompts`` relationship would load whole rows
         (prompt, params, gen_payload, ...) for every live request of the account. The anonymous account's ids are
@@ -1073,7 +1180,11 @@ class User(db.Model):
         from horde.classes.base.waiting_prompt import WaitingPrompt
 
         active_generations: dict[str, list[str]] = {}
-        id_and_type_rows = db.session.query(WaitingPrompt.id, WaitingPrompt.wp_type).filter(WaitingPrompt.user_id == self.id).all()
+        id_and_type_rows = (
+            db.session.query(WaitingPrompt.id, WaitingPrompt.wp_type)
+            .filter(WaitingPrompt.user_id == self.id, WaitingPrompt.sharedkey_id.is_(None))
+            .all()
+        )
         for waiting_prompt_id, wp_type in id_and_type_rows:
             active_generations.setdefault(wp_type, [])
             if self.is_anon():
@@ -1158,10 +1269,10 @@ class User(db.Model):
         try:
             privileges = [0, 1, 2]  # public, self-view, moderator
             for privilege in privileges:
-                cache_name = f"cached_user_id_{self.id}_privilege_{privilege}"
+                cache_name = f"cached_user_id_v2_{self.id}_privilege_{privilege}"
                 hr.horde_r_delete(cache_name)
 
-            api_cache_name = f"cached_apikey_user_{self.api_key}"
+            api_cache_name = f"cached_apikey_user_v2_{self.api_key}"
             hr.horde_r_delete(api_cache_name)
 
         except Exception:

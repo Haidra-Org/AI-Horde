@@ -120,6 +120,11 @@ class WaitingPrompt(db.Model):
     # presorted. The predicate is PostgreSQL-only and ignored on SQLite.
     __table_args__ = (
         db.Index(
+            "ix_waiting_prompts_sharedkey_id",
+            "sharedkey_id",
+            postgresql_where=db.text("sharedkey_id IS NOT NULL"),
+        ),
+        db.Index(
             "ix_waiting_prompts_active_queue",
             "wp_type",
             db.text("extra_priority DESC"),
@@ -307,6 +312,32 @@ class WaitingPrompt(db.Model):
 
     def get_model_names(self):
         return [m.model for m in self.models]
+
+    def get_submitted_request(self) -> dict[str, Any]:
+        """Return the request as this row records it, shaped like the generation input model.
+
+        The values are the normalized ones the horde acts on rather than the bytes the client sent: omitted
+        parameters are filled with their defaults, the prompt is the filtered one, and a style has already
+        been merged in. Submission-time controls that leave no trace on the row (dry_run, allow_downgrade,
+        replacement_filter, style) are not reported. Subclasses add the fields of their own input model.
+        """
+        params = dict(self.params)
+        params["n"] = self.jobs
+        return {
+            "prompt": self.prompt,
+            "params": params,
+            "models": self.get_model_names(),
+            "workers": [str(allowed.worker_id) for allowed in self.workers],
+            "worker_blacklist": self.worker_blacklist,
+            "trusted_workers": self.trusted_workers,
+            "validated_backends": self.validated_backends,
+            "slow_workers": self.slow_workers,
+            "extra_slow_workers": self.extra_slow_workers,
+            "disable_batching": self.disable_batching,
+            "webhook": self.webhook,
+            "proxied_account": self.proxied_account,
+            "extra_source_images": (self.extra_source_images or {}).get("esi"),
+        }
 
     # These are typically horde-specific so they will be defined in the specific class for this horde type
     def extract_params(self):

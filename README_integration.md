@@ -44,6 +44,7 @@ Use these endpoints to generate images. Please use the `/check` endpoint for che
 1. Initiate the request: `api/v2/generate/async`
 2. Check the request status: `api/v2/generate/check`
 3. Retrieve the request results: `api/v2/generate/status`
+4. Retrieve the submitted parameters: `api/v2/generate/request` (see [Request parameters](#request-parameters))
 
 ### Text Generation Endpoints
 
@@ -51,6 +52,7 @@ Use these endpoints to generate text.
 
 1. Initiate the request: `api/v2/generate/text/async`
 2. Retrieve the request results: `api/v2/generate/text/status`
+3. Retrieve the submitted parameters: `api/v2/generate/text/request` (see [Request parameters](#request-parameters))
 
 ### Image Alchemy
 
@@ -58,6 +60,33 @@ Use these endpoints to interrogate or manipulate images.
 
 1. Initiate the request: `api/v2/interrogate/async`
 2. Retrieve the request results: `api/v2/interrogate/status`
+
+## Request parameters
+
+The `check` and `status` endpoints only need the request ID, so anyone holding the ID can follow a request's progress and collect its results. The submitted prompt and parameters are not part of those responses. To read them back, call `api/v2/generate/request/<id>` (or `api/v2/generate/text/request/<id>`) with the `apikey` header set to the key that submitted the request. A different user's key is refused, and so is the anonymous key. A shared key can read the requests it submitted, and the owner of a shared key can read the requests submitted through it.
+
+The response has the same shape as the generation input, so it can be posted back to `api/v2/generate/async` as-is. The values are the ones the AI Horde recorded: parameters left out of the submission come back with their defaults filled in, the prompt is the one that went through the prompt filter, and a style is already merged in. Options that only steer the submission (`dry_run`, `allow_downgrade`, `replacement_filter`, `style`) are not recorded and are not returned. Source images come back as the object storage references they were uploaded to, not as the submitted base64 data.
+
+## Shared key activity and privacy
+
+Account details (`find_user` and `users/<id>`) list only directly owned requests in `active_generations`.
+Requests funded by a shared key, including through a style, are excluded even from privileged account views.
+Possession of a shared key does not provide a list of its request IDs. Access using an already-known request
+ID is unchanged, including the owner's ability to read its submitted parameters.
+
+To monitor a shared key, call `GET /api/v2/sharedkeys/<id>` with the owner's **personal** API key in the
+`apikey` header. The response adds `active_usage`, with `image` and `text` summaries. Each contains:
+
+- `requests`: number of requests with queued or processing work.
+- `queued` and `processing`: generation counts, not request counts.
+- `finished`: completed generations within those active requests.
+- `oldest_queued_age`: age in seconds of the oldest request with queued work, or zero if none.
+
+Inactive, expired, faulted, cancelled, and fully completed requests are excluded. Empty summaries contain
+zeroes. Existing `kudos` and `utilized` fields describe the remaining allowance and cumulative spending;
+they are not estimates of the cost of outstanding work. No request IDs or request contents are included.
+The activity summary is omitted for unauthenticated callers, shared-key holders, and other accounts.
+Owner-authenticated responses bypass the public endpoint cache and must not be stored by HTTP caches.
 
 ## Errors and return codes
 

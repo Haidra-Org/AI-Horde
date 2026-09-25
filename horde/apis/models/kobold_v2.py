@@ -373,6 +373,11 @@ class TextModels(v2.Models):
                 ),
             },
         )
+        self.response_model_submitted_request = v2.derive_submitted_request_model(
+            api,
+            "GenerationSubmittedKobold",
+            self.input_model_request_generation,
+        )
         self.response_model_contrib_details = api.inherit(
             "ContributionsDetailsKobold",
             self.response_model_contrib_details,

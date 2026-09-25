@@ -6,6 +6,7 @@ import json
 import os
 import time
 from datetime import datetime, timedelta
+from typing import Any
 
 import logfire
 import regex as re
@@ -82,6 +83,30 @@ api = Namespace("v2", "API Version 2")
 models = Models(api)
 parsers = Parsers()
 
+
+def assert_submitting_key(apikey: str, wp: WaitingPrompt) -> None:
+    """Refuse to expose a stored request unless ``apikey`` is the key that submitted it.
+
+    The request ID alone is deliberately enough for the status endpoints, so the key check is what keeps
+    the submitted prompt and parameters private. A shared key only reads the requests it submitted itself.
+    A user key reads the requests submitted with it directly and those submitted through the user's own
+    shared keys, which are charged to that user. The anonymous key is public and identifies nobody, so it
+    is refused outright.
+    """
+    sharedkey = database.find_sharedkey(apikey)
+    if sharedkey:
+        if str(wp.sharedkey_id) != str(sharedkey.id):
+            raise e.NotRequestOwner(wp.id)
+        return
+    user = database.find_user_by_api_key(apikey)
+    if not user:
+        raise e.InvalidAPIKey("request parameters")
+    if user.is_anon():
+        raise e.AnonForbidden()
+    if user.id != wp.user_id:
+        raise e.NotRequestOwner(wp.id)
+
+
 handle_bad_request = api.errorhandler(e.BadRequest)(e.handle_bad_requests)
 handle_forbidden = api.errorhandler(e.Forbidden)(e.handle_bad_requests)
 handle_missing_prompts = api.errorhandler(e.MissingPrompt)(e.handle_bad_requests)
@@ -105,6 +130,7 @@ handle_wrong_credentials = api.errorhandler(e.WrongCredentials)(e.handle_bad_req
 handle_not_admin = api.errorhandler(e.NotAdmin)(e.handle_bad_requests)
 handle_not_mod = api.errorhandler(e.NotModerator)(e.handle_bad_requests)
 handle_not_owner = api.errorhandler(e.NotOwner)(e.handle_bad_requests)
+handle_not_request_owner = api.errorhandler(e.NotRequestOwner)(e.handle_bad_requests)
 handle_not_privileged = api.errorhandler(e.NotPrivileged)(e.handle_bad_requests)
 handle_anon_forbidden = api.errorhandler(e.AnonForbidden)(e.handle_bad_requests)
 handle_not_trusted = api.errorhandler(e.NotTrusted)(e.handle_bad_requests)
@@ -1595,7 +1621,7 @@ class UserSingle(Resource):
             elif str(resolved_user.id) == str(user_id):
                 details_privilege = 1
         cached_user = None
-        cache_name = f"cached_user_id_{user_id}_privilege_{details_privilege}"
+        cache_name = f"cached_user_id_v2_{user_id}_privilege_{details_privilege}"
         if hr.horde_r:
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
@@ -2001,7 +2027,7 @@ class FindUser(Resource):
         if not self.args.apikey:
             raise e.InvalidAPIKey("GET FindUser")
         cached_user = None
-        cache_name = f"cached_apikey_user_{hash_api_key(self.args.apikey)}"
+        cache_name = f"cached_apikey_user_v2_{hash_api_key(self.args.apikey)}"
         if hr.horde_r:
             cached_user = hr.horde_r_get(cache_name)
         if cached_user:
@@ -3267,6 +3293,13 @@ class SharedKey(Resource):
 class SharedKeySingle(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=False,
+        location="headers",
+        help="The owner's personal API key, to include aggregate active usage.",
+    )
+    get_parser.add_argument(
         "Client-Agent",
         default="unknown:0:unknown",
         type=str,
@@ -3275,7 +3308,7 @@ class SharedKeySingle(Resource):
         location="headers",
     )
 
-    @cache.cached(timeout=60)
+    @cache.cached(timeout=60, unless=lambda: "apikey" in request.headers)
     @api.expect(get_parser)
     @api.marshal_with(
         models.response_model_sharedkey_details,
@@ -3285,13 +3318,27 @@ class SharedKeySingle(Resource):
     )
     @api.response(401, "Invalid API Key", models.response_model_error)
     @api.response(404, "Shared Key Not Found", models.response_model_error)
-    def get(self, sharedkey_id=""):
-        """Get details about an existing Shared Key"""
+    def get(self, sharedkey_id: str = "") -> tuple[dict[str, Any], int, dict[str, str]]:
+        """Return shared-key details, including active usage only for its authenticated owner.
+
+        Args:
+            sharedkey_id: Shared-key UUID from the request path.
+
+        Returns:
+            Shared-key details, the success status, and headers preventing HTTP caching.
+
+        Raises:
+            e.InvalidAPIKey: The shared key does not exist.
+        """
         self.args = self.get_parser.parse_args()
         sharedkey = database.find_sharedkey(sharedkey_id)
         if not sharedkey:
             raise e.InvalidAPIKey("get sharedkey", keytype="Shared")
-        return sharedkey.get_details(), 200
+        owner = None
+        if self.args.apikey:
+            owner = database.find_user_by_api_key(self.args.apikey)
+        details = sharedkey.get_details(include_active_usage=owner is not None and owner.id == sharedkey.user_id)
+        return details, 200, {"Cache-Control": "private, no-store"}
 
     patch_parser = reqparse.RequestParser()
     patch_parser.add_argument("apikey", type=str, required=True, help="User API key.", location="headers")

@@ -81,6 +81,7 @@ The errors returned by the AI horde are always in this json format
 | NotAdmin | Request needs AI Horded admin credentials |
 | NotModerator | Request needs AI Horded moderator credentials |
 | NotOwner | Request needs worker owner credentials |
+| NotRequestOwner | Request parameters can only be retrieved with the API key that submitted the request |
 | NotPrivileged | This user is not hardcoded to perform this operation |
 | AnonForbidden | Anonymous is not allowed to perform this operation |
 | AnonForbiddenWorker | Anonymous tried to run a worker |

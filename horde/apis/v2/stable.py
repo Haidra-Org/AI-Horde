@@ -23,6 +23,7 @@ from horde.apis.v2.base import (
     JobPopTemplate,
     JobSubmitTemplate,
     api,
+    assert_submitting_key,
     commit_request_cancellation,
 )
 from horde.classes.base import settings
@@ -617,6 +618,60 @@ class ImageAsyncStatus(Resource):
         if cancellation_claimed:
             record_request_cancellation_forecast(request_id=str(wp.id), cancelled_at=cancelled_at)
         return (wp_status, 200)
+
+
+class ImageAsyncRequest(Resource):
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=True,
+        help="The API key which submitted the request.",
+        location="headers",
+    )
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version",
+        location="headers",
+    )
+
+    decorators = [limiter.limit("60/minute", key_func=lim.get_request_path)]
+
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_submitted_request,
+        code=200,
+        description="Submitted Request Parameters",
+        skip_none=True,
+    )
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(403, "Access Denied", models.response_model_error)
+    @api.response(404, "Request Not found", models.response_model_error)
+    def get(self, id=""):
+        """Retrieve the parameters of a submitted asynchronous generation request.
+        Unlike the status and check endpoints, the request ID alone is not enough: the apikey header
+        must be the key which submitted the request.
+        The response has the same shape as the generation input, holding the values the horde recorded
+        after filling in defaults and applying any prompt filter or style.
+        """
+        self.args = self.get_parser.parse_args()
+        wp = database.get_wp_by_id(id)
+        if not wp:
+            raise e.RequestNotFound(
+                id,
+                request_type="Image Waiting Prompt (Parameters)",
+                client_agent=self.args["Client-Agent"],
+                ipaddr=request.remote_addr,
+            )
+        assert_submitting_key(self.args["apikey"], wp)
+        submitted_request = wp.get_submitted_request()
+        # The dict is fully materialized; release the pooled connection before
+        # marshalling and the response write, as the status endpoints do.
+        db.session.remove()
+        return (submitted_request, 200)
 
 
 class ImageAsyncCheck(Resource):
