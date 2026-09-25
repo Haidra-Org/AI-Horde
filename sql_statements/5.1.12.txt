@@ -1,0 +1,8 @@
+-- Run with psql, -v ON_ERROR_STOP=1 so a failure stops the migration.
+-- Run outside a transaction: CREATE INDEX CONCURRENTLY cannot run inside BEGIN/COMMIT.
+--
+-- Shared-key activity summaries filter requests by their funding key. Build the lookup index
+-- without blocking ordinary generation writes, before deploying the activity endpoint.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_sharedkey_id
+  ON waiting_prompts (sharedkey_id)
+  WHERE sharedkey_id IS NOT NULL;

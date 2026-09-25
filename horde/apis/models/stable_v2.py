@@ -928,6 +928,19 @@ class ImageModels(v2.Models):
                 ),
             },
         )
+        self.response_model_submitted_request = v2.derive_submitted_request_model(
+            api,
+            "GenerationSubmittedStable",
+            self.input_model_request_generation,
+            {
+                "source_image": fields.String(
+                    description="The object storage reference the source image was uploaded to on submission.",
+                ),
+                "source_mask": fields.String(
+                    description="The object storage reference the source mask was uploaded to on submission.",
+                ),
+            },
+        )
         self.response_model_team_details = api.inherit(
             "TeamDetailsStable",
             self.response_model_team_details,
