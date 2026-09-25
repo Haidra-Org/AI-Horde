@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Verify the 5.1.12 DDL is additive and repeatable against a pre-change table."""
+"""Verify the moderation DDL is additive and repeatable against a pre-change table in an isolated schema."""
 
 from pathlib import Path
 
@@ -12,8 +12,8 @@ import sqlparse
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
 
 
-def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
-    schema_name = new_test_schema_name("horde_5_1_12_migration")
+def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
+    schema_name = new_test_schema_name("horde_moderation_migration")
     create_schema(pg_dsn, schema_name)
     engine = sqlalchemy.create_engine(
         pg_dsn,

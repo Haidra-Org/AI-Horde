@@ -8,7 +8,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import dateutil.relativedelta
 from sqlalchemy import Enum, UniqueConstraint, and_, exists, func
@@ -40,6 +40,10 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.stripe_subs import stripe_subs
+
+if TYPE_CHECKING:
+    from horde.classes.base.processing_generation import ProcessingGeneration
+    from horde.classes.base.worker import WorkerTemplate
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import generate_api_key, generate_client_id, get_db_uuid, is_profane, sanitize_string
 
@@ -1305,7 +1309,7 @@ class User(db.Model):
         except Exception:
             return None
 
-    def record_problem_job(self, procgen, ipaddr, worker, prompt):
+    def record_problem_job(self, procgen: ProcessingGeneration, ipaddr: str, worker: WorkerTemplate, prompt: str) -> None:
         """Capture worker-reported evidence and update existing problem-job counters.
 
         Args:
@@ -1362,7 +1366,7 @@ class User(db.Model):
             latest_user = f"{self.get_unique_alias()}:{procgen.wp.proxied_account}"
         loras = ""
         if "loras" in procgen.wp.params:
-            loras = f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
+            loras = f"\nLatest LoRas: {[lora['name'] for lora in procgen.wp.params['loras']]}."
         moderation_reference = (
             f"Moderation event: {moderation_event_id or 'unavailable (evidence write failed)'}. "
             f"Review: {hv.horde_url}/api/v2/operations/moderation/prompts?user_id={self.id}"
