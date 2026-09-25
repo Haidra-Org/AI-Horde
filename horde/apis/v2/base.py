@@ -92,6 +92,15 @@ def assert_submitting_key(apikey: str, wp: WaitingPrompt) -> None:
     A user key reads the requests submitted with it directly and those submitted through the user's own
     shared keys, which are charged to that user. The anonymous key is public and identifies nobody, so it
     is refused outright.
+
+    Args:
+        apikey: Submitted personal or shared API key.
+        wp: Request whose original submission is being requested.
+
+    Raises:
+        e.InvalidAPIKey: The key does not identify a user.
+        e.AnonForbidden: The key is the public anonymous key.
+        e.NotRequestOwner: The key is not authorized for this request.
     """
     sharedkey = database.find_sharedkey(apikey)
     if sharedkey:
@@ -218,6 +227,7 @@ def commit_request_cancellation(wp) -> bool:
 
 class GenerateTemplate(Resource):
     gentype = "template"
+    submitted_prompt: str | None = None
     proxied_request = False
 
     def post(self):
@@ -244,6 +254,8 @@ class GenerateTemplate(Resource):
         return {"horde.gentype": self.gentype}
 
     def _post_inner(self):
+        # Capture once, before subclass validate() applies styles or moderation.
+        self.submitted_prompt = self.args.prompt
         # I have to extract and store them this way, because if I use the defaults
         # It causes them to be a shared object from the parsers class
         self.params = {}
@@ -540,6 +552,7 @@ class GenerateTemplate(Resource):
             worker_ids=self.workers,
             models=self.models,
             prompt=self.args["prompt"],
+            submitted_prompt=self.submitted_prompt,
             user_id=self.user.id,
             params=self.params,
             nsfw=self.args.nsfw,

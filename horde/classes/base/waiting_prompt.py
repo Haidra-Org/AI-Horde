@@ -10,14 +10,15 @@ import time
 import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import logfire
-from sqlalchemy import JSON, or_
+from sqlalchemy import JSON, inspect, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy.orm import Mapped, object_session, relationship
 from sqlalchemy.sql import expression
 
 from horde import vars as hv
@@ -51,6 +52,19 @@ from horde.utils import get_db_uuid, get_expiry_date, get_extra_slow_expiry_date
 
 if TYPE_CHECKING:
     from horde.classes.base.user import User
+
+
+class SubmittedPromptPurpose(StrEnum):
+    """Represent the two approved consumers of original prompt provenance.
+
+    The value is a declaration of intent by the caller, not a credential: it
+    records which reviewed path is reading the column so a future consumer has
+    to name itself rather than reach the text incidentally.
+    """
+
+    REQUEST_OWNER = "request_owner"
+    MODERATION_EVIDENCE = "moderation_evidence"
+
 
 procgen_classes = {
     "template": ProcessingGeneration,
@@ -138,7 +152,11 @@ class WaitingPrompt(db.Model):
     }
     id = db.Column(uuid_column_type(), primary_key=True, default=get_db_uuid)
     wp_type = db.Column(db.String(30), nullable=False, index=True)
+    # Effective worker input. Never substitute submitted_prompt in generation consumers.
     prompt = db.Column(db.Text, nullable=False)
+    # Submission provenance, before styles/moderation. NULL means unknown; it must
+    # NEVER fall back to prompt. Deferred to keep queue scans lean.
+    submitted_prompt: Mapped[str | None] = db.deferred(db.Column(db.Text, nullable=True), raiseload=True)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user: Mapped[User] = relationship("User", back_populates="waiting_prompts")
@@ -313,18 +331,47 @@ class WaitingPrompt(db.Model):
     def get_model_names(self):
         return [m.model for m in self.models]
 
+    def read_privileged_submitted_prompt(self, *, purpose: SubmittedPromptPurpose) -> str | None:
+        """Return submission provenance explicitly without populating a deferred ORM attribute.
+
+        Ordinary queries and joins omit this sensitive column; accidental lazy
+        access raises. Only requester serialization and moderation evidence should
+        call this method. A missing original never falls back to the worker prompt.
+
+        Args:
+            purpose: Which of the two approved consumers is reading.
+
+        Returns:
+            The submitted string, or None when provenance was not captured.
+
+        Raises:
+            RuntimeError: A detached instance requires a database read.
+        """
+        if "submitted_prompt" not in inspect(self).unloaded:
+            return self.submitted_prompt
+        session = object_session(self)
+        if session is None:
+            raise RuntimeError("Read submitted prompt before releasing the request's database session")
+        return session.scalar(select(WaitingPrompt.submitted_prompt).where(WaitingPrompt.id == self.id))
+
     def get_submitted_request(self) -> dict[str, Any]:
         """Return the request as this row records it, shaped like the generation input model.
 
         The values are the normalized ones the horde acts on rather than the bytes the client sent: omitted
-        parameters are filled with their defaults, the prompt is the filtered one, and a style has already
-        been merged in. Submission-time controls that leave no trace on the row (dry_run, allow_downgrade,
+        parameters are filled with their defaults, but the prompt is the original submission, before
+        styles or moderation. Legacy rows omit it. This is not an exact replay of styled requests.
+        Submission-time controls that leave no trace on the row (dry_run, allow_downgrade,
         replacement_filter, style) are not reported. Subclasses add the fields of their own input model.
+
+        Callers must authorize the requester first; assert_submitting_key is that check.
+
+        Returns:
+            Original prompt and normalized parameters for the authenticated requester.
         """
         params = dict(self.params)
         params["n"] = self.jobs
         return {
-            "prompt": self.prompt,
+            "prompt": self.read_privileged_submitted_prompt(purpose=SubmittedPromptPurpose.REQUEST_OWNER),
             "params": params,
             "models": self.get_model_names(),
             "workers": [str(allowed.worker_id) for allowed in self.workers],
