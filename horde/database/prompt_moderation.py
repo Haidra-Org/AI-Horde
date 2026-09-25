@@ -28,10 +28,12 @@ from horde.classes.base.prompt_moderation import (
     PromptModerationReview,
     PromptReviewStatus,
 )
+from horde.classes.base.worker import WorkerSuspicionEvent
 from horde.flask import db
 from horde.logger import logger
 
 PROMPT_EVIDENCE_RETENTION: timedelta = timedelta(days=30)
+WORKER_EVIDENCE_RETENTION: timedelta = timedelta(days=90)
 MAX_EVIDENCE_CHARACTERS: int = 16000
 CLEANUP_BATCH_SIZE: int = 1000
 
@@ -198,18 +200,26 @@ def review_prompt_event(*, event_id: int, reviewer_id: int, status: PromptReview
 
 
 def prune_moderation_evidence() -> int:
-    """Delete a bounded batch of expired prompt evidence, cascading to its reviews.
+    """Delete bounded batches of expired prompt and worker evidence, including reviews.
 
     Returns:
         Number of evidence rows deleted. Run periodically in an application context.
     """
+    deleted_count = 0
     with db.engine.begin() as connection:
-        expired = (
-            select(PromptModerationEvent.id)
-            .where(PromptModerationEvent.created < datetime.utcnow() - PROMPT_EVIDENCE_RETENTION)
-            .order_by(PromptModerationEvent.created, PromptModerationEvent.id)
-            .limit(CLEANUP_BATCH_SIZE)
-        )
-        return connection.execute(
-            delete(PromptModerationEvent).where(PromptModerationEvent.id.in_(expired)),
-        ).rowcount
+        for model, retention in (
+            (PromptModerationEvent, PROMPT_EVIDENCE_RETENTION),
+            (WorkerSuspicionEvent, WORKER_EVIDENCE_RETENTION),
+        ):
+            expired = (
+                select(model.id)
+                .where(model.created < datetime.utcnow() - retention)
+                .order_by(
+                    model.created,
+                    model.id,
+                )
+                .limit(CLEANUP_BATCH_SIZE)
+            )
+            result = connection.execute(delete(model).where(model.id.in_(expired)))
+            deleted_count += result.rowcount
+    return deleted_count

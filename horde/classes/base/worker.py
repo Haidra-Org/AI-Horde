@@ -102,6 +102,32 @@ class WorkerSuspicions(db.Model):
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
+class WorkerSuspicionEvent(db.Model):
+    """Immutable moderation audit record for a worker suspicion report.
+
+    ``WorkerSuspicions`` is the worker's resettable current score and cascades
+    away with the worker.  This table deliberately has no foreign keys so the
+    evidence remains available after a moderator reset or worker deletion.
+    """
+
+    __tablename__ = "worker_suspicion_events"
+    __table_args__ = (
+        db.Index("ix_worker_suspicion_events_created", "created"),
+        db.Index("ix_worker_suspicion_events_worker_id", "worker_id", "id"),
+        db.Index("ix_worker_suspicion_events_user_id", "user_id", "id"),
+        db.Index("ix_worker_suspicion_events_reason_id", "suspicion_id", "id"),
+    )
+
+    id: Mapped[int] = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True)
+    created: Mapped[datetime] = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    worker_id: Mapped[uuid.UUID | str] = db.Column(uuid_column_type(), nullable=False)
+    worker_name: Mapped[str] = db.Column(db.String(100), nullable=False)
+    user_id: Mapped[int] = db.Column(db.Integer, nullable=False)
+    suspicion_id: Mapped[int] = db.Column(db.Integer, nullable=False)
+    amount: Mapped[int] = db.Column(db.Integer, default=1, nullable=False)
+    detail: Mapped[str] = db.Column(db.Text, nullable=False)
+
+
 class WorkerModel(db.Model):
     __tablename__ = "worker_models"
     # wp_has_valid_workers probes this table per worker through an EXISTS
@@ -277,17 +303,39 @@ class WorkerTemplate(db.Model):
         if is_profane(self.name):
             self.report_suspicion(reason=Suspicions.WORKER_PROFANITY, formats=[self.name])
 
-    def report_suspicion(self, amount=1, reason=Suspicions.WORKER_PROFANITY, formats=None):
+    def report_suspicion(
+        self,
+        amount: int = 1,
+        reason: Suspicions = Suspicions.WORKER_PROFANITY,
+        formats: list[Any] | None = None,
+    ) -> None:
+        """Record suspicion in both resettable scores and retained worker history.
+
+        Args:
+            amount: Suspicion amount attributed to the owner.
+            reason: Existing suspicion category.
+            formats: Values interpolated into the category's diagnostic template.
+        """
         if not formats:
             formats = []
         # Unreasonable Fast can be added multiple times and it increases suspicion each time
         if reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED] and int(reason) in self.get_suspicion_reasons():
             return
+        reason_log = SUSPICION_LOGS[reason].format(*formats)
         new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)
+        db.session.add(
+            WorkerSuspicionEvent(
+                worker_id=self.id,
+                worker_name=self.name,
+                user_id=self.user_id,
+                suspicion_id=int(reason),
+                amount=amount,
+                detail=reason_log,
+            ),
+        )
         self.user.report_suspicion(amount, reason, formats)
         if reason:
-            reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"Worker '{self.id}' suspicion increased. Reason: {reason_log}")
         if self.is_suspicious() and not self.paused:
             self.paused = True

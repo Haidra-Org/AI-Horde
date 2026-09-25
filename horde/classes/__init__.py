@@ -22,6 +22,7 @@ from horde.classes.base.settings import HordeSettings
 from horde.classes.base.style import Style
 from horde.classes.base.team import Team  # noqa 401
 from horde.classes.base.user import User
+from horde.classes.base.worker import WorkerSuspicionEvent  # noqa 401
 
 # noqa 401
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt  # noqa 401

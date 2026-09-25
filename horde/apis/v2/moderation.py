@@ -2,15 +2,16 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Expose moderator-only review of retained prompt evidence.
+"""Expose moderator-only operational review over prompt evidence and worker state.
 
 Every resource here requires a moderator ``apikey`` and answers with
-``Cache-Control: private, no-store``: the payloads carry account identity and
-retained prompt text.
+``Cache-Control: private, no-store``: the payloads carry account identity,
+IP addresses, and retained prompt text.
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,13 +20,16 @@ from flask_restx import Resource, reqparse
 from horde import exceptions as e
 from horde.apis.v2.base import api, check_for_mod, models
 from horde.classes.base.prompt_moderation import PromptModerationReason, PromptReviewStatus
+from horde.database import moderation as moderation_db
 from horde.database.prompt_moderation import get_prompt_events, review_prompt_event
 from horde.flask import db
 from horde.limiter import limiter
+from horde.suspicions import Suspicions
 
 PRIVATE_HEADERS: dict[str, str] = {"Cache-Control": "private, no-store"}
 MAX_REVIEW_NOTE_CHARACTERS: int = 2000
 MAX_EVIDENCE_PAGE: int = 100
+MAX_OPERATIONS_PAGE: int = 500
 
 
 def _add_moderator_credentials(parser: reqparse.RequestParser) -> None:
@@ -214,3 +218,84 @@ class OperationsPromptReview(Resource):
         ):
             raise e.ModerationEventNotFound(event_id)
         return {"id": event_id, "status": self.args.status, "reviewer_id": reviewer_id}, 200, PRIVATE_HEADERS
+
+
+class OperationsModeration(Resource):
+    """Expose current promotion and paused-worker review queues to moderators."""
+
+    decorators = [limiter.limit("30/minute")]
+
+    get_parser = reqparse.RequestParser()
+    _add_moderator_credentials(get_parser)
+    get_parser.add_argument(
+        "limit",
+        default=100,
+        type=int,
+        required=False,
+        help="Maximum rows returned in each review section (1-500).",
+        location="args",
+    )
+
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_moderation_overview, code=200, description="Moderation operations review")
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(403, "Access Denied", models.response_model_error)
+    def get(self) -> tuple[moderation_db.ModerationOverview, int, dict[str, str]]:
+        """Return promotion exceptions and paused workers for moderator review."""
+        self.args = self.get_parser.parse_args()
+        check_for_mod(self.args.apikey, "GET OperationsModeration")
+        _assert_page_bounds(self.args.limit, None, MAX_OPERATIONS_PAGE)
+        overview = moderation_db.get_moderation_overview(limit=self.args.limit)
+        # The queues are fully materialized; release the pooled connection before marshalling.
+        db.session.remove()
+        return overview, 200, PRIVATE_HEADERS
+
+
+class OperationsWorkerSuspicionEvents(Resource):
+    """Expose immutable worker suspicion history to moderators."""
+
+    decorators = [limiter.limit("30/minute")]
+
+    get_parser = reqparse.RequestParser()
+    _add_moderator_credentials(get_parser)
+    get_parser.add_argument("limit", default=100, type=int, required=False, help="Rows per page (1-500).", location="args")
+    get_parser.add_argument("before_id", type=int, required=False, help="Exclusive descending cursor.", location="args")
+    get_parser.add_argument("worker_id", type=str, required=False, help="Restrict to one worker UUID.", location="args")
+    get_parser.add_argument("user_id", type=int, required=False, help="Restrict to one owning account.", location="args")
+    get_parser.add_argument("suspicion_id", type=int, required=False, help="Restrict to one suspicion reason.", location="args")
+
+    @api.expect(get_parser)
+    @api.marshal_with(
+        models.response_model_worker_suspicion_events,
+        code=200,
+        description="Immutable worker suspicion event history",
+    )
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(403, "Access Denied", models.response_model_error)
+    def get(self) -> tuple[moderation_db.WorkerSuspicionEventsPage, int, dict[str, str]]:
+        """Return a cursor-paginated worker suspicion audit stream."""
+        self.args = self.get_parser.parse_args()
+        check_for_mod(self.args.apikey, "GET OperationsWorkerSuspicionEvents")
+        _assert_page_bounds(self.args.limit, self.args.before_id, MAX_OPERATIONS_PAGE)
+        if self.args.worker_id is not None:
+            try:
+                uuid.UUID(self.args.worker_id)
+            except ValueError as err:
+                raise e.BadRequest("worker_id must be a UUID", rc="InvalidWorkerID") from err
+        if self.args.suspicion_id is not None:
+            try:
+                Suspicions(self.args.suspicion_id)
+            except ValueError as err:
+                raise e.BadRequest("Unknown suspicion_id", rc="InvalidSuspicionID") from err
+        page = moderation_db.get_worker_suspicion_events(
+            limit=self.args.limit,
+            before_id=self.args.before_id,
+            worker_id=self.args.worker_id,
+            user_id=self.args.user_id,
+            suspicion_id=self.args.suspicion_id,
+        )
+        # The page is fully materialized; release the pooled connection before marshalling.
+        db.session.remove()
+        return page, 200, PRIVATE_HEADERS

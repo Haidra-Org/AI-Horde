@@ -7,7 +7,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 import dateutil.relativedelta
 from sqlalchemy import Enum, UniqueConstraint, and_, exists, func
@@ -39,6 +40,10 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.patreon import patrons
 from horde.stripe_subs import stripe_subs
+
+if TYPE_CHECKING:
+    from horde.classes.base.processing_generation import ProcessingGeneration
+    from horde.classes.base.worker import WorkerTemplate
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import generate_api_key, generate_client_id, get_db_uuid, is_profane, sanitize_string
 
@@ -367,6 +372,14 @@ class UserSharedKey(db.Model):
                 )
 
         return True, None
+
+
+class PromotionStatus(StrEnum):
+    """Outcome of the automatic trust promotion decision for one account."""
+
+    PROMOTE = "promote"
+    BLOCKED_BY_SUSPICION = "blocked_by_suspicion"
+    NOT_A_CANDIDATE = "not_a_candidate"
 
 
 class User(db.Model):
@@ -897,20 +910,38 @@ class User(db.Model):
         self.modify_kudos(kudos, "styled", commit=False, entry_type=KudosEntryType.STYLE_REWARD)
         db.session.commit()
 
+    def promotion_status(self, threshold: int | float | None) -> PromotionStatus:
+        """Decide automatic promotion to trusted without applying it.
+
+        This is the only statement of the promotion criteria. ``check_for_trust``
+        promotes on PROMOTE, and the moderation overview buckets its review queues
+        by the same result, so the two can only agree.
+
+        Args:
+            threshold: Evaluating-kudos level that opens promotion, or None when
+                automatic promotion is disabled.
+
+        Returns:
+            PROMOTE when every criterion holds, BLOCKED_BY_SUSPICION when suspicion
+            alone withholds it, NOT_A_CANDIDATE otherwise.
+        """
+        if threshold is None or self.evaluating_kudos <= threshold:
+            return PromotionStatus.NOT_A_CANDIDATE
+        if self.trusted or self.is_anon():
+            return PromotionStatus.NOT_A_CANDIDATE
+        # An account has to exist for at least 1 week to become trusted automatically
+        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+            return PromotionStatus.NOT_A_CANDIDATE
+        if self.is_suspicious():
+            return PromotionStatus.BLOCKED_BY_SUSPICION
+        return PromotionStatus.PROMOTE
+
     def check_for_trust(self) -> None:
         """After a user passes the evaluation threshold (?? kudos)
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         """
-        threshold = get_kudos_trust_threshold()
-        if threshold is None or self.evaluating_kudos <= threshold:
-            return
-        if self.is_suspicious():
-            return
-        if self.is_anon():
-            return
-        # An account has to exist for at least 1 week to become trusted automatically
-        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+        if self.promotion_status(get_kudos_trust_threshold()) is not PromotionStatus.PROMOTE:
             return
         # The escrow-to-balance movement is applier-owned: the fold rule is that a
         # trusted user's evaluation escrow always drains to the spendable balance,
@@ -1278,7 +1309,7 @@ class User(db.Model):
         except Exception:
             return None
 
-    def record_problem_job(self, procgen, ipaddr, worker, prompt):
+    def record_problem_job(self, procgen: ProcessingGeneration, ipaddr: str, worker: WorkerTemplate, prompt: str) -> None:
         """Capture worker-reported evidence and update existing problem-job counters.
 
         Args:
@@ -1335,7 +1366,7 @@ class User(db.Model):
             latest_user = f"{self.get_unique_alias()}:{procgen.wp.proxied_account}"
         loras = ""
         if "loras" in procgen.wp.params:
-            loras = f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
+            loras = f"\nLatest LoRas: {[lora['name'] for lora in procgen.wp.params['loras']]}."
         moderation_reference = (
             f"Moderation event: {moderation_event_id or 'unavailable (evidence write failed)'}. "
             f"Review: {hv.horde_url}/api/v2/operations/moderation/prompts?user_id={self.id}"

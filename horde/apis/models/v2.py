@@ -1832,6 +1832,105 @@ class Models:
                 "reviewer_id": fields.Integer(description="Moderator the disposition is attributed to."),
             },
         )
+        self.response_model_moderation_suspicion_reason = api.model(
+            "ModerationSuspicionReason",
+            {
+                "id": fields.Integer(description="Stable numeric suspicion reason code."),
+                "name": fields.String(description="Stable symbolic suspicion reason name."),
+                "description": fields.String(description="Human-readable reason template."),
+                "count": fields.Integer(description="Number of currently active reports for this reason."),
+            },
+        )
+        self.response_model_promotion_review_user = api.model(
+            "PromotionReviewUser",
+            {
+                "id": self.response_model_user_details["id"],
+                "username": self.response_model_user_details["username"],
+                "created": fields.DateTime(dt_format="iso8601"),
+                "last_active": fields.DateTime(dt_format="iso8601"),
+                "account_age": self.response_model_user_details["account_age"],
+                "kudos": self.response_model_user_details["kudos"],
+                "evaluating_kudos": self.response_model_user_details["evaluating_kudos"],
+                "promotion_threshold": fields.Float(),
+                "threshold_excess": fields.Float(),
+                "suspicious": self.response_model_user_details["suspicious"],
+                "suspicion_threshold": fields.Integer(),
+                "suspicion_reasons": fields.List(fields.Nested(self.response_model_moderation_suspicion_reason)),
+                "blockers": fields.List(fields.String(enum=["suspicion"])),
+                "flagged": self.response_model_user_details["flagged"],
+                "deleted": self.response_model_user_details["deleted"],
+                "vpn": self.response_model_user_details["vpn"],
+                "worker_count": self.response_model_user_details["worker_count"],
+                "paused_worker_count": fields.Integer(),
+                "worker_kudos": fields.Float(),
+                "worker_fulfilments": fields.Integer(),
+                "contact": self.response_model_user_details["contact"],
+                "admin_comment": self.response_model_user_details["admin_comment"],
+            },
+        )
+        self.response_model_paused_worker_review = api.inherit(
+            "PausedWorkerReview",
+            self.response_model_worker_details_lite,
+            {
+                "owner_id": fields.Integer(),
+                "owner": self.response_model_worker_details["owner"],
+                "created": fields.DateTime(dt_format="iso8601"),
+                "last_check_in": fields.DateTime(dt_format="iso8601"),
+                "paused": self.response_model_worker_details["paused"],
+                "maintenance_mode": self.response_model_worker_details["maintenance_mode"],
+                "maintenance_msg": fields.String(),
+                "suspicious": self.response_model_worker_details["suspicious"],
+                "suspicion_threshold": fields.Integer(),
+                "suspicion_reasons": fields.List(fields.Nested(self.response_model_moderation_suspicion_reason)),
+                "owner_suspicion": self.response_model_user_details["suspicious"],
+                "owner_trusted": fields.Boolean(),
+                "owner_flagged": self.response_model_user_details["flagged"],
+                "kudos_rewards": self.response_model_worker_details["kudos_rewards"],
+                "kudos_details": self.response_model_worker_details["kudos_details"],
+                "requests_fulfilled": self.response_model_worker_details["requests_fulfilled"],
+                "uncompleted_jobs": self.response_model_worker_details["uncompleted_jobs"],
+                "aborted_jobs": fields.Integer(),
+                "contributions": fields.Float(),
+                "uptime": self.response_model_worker_details["uptime"],
+                "threads": self.response_model_worker_details["threads"],
+                "bridge_agent": self.response_model_worker_details["bridge_agent"],
+                "models": self.response_model_worker_details["models"],
+                "ipaddr": self.response_model_worker_details["ipaddr"],
+                "contact": self.response_model_worker_details["contact"],
+            },
+        )
+        self.response_model_moderation_overview = api.model(
+            "ModerationOverview",
+            {
+                "promotion_enabled": fields.Boolean(),
+                "promotion_threshold": fields.Float(),
+                "promotion_blocked_users": fields.List(fields.Nested(self.response_model_promotion_review_user)),
+                "promotion_eligible_users": fields.List(fields.Nested(self.response_model_promotion_review_user)),
+                "paused_workers": fields.List(fields.Nested(self.response_model_paused_worker_review)),
+            },
+        )
+        self.response_model_worker_suspicion_event = api.model(
+            "WorkerSuspicionEvent",
+            {
+                "id": fields.Integer(),
+                "created": self.response_model_message_full["created"],
+                "worker_id": self.response_model_generation_result["worker_id"],
+                "worker_name": self.response_model_generation_result["worker_name"],
+                "user_id": self.response_model_user_details["id"],
+                "suspicion_id": fields.Integer(),
+                "reason": fields.String(),
+                "amount": fields.Integer(),
+                "detail": fields.String(),
+            },
+        )
+        self.response_model_worker_suspicion_events = api.model(
+            "WorkerSuspicionEvents",
+            {
+                "events": fields.List(fields.Nested(self.response_model_worker_suspicion_event)),
+                "next_cursor": fields.Integer(),
+            },
+        )
+
         self.input_model_add_ip_timeout = api.model(
             "AddTimeoutIPInput",
             {

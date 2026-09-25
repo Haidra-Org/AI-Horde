@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Verify the 5.1.12 DDL is additive and repeatable against a pre-change table."""
+"""Verify the moderation DDL is additive and repeatable against a pre-change table in an isolated schema."""
 
 from pathlib import Path
 
@@ -12,8 +12,8 @@ import sqlparse
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
 
 
-def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
-    schema_name = new_test_schema_name("horde_5_1_12_migration")
+def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
+    schema_name = new_test_schema_name("horde_moderation_migration")
     create_schema(pg_dsn, schema_name)
     engine = sqlalchemy.create_engine(
         pg_dsn,
@@ -41,9 +41,12 @@ def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             predicate = sharedkey_index.get("dialect_options", {}).get("postgresql_where")
             assert predicate is not None
             assert "sharedkey_id IS NOT NULL" in str(predicate)
-            assert {"prompt_moderation_events", "prompt_moderation_reviews"} <= set(
+            assert {"prompt_moderation_events", "prompt_moderation_reviews", "worker_suspicion_events"} <= set(
                 sqlalchemy.inspect(connection).get_table_names(),
             )
+            assert "ix_worker_suspicion_events_user_id" in {
+                index["name"] for index in sqlalchemy.inspect(connection).get_indexes("worker_suspicion_events")
+            }
     finally:
         engine.dispose()
         drop_schema(pg_dsn, schema_name)

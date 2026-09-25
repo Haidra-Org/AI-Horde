@@ -1,6 +1,6 @@
 ---
 title: "Prompt moderation evidence reference"
-summary: "What the horde retains when a prompt is rejected or a worker reports a job, how long it keeps it, and the moderator API over it."
+summary: "What the horde retains when a prompt is rejected, a worker reports a job, or a worker draws suspicion; how long it keeps it; and the moderator API over it and over promotion review."
 topics: [requests, moderation, operations]
 order: 65
 ---
@@ -36,6 +36,11 @@ the request expired or the account was deleted. A replacement that succeeded and
 | Worker report capture       | `horde/classes/base/user.py`                | `User.record_problem_job`            |
 | Listing endpoint            | `horde/apis/v2/moderation.py`               | `OperationsPromptEvents`             |
 | Review endpoint             | `horde/apis/v2/moderation.py`               | `OperationsPromptReview`             |
+| Worker suspicion history    | `horde/classes/base/worker.py`              | `WorkerSuspicionEvent`, written by `WorkerTemplate.report_suspicion` |
+| Overview query              | `horde/database/moderation.py`              | `get_moderation_overview`            |
+| Worker history query        | `horde/database/moderation.py`              | `get_worker_suspicion_events`        |
+| Overview endpoint           | `horde/apis/v2/moderation.py`               | `OperationsModeration`               |
+| Worker history endpoint     | `horde/apis/v2/moderation.py`               | `OperationsWorkerSuspicionEvents`    |
 
 ## Recorded events
 
@@ -70,16 +75,37 @@ Every endpoint requires the moderator `apikey` header and responds with `Cache-C
 - `PATCH /api/v2/operations/moderation/prompts/<event_id>` takes a JSON `status` (`pending`, `reviewed`, `dismissed`)
   and an optional `note` of at most 2,000 characters. `pending` reopens an event. The authenticated key supplies
   reviewer identity; the body cannot.
+- `GET /api/v2/operations/moderation` returns the promotion and paused-worker review queues. Accepts `limit`
+  (1-500, default 100), applied to each queue independently. Promotion candidates are decided by
+  `User.promotion_status`, the same method `User.check_for_trust` promotes on: not yet trusted, above the kudos
+  trust threshold, at least seven days old,
+  and not anonymous. `promotion_blocked_users` holds those whose suspicion count reaches
+  `User.SUSPICION_THRESHOLD`, `promotion_eligible_users` the rest. When no threshold is configured,
+  `promotion_enabled` is false and both lists are empty. Paused
+  workers carry the owner, worker state, models, and current suspicion reasons.
+- `GET /api/v2/operations/worker_suspicion_events` returns newest-first worker suspicion history. Accepts `limit`
+  (1-500, default 100), `before_id`, `worker_id` (a UUID), `user_id`, and `suspicion_id`. Follow `next_cursor`
+  as the next `before_id`.
 
 The prompt listing defaults to every disposition; `status=pending` is the review queue. A review records the latest
 disposition only.
 
-`tests/integration/test_prompt_moderation.py` covers these contracts.
+`tests/integration/test_prompt_moderation.py` and `tests/integration/test_moderation_operations.py` cover these
+contracts.
+
+## Worker suspicion history
+
+`worker_suspicions` is the resettable current score: it cascades away with the worker and a moderator reset clears
+it. `worker_suspicion_events` is the history. `report_suspicion` appends one row per newly recorded suspicion, with
+the worker's id and name, the owning account, the amount, and the formatted diagnostic. It has no foreign keys, so
+deleting the worker or resetting its suspicion leaves the rows in place. A reason `report_suspicion` already
+deduplicates (a non-accumulating reason the worker carries) produces no row.
 
 ## Retention
 
-Prompt evidence and its reviews expire after 30 days. The primary node's maintenance loop deletes up to 1,000 rows
-every minute using the creation-time index. Deleting an event cascades to its review.
+Prompt evidence and its reviews expire after 30 days, worker suspicion history after 90. The primary node's
+maintenance loop deletes up to 1,000 rows of each kind every minute using the creation-time indexes. Deleting an event
+cascades to its review.
 
 ## Sharp edges
 
@@ -90,6 +116,9 @@ every minute using the creation-time index. Deleting an event cascades to its re
   already contended.
 - **No foreign keys.** A rejected submission has no waiting row, and evidence must outlive request expiry and account
   deletion. Only the review references the event.
+- **Worker history rides the request's session.** Unlike prompt evidence, the suspicion event is added to the same
+  session as the score, because suspicion is reported from paths that commit. A caller that reports suspicion and
+  then rolls back loses the history with everything else.
 - **Retention is eventual.** Ordinary replacement volume does not reach these tables; sustained rejection or
   problem-job volume still consumes storage. Monitor the maintenance loop for failures and backlog. Live-row cleanup
   leaves backups alone.
