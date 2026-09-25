@@ -23,6 +23,22 @@ def remove_all_model_default_params(model):
         model[key].default = None
 
 
+# Generation input fields that steer the submission itself and leave no trace on the stored request.
+SUBMISSION_ONLY_FIELDS = frozenset({"dry_run", "allow_downgrade", "replacement_filter", "style"})
+
+
+def derive_submitted_request_model(api, name, input_model, overrides=None):
+    """Build the response model for a stored request from its generation input model.
+
+    The stored request is reported in the same shape it was submitted in, so a client can reuse it as-is.
+    Submission-only fields are dropped, and ``overrides`` replaces the fields whose stored form differs from
+    the submitted one.
+    """
+    fields_by_name = {key: value for key, value in input_model.items() if key not in SUBMISSION_ONLY_FIELDS}
+    fields_by_name.update(overrides or {})
+    return api.model(name, fields_by_name)
+
+
 class Parsers:
     def __init__(self):
         # A Basic parser which only expects a Client-Agent
@@ -1101,10 +1117,32 @@ class Models:
             },
         )
 
+        sharedkey_usage_by_type = api.model(
+            "SharedKeyActiveUsageByType",
+            {
+                "requests": fields.Integer(description="Requests with queued or processing work."),
+                "queued": fields.Integer(description="Generations waiting for assignment."),
+                "processing": fields.Integer(description="Generations currently assigned to workers."),
+                "finished": fields.Integer(description="Completed generations within these active requests."),
+                "oldest_queued_age": fields.Integer(
+                    description="Age in seconds of the oldest request with queued work; zero when none are queued.",
+                ),
+            },
+        )
+        sharedkey_active_usage = api.model(
+            "SharedKeyActiveUsage",
+            {kind: fields.Nested(sharedkey_usage_by_type) for kind in ("image", "text")},
+        )
         self.response_model_sharedkey_details = api.model(
             "SharedKeyDetails",
             {
                 "id": fields.String(description="The SharedKey ID."),
+                "active_usage": fields.Nested(
+                    sharedkey_active_usage,
+                    skip_none=True,
+                    allow_null=True,
+                    description="Aggregate outstanding work. Only included for the owner's personal API key on GET sharedkeys/{id}.",
+                ),
                 "username": fields.String(
                     description="The owning user's unique Username. It is a combination of their chosen alias plus their ID.",
                 ),
@@ -1294,7 +1332,11 @@ class Models:
                         example="00000000-0000-0000-0000-000000000000",
                     ),
                 ),
-                "active_generations": fields.Nested(self.response_model_user_active_generations, skip_none=True),
+                "active_generations": fields.Nested(
+                    self.response_model_user_active_generations,
+                    skip_none=True,
+                    description="Direct request IDs only. Requests funded by shared keys, including styles, are excluded.",
+                ),
                 "monthly_kudos": fields.Nested(self.response_model_monthly_kudos, skip_none=True),
                 "trusted": fields.Boolean(
                     example=False,
