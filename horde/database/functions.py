@@ -2369,7 +2369,7 @@ def retrieve_available_styles(
     if model is not None:
         style_query = style_query.filter(StyleModel.model == model)
     style_order_by = Style.created.asc() if sort == "age" else Style.use_count.desc()
-    return style_query.order_by(style_order_by).offset(page).limit(25).all()
+    return style_query.order_by(style_order_by).offset(page * 25).limit(25).all()
 
 
 def retrieve_available_collections(
@@ -2385,7 +2385,7 @@ def retrieve_available_collections(
     if public_only:
         style_query = style_query.filter(StyleCollection.public.is_(True))
     style_order_by = StyleCollection.created.asc() if sort == "age" else StyleCollection.use_count.desc()
-    return style_query.order_by(style_order_by).offset(page).limit(25).all()
+    return style_query.order_by(style_order_by).offset(page * 25).limit(25).all()
 
 
 def get_all_active_worker_messages(worker_id):
@@ -2412,7 +2412,7 @@ def get_worker_messages(user_id=None, worker_id=None, validity="all", page=0):
         wmquery = wmquery.filter(WorkerMessage.expiry > datetime.utcnow())
     if validity == "expired":
         wmquery = wmquery.filter(WorkerMessage.expiry <= datetime.utcnow())
-    return wmquery.offset(page).limit(50).all()
+    return wmquery.offset(page * 50).limit(50).all()
 
 
 def get_all_users_passkeys():
