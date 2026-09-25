@@ -15,8 +15,11 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
+from flask import Flask
 from flask.testing import FlaskClient
+from sqlalchemy import inspect
 
+from horde.classes.base.waiting_prompt import SubmittedPromptPurpose
 from tests.fixture_types import MakeApiUser
 
 AGENT: str = "aihorde_ci_client:1.0:(test)ci"
@@ -50,6 +53,15 @@ def _no_rate_limit() -> Iterator[None]:
     limiter.enabled = False
     yield
     limiter.enabled = previous
+
+
+@pytest.fixture(autouse=True)
+def _no_external_prompt_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep submissions that reach the prompt filter from calling R2 or Discord."""
+    from horde.apis.v2 import base
+
+    monkeypatch.setattr(base, "upload_prompt", lambda *_: None)
+    monkeypatch.setattr(base, "send_problem_user_notification", lambda *_: None)
 
 
 def _headers(api_key: str | None) -> dict[str, str]:
@@ -236,3 +248,108 @@ class TestTextRequestParameters:
 
         assert resp.status_code == 404, resp.get_data(as_text=True)
         assert resp.get_json()["rc"] == "RequestNotFound"
+
+
+class TestSubmittedPromptProvenance:
+    @pytest.mark.parametrize("mode", ["opt_in", "education", "model", "flagged"])
+    def test_a_replaced_prompt_reaches_workers_while_the_original_stays_private(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+    ) -> None:
+        """Every replacement path stores the replaced prompt as the effective prompt.
+
+        The original prompt is returned only by the owner-only request endpoint. The
+        public status and check endpoints expose neither it nor the provenance
+        field, and a row without provenance omits ``prompt`` rather than falling
+        back to the effective prompt.
+        """
+        from horde.apis.v2 import base
+        from horde.classes.base.user import User
+        from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+        from horde.flask import db
+
+        submitter = make_api_user(kudos=1000)
+        settle_kudos()
+        with app.app_context():
+            account = db.session.get(User, submitter.id)
+            if mode == "education":
+                account.set_education(True)
+            if mode == "flagged":
+                account.set_flagged(True)
+            db.session.commit()
+        checker = base.prompt_checker
+        monkeypatch.setattr(type(checker), "__call__", lambda *_: (2 if mode in {"opt_in", "education"} else 0, []))
+        monkeypatch.setattr(checker, "check_nsfw_model_block", lambda *_: mode == "model")
+        monkeypatch.setattr(checker, "apply_replacement_filter", lambda *_: "synthetic replacement")
+        monkeypatch.setattr(checker, "nsfw_model_prompt_replace", lambda *_, **__: "synthetic replacement")
+        payload = {**IMAGE_REQUEST, "replacement_filter": mode == "opt_in"}
+        response = client.post("/api/v2/generate/async", json=payload, headers={"apikey": submitter.api_key})
+        assert response.status_code == 202, response.get_json()
+        request_id = response.get_json()["id"]
+        retrieved = client.get(f"/api/v2/generate/request/{request_id}", headers={"apikey": submitter.api_key})
+        assert retrieved.get_json()["prompt"] == payload["prompt"]
+        assert retrieved.headers["Cache-Control"] == "private, no-store"
+        for route in ("status", "check"):
+            public_response = client.get(f"/api/v2/generate/{route}/{request_id}")
+            assert public_response.status_code == 200, public_response.get_json()
+            assert payload["prompt"] not in public_response.get_data(as_text=True)
+            assert "submitted_prompt" not in public_response.get_data(as_text=True)
+        with app.app_context():
+            waiting = db.session.get(ImageWaitingPrompt, request_id)
+            assert "submitted_prompt" in inspect(waiting).unloaded
+            assert waiting.prompt == "synthetic replacement"
+            assert waiting.gen_payload["prompt"] == "synthetic replacement"
+            assert waiting.get_share_metadata()["prompt"] == "synthetic replacement"
+            # Simulate a pre-migration row. Neither the serializer nor REST marshalling
+            # may substitute the effective prompt for unavailable provenance.
+            waiting.submitted_prompt = None
+            db.session.commit()
+        legacy = client.get(f"/api/v2/generate/request/{request_id}", headers={"apikey": submitter.api_key})
+        assert "prompt" not in legacy.get_json()
+        client.delete(f"/api/v2/generate/status/{request_id}", headers={"apikey": submitter.api_key})
+
+    def test_a_style_changes_the_effective_prompt_but_not_the_original(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A style rewrites the effective prompt while the stored original is the submitted text."""
+        from horde.apis.v2 import base, stable
+        from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+        from horde.flask import db
+
+        submitter = make_api_user(kudos=1000)
+        settle_kudos()
+        original_apply_style = stable.ImageAsyncGenerate.apply_style
+
+        def apply_synthetic_style(resource) -> None:
+            original_apply_style(resource)
+            resource.prompt = "style prefix: " + resource.prompt
+
+        monkeypatch.setattr(stable.ImageAsyncGenerate, "apply_style", apply_synthetic_style)
+        checker = base.prompt_checker
+        monkeypatch.setattr(type(checker), "__call__", lambda *_: (0, []))
+        monkeypatch.setattr(checker, "check_nsfw_model_block", lambda *_: False)
+        response = client.post(
+            "/api/v2/generate/async",
+            json={**IMAGE_REQUEST, "replacement_filter": False},
+            headers={"apikey": submitter.api_key},
+        )
+        assert response.status_code == 202, response.get_json()
+        request_id = response.get_json()["id"]
+        try:
+            with app.app_context():
+                waiting = db.session.get(ImageWaitingPrompt, request_id)
+                assert waiting.prompt == "style prefix: " + IMAGE_REQUEST["prompt"]
+                original = waiting.read_privileged_submitted_prompt(purpose=SubmittedPromptPurpose.MODERATION_EVIDENCE)
+                assert original == IMAGE_REQUEST["prompt"]
+        finally:
+            client.delete(f"/api/v2/generate/status/{request_id}", headers={"apikey": submitter.api_key})
