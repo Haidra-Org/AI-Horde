@@ -33,7 +33,11 @@ from horde.classes.base.style_application import (
     merge_client_parameters,
     resolve_template_field_values,
 )
-from horde.classes.base.style_contract import load_parameter_policy, load_template_fields
+from horde.classes.base.style_contract import (
+    StyleContractVocabulary,
+    load_parameter_policy,
+    load_template_fields,
+)
 from horde.classes.base.team import Team, find_team_by_id, find_team_by_name, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
@@ -748,6 +752,17 @@ class GenerateTemplate(Resource):
         """
         return self.args.get("template_fields")
 
+    def style_contract_vocabulary(self) -> StyleContractVocabulary:
+        """Return what a style of this gentype lets its parameter policy talk about.
+
+        Returns:
+            The vocabulary a stored policy is validated against when the style is applied.
+
+        Raises:
+            NotImplementedError: If the gentype did not supply one.
+        """
+        raise NotImplementedError("A gentype applying a style's parameter policy has to supply its vocabulary.")
+
     def apply_style_contract(self, style):
         """Merge the request's params into a style's and check the template fields it supplied.
 
@@ -763,12 +778,17 @@ class GenerateTemplate(Resource):
                 the values to fill them with.
 
         Raises:
-            horde.exceptions.BadRequest: If the request set a param the style does not allow it to set
-                or one above a ceiling, or supplied a template field the style does not declare.
+            horde.exceptions.BadRequest: If the style's stored declarations no longer pass validation,
+                the request set a param above a ceiling, or supplied a template field the style does
+                not declare.
         """
-        self.style_parameter_policy = load_parameter_policy(style.parameter_policy)
+        self.style_parameter_policy = load_parameter_policy(
+            style.parameter_policy,
+            vocabulary=self.style_contract_vocabulary(),
+            style_name=style.name,
+        )
         resolved_template_fields = resolve_template_field_values(
-            declared_fields=load_template_fields(style.template_fields),
+            declared_fields=load_template_fields(style.template_fields, style_name=style.name),
             supplied_fields=self.get_supplied_template_fields(),
         )
         self.params = merge_client_parameters(

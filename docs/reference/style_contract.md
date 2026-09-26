@@ -132,11 +132,12 @@ The three modes:
 - `all`: every param may come from the request, except `n`, which comes from it regardless.
 
 A policy is validated against the params model of its own style type rather than against a list
-restated here. `text_style_contract_vocabulary` in `horde/apis/v2/kobold_styles.py` and
-`image_style_contract_vocabulary` in `horde/apis/v2/stable_styles.py` build that vocabulary and reach
-the pydantic models through the validation context, so a stored policy can be read back without the
-API layer. A text style may cap `max_length`, `max_context_length` and `n`; an image style may cap
-`width`, `height`, `steps` and `n`.
+restated here. `text_style_contract_vocabulary` in `horde/apis/v2/kobold.py` and
+`image_style_contract_vocabulary` in `horde/apis/v2/stable.py` build that vocabulary next to the params
+model it reads, and reach the pydantic models through the validation context, so
+`horde/classes/base/style_contract.py` does not import the API layer. The style endpoints and the
+request path validate against the same vocabulary. A text style may cap `max_length`,
+`max_context_length` and `n`; an image style may cap `width`, `height`, `steps` and `n`.
 
 Rejections at declaration time, all 400 with the return code shown:
 
@@ -162,6 +163,17 @@ with a message naming the param and the mode. A value above a ceiling is rejecte
 `StyleParameterAboveCeiling` rather than trimmed, because trimming would change what the request costs
 without reporting it. A value exactly at the ceiling is accepted, and the style's own params are never
 checked against a ceiling.
+
+The request path validates the stored declarations again each time the style is applied, against the
+same vocabulary the style endpoints use. A stored declaration can stop validating when the rules or the
+params model change after it was written, and the request is then refused with a 400.
+
+Rejections when a request is sent under a style, all 400 with the return code shown:
+
+| Request | Return code |
+| --- | --- |
+| A value above the ceiling the style puts on it | `StyleParameterAboveCeiling` |
+| The style's stored `parameter_policy` or `template_fields` no longer validates | `StyleDeclarationInvalid` |
 
 An image style that sets neither `width` nor `height` takes both from the request. That fallback
 applies only to a style with no policy; once a policy is declared, the policy settles every param.
@@ -348,7 +360,7 @@ receives falls back to its own defaults rather than applying the document.
 | Concept | File | Symbol |
 | --- | --- | --- |
 | Policy and placeholder declarations | `horde/classes/base/style_contract.py` | `StyleParameterPolicy`, `StyleTemplateFields` |
-| Declaration validation and storage | `horde/classes/base/style_contract.py` | `parse_parameter_policy`, `parse_template_fields`, `serialize_parameter_policy`, `load_parameter_policy` |
+| Declaration validation and storage | `horde/classes/base/style_contract.py` | `parse_parameter_policy`, `parse_template_fields`, `serialize_parameter_policy`, `load_parameter_policy`, `load_template_fields` |
 | Param merge and ceilings | `horde/classes/base/style_application.py` | `merge_client_parameters` |
 | Placeholder resolution | `horde/classes/base/style_application.py` | `resolve_template_field_values` |
 | Text template formatting and the protected pattern | `horde/classes/base/style_application.py` | `format_text_style_prompt`, `PROTECTED_TEXT_PLACEHOLDER_PATTERN` |
@@ -359,10 +371,11 @@ receives falls back to its own defaults rather than applying the document.
 | Token estimate and fit rule | `horde/classes/kobold/request_fit.py` | `estimate_prompt_tokens`, `prompt_fits_context` |
 | Context sizing and its bound | `horde/classes/kobold/request_fit.py` | `fit_context_length`, `context_growth_upper_bound` |
 | Shared merge, resolution and dry-run body | `horde/apis/v2/base.py` | `GenerateTemplate.apply_style_contract`, `GenerateTemplate.get_resolved_request`, `GenerateTemplate.dry_run_answerable_from_cache` |
+| Vocabulary hook for the request path | `horde/apis/v2/base.py`, `horde/apis/v2/kobold.py`, `horde/apis/v2/stable.py` | `GenerateTemplate.style_contract_vocabulary`, `TextAsyncGenerate.style_contract_vocabulary`, `ImageAsyncGenerate.style_contract_vocabulary` |
 | Style application on a text request | `horde/apis/v2/kobold.py` | `TextAsyncGenerate.apply_style`, `TextAsyncGenerate.apply_context_fit` |
 | Style application on an image request | `horde/apis/v2/stable.py` | `ImageAsyncGenerate.apply_style`, `ImageAsyncGenerate.get_resolved_request` |
-| Declaration vocabulary and ceiling bounds | `horde/apis/v2/kobold_styles.py`, `horde/apis/v2/stable_styles.py` | `text_style_contract_vocabulary`, `image_style_contract_vocabulary` |
-| Type-specific hooks the shared endpoints call | `horde/apis/v2/styles.py` | `StyleContractArgs.parse_type_specific_args`, `StyleContractArgs.apply_type_specific_args` |
+| Declaration vocabulary and ceiling bounds | `horde/apis/v2/kobold.py`, `horde/apis/v2/stable.py` | `text_style_contract_vocabulary`, `image_style_contract_vocabulary`, `TEXT_CEILING_PARAMETER_NAMES`, `IMAGE_CEILING_PARAMETER_NAMES` |
+| Type-specific hooks the shared endpoints call | `horde/apis/v2/styles.py` | `StyleContractArgs.style_contract_vocabulary`, `StyleContractArgs.parse_type_specific_args`, `StyleContractArgs.apply_type_specific_args` |
 | Shared request and response shapes | `horde/apis/models/v2.py` | `model_style_parameter_policy`, `model_style_template_field`, `response_model_resolved_request` |
 | Per-type response shapes | `horde/apis/models/kobold_v2.py`, `horde/apis/models/stable_v2.py` | `response_model_async`, `response_model_resolved_request` |
 | Worker context ceiling | `horde/database/functions.py` | `get_highest_text_worker_max_context_length` |
@@ -378,6 +391,7 @@ receives falls back to its own defaults rather than applying the document.
 | Which params each mode accepts from the request | `tests/unit/test_style_contract.py`, `TestParameterPolicyApplication` |
 | Placeholder names, descriptions, limit and uniqueness | `tests/unit/test_style_contract.py`, `TestTemplateFields` |
 | Declarations are stored and read back unchanged | `tests/unit/test_style_contract.py`, `TestRoundTrip` |
+| A stored declaration that no longer validates is refused with `StyleDeclarationInvalid` | `tests/unit/test_style_contract.py`, `TestStoredDeclarationValidation`; `tests/integration/test_text_style_application.py`, `TestTextStyleParameterPolicy` |
 | Param merge, unlisted params ignored, and `n` coming from the request | `tests/unit/test_style_application.py`, `TestParameterMerge` |
 | A value above a ceiling is refused, not trimmed | `tests/unit/test_style_application.py`, `TestParameterCeilings` |
 | Supplied placeholders, required ones and prompt-length bounds | `tests/unit/test_style_application.py`, `TestTemplateFields` |

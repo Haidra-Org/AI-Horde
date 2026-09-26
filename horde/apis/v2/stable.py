@@ -27,7 +27,12 @@ from horde.apis.v2.base import (
 )
 from horde.classes.base import settings
 from horde.classes.base.style import StyleCollection
-from horde.classes.base.style_contract import RESERVED_TEMPLATE_FIELD_NAMES
+from horde.classes.base.style_contract import (
+    RESERVED_TEMPLATE_FIELD_NAMES,
+    ParameterCeilingBound,
+    StyleContractVocabulary,
+    build_vocabulary,
+)
 from horde.classes.base.user import User
 from horde.classes.stable.genstats import (
     get_compiled_imagegen_stats_models,
@@ -75,6 +80,32 @@ STYLE_SIZE_FALLBACK_PARAMETERS = ("width", "height")
 
 PROMPT_SEPARATOR = "###"
 """What splits an image prompt into the part to generate from and the part to keep away from."""
+
+
+IMAGE_CEILING_PARAMETER_NAMES = ("width", "height", "steps", "n")
+"""The params an image style's policy may cap. The range each ceiling may take comes from the params model."""
+
+
+def image_style_contract_vocabulary() -> StyleContractVocabulary:
+    """Return what an image style's parameter policy may talk about.
+
+    The params model is the vocabulary clients already generate against, so anything outside it would
+    be a key the request path never sees.
+
+    Returns:
+        The params an image style may hand over, and the ones it may cap with their ranges.
+    """
+    payload_fields = models.input_model_generation_payload.resolved
+    return build_vocabulary(
+        parameter_names=payload_fields,
+        ceiling_bounds={
+            parameter_name: ParameterCeilingBound(
+                minimum=payload_fields[parameter_name].minimum,
+                maximum=payload_fields[parameter_name].maximum,
+            )
+            for parameter_name in IMAGE_CEILING_PARAMETER_NAMES
+        },
+    )
 
 
 class ImageAsyncGenerate(GenerateTemplate):
@@ -461,6 +492,14 @@ class ImageAsyncGenerate(GenerateTemplate):
             extra_source_images=self.args.extra_source_images,
             kudos_adjustment=2 if self.style_kudos is True else 0,
         )
+
+    def style_contract_vocabulary(self) -> StyleContractVocabulary:
+        """Return what an image style's parameter policy may talk about.
+
+        Returns:
+            The image vocabulary, which a stored policy is validated against when the style is applied.
+        """
+        return image_style_contract_vocabulary()
 
     def apply_style(self):
         if self.args.style is None:

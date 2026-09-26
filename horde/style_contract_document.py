@@ -159,8 +159,9 @@ def compile_style_contract() -> StyleContractDocument:
     # Imported here because the vocabularies and the rate limits are declared in the API layer, which
     # imports the endpoint this contract is served from.
     import horde.apis.limiter_api as lim
-    from horde.apis.v2.kobold_styles import TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT, text_style_contract_vocabulary
-    from horde.apis.v2.stable_styles import image_style_contract_vocabulary
+    from horde.apis.v2.kobold import text_style_contract_vocabulary
+    from horde.apis.v2.kobold_styles import TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT
+    from horde.apis.v2.stable import image_style_contract_vocabulary
 
     text_vocabulary = text_style_contract_vocabulary()
     image_vocabulary = image_style_contract_vocabulary()

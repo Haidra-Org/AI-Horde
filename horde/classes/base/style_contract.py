@@ -431,6 +431,26 @@ def _vocabulary(info: ValidationInfo) -> StyleContractVocabulary | None:
     return vocabulary
 
 
+def _validation_reasons(error: ValidationError) -> str:
+    """Return every reason a pydantic ValidationError gives, as one line for a client to read.
+
+    Args:
+        error: The error the model raised.
+
+    Returns:
+        The reasons, each prefixed with the location it applies to, separated by semicolons.
+    """
+    reasons: list[str] = []
+    for detail in error.errors():
+        # Pydantic prefixes anything a validator raised with "Value error, "; strip it so the client
+        # gets the plain reason.
+        reason = detail["msg"].removeprefix("Value error, ")
+        location = ".".join(str(part) for part in detail["loc"])
+        reasons.append(f"{location}: {reason}" if location else reason)
+
+    return "; ".join(reasons)
+
+
 def _as_bad_request(error: ValidationError, subject: str) -> NoReturn:
     """Translate a pydantic ValidationError into a horde BadRequest.
 
@@ -442,18 +462,31 @@ def _as_bad_request(error: ValidationError, subject: str) -> NoReturn:
         horde.exceptions.BadRequest: Always, listing every reason the model gave.
     """
     return_code = "BadRequest"
-    reasons: list[str] = []
-    for detail in error.errors():
-        if detail["type"] == OVERRIDABLE_MISPLACED_ERROR_TYPE:
-            return_code = "StylePolicyOverridableMisplaced"
+    if any(detail["type"] == OVERRIDABLE_MISPLACED_ERROR_TYPE for detail in error.errors()):
+        return_code = "StylePolicyOverridableMisplaced"
 
-        # Pydantic prefixes anything a validator raised with "Value error, "; strip it so the client
-        # gets the plain reason.
-        reason = detail["msg"].removeprefix("Value error, ")
-        location = ".".join(str(part) for part in detail["loc"])
-        reasons.append(f"{location}: {reason}" if location else reason)
+    raise e.BadRequest(f"'{subject}' is not valid. {_validation_reasons(error)}.", rc=return_code)
 
-    raise e.BadRequest(f"'{subject}' is not valid. {'; '.join(reasons)}.", rc=return_code)
+
+def _as_invalid_stored_declaration(error: ValidationError, *, subject: str, style_name: str) -> NoReturn:
+    """Translate a pydantic ValidationError raised by a stored declaration into a horde BadRequest.
+
+    A declaration passed validation when it was written, and the rules or the style type's params
+    model can change after that. The request cannot run under the style as stored, and the fault lies
+    with the style, so the client gets a 400 naming it.
+
+    Args:
+        error: The error the model raised.
+        subject: The style column that failed, used in the message.
+        style_name: The style the declaration belongs to, used in the message.
+
+    Raises:
+        horde.exceptions.BadRequest: Always, with the ``StyleDeclarationInvalid`` return code.
+    """
+    raise e.BadRequest(
+        f"Style '{style_name}' cannot be applied because its stored '{subject}' is not valid. {_validation_reasons(error)}.",
+        rc="StyleDeclarationInvalid",
+    )
 
 
 def build_vocabulary(
@@ -543,31 +576,53 @@ def serialize_template_fields(template_fields: Sequence[StyleTemplateField]) -> 
     return [declaration.model_dump(mode="json") for declaration in template_fields]
 
 
-def load_parameter_policy(stored_policy: object) -> StyleParameterPolicy | None:
-    """Read a policy back off a style row.
+def load_parameter_policy(
+    stored_policy: object,
+    *,
+    vocabulary: StyleContractVocabulary,
+    style_name: str,
+) -> StyleParameterPolicy | None:
+    """Read a policy back off a style row, validating it as the style endpoints would.
 
     Args:
         stored_policy: The ``parameter_policy`` column, which is null for a style that declares none.
+        vocabulary: What the style's type lets a policy talk about.
+        style_name: The style the policy belongs to, named in the rejection.
 
     Returns:
         The policy, or None when the style declares none.
+
+    Raises:
+        horde.exceptions.BadRequest: With the ``StyleDeclarationInvalid`` return code, if the stored
+            policy no longer passes validation.
     """
-    if not isinstance(stored_policy, dict):
+    if stored_policy is None:
         return None
 
-    return StyleParameterPolicy.model_validate(stored_policy)
+    try:
+        return StyleParameterPolicy.model_validate(stored_policy, context={VOCABULARY_CONTEXT_KEY: vocabulary})
+    except ValidationError as validation_error:
+        _as_invalid_stored_declaration(validation_error, subject="parameter_policy", style_name=style_name)
 
 
-def load_template_fields(stored_fields: object) -> tuple[StyleTemplateField, ...]:
-    """Read template field declarations back off a style row.
+def load_template_fields(stored_fields: object, *, style_name: str) -> tuple[StyleTemplateField, ...]:
+    """Read template field declarations back off a style row, validating them as the style endpoints would.
 
     Args:
         stored_fields: The ``template_fields`` column, which is null for a style that declares none.
+        style_name: The style the declarations belong to, named in the rejection.
 
     Returns:
         The declarations, empty when the style declares none.
+
+    Raises:
+        horde.exceptions.BadRequest: With the ``StyleDeclarationInvalid`` return code, if the stored
+            declarations no longer pass validation.
     """
-    if not isinstance(stored_fields, list):
+    if stored_fields is None:
         return ()
 
-    return tuple(StyleTemplateFields.model_validate(stored_fields).root)
+    try:
+        return tuple(StyleTemplateFields.model_validate(stored_fields).root)
+    except ValidationError as validation_error:
+        _as_invalid_stored_declaration(validation_error, subject="template_fields", style_name=style_name)
