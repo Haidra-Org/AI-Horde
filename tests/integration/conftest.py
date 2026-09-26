@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import sqlalchemy
@@ -177,7 +177,26 @@ def _reset_redis_state() -> None:
 
 @pytest.fixture
 def client(app: Flask) -> FlaskClient:
-    return app.test_client()
+    """Return a test client that releases the ORM session after every request.
+
+    The module-scoped ``app`` fixture keeps one app context pushed, and a test-client request reuses it,
+    so the scoped session is never removed between requests and, with ``expire_on_commit`` off, a
+    relationship loaded before a row was inserted stays stale. Production serves each request on a
+    session of its own; removing the session after each call reproduces that.
+    """
+    from horde.flask import db
+
+    test_client = app.test_client()
+    open_request = test_client.open
+
+    def open_and_release_session(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return open_request(*args, **kwargs)
+        finally:
+            db.session.remove()
+
+    test_client.open = open_and_release_session  # type: ignore[method-assign]
+    return test_client
 
 
 @pytest.fixture
