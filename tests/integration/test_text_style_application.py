@@ -34,6 +34,9 @@ TEMPLATE_FIELDS = [
 
 WORKER_NAME = "CICD Style Scribe"
 
+WORKER_MAX_CONTEXT_LENGTH = 4096
+"""The largest context the workers these cases check in advertise."""
+
 
 @pytest.fixture(autouse=True, scope="module")
 def _no_rate_limit() -> Iterator[None]:
@@ -147,12 +150,20 @@ def queued_request(
         client.delete(f"/api/v2/generate/text/status/{request_id}", headers=request_headers)
 
 
-def pop_payload(client: FlaskClient, request_headers: dict[str, str]) -> dict[str, Any]:
+def pop_payload(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    *,
+    worker_name: str = WORKER_NAME,
+    models: list[str] = TEXT_MODELS,
+) -> dict[str, Any]:
     """Take one job off the text queue as a worker and return what the worker was handed.
 
     Args:
         client: The Flask test client.
         request_headers: Headers carrying the worker owner's API key.
+        worker_name: The name the worker checks in under.
+        models: The models the worker serves.
 
     Returns:
         The payload of the popped job.
@@ -160,11 +171,11 @@ def pop_payload(client: FlaskClient, request_headers: dict[str, str]) -> dict[st
     response = client.post(
         "/api/v2/generate/text/pop",
         json={
-            "name": WORKER_NAME,
-            "models": TEXT_MODELS,
+            "name": worker_name,
+            "models": models,
             "bridge_agent": request_headers["Client-Agent"],
             "amount": 1,
-            "max_context_length": 4096,
+            "max_context_length": WORKER_MAX_CONTEXT_LENGTH,
             "max_length": 512,
         },
         headers=request_headers,
@@ -649,6 +660,92 @@ class TestContextFit:
 
             assert response.status_code == 400, response.get_data(as_text=True)
             assert response.get_json()["rc"] == "PromptExceedsContext"
+
+    bound_worker_models = ["cicd/context-bound-scribe"]
+    """Served only by the worker ``bound_worker_online`` checks in, so no other worker sets the bound."""
+
+    unserved_models = ["cicd/context-unserved-scribe"]
+    """Served by no worker in this module."""
+
+    prompt_past_half_the_worker_context = "filler text " * 700
+    """2800 estimated tokens: past 2048 with the 240 to generate, and within 4096."""
+
+    prompt_past_the_worker_context = "filler text " * 1100
+    """4400 estimated tokens, past 4096 before anything is generated."""
+
+    @pytest.fixture
+    def bound_worker_online(self, client, request_headers: dict[str, str]) -> None:
+        """Check in a worker serving ``bound_worker_models`` at 4096 tokens of context.
+
+        Taking a job checks the worker in, which puts it inside the online window.
+        """
+        with queued_request(client, request_headers, models=self.bound_worker_models):
+            pop_payload(
+                client,
+                request_headers,
+                worker_name="CICD Context Bound Scribe",
+                models=self.bound_worker_models,
+            )
+
+    @pytest.mark.usefixtures("bound_worker_online")
+    def test_grow_stops_at_the_largest_context_an_online_worker_serves(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        with queued_request(
+            client,
+            request_headers,
+            prompt=self.prompt_past_half_the_worker_context,
+            models=self.bound_worker_models,
+            context_fit="grow",
+            params={"max_length": 240, "max_context_length": 1024},
+        ):
+            payload = pop_payload(
+                client,
+                request_headers,
+                worker_name="CICD Context Bound Scribe",
+                models=self.bound_worker_models,
+            )
+
+            assert payload["max_context_length"] == WORKER_MAX_CONTEXT_LENGTH
+
+    @pytest.mark.usefixtures("bound_worker_online")
+    def test_grow_refuses_a_prompt_past_the_largest_context_an_online_worker_serves(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        response = post_request(
+            client,
+            request_headers,
+            prompt=self.prompt_past_the_worker_context,
+            models=self.bound_worker_models,
+            context_fit="grow",
+            params={"max_length": 240, "max_context_length": 1024},
+        )
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "PromptExceedsContext"
+        assert f"max_context_length of {WORKER_MAX_CONTEXT_LENGTH}" in response.get_json()["message"]
+
+    def test_grow_without_an_online_worker_refuses_at_the_requested_context(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        response = post_request(
+            client,
+            request_headers,
+            prompt=self.over_long_prompt,
+            models=self.unserved_models,
+            context_fit="grow",
+            params={"max_length": 240, "max_context_length": 1024},
+        )
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "PromptExceedsContext"
+        assert "max_context_length of 1024" in response.get_json()["message"]
 
     def test_an_unknown_setting_is_refused(self, client, request_headers: dict[str, str]) -> None:
         response = post_request(client, request_headers, context_fit="shrink")

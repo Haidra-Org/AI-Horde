@@ -163,31 +163,34 @@ def context_growth_upper_bound(
     *,
     policy: StyleParameterPolicy | None,
     highest_worker_max_context_length: int | None,
+    requested_max_context_length: int,
 ) -> int:
     """Return the largest context growth may reach for one request.
 
     Growing past what any online worker advertises would leave the request waiting until it expires,
     so the worker pool limits growth alongside the params model and the style's own ceiling. When no
-    online worker serves any of the request's models there is no pool limit to apply: such a request
-    has no worker either way, which the horde already reports back.
+    online worker serves any of the request's models there is no size the pool is known to serve, so
+    the request does not grow at all: the limit is the context it asked for, and a prompt that does
+    not fit it is refused.
 
     Args:
         policy: The style's parameter policy, or None when no style applies or it declares none.
         highest_worker_max_context_length: The largest context advertised by an online worker serving
             one of the request's models, or None when no such worker is online.
+        requested_max_context_length: The context the request set before any growth.
 
     Returns:
         The limit.
     """
-    bounds = [MAX_CONTEXT_LENGTH_LIMIT]
+    if highest_worker_max_context_length is None:
+        return requested_max_context_length
+
+    bounds = [MAX_CONTEXT_LENGTH_LIMIT, highest_worker_max_context_length]
 
     if policy is not None:
         style_ceiling = policy.ceiling_for(MAX_CONTEXT_LENGTH_PARAMETER)
         if style_ceiling is not None:
             bounds.append(style_ceiling)
-
-    if highest_worker_max_context_length is not None:
-        bounds.append(highest_worker_max_context_length)
 
     return min(bounds)
 

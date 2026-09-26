@@ -235,6 +235,10 @@ used instead of the power of two. When nothing within the bound fits, the reques
 `PromptExceedsContext` quoting the bound. Under `reject` the bound is `MAX_CONTEXT_LENGTH_LIMIT`, since
 nothing grows.
 
+When no online text worker serves any of the request's models, a `grow` request does not grow: the
+bound is the `max_context_length` the request set, so a prompt that does not fit it is refused with
+`PromptExceedsContext` quoting that size. A prompt that already fits is accepted as it is.
+
 ## The dry run body
 
 A dry run of `/v2/generate/async` or `/v2/generate/text/async` returns 200 with `kudos` and `resolved`,
@@ -426,10 +430,12 @@ receives falls back to its own defaults rather than applying the document.
 - The token estimate runs no tokenizer. `ceil(len(prompt) / 3)` is a conservative character count, so
   `reject` can refuse a prompt a real tokenizer would have fitted, and `grow` can buy context a request
   does not need. Per-model tokenization would make the estimate exact.
-- Growth with no online worker for the request's models is limited only by the params model. When
+- Growth with no online worker for the request's models is refused. When
   `get_highest_text_worker_max_context_length` finds no online worker serving those models it returns
-  null and contributes no limit, so growth can reach 1048576 for a request nothing can serve. The
-  response already warns that no worker can fulfil such a request.
+  null, and `context_growth_upper_bound` then returns the requested `max_context_length`, so a `grow`
+  request whose prompt does not fit is rejected with `PromptExceedsContext` at the requested size. The
+  same request under `ignore` would be queued and wait for a worker to come online;
+  under `grow` the client has to retry once one has checked in within the 300-second window.
 - A patch replaces a JSON column whole. Sending `parameter_policy` or `template_fields` on a `PATCH`
   overwrites the stored value; there is no merge, and no way to clear one back to null through the
   endpoint.
