@@ -187,18 +187,29 @@ class TestContextFitting:
 class TestGrowthBound:
     """What limits growth: the params model, the style's ceiling and the worker pool."""
 
-    def test_without_a_style_or_a_pool_the_params_model_bounds_growth(self) -> None:
-        bound = context_growth_upper_bound(policy=None, highest_worker_max_context_length=None)
+    def test_without_a_style_the_pool_bounds_growth(self) -> None:
+        bound = context_growth_upper_bound(
+            policy=None,
+            highest_worker_max_context_length=8192,
+            requested_max_context_length=2048,
+        )
+
+        assert bound == 8192
+
+    def test_a_pool_past_the_params_model_is_held_to_the_params_model(self) -> None:
+        bound = context_growth_upper_bound(
+            policy=None,
+            highest_worker_max_context_length=MAX_CONTEXT_LENGTH_LIMIT * 2,
+            requested_max_context_length=2048,
+        )
 
         assert bound == MAX_CONTEXT_LENGTH_LIMIT
-
-    def test_the_pool_bounds_growth(self) -> None:
-        assert context_growth_upper_bound(policy=None, highest_worker_max_context_length=8192) == 8192
 
     def test_the_styles_ceiling_bounds_growth(self) -> None:
         bound = context_growth_upper_bound(
             policy=policy_of(override="all", ceilings={"max_context_length": 4096}),
             highest_worker_max_context_length=8192,
+            requested_max_context_length=2048,
         )
 
         assert bound == 4096
@@ -207,6 +218,7 @@ class TestGrowthBound:
         bound = context_growth_upper_bound(
             policy=policy_of(override="all", ceilings={"max_context_length": 16384}),
             highest_worker_max_context_length=8192,
+            requested_max_context_length=2048,
         )
 
         assert bound == 8192
@@ -214,7 +226,36 @@ class TestGrowthBound:
     def test_a_policy_without_that_ceiling_bounds_nothing(self) -> None:
         bound = context_growth_upper_bound(
             policy=policy_of(override="all", ceilings={"max_length": 512}),
-            highest_worker_max_context_length=None,
+            highest_worker_max_context_length=8192,
+            requested_max_context_length=2048,
         )
 
-        assert bound == MAX_CONTEXT_LENGTH_LIMIT
+        assert bound == 8192
+
+    def test_with_no_online_worker_the_request_does_not_grow(self) -> None:
+        bound = context_growth_upper_bound(
+            policy=policy_of(override="all", ceilings={"max_context_length": 16384}),
+            highest_worker_max_context_length=None,
+            requested_max_context_length=2048,
+        )
+
+        assert bound == 2048
+
+    def test_with_no_online_worker_an_over_long_prompt_is_refused_at_the_requested_context(self) -> None:
+        bound = context_growth_upper_bound(
+            policy=None,
+            highest_worker_max_context_length=None,
+            requested_max_context_length=2048,
+        )
+
+        with pytest.raises(e.BadRequest) as rejection:
+            fit_context_length(
+                estimated_prompt_tokens=3000,
+                max_length=80,
+                max_context_length=2048,
+                context_fit=ContextFit.GROW,
+                upper_bound=bound,
+            )
+
+        assert rejection.value.rc == "PromptExceedsContext"
+        assert "does not fit a max_context_length of 2048" in rejection.value.specific

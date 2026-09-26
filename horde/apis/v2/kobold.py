@@ -342,7 +342,7 @@ class TextAsyncGenerate(GenerateTemplate):
             max_length=max_length,
             max_context_length=max_context_length,
             context_fit=self.context_fit,
-            upper_bound=self.get_context_growth_upper_bound(),
+            upper_bound=self.get_context_growth_upper_bound(requested_max_context_length=max_context_length),
         )
         if fitted_context_length == max_context_length:
             return
@@ -353,8 +353,12 @@ class TextAsyncGenerate(GenerateTemplate):
         self.params[MAX_CONTEXT_LENGTH_PARAMETER] = fitted_context_length
         logger.debug(f"Context grown from {max_context_length} to {fitted_context_length} to fit the prompt.")
 
-    def get_context_growth_upper_bound(self):
+    def get_context_growth_upper_bound(self, *, requested_max_context_length):
         """Return the largest context this request may grow to.
+
+        Args:
+            requested_max_context_length (int): The context the request set before any growth, which
+                is also the limit when no online worker serves the request's models.
 
         Returns:
             int: The limit, which only growth is held to.
@@ -365,6 +369,7 @@ class TextAsyncGenerate(GenerateTemplate):
         return context_growth_upper_bound(
             policy=self.style_parameter_policy,
             highest_worker_max_context_length=database.get_highest_text_worker_max_context_length(self.models),
+            requested_max_context_length=requested_max_context_length,
         )
 
 
