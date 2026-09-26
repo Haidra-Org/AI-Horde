@@ -84,16 +84,14 @@ class TestParameterMerge:
 
         assert merged == {"max_length": 240, "max_context_length": 1024, "temperature": 0.7, "n": 2}
 
-    def test_override_listed_rejects_a_param_it_does_not_list(self) -> None:
-        with pytest.raises(e.BadRequest) as rejection:
-            merge_client_parameters(
-                style_parameters=STYLE_PARAMETERS,
-                client_parameters=CLIENT_PARAMETERS,
-                policy=policy_of(override="listed", overridable=("max_length",)),
-            )
+    def test_override_listed_ignores_a_param_it_does_not_list(self) -> None:
+        merged = merge_client_parameters(
+            style_parameters=STYLE_PARAMETERS,
+            client_parameters=CLIENT_PARAMETERS,
+            policy=policy_of(override="listed", overridable=("max_length",)),
+        )
 
-        assert rejection.value.rc == "StyleParameterNotOverridable"
-        assert "temperature" in rejection.value.specific
+        assert merged == {"max_length": 240, "max_context_length": 1024, "temperature": 0.7, "n": 3}
 
     @pytest.mark.parametrize("override", ["none", "listed", "all"])
     def test_the_request_count_comes_from_the_request_under_every_mode(self, override: str) -> None:
@@ -167,16 +165,7 @@ class TestParameterCeilings:
 
         assert rejection.value.rc == "StyleParameterAboveCeiling"
 
-    def test_a_ceiling_on_a_param_the_mode_does_not_let_through_does_nothing(self) -> None:
-        merged = merge_client_parameters(
-            style_parameters=STYLE_PARAMETERS,
-            client_parameters={"max_length": 4096},
-            policy=policy_of(override="none", ceilings={"max_length": 512}),
-        )
-
-        assert merged["max_length"] == STYLE_PARAMETERS["max_length"]
-
-    def test_a_param_the_style_refuses_outright_is_reported_before_a_ceiling(self) -> None:
+    def test_an_unlisted_param_is_ignored_while_a_listed_one_is_held_to_its_ceiling(self) -> None:
         with pytest.raises(e.BadRequest) as rejection:
             merge_client_parameters(
                 style_parameters=STYLE_PARAMETERS,
@@ -188,7 +177,8 @@ class TestParameterCeilings:
                 ),
             )
 
-        assert rejection.value.rc == "StyleParameterNotOverridable"
+        assert rejection.value.rc == "StyleParameterAboveCeiling"
+        assert "max_length" in rejection.value.specific
 
 
 class TestTemplateFields:

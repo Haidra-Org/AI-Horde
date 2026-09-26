@@ -337,7 +337,10 @@ class TestTextStyleContractRejections:
         request_headers: dict[str, str],
         ceiling: int,
     ) -> None:
-        body = style_body(f"contract ceiling {ceiling}", parameter_policy={"ceilings": {"max_length": ceiling}})
+        body = style_body(
+            f"contract ceiling {ceiling}",
+            parameter_policy={"override": "all", "ceilings": {"max_length": ceiling}},
+        )
         response = post_style(client, request_headers, body)
 
         assert response.status_code == 400, response.get_data(as_text=True)
@@ -349,7 +352,24 @@ class TestTextStyleContractRejections:
     ) -> None:
         # width belongs to image requests, and temperature is a text param no text style may cap.
         for parameter_name in ("width", "temperature"):
-            body = style_body(f"contract ceiling {parameter_name}", parameter_policy={"ceilings": {parameter_name: 2}})
+            body = style_body(
+                f"contract ceiling {parameter_name}",
+                parameter_policy={"override": "all", "ceilings": {parameter_name: 2}},
+            )
+            response = post_style(client, request_headers, body)
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+
+    def test_a_ceiling_on_a_parameter_the_mode_does_not_hand_over_is_rejected(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        for mode_name, policy in (
+            ("none", {"override": "none", "ceilings": {"max_length": 512}}),
+            ("listed", {"override": "listed", "overridable": ["max_length"], "ceilings": {"max_context_length": 4096}}),
+        ):
+            body = style_body(f"contract inert ceiling {mode_name}", parameter_policy=policy)
             response = post_style(client, request_headers, body)
 
             assert response.status_code == 400, response.get_data(as_text=True)

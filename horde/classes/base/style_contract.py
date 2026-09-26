@@ -188,8 +188,9 @@ class StyleParameterPolicy(BaseModel):
     """The largest value a request may ask for, per param.
 
     A ceiling limits the request's value only; the style's own params are never checked against it. A
-    ceiling on a param the current mode does not let a request set is accepted and does nothing,
-    except for ``n``, which always comes from the request and so is capped under every mode.
+    ceiling is only accepted on a param the mode hands to the request: ``n`` under every mode, since
+    it always comes from the request; any param the style type can cap under ``all``; only the params
+    in ``overridable`` under ``listed``; and nothing else under ``none``.
     """
 
     @model_validator(mode="before")
@@ -324,6 +325,31 @@ class StyleParameterPolicy(BaseModel):
         """
         if self.override is StyleParameterOverride.LISTED and not self.overridable:
             raise ValueError(OVERRIDABLE_REQUIRED_MESSAGE)
+
+        return self
+
+    @model_validator(mode="after")
+    def _ceilings_cap_parameters_the_mode_hands_over(self) -> StyleParameterPolicy:
+        """Reject a ceiling on a param the mode never lets a request set.
+
+        Such a ceiling would never be measured against anything, and a style author reading it back
+        would expect it to hold. This rule needs only the policy itself, so it also holds for a policy
+        validated without a vocabulary.
+
+        Returns:
+            The same policy.
+
+        Raises:
+            ValueError: If a ceiling caps a param the mode does not hand to the request.
+        """
+        for parameter_name in self.ceilings or {}:
+            if parameter_name in NON_OVERRIDABLE_PARAMETER_NAMES or self.allows_client_parameter(parameter_name):
+                continue
+
+            raise ValueError(
+                f"a ceiling on '{parameter_name}' would never apply under override '{self.override.value}', "
+                "which does not let a request set it",
+            )
 
         return self
 
@@ -462,8 +488,8 @@ def parse_parameter_policy(raw_policy: object, *, vocabulary: StyleContractVocab
 
     Raises:
         horde.exceptions.BadRequest: If the policy is malformed, lists a param the type does not have,
-            puts ``overridable`` under a mode that does not read it, or caps a param the type cannot
-            cap or caps one outside its range.
+            puts ``overridable`` under a mode that does not read it, caps a param the type cannot cap
+            or one the mode does not hand to the request, or caps one outside its range.
     """
     try:
         return StyleParameterPolicy.model_validate(raw_policy, context={VOCABULARY_CONTEXT_KEY: vocabulary})

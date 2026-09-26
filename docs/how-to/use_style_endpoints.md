@@ -244,10 +244,12 @@ that takes a new style.
 - An optional placeholder the request leaves out becomes the empty string, so a template reading
   `about {subject}` produces the bare label `about ` when nothing fills it. Write the label into the
   placeholder's value, or make the field required.
-- A ceiling on a param the request cannot set does nothing. Under `none`, and under `listed` for a
-  param not in `overridable`, the style's own value is used and the ceiling never applies. The one
-  exception is `n`, which comes from the request under every mode and is therefore capped under every
-  mode.
+- A ceiling is only accepted on a param the request can set. Under `none`, and under `listed` for a
+  param not in `overridable`, the style's own value is always used, so a ceiling there is rejected with
+  400 when the style is written. The one exception is `n`, which comes from the request under every
+  mode and may be capped under every mode.
+- Under `listed`, a param the request sets that is not in `overridable` is ignored without an error,
+  the same as under `none`. A dry run's `resolved.params` shows which values the request kept.
 - `n` can never be handed over by a policy. It always comes from the request, defaults to 1, and
   listing it in `overridable` is rejected.
 - Using someone else's style adds 2 kudos to the quote and credits that style's owner 2. Using your

@@ -29,7 +29,6 @@ from typing import Any
 from horde import exceptions as e
 from horde.classes.base.style_contract import (
     NON_OVERRIDABLE_PARAMETER_NAMES,
-    StyleParameterOverride,
     StyleParameterPolicy,
     StyleTemplateField,
 )
@@ -80,8 +79,10 @@ def merge_client_parameters(
 
     The style's params are the starting point. ``n`` always comes from the request, because it is how
     many generations were asked for rather than how they are made. The rest of the request's params
-    are kept only as far as the style's policy allows, and every value the request ends up
-    controlling is held to the ceilings the policy sets, ``n`` included.
+    are kept only as far as the style's policy allows; a param the policy does not hand over is
+    ignored under every mode, because clients serialize every param that has a default and refusing
+    those would refuse nearly every request. Every value the request ends up controlling is held to
+    the ceilings the policy sets, ``n`` included.
 
     Args:
         style_parameters: The style's own params. The caller passes a copy; this does not mutate it.
@@ -92,8 +93,8 @@ def merge_client_parameters(
         The merged params.
 
     Raises:
-        horde.exceptions.BadRequest: If the request set a param the policy does not make overridable,
-            or set one above the ceiling the policy places on it.
+        horde.exceptions.BadRequest: If the request set a param it controls above the ceiling the
+            policy places on it.
     """
     merged_parameters = dict(style_parameters)
     client_controlled_parameters: dict[str, Any] = {
@@ -107,14 +108,6 @@ def merge_client_parameters(
 
             if policy.allows_client_parameter(parameter_name):
                 client_controlled_parameters[parameter_name] = client_value
-                continue
-
-            if policy.override is StyleParameterOverride.LISTED:
-                raise e.BadRequest(
-                    f"This style does not allow '{parameter_name}' to be set.",
-                    rc="StyleParameterNotOverridable",
-                )
-            # Under 'none' a params body has always been ignored rather than refused.
 
         for parameter_name, client_value in client_controlled_parameters.items():
             _raise_if_above_ceiling(policy, parameter_name, client_value)
