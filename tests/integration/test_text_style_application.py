@@ -376,6 +376,34 @@ class TestTextStyleParameterPolicy:
             assert response.status_code == 400, response.get_data(as_text=True)
             assert response.get_json()["rc"] == "StyleParameterAboveCeiling"
 
+    def test_a_stored_policy_that_no_longer_validates_is_a_client_error(
+        self,
+        app,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        """A stored policy the text vocabulary does not accept is refused with 400 and the style's name."""
+        import uuid
+
+        from horde.classes.base.style import Style
+        from horde.flask import db
+
+        style_name = "text policy stored invalid"
+        body = style_body(style_name, parameter_policy={"override": "all"})
+        with created_style(client, request_headers, body) as style_id:
+            # The endpoints refuse this policy, so it can only reach the row by a direct write, as it
+            # would after the params model drops a param a stored policy names.
+            with app.app_context():
+                stored_style = db.session.query(Style).filter_by(id=uuid.UUID(style_id)).one()
+                stored_style.parameter_policy = {"override": "listed", "overridable": ["max_tokens"]}
+                db.session.commit()
+
+            response = post_request(client, request_headers, style=style_id, params={"max_length": 120})
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleDeclarationInvalid"
+            assert style_name in response.get_json()["message"]
+
 
 def client_default_params() -> dict[str, Any]:
     """Build the params body a generated client sends when the user sets nothing.

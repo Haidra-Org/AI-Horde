@@ -22,6 +22,11 @@ from horde.apis.v2.base import (
 from horde.classes.base import settings
 from horde.classes.base.style import StyleCollection
 from horde.classes.base.style_application import format_text_style_prompt
+from horde.classes.base.style_contract import (
+    ParameterCeilingBound,
+    StyleContractVocabulary,
+    build_vocabulary,
+)
 from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
     get_compiled_textgen_stats_totals,
@@ -56,6 +61,32 @@ from horde.vars import horde_title
 
 models = TextModels(api)
 parsers = TextParsers()
+
+
+TEXT_CEILING_PARAMETER_NAMES = ("max_length", "max_context_length", "n")
+"""The params a text style's policy may cap. The range each ceiling may take comes from the params model."""
+
+
+def text_style_contract_vocabulary() -> StyleContractVocabulary:
+    """Return what a text style's parameter policy may talk about.
+
+    The params model is the vocabulary clients already generate against, so anything outside it would
+    be a key the request path never sees.
+
+    Returns:
+        The params a text style may hand over, and the ones it may cap with their ranges.
+    """
+    payload_fields = models.input_model_generation_payload.resolved
+    return build_vocabulary(
+        parameter_names=payload_fields,
+        ceiling_bounds={
+            parameter_name: ParameterCeilingBound(
+                minimum=payload_fields[parameter_name].minimum,
+                maximum=payload_fields[parameter_name].maximum,
+            )
+            for parameter_name in TEXT_CEILING_PARAMETER_NAMES
+        },
+    )
 
 
 class TextAsyncGenerate(GenerateTemplate):
@@ -236,6 +267,14 @@ class TextAsyncGenerate(GenerateTemplate):
         params_hash = hash_dictionary(gen_payload)
         # logger.debug([params_hash,gen_payload])
         return params_hash
+
+    def style_contract_vocabulary(self) -> StyleContractVocabulary:
+        """Return what a text style's parameter policy may talk about.
+
+        Returns:
+            The text vocabulary, which a stored policy is validated against when the style is applied.
+        """
+        return text_style_contract_vocabulary()
 
     def apply_style(self):
         if self.args.style is None:

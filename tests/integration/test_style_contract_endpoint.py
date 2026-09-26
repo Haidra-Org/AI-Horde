@@ -15,8 +15,9 @@ import re
 import pytest
 
 from horde.apis.limiter_api import REQUEST_2SEC_LIMIT_PER_IP, REQUEST_90MIN_LIMIT_PER_IP
-from horde.apis.v2.kobold_styles import TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT, text_style_contract_vocabulary
-from horde.apis.v2.stable_styles import image_style_contract_vocabulary
+from horde.apis.v2.kobold import text_style_contract_vocabulary
+from horde.apis.v2.kobold_styles import TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT
+from horde.apis.v2.stable import image_style_contract_vocabulary
 from horde.classes.kobold.request_fit import ContextFit
 from horde.style_contract_document import SCHEMA_VERSION
 

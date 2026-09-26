@@ -6,7 +6,7 @@ from flask_restx import Resource, reqparse
 
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
-from horde.apis.v2.stable import models, parsers
+from horde.apis.v2.stable import image_style_contract_vocabulary, models, parsers
 from horde.apis.v2.styles import (
     SingleStyleTemplate,
     SingleStyleTemplateGet,
@@ -15,42 +15,13 @@ from horde.apis.v2.styles import (
     api,
 )
 from horde.classes.base.style import Style, StyleExample
-from horde.classes.base.style_contract import (
-    ParameterCeilingBound,
-    StyleContractVocabulary,
-    build_vocabulary,
-)
+from horde.classes.base.style_contract import StyleContractVocabulary
 from horde.database import functions as database
 from horde.flask import cache, db
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.utils import ensure_clean
 from horde.validation import ParamValidator
-
-IMAGE_CEILING_PARAMETER_NAMES = ("width", "height", "steps", "n")
-"""The params an image style's policy may cap. The range each ceiling may take comes from the params model."""
-
-
-def image_style_contract_vocabulary() -> StyleContractVocabulary:
-    """Return what an image style's parameter policy may talk about.
-
-    The params model is the vocabulary clients already generate against, so anything outside it would
-    be a key the request path never sees.
-
-    Returns:
-        The params an image style may hand over, and the ones it may cap with their ranges.
-    """
-    payload_fields = models.input_model_generation_payload.resolved
-    return build_vocabulary(
-        parameter_names=payload_fields,
-        ceiling_bounds={
-            parameter_name: ParameterCeilingBound(
-                minimum=payload_fields[parameter_name].minimum,
-                maximum=payload_fields[parameter_name].maximum,
-            )
-            for parameter_name in IMAGE_CEILING_PARAMETER_NAMES
-        },
-    )
 
 
 class ImageStyleContractArgs(StyleContractArgs):

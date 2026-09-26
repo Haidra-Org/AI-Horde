@@ -197,6 +197,7 @@ The errors returned by the AI horde are always in this json format
 | NulByteInPayload | The request payload may not contain NUL bytes |
 | PromptExceedsContext | The prompt does not fit the context length the request would run under |
 | SharedKeyAssignedStyles | This shared key is restricted to specific styles |
+| StyleDeclarationInvalid | A style's stored parameter policy or template fields no longer pass validation, so the style cannot be applied |
 | StyleParameterAboveCeiling | A requested parameter is above the ceiling the style puts on it |
 | StylePolicyOverridableMisplaced | A style's overridable list is only read under the 'listed' override mode |
 | StylesAnonForbidden | Anonymous users cannot create styles |

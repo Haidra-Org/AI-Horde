@@ -7,7 +7,7 @@ from flask_restx import reqparse
 
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
-from horde.apis.v2.kobold import models, parsers
+from horde.apis.v2.kobold import models, parsers, text_style_contract_vocabulary
 from horde.apis.v2.styles import (
     SingleStyleTemplate,
     SingleStyleTemplateGet,
@@ -16,11 +16,7 @@ from horde.apis.v2.styles import (
     api,
 )
 from horde.classes.base.style import Style
-from horde.classes.base.style_contract import (
-    ParameterCeilingBound,
-    StyleContractVocabulary,
-    build_vocabulary,
-)
+from horde.classes.base.style_contract import StyleContractVocabulary
 from horde.database import functions as database
 from horde.flask import cache
 from horde.limiter import limiter
@@ -28,33 +24,8 @@ from horde.logger import logger
 from horde.utils import ensure_clean
 from horde.validation import ParamValidator
 
-TEXT_CEILING_PARAMETER_NAMES = ("max_length", "max_context_length", "n")
-"""The params a text style's policy may cap. The range each ceiling may take comes from the params model."""
-
 TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT = "20/hour"
 """How many text styles one address may write in an hour. The per-second limit applies on top of it."""
-
-
-def text_style_contract_vocabulary() -> StyleContractVocabulary:
-    """Return what a text style's parameter policy may talk about.
-
-    The params model is the vocabulary clients already generate against, so anything outside it would
-    be a key the request path never sees.
-
-    Returns:
-        The params a text style may hand over, and the ones it may cap with their ranges.
-    """
-    payload_fields = models.input_model_generation_payload.resolved
-    return build_vocabulary(
-        parameter_names=payload_fields,
-        ceiling_bounds={
-            parameter_name: ParameterCeilingBound(
-                minimum=payload_fields[parameter_name].minimum,
-                maximum=payload_fields[parameter_name].maximum,
-            )
-            for parameter_name in TEXT_CEILING_PARAMETER_NAMES
-        },
-    )
 
 
 class TextStyleContractArgs(StyleContractArgs):

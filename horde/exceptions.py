@@ -195,6 +195,7 @@ KNOWN_RC = [
     "TooManyWorkersTrusted",
     "StylePolicyOverridableMisplaced",
     "StyleParameterAboveCeiling",
+    "StyleDeclarationInvalid",
     "TemplateFieldsRequireStyle",
     "TemplateFieldUnknown",
     "TemplateFieldMissing",

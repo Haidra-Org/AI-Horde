@@ -389,16 +389,51 @@ class TestRoundTrip:
         policy = parse_policy(
             {"override": "listed", "overridable": ["max_length"], "ceilings": {"max_length": 512}},
         )
-        assert load_parameter_policy(serialize_parameter_policy(policy)) == policy
+        stored = serialize_parameter_policy(policy)
+        assert load_parameter_policy(stored, vocabulary=TEXT_VOCABULARY, style_name="round trip") == policy
 
     def test_an_image_policy_reads_back_unchanged(self):
         policy = parse_policy({"override": "all", "ceilings": {"width": 1024, "height": 1024}}, IMAGE_VOCABULARY)
-        assert load_parameter_policy(serialize_parameter_policy(policy)) == policy
+        stored = serialize_parameter_policy(policy)
+        assert load_parameter_policy(stored, vocabulary=IMAGE_VOCABULARY, style_name="round trip") == policy
 
     def test_template_fields_read_back_unchanged(self):
         declared = parse_template_fields([{"name": "caption", "description": "What the picture shows", "required": True}])
-        assert load_template_fields(serialize_template_fields(declared)) == declared
+        assert load_template_fields(serialize_template_fields(declared), style_name="round trip") == declared
 
     def test_a_style_declaring_neither_reads_back_as_nothing(self):
-        assert load_parameter_policy(None) is None
-        assert load_template_fields(None) == ()
+        assert load_parameter_policy(None, vocabulary=TEXT_VOCABULARY, style_name="plain") is None
+        assert load_template_fields(None, style_name="plain") == ()
+
+
+class TestStoredDeclarationValidation:
+    """A stored declaration that no longer validates is a client error naming the style."""
+
+    def test_a_stored_policy_naming_a_parameter_outside_the_vocabulary_is_rejected(self):
+        stored_policy = {"override": "listed", "overridable": ["max_tokens"]}
+        with pytest.raises(e.BadRequest) as raised:
+            load_parameter_policy(stored_policy, vocabulary=TEXT_VOCABULARY, style_name="drifted style")
+        assert raised.value.rc == "StyleDeclarationInvalid"
+        assert "'drifted style'" in raised.value.specific
+        assert "parameter_policy" in raised.value.specific
+        assert "max_tokens" in raised.value.specific
+
+    def test_a_stored_policy_is_validated_against_the_given_vocabulary(self):
+        # Valid for an image style, but width is not a text param.
+        stored_policy = {"override": "all", "ceilings": {"width": 1024}}
+        with pytest.raises(e.BadRequest) as raised:
+            load_parameter_policy(stored_policy, vocabulary=TEXT_VOCABULARY, style_name="mixed up")
+        assert raised.value.rc == "StyleDeclarationInvalid"
+
+    def test_a_malformed_stored_template_field_list_is_rejected(self):
+        stored_fields = [{"name": "caption", "description": "ok"}, {"name": "p", "description": "reserved"}]
+        with pytest.raises(e.BadRequest) as raised:
+            load_template_fields(stored_fields, style_name="drifted style")
+        assert raised.value.rc == "StyleDeclarationInvalid"
+        assert "'drifted style'" in raised.value.specific
+        assert "template_fields" in raised.value.specific
+
+    def test_a_stored_template_field_value_that_is_not_a_list_is_rejected(self):
+        with pytest.raises(e.BadRequest) as raised:
+            load_template_fields({"caption": "What the picture shows"}, style_name="drifted style")
+        assert raised.value.rc == "StyleDeclarationInvalid"
