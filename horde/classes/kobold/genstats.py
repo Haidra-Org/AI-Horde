@@ -5,6 +5,7 @@
 from datetime import datetime
 
 from sqlalchemy import Enum
+from sqlalchemy.exc import SQLAlchemyError
 
 from horde.enums import ImageGenState
 from horde.flask import db
@@ -12,6 +13,15 @@ from horde.logger import logger
 
 
 def record_text_statistic(procgen):
+    """Store a finished text generation's statistic row, best-effort.
+
+    Callers invoke this after the generation and its kudos payout are committed,
+    so a failed insert is logged and rolled back without raising. Raising would
+    fail the worker's submit for a job that is already paid and complete.
+    """
+    # Read before the insert: after a rollback these attributes are expired and
+    # reloading them needs the database that just failed.
+    procgen_id, wp_id, worker_id = procgen.id, procgen.wp_id, procgen.worker_id
     state = ImageGenState.OK
     # Currently there's no way to record cancelled images, but maybe there will be in the future
     if procgen.cancelled:
@@ -29,8 +39,15 @@ def record_text_statistic(procgen):
         client_agent=procgen.wp.client_agent,
         state=state,
     )
-    db.session.add(statistic)
-    db.session.commit()
+    try:
+        db.session.add(statistic)
+        db.session.commit()
+    except SQLAlchemyError as error:
+        # A failed flush leaves the session unusable for the rest of the request until rolled back.
+        db.session.rollback()
+        logger.error(
+            f"Text generation statistic insert failed ({type(error).__name__}): procgen {procgen_id} of wp {wp_id} by worker {worker_id}",
+        )
 
 
 class TextGenerationStatistic(db.Model):
