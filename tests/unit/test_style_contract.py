@@ -11,6 +11,7 @@ vocabulary a policy is validated against differs between them.
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from horde import exceptions as e
 from horde.classes.base.style_contract import (
@@ -168,14 +169,14 @@ class TestParameterPolicyCeilings:
     """The ceilings a policy puts on the params it caps."""
 
     def test_ceilings_within_the_parameter_range_are_kept(self):
-        policy = parse_policy({"ceilings": {"max_length": 512, "max_context_length": 4096}})
+        policy = parse_policy({"override": "all", "ceilings": {"max_length": 512, "max_context_length": 4096}})
         assert policy.ceilings == {"max_length": 512, "max_context_length": 4096}
 
     def test_absent_ceilings_stay_absent(self):
         assert parse_policy({}).ceilings is None
 
     def test_image_ceilings_are_kept_against_the_image_vocabulary(self):
-        policy = parse_policy({"ceilings": {"width": 1024, "steps": 30}}, IMAGE_VOCABULARY)
+        policy = parse_policy({"override": "all", "ceilings": {"width": 1024, "steps": 30}}, IMAGE_VOCABULARY)
         assert policy.ceilings == {"width": 1024, "steps": 30}
 
     @pytest.mark.parametrize(
@@ -190,45 +191,91 @@ class TestParameterPolicyCeilings:
         ],
     )
     def test_ceilings_outside_the_parameter_range_are_rejected(self, parameter_name: str, value: int):
-        with pytest.raises(e.BadRequest):
-            parse_policy({"ceilings": {parameter_name: value}})
+        with pytest.raises(e.BadRequest) as raised:
+            parse_policy({"override": "all", "ceilings": {parameter_name: value}})
+        assert "cannot be capped" in raised.value.specific
 
     def test_a_ceiling_on_a_parameter_this_type_cannot_cap_is_rejected(self):
         with pytest.raises(e.BadRequest):
-            parse_policy({"ceilings": {"temperature": 2}})
+            parse_policy({"override": "all", "ceilings": {"temperature": 2}})
 
     def test_a_ceiling_from_the_other_style_type_is_rejected(self):
         with pytest.raises(e.BadRequest):
-            parse_policy({"ceilings": {"width": 1024}})
+            parse_policy({"override": "all", "ceilings": {"width": 1024}})
         with pytest.raises(e.BadRequest):
-            parse_policy({"ceilings": {"max_length": 512}}, IMAGE_VOCABULARY)
+            parse_policy({"override": "all", "ceilings": {"max_length": 512}}, IMAGE_VOCABULARY)
 
     @pytest.mark.parametrize("value", [True, "512", 512.5, [512]])
     def test_non_integer_ceilings_are_rejected(self, value: object):
         with pytest.raises(e.BadRequest):
-            parse_policy({"ceilings": {"max_length": value}})
+            parse_policy({"override": "all", "ceilings": {"max_length": value}})
 
     def test_a_non_object_ceilings_value_is_rejected(self):
         with pytest.raises(e.BadRequest):
-            parse_policy({"ceilings": ["max_length"]})
-
-    def test_a_ceiling_the_mode_leaves_inert_is_accepted(self):
-        # Under 'none' a request sets nothing, so nothing is measured against this ceiling. It is
-        # still a valid thing to declare, and it starts applying as soon as the mode changes.
-        policy = parse_policy({"override": "none", "ceilings": {"max_length": 512}})
-        assert policy.ceiling_for("max_length") == 512
+            parse_policy({"override": "all", "ceilings": ["max_length"]})
 
     def test_the_request_count_can_be_capped_under_every_mode(self):
-        # The number of takes always comes from the request, so its ceiling is never inert.
-        for mode in ("none", "all"):
-            policy = parse_policy({"override": mode, "ceilings": {"n": 4}})
-            assert policy.ceiling_for("n") == 4
+        # The number of takes always comes from the request, so its ceiling always applies.
+        for raw_policy in (
+            {"override": "none", "ceilings": {"n": 4}},
+            {"override": "listed", "overridable": ["max_length"], "ceilings": {"n": 4}},
+            {"override": "all", "ceilings": {"n": 4}},
+        ):
+            assert parse_policy(raw_policy).ceiling_for("n") == 4
 
     def test_ceiling_lookup_by_parameter(self):
-        policy = parse_policy({"ceilings": {"max_length": 512}})
+        policy = parse_policy({"override": "all", "ceilings": {"max_length": 512}})
         assert policy.ceiling_for("max_length") == 512
         assert policy.ceiling_for("max_context_length") is None
         assert policy.ceiling_for("temperature") is None
+
+
+class TestParameterPolicyCeilingMode:
+    """A ceiling is only accepted on a param the mode hands to the request."""
+
+    @pytest.mark.parametrize("parameter_name", ["max_length", "max_context_length"])
+    def test_none_rejects_a_ceiling_on_anything_but_the_request_count(self, parameter_name: str):
+        with pytest.raises(e.BadRequest) as raised:
+            parse_policy({"override": "none", "ceilings": {parameter_name: 512}})
+        assert raised.value.rc == "BadRequest"
+        assert f"'{parameter_name}'" in raised.value.specific
+        assert "'none'" in raised.value.specific
+
+    def test_an_absent_mode_rejects_a_ceiling_as_none_does(self):
+        with pytest.raises(e.BadRequest) as raised:
+            parse_policy({"ceilings": {"max_length": 512}})
+        assert "'none'" in raised.value.specific
+
+    def test_listed_accepts_a_ceiling_on_a_listed_parameter(self):
+        policy = parse_policy({"override": "listed", "overridable": ["max_length"], "ceilings": {"max_length": 512}})
+        assert policy.ceiling_for("max_length") == 512
+
+    def test_listed_rejects_a_ceiling_on_a_parameter_it_does_not_list(self):
+        with pytest.raises(e.BadRequest) as raised:
+            parse_policy(
+                {
+                    "override": "listed",
+                    "overridable": ["max_length"],
+                    "ceilings": {"max_length": 512, "max_context_length": 4096},
+                },
+            )
+        assert raised.value.rc == "BadRequest"
+        assert "'max_context_length'" in raised.value.specific
+        assert "'listed'" in raised.value.specific
+
+    def test_all_accepts_a_ceiling_on_every_parameter_the_type_can_cap(self):
+        text_policy = parse_policy({"override": "all", "ceilings": {"max_length": 512, "max_context_length": 4096, "n": 4}})
+        assert text_policy.ceilings == {"max_length": 512, "max_context_length": 4096, "n": 4}
+
+        image_policy = parse_policy(
+            {"override": "all", "ceilings": {"width": 1024, "height": 1024, "steps": 30, "n": 4}},
+            IMAGE_VOCABULARY,
+        )
+        assert image_policy.ceilings == {"width": 1024, "height": 1024, "steps": 30, "n": 4}
+
+    def test_the_mode_rule_holds_without_a_vocabulary(self):
+        with pytest.raises(ValidationError):
+            StyleParameterPolicy(override="none", ceilings={"max_length": 512})
 
 
 class TestParameterPolicyApplication:

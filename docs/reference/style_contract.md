@@ -126,8 +126,9 @@ The three modes:
 
 - `none`: the style's params are used and the request's params body is ignored, with no error. A style
   with no policy at all behaves the same way.
-- `listed`: only the params listed in `overridable` may come from the request. Setting any other param
-  is rejected with `StyleParameterNotOverridable`.
+- `listed`: only the params listed in `overridable` may come from the request. Any other param the
+  request sets is ignored, as under `none`, with no error. Clients commonly send every param that has
+  a default, so refusing unlisted ones would refuse nearly every request.
 - `all`: every param may come from the request, except `n`, which comes from it regardless.
 
 A policy is validated against the params model of its own style type rather than against a list
@@ -145,18 +146,22 @@ Rejections at declaration time, all 400 with the return code shown:
 | `listed` with no list, or an empty one | `BadRequest` |
 | An entry the params model does not have, or `n` | `BadRequest` |
 | A ceiling on a param this style type cannot cap | `BadRequest` |
+| A ceiling on a param the mode does not let the request set | `BadRequest` |
 | A ceiling outside the bounds of the param it caps | `BadRequest` |
 | An unknown key, an unknown mode, or a malformed value | `BadRequest` |
 
 Repeated entries in `overridable` are collapsed and the given order is kept. An explicit `null` counts
 as absence, so it is accepted under any mode.
 
-A ceiling applies to every value the request ends up controlling, and to the request's value only. A
-ceiling on a param the current mode does not let the request set is accepted and does nothing, except
-for `n`, which comes from the request under every mode and so is capped under every mode. A value
-above a ceiling is rejected with `StyleParameterAboveCeiling` rather than trimmed, because trimming
-would change what the request costs without reporting it. A value exactly at the ceiling is accepted,
-and the style's own params are never checked against a ceiling.
+A ceiling applies to every value the request ends up controlling, and to the request's value only, so
+a ceiling is only accepted on a param the mode hands to the request. `n` comes from the request under
+every mode and may be capped under every mode. Under `all` any param the style type can cap may carry
+a ceiling; under `listed` only the params also in `overridable` may; under `none` only `n` may. Any
+other ceiling would never be measured against anything, so it is rejected when the style is written,
+with a message naming the param and the mode. A value above a ceiling is rejected with
+`StyleParameterAboveCeiling` rather than trimmed, because trimming would change what the request costs
+without reporting it. A value exactly at the ceiling is accepted, and the style's own params are never
+checked against a ceiling.
 
 An image style that sets neither `width` nor `height` takes both from the request. That fallback
 applies only to a style with no policy; once a policy is declared, the policy settles every param.
@@ -369,10 +374,11 @@ receives falls back to its own defaults rather than applying the document.
 | Contract | Test |
 | --- | --- |
 | Override modes, `overridable` placement and ceiling bounds | `tests/unit/test_style_contract.py`, `TestParameterPolicyOverride`, `TestParameterPolicyOverridable`, `TestParameterPolicyCeilings` |
+| A ceiling only on a param the mode hands to the request | `tests/unit/test_style_contract.py`, `TestParameterPolicyCeilingMode` |
 | Which params each mode accepts from the request | `tests/unit/test_style_contract.py`, `TestParameterPolicyApplication` |
 | Placeholder names, descriptions, limit and uniqueness | `tests/unit/test_style_contract.py`, `TestTemplateFields` |
 | Declarations are stored and read back unchanged | `tests/unit/test_style_contract.py`, `TestRoundTrip` |
-| Param merge and `n` coming from the request | `tests/unit/test_style_application.py`, `TestParameterMerge` |
+| Param merge, unlisted params ignored, and `n` coming from the request | `tests/unit/test_style_application.py`, `TestParameterMerge` |
 | A value above a ceiling is refused, not trimmed | `tests/unit/test_style_application.py`, `TestParameterCeilings` |
 | Supplied placeholders, required ones and prompt-length bounds | `tests/unit/test_style_application.py`, `TestTemplateFields` |
 | The chars-per-token estimate and the fit rule | `tests/unit/test_text_request_fit.py`, `TestPromptTokenEstimate`, `TestFitRule` |
@@ -413,9 +419,6 @@ receives falls back to its own defaults rather than applying the document.
 - A patch replaces a JSON column whole. Sending `parameter_policy` or `template_fields` on a `PATCH`
   overwrites the stored value; there is no merge, and no way to clear one back to null through the
   endpoint.
-- A ceiling can be inert. A ceiling on a param the style's mode does not let the request set is
-  accepted and never applies, since ceilings hold the request's values rather than the style's. Only
-  `n` is capped under every mode.
 
 ## Schema
 

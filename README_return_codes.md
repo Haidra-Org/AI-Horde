@@ -198,7 +198,6 @@ The errors returned by the AI horde are always in this json format
 | PromptExceedsContext | The prompt does not fit the context length the request would run under |
 | SharedKeyAssignedStyles | This shared key is restricted to specific styles |
 | StyleParameterAboveCeiling | A requested parameter is above the ceiling the style puts on it |
-| StyleParameterNotOverridable | The style does not let the request set this parameter |
 | StylePolicyOverridableMisplaced | A style's overridable list is only read under the 'listed' override mode |
 | StylesAnonForbidden | Anonymous users cannot create styles |
 | StylesRequiresCustomizer | Only customizers and trusted users can create styles |

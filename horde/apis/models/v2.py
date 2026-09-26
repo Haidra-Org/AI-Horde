@@ -1264,8 +1264,9 @@ class Models:
                     description=(
                         "Which of the request's params are kept when this style is applied. "
                         f"'{StyleParameterOverride.NONE.value}' uses the style's params as they are, "
-                        f"'{StyleParameterOverride.LISTED.value}' accepts the params in 'overridable', and "
-                        f"'{StyleParameterOverride.ALL.value}' accepts any of them. The ceilings apply either way."
+                        f"'{StyleParameterOverride.LISTED.value}' accepts the params in 'overridable' and ignores "
+                        f"the rest, and '{StyleParameterOverride.ALL.value}' accepts any of them. The ceilings apply "
+                        "either way."
                     ),
                 ),
                 "overridable": fields.List(
@@ -1281,7 +1282,11 @@ class Models:
                     example={"steps": 30},
                     description=(
                         "The largest value a request under this style may set, per param. A request above a ceiling "
-                        "is refused rather than trimmed. Which params can be capped depends on the style's type."
+                        "is refused rather than trimmed. Which params can be capped depends on the style's type, and "
+                        "a ceiling is only accepted on a param the override mode lets the request set: 'n' under "
+                        f"every mode, any cappable param under '{StyleParameterOverride.ALL.value}', only the params "
+                        f"in 'overridable' under '{StyleParameterOverride.LISTED.value}', and nothing else under "
+                        f"'{StyleParameterOverride.NONE.value}'."
                     ),
                 ),
             },

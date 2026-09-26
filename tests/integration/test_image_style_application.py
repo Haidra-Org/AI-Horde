@@ -344,16 +344,17 @@ class TestImageStyleParameterPolicy:
                 assert payload["ddim_steps"] == 30
                 assert payload["width"] == STYLE_PARAMS["width"]
 
-    def test_a_param_the_style_does_not_list_is_refused(self, client, request_headers: dict[str, str]) -> None:
+    def test_a_param_the_style_does_not_list_is_ignored(self, client, request_headers: dict[str, str]) -> None:
         body = style_body(
-            "image policy listed refusal",
+            "image policy listed unlisted",
             parameter_policy={"override": "listed", "overridable": ["steps"]},
         )
         with created_style(client, request_headers, body) as style_id:
-            response = post_request(client, request_headers, style=style_id, params={"width": 768})
+            with queued_request(client, request_headers, style=style_id, params={"steps": 30, "width": 768}):
+                payload = pop_payload(client, request_headers)
 
-            assert response.status_code == 400, response.get_data(as_text=True)
-            assert response.get_json()["rc"] == "StyleParameterNotOverridable"
+                assert payload["ddim_steps"] == 30
+                assert payload["width"] == STYLE_PARAMS["width"]
 
     def test_a_param_above_the_ceiling_is_refused_rather_than_trimmed(
         self,
@@ -426,6 +427,107 @@ class TestImageStyleParameterPolicy:
 
                 assert payload["width"] == 512
                 assert payload["height"] == 768
+
+
+def client_default_params() -> dict[str, Any]:
+    """Build the params body a generated client sends when the user sets nothing.
+
+    Read from the image payload model at call time, so the body tracks the defaults the API documents.
+
+    Returns:
+        Every param of the image payload model that documents a default, set to that default.
+    """
+    from horde.apis.v2.stable import models
+
+    return {
+        parameter_name: parameter_field.default
+        for parameter_name, parameter_field in models.input_model_generation_payload.resolved.items()
+        if parameter_field.default is not None
+    }
+
+
+def payload_key(parameter_name: str) -> str:
+    """Return the key a worker's payload carries a request param under.
+
+    Args:
+        parameter_name: The param as the request names it.
+
+    Returns:
+        The payload key, which differs only for ``steps``.
+    """
+    if parameter_name == "steps":
+        return "ddim_steps"
+    return parameter_name
+
+
+class TestImageStyleGeneratedClientDefaults:
+    """A request from a client that sends every param with a default, under the policy modes that read it."""
+
+    style_params: dict[str, Any] = {
+        "width": 768,
+        "height": 640,
+        "steps": 8,
+        "cfg_scale": 5.0,
+        "sampler_name": "k_euler",
+        "karras": True,
+    }
+    """Differs from the documented default on each param it sets, so a payload shows which side won."""
+
+    def test_the_style_differs_from_the_defaults_it_sets(self) -> None:
+        client_params = client_default_params()
+
+        for parameter_name, style_value in self.style_params.items():
+            assert parameter_name in client_params, parameter_name
+            assert client_params[parameter_name] != style_value, parameter_name
+
+    def test_listed_takes_the_listed_param_and_the_style_keeps_the_rest(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        body = style_body(
+            "image client defaults listed",
+            params=dict(self.style_params),
+            parameter_policy={"override": "listed", "overridable": ["steps"]},
+        )
+        client_params = client_default_params()
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params=client_params):
+                payload = pop_payload(client, request_headers)
+
+                assert payload["ddim_steps"] == client_params["steps"]
+                for parameter_name, style_value in self.style_params.items():
+                    if parameter_name != "steps":
+                        assert payload[payload_key(parameter_name)] == style_value, parameter_name
+
+    def test_all_takes_every_param_the_client_sent(self, client, request_headers: dict[str, str]) -> None:
+        # A client that fills in every default overrides each of those params under this mode.
+        body = style_body(
+            "image client defaults all",
+            params=dict(self.style_params),
+            parameter_policy={"override": "all"},
+        )
+        client_params = client_default_params()
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params=client_params):
+                payload = pop_payload(client, request_headers)
+
+                for parameter_name, client_value in client_params.items():
+                    if parameter_name != "n":
+                        assert payload[payload_key(parameter_name)] == client_value, parameter_name
+
+    def test_none_keeps_every_param_of_the_style(self, client, request_headers: dict[str, str]) -> None:
+        body = style_body(
+            "image client defaults none",
+            params=dict(self.style_params),
+            parameter_policy={"override": "none"},
+        )
+        with created_style(client, request_headers, body) as style_id:
+            with queued_request(client, request_headers, style=style_id, params=client_default_params()):
+                payload = pop_payload(client, request_headers)
+
+                for parameter_name, style_value in self.style_params.items():
+                    assert payload[payload_key(parameter_name)] == style_value, parameter_name
 
 
 class TestImageStyleTemplateFields:
