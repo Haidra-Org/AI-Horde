@@ -264,6 +264,15 @@ class TextAsyncGenerate(GenerateTemplate):
         ## IMPORTANT: When adjusting this, also adjust TextWaitingPrompt.calculate_kudos()
         # We need to also use the model list into our hash, as our kudos calculation is based on whichever model is first
         gen_payload["models"] = self.args.models
+        # The keys match GenerateTemplate.get_hashed_params_dict, except that the models are read
+        # from the request args: apply_style replaces self.models with the style's models after the
+        # pre-validate cache lookup, so hashing self.models would key the lookup and the store apart.
+        gen_payload["extra_source_images"] = self.get_extra_source_images_count()
+        # The style surcharge is in the quote too, and whether a style applied is not visible in
+        # the params themselves. The hash runs both at the pre-validate cache lookup and at the
+        # post-validate store, so it reads the request arg; style_kudos is still False at lookup
+        # time.
+        gen_payload["styled"] = self.args.style is not None
         params_hash = hash_dictionary(gen_payload)
         # logger.debug([params_hash,gen_payload])
         return params_hash

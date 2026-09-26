@@ -251,10 +251,15 @@ response marshals through the same model and leaves `resolved` unset, where the 
 drops it.
 
 Dry-run quotes are cached in Redis against a hash of the params, the model list, the extra-source-image
-count and whether a style surcharge applied. `GenerateTemplate.dry_run_answerable_from_cache` bypasses
-that cache whenever the request specifies a style or supplies template fields, and the text override
-bypasses it for a `context_fit` other than `ignore`, since the quote and the resolved body then depend
-on the prompt and on the outcome of resolution.
+count and whether the request names a style (`get_hashed_params_dict`). The hash is computed twice, at
+the cache lookup before validation and at the store after it, so its keys read only what the request
+sent. The `styled` key reads the `style` argument, since the surcharge
+flag is only set during validation, and the text and image overrides read the model list from the
+request arguments, since applying a style replaces the resolved models.
+`GenerateTemplate.dry_run_answerable_from_cache` bypasses that cache whenever the request specifies a
+style or supplies template fields, and the text override bypasses it for a `context_fit` other than
+`ignore`, since the quote and the resolved body then depend on the prompt and on the outcome of
+resolution.
 
 ## What a request costs
 
@@ -385,6 +390,7 @@ receives falls back to its own defaults rather than applying the document.
 | Worker context ceiling | `horde/database/functions.py` | `get_highest_text_worker_max_context_length` |
 | Text pricing | `horde/classes/kobold/waiting_prompt.py` | `TextWaitingPrompt.calculate_kudos` |
 | Style columns | `horde/classes/base/style.py` | `Style.parameter_policy`, `Style.template_fields` |
+| The dry-run quote cache key | `horde/apis/v2/base.py`, `horde/apis/v2/stable.py`, `horde/apis/v2/kobold.py` | `GenerateTemplate.get_hashed_params_dict`, `ImageAsyncGenerate.get_hashed_params_dict`, `TextAsyncGenerate.get_hashed_params_dict` |
 
 ## Tests
 
@@ -415,6 +421,7 @@ receives falls back to its own defaults rather than applying the document.
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
+| The quote cache key tells a styled request apart and is stable across validation | `tests/unit/test_dry_run_kudos_quote.py`, `TestQuoteCacheKey`, `TestTextQuoteCacheKey` |
 
 ## Sharp edges
 
