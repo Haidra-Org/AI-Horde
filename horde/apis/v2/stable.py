@@ -433,9 +433,11 @@ class ImageAsyncGenerate(GenerateTemplate):
         # The quote includes the per-extra-source-image tax, so payloads which differ only
         # in how many they carry must not share a cached kudos calculation.
         gen_payload["extra_source_images"] = self.get_extra_source_images_count()
-        # The style surcharge is in the quote too, and whether a style applied is not
-        # visible in the params themselves.
-        gen_payload["style_kudos"] = self.style_kudos is True
+        # The style surcharge is in the quote too, and whether a style applied is not visible in
+        # the params themselves. The hash runs both at the pre-validate cache lookup and at the
+        # post-validate store, so it reads the request arg; style_kudos is still False at lookup
+        # time.
+        gen_payload["styled"] = self.args.style is not None
         params_hash = hash_dictionary(gen_payload)
         return params_hash
 

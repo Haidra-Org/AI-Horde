@@ -296,6 +296,33 @@ class TestTextStyleQuote:
 
             assert styled_quote == unstyled_quote
 
+    def test_an_unstyled_quote_after_a_styled_one_carries_no_surcharge(
+        self,
+        client,
+        request_headers: dict[str, str],
+        make_api_user,
+    ) -> None:
+        """An unstyled dry run is not answered with the cached quote of a styled one for the same params.
+
+        The styled dry run stores its quote against the params the style resolved to, which the unstyled
+        request then sends unchanged. A styled dry run skips the cache lookup, so only this order can
+        return a cached quote across the two.
+        """
+        # Sending n makes the resolved params identical to the request's, and a temperature no other
+        # case uses keeps an earlier quote out of the cache.
+        shared_params = {**STYLE_PARAMS, "temperature": 0.83, "n": 1}
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text quote cache", params=shared_params)) as style_id:
+            styled = post_dry_run(client, request_headers, style=style_id, params=shared_params)
+            assert styled.status_code == 200, styled.get_data(as_text=True)
+            assert styled.get_json()["resolved"]["params"] == shared_params
+            assert styled.get_json()["resolved"]["models"] == TEXT_MODELS
+
+            unstyled_quote = dry_run_kudos(client, request_headers, params=shared_params)
+
+            assert unstyled_quote == styled.get_json()["kudos"] - STYLE_KUDOS_SURCHARGE
+
 
 class TestTextStyleParameterPolicy:
     """Which of a request's params a style's parameter policy lets through."""
