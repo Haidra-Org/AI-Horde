@@ -3,9 +3,29 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import os
+from urllib.parse import urlencode, urlsplit
 
 import requests
 from loguru import logger
+
+
+def moderation_event_url(event_id: int) -> str | None:
+    """Return the frontpage review link for one prompt moderation event.
+
+    Args:
+        event_id: The `prompt_moderation_events` row an alert refers to.
+
+    Returns:
+        The encoded review URL, or None when `HORDE_MODERATION_FRONTPAGE_URL` is unset or not an absolute HTTP URL.
+    """
+    base_url = os.getenv("HORDE_MODERATION_FRONTPAGE_URL", "").rstrip("/")
+    if not base_url:
+        return None
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment:
+        logger.warning("HORDE_MODERATION_FRONTPAGE_URL must be an absolute HTTP URL without a query or fragment")
+        return None
+    return f"{base_url}/admin/review?{urlencode({'tab': 'prompts', 'event_id': event_id})}"
 
 
 def send_webhook(webhook_url: str, message: str):

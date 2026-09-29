@@ -2,41 +2,67 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Verify the 5.1.12 DDL is additive and repeatable against a pre-change table."""
+"""Verify the moderation DDL is additive, repeatable, and builds the same tables as the ORM models."""
 
+from __future__ import annotations
+
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
+import pytest
 import sqlalchemy
 import sqlparse
 
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
 
+MIGRATION_PATH = Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.12.txt"
+"""The migration that creates the moderation tables in production."""
+WAITING_PROMPTS_STUB = "CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT)"
+"""The pre-change columns of ``waiting_prompts`` the migration alters or indexes."""
+WORKERS_STUB = "CREATE TABLE workers (id UUID PRIMARY KEY)"
+"""The key ``user_problem_jobs.worker_id`` referenced before the migration."""
+USER_PROBLEM_JOBS_STUB = (
+    "CREATE TABLE user_problem_jobs (id INTEGER PRIMARY KEY, ipaddr VARCHAR(39) NOT NULL, created TIMESTAMP NOT NULL, "
+    "worker_id UUID NOT NULL REFERENCES workers (id) ON DELETE CASCADE)"
+)
+"""The pre-change columns of ``user_problem_jobs`` the migration alters or indexes.
 
-def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
-    schema_name = new_test_schema_name("horde_5_1_12_migration")
-    create_schema(pg_dsn, schema_name)
-    engine = sqlalchemy.create_engine(
+The worker key is unnamed, as ``db.create_all()`` built it, so PostgreSQL gives it the default name the migration drops.
+"""
+MODERATION_TABLES = ("prompt_moderation_events", "prompt_moderation_notes")
+"""The tables the migration creates, which the ORM models must build identically."""
+
+
+def _schema_engine(pg_dsn: str, schema_name: str) -> sqlalchemy.Engine:
+    return sqlalchemy.create_engine(
         pg_dsn,
         isolation_level="AUTOCOMMIT",
         connect_args={"options": f"-c search_path={schema_name}"},
     )
+
+
+def _apply_migration(connection: sqlalchemy.Connection) -> None:
+    for statement in sqlparse.split(MIGRATION_PATH.read_text()):
+        connection.execute(sqlalchemy.text(statement))
+
+
+def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
+    schema_name = new_test_schema_name("horde_moderation_migration")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
     try:
         with engine.connect() as connection:
-            connection.execute(sqlalchemy.text("CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT)"))
-            connection.execute(
-                sqlalchemy.text(
-                    "CREATE TABLE user_problem_jobs (id INTEGER PRIMARY KEY, ipaddr VARCHAR(39) NOT NULL, created TIMESTAMP NOT NULL)",
-                )
-            )
+            connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
+            connection.execute(sqlalchemy.text(WORKERS_STUB))
+            connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
             connection.execute(
                 sqlalchemy.text(
                     "INSERT INTO waiting_prompts (id, prompt) VALUES ('00000000-0000-0000-0000-000000000001', 'effective')",
                 )
             )
-            script = (Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.12.txt").read_text()
             for _ in range(2):
-                for statement in sqlparse.split(script):
-                    connection.execute(sqlalchemy.text(statement))
+                _apply_migration(connection)
             row = connection.execute(sqlalchemy.text("SELECT prompt, submitted_prompt FROM waiting_prompts")).one()
             assert row == ("effective", None)
             indexes = {index["name"]: index for index in sqlalchemy.inspect(connection).get_indexes("waiting_prompts")}
@@ -46,9 +72,114 @@ def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             predicate = sharedkey_index.get("dialect_options", {}).get("postgresql_where")
             assert predicate is not None
             assert "sharedkey_id IS NOT NULL" in str(predicate)
-            problem_job_columns = {column["name"]: column for column in sqlalchemy.inspect(connection).get_columns("user_problem_jobs")}
+            inspector = sqlalchemy.inspect(connection)
+            tables = set(inspector.get_table_names())
+            assert {"prompt_moderation_events", "prompt_moderation_notes"} <= tables
+            columns = {column["name"]: column for column in inspector.get_columns("prompt_moderation_events")}
+            assert {"ipaddr", "ip_subject_key", "models"} <= set(columns)
+            event_indexes = {index["name"]: index for index in inspector.get_indexes("prompt_moderation_events")}
+            assert {
+                "ix_prompt_moderation_created",
+                "ix_prompt_moderation_user_id",
+                "ix_prompt_moderation_ip_subject_key_id",
+                "ix_prompt_moderation_unkeyed_ipaddr_id",
+                "ix_prompt_moderation_proxied_account_id",
+                "ix_prompt_moderation_worker_id",
+            } <= set(event_indexes)
+            assert event_indexes["ix_prompt_moderation_proxied_account_id"]["column_names"] == ["proxied_account", "id"]
+            assert "ix_prompt_moderation_notes_event_id" in {index["name"] for index in inspector.get_indexes("prompt_moderation_notes")}
+            problem_job_columns = {column["name"]: column for column in inspector.get_columns("user_problem_jobs")}
             # An origin with no IP subject stores no address.
             assert problem_job_columns["ipaddr"]["nullable"]
     finally:
         engine.dispose()
         drop_schema(pg_dsn, schema_name)
+
+
+ABSENT = "<absent>"
+"""The value reported for an item one schema has and the other lacks."""
+
+
+def _catalog(connection: sqlalchemy.Connection, schema_name: str) -> dict[str, Any]:
+    """Return every column attribute, constraint and index of the moderation tables, as PostgreSQL renders them.
+
+    The catalog functions normalize how each DDL source spelled a type, default, constraint or predicate, so only the
+    schema qualifier differs between two schemas and is removed.
+    """
+    items: dict[str, Any] = {}
+    for table in MODERATION_TABLES:
+        relation = {"table": table}
+        for name, type_name, not_null, default in connection.execute(
+            sqlalchemy.text(
+                "SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull, pg_get_expr(d.adbin, d.adrelid) "
+                "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum "
+                "WHERE a.attrelid = CAST(:table AS regclass) AND a.attnum > 0 AND NOT a.attisdropped",
+            ),
+            relation,
+        ):
+            items[f"{table} column {name} type"] = type_name
+            items[f"{table} column {name} not null"] = not_null
+            items[f"{table} column {name} server default"] = default
+        for name, definition in connection.execute(
+            sqlalchemy.text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = CAST(:table AS regclass)"),
+            relation,
+        ):
+            items[f"{table} constraint {name}"] = definition.replace(f"{schema_name}.", "")
+        for name, definition in connection.execute(
+            sqlalchemy.text(
+                "SELECT c.relname, pg_get_indexdef(i.indexrelid) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                "WHERE i.indrelid = CAST(:table AS regclass)",
+            ),
+            relation,
+        ):
+            items[f"{table} index {name}"] = definition.replace(f"{schema_name}.", "")
+    return items
+
+
+@pytest.fixture(scope="module")
+def _moderation_catalogs(pg_dsn: str) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Build the moderation tables from the migration and from the ORM models in two schemas and return both catalogs."""
+    from horde.classes.base.prompt_moderation import PromptModerationEvent, PromptModerationNote
+
+    migration_schema = new_test_schema_name("horde_moderation_parity_sql")
+    orm_schema = new_test_schema_name("horde_moderation_parity_orm")
+    engines: list[sqlalchemy.Engine] = []
+    for schema_name in (migration_schema, orm_schema):
+        create_schema(pg_dsn, schema_name)
+        engines.append(_schema_engine(pg_dsn, schema_name))
+    migration_engine, orm_engine = engines
+    try:
+        with migration_engine.connect() as connection:
+            connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
+            connection.execute(sqlalchemy.text(WORKERS_STUB))
+            connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
+            _apply_migration(connection)
+            migration_catalog = _catalog(connection, migration_schema)
+        with orm_engine.connect() as connection:
+            for table in (PromptModerationEvent.__table__, PromptModerationNote.__table__):
+                table.create(connection)
+            orm_catalog = _catalog(connection, orm_schema)
+        yield migration_catalog, orm_catalog
+    finally:
+        for engine in engines:
+            engine.dispose()
+        for schema_name in (migration_schema, orm_schema):
+            drop_schema(pg_dsn, schema_name)
+
+
+def test_orm_models_build_the_same_moderation_tables_as_the_migration(
+    _moderation_catalogs: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    """Columns, types, nullability, server defaults, keys, constraints and indexes agree between the two DDL sources.
+
+    Behavior tests build their schema from the models while production runs the migration, so a difference here means
+    the tests exercise a schema production does not have.
+    """
+    migration_catalog, orm_catalog = _moderation_catalogs
+    assert any(" index " in item for item in migration_catalog), "the catalog query found no indexes"
+    differences = [
+        f"{item}: migration {migration_catalog.get(item, ABSENT)!r}, ORM {orm_catalog.get(item, ABSENT)!r}"
+        for item in sorted(migration_catalog.keys() | orm_catalog.keys())
+        if migration_catalog.get(item, ABSENT) != orm_catalog.get(item, ABSENT)
+    ]
+    assert not differences, "\n".join(differences)

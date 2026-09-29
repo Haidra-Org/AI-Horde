@@ -34,6 +34,7 @@ from horde.classes.base.worker import Worker, WorkerMessage
 from horde.consts import HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
+from horde.database.prompt_moderation import PromptEvidence, PromptModerationReason, record_prompt_evidence
 from horde.detection import prompt_checker
 from horde.discord import send_problem_user_notification
 from horde.enums import KudosEntryType
@@ -454,6 +455,7 @@ class GenerateTemplate(Resource):
             if ip_timeout:
                 raise e.TimeoutIP(self.user_ip, ip_timeout)
             # logger.warning(datetime.utcnow())
+            moderation_prompt = self.prompt
             prompt_suspicion = 0
             # The suspicion score is only read by the corrupt-prompt branch below, which excludes the
             # text gentype, so text requests would pay for a full regex sweep of a multi-kilobyte
@@ -468,12 +470,14 @@ class GenerateTemplate(Resource):
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
                 if self.args.replacement_filter or self.user.education:
                     if not prompt_checker.check_prompt_replacement_length(self.prompt):
+                        self._record_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
                         raise e.BadRequest("Prompt has to be below 7000 chars when replacement filter is on")
                     self.prompt = prompt_checker.apply_replacement_filter(self.prompt)
                     # If it returns None, it means it replaced everything with an empty string
                     if self.prompt is not None:
                         prompt_replaced = True
                 if not prompt_replaced:
+                    self._record_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
                     # Moderators do not get ip blocked to allow for experiments
                     if not self.user.moderator:
                         prompt_dict = {
@@ -510,6 +514,7 @@ class GenerateTemplate(Resource):
                     prompt_replaced = True
                 # This will only trigger if the prompt after replacements is an empty string
                 if not prompt_replaced:
+                    self._record_prompt_rejection(moderation_prompt, PromptModerationReason.MODEL_REJECTION)
                     msg = (
                         "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. "
                         "Please select another model and try again."
@@ -538,6 +543,23 @@ class GenerateTemplate(Resource):
             #             message = (f"The trigger '{csam_trigger_check}' has been detected to generate "
             #                       "unethical images on its own and as such has had to be prevented from use. "
             #                        "Thank you for understanding.")
+
+    def _record_prompt_rejection(self, moderation_prompt: str, reason: PromptModerationReason) -> None:
+        # The effective prompt is text a worker would receive. Every rejection in validate() happens
+        # either before any replacement ran or after a replacement emptied the prompt, so a rejection
+        # never has one; self.prompt at this point is either the moderation input or None.
+        record_prompt_evidence(
+            PromptEvidence(
+                user_id=self.user.id,
+                reason=reason,
+                submitted_prompt=self.submitted_prompt,
+                moderation_prompt=moderation_prompt,
+                effective_prompt=None,
+                proxied_account=self.args.get("proxied_account"),
+                ipaddr=self.user_ip,
+                models=self.models,
+            ),
+        )
 
     def get_size_too_big_message(self):
         return (

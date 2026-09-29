@@ -195,7 +195,6 @@ class WorkerTemplate(db.Model):
         back_populates="worker",
         cascade="all, delete-orphan",
     )
-    problem_jobs = db.relationship("UserProblemJobs", back_populates="worker", cascade="all, delete-orphan")
     messages = db.relationship("WorkerMessage", back_populates="worker", cascade="all, delete-orphan")
 
     require_upfront_kudos = False

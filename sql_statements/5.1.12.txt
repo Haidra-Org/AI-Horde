@@ -19,9 +19,58 @@ SET lock_timeout = '5s';
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS submitted_prompt TEXT;
 RESET lock_timeout;
 
+-- No account or request foreign keys: a rejected submission has no waiting row, and
+-- evidence must outlive request expiry and account deletion.
+CREATE TABLE IF NOT EXISTS prompt_moderation_events (
+  id BIGSERIAL PRIMARY KEY,
+  created TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
+  user_id INTEGER NOT NULL,
+  request_id VARCHAR(36),
+  job_id VARCHAR(36) UNIQUE,
+  worker_id VARCHAR(36),
+  proxied_account TEXT,
+  ipaddr TEXT,
+  ip_subject_key VARCHAR(64),
+  origin_text VARCHAR(255),
+  models JSONB,
+  reason VARCHAR(32) NOT NULL,
+  outcome VARCHAR(16) NOT NULL,
+  submitted_prompt TEXT,
+  moderation_prompt TEXT,
+  effective_prompt TEXT,
+  text_truncated BOOLEAN NOT NULL DEFAULT false
+);
+-- Time-bounded browsing (since/until) reads every event, so it keeps a plain creation-time index.
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_created ON prompt_moderation_events (created);
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_user_id ON prompt_moderation_events (user_id, id);
+-- Serves a proxied-account filter with or without an account; only service accounts supply one.
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_proxied_account_id
+  ON prompt_moderation_events (proxied_account, id) WHERE proxied_account IS NOT NULL;
+-- The address filter matches the pseudonym, and the address only on events without one. Every
+-- event captured under a usable secret has a pseudonym, so the address index holds the rest alone.
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_ip_subject_key_id
+  ON prompt_moderation_events (ip_subject_key, id) WHERE ip_subject_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_unkeyed_ipaddr_id
+  ON prompt_moderation_events (ipaddr, id) WHERE ip_subject_key IS NULL;
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_worker_id
+  ON prompt_moderation_events (worker_id, id) WHERE worker_id IS NOT NULL;
+
+-- Notes are separate so that writing one never edits captured evidence.
+CREATE TABLE IF NOT EXISTS prompt_moderation_notes (
+  id BIGSERIAL PRIMARY KEY,
+  event_id BIGINT NOT NULL REFERENCES prompt_moderation_events (id) ON DELETE CASCADE,
+  author_id INTEGER NOT NULL,
+  note VARCHAR(2000) NOT NULL,
+  created TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT timezone('utc', now())
+);
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_notes_event_id ON prompt_moderation_notes (event_id, id);
+
 -- A request origin that is not an IP address has no IP subject, so user_problem_jobs stores no
 -- address for it. Dropping NOT NULL is metadata-only; the lock timeout fails rather than
 -- queueing behind a long transaction.
 SET lock_timeout = '5s';
 ALTER TABLE user_problem_jobs ALTER COLUMN ipaddr DROP NOT NULL;
+ALTER TABLE user_problem_jobs ADD COLUMN IF NOT EXISTS origin_text VARCHAR(255);
+-- Worker report records are evidence about the reported account and must outlive the reporting worker.
+ALTER TABLE user_problem_jobs DROP CONSTRAINT IF EXISTS user_problem_jobs_worker_id_fkey;
 RESET lock_timeout;
