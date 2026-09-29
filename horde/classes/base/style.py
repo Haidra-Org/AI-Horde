@@ -199,8 +199,17 @@ class Style(db.Model):
 
     # Should be extended by each specific horde
     @logger.catch(reraise=True)
-    def get_details(self, details_privilege=0):
-        """We display these in the styles list json"""
+    def get_details(self, details_privilege=0, *, include_shared_key=False):
+        """Return the style as the style endpoints serve it.
+
+        Args:
+            details_privilege (int): Not read; the style's details are the same at every privilege.
+            include_shared_key (bool): Whether to include the shared key the style generates under.
+                The caller must authenticate the style's owner first; everyone else gets null.
+
+        Returns:
+            dict: The style's details ready for API serialization.
+        """
         ret_dict = {
             "name": self.name,
             "info": self.info,
@@ -217,7 +226,7 @@ class Style(db.Model):
             "use_count": self.use_count,
             "public": self.public,
             "nsfw": self.nsfw,
-            "shared_key": self.sharedkey.get_details() if self.sharedkey else None,
+            "shared_key": self.sharedkey.get_details() if include_shared_key and self.sharedkey else None,
         }
         return ret_dict
 

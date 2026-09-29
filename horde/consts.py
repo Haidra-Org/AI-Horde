@@ -8,6 +8,11 @@ from horde_sdk.generation_parameters.image.constraints import (
 )
 
 HORDE_VERSION = "5.1.13"
+
+# The key an anonymous request carries. Generated clients send it whenever no key is configured, so
+# its presence on a request says nothing about who is asking.
+ANONYMOUS_API_KEY = "0000000000"
+
 HORDE_API_VERSION = "2.6"
 
 WHITELISTED_SERVICE_IPS = {

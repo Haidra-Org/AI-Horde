@@ -10,6 +10,7 @@ text style params model, so only the params that model declares come back out.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -17,6 +18,8 @@ from typing import Any
 import pytest
 from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
+
+from tests.fixture_types import MakeApiUser
 
 TEXT_MODELS = ["elinas/chronos-70b-v2"]
 
@@ -412,3 +415,141 @@ class TestTextStyleContractRejections:
         response = post_style(client, request_headers, body)
 
         assert response.status_code == 400, response.get_data(as_text=True)
+
+
+@contextmanager
+def created_shared_key(client: FlaskClient, request_headers: dict[str, str], name: str) -> Iterator[str]:
+    """Create a shared key for the duration of the block and delete it at the end.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the API key of the user the shared key belongs to.
+        name: The shared key's name.
+
+    Yields:
+        The id of the new shared key.
+    """
+    response = client.put("/api/v2/sharedkeys", json={"kudos": 100, "name": name}, headers=request_headers)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    shared_key_id = response.get_json()["id"]
+    try:
+        yield shared_key_id
+    finally:
+        client.delete(f"/api/v2/sharedkeys/{shared_key_id}", headers=request_headers)
+
+
+class TestTextStyleSharedKeyVisibility:
+    """The shared key a text style generates under is served to its owner only."""
+
+    def test_the_owner_gets_the_shared_key_by_id(self, client, request_headers: dict[str, str]) -> None:
+        with (
+            created_shared_key(client, request_headers, "text owner by id") as shared_key_id,
+            created_style(client, request_headers, style_body("text owner by id", sharedkey=shared_key_id)) as style_id,
+        ):
+            response = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            assert response.get_json()["shared_key"]["id"] == shared_key_id
+            # The owner's copy must not be kept by any cache between the horde and the owner.
+            assert response.headers["Cache-Control"] == "private, no-store"
+
+    def test_the_owner_gets_the_shared_key_by_name(self, client, request_headers: dict[str, str]) -> None:
+        style_name = f"text owner by name {uuid.uuid4().hex[:8]}"
+        with (
+            created_shared_key(client, request_headers, "text owner by name") as shared_key_id,
+            created_style(client, request_headers, style_body(style_name, sharedkey=shared_key_id)),
+        ):
+            response = client.get(f"/api/v2/styles/text_by_name/{style_name}", headers=request_headers)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            assert response.get_json()["shared_key"]["id"] == shared_key_id
+            assert response.headers["Cache-Control"] == "private, no-store"
+
+    def test_another_user_gets_null(
+        self,
+        client,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+    ) -> None:
+        other_user = make_api_user()
+        other_user_headers = {**request_headers, "apikey": other_user.api_key}
+        style_name = f"text other user {uuid.uuid4().hex[:8]}"
+        with (
+            created_shared_key(client, request_headers, "text other user") as shared_key_id,
+            created_style(client, request_headers, style_body(style_name, sharedkey=shared_key_id)) as style_id,
+        ):
+            by_id = client.get(f"/api/v2/styles/text/{style_id}", headers=other_user_headers)
+            by_name = client.get(f"/api/v2/styles/text_by_name/{style_name}", headers=other_user_headers)
+
+            assert by_id.status_code == 200, by_id.get_data(as_text=True)
+            assert by_id.get_json()["shared_key"] is None
+            assert by_name.status_code == 200, by_name.get_data(as_text=True)
+            assert by_name.get_json()["shared_key"] is None
+
+    def test_an_anonymous_caller_gets_null(self, client, request_headers: dict[str, str]) -> None:
+        anonymous_headers = {"Client-Agent": request_headers["Client-Agent"]}
+        style_name = f"text anonymous {uuid.uuid4().hex[:8]}"
+        with (
+            created_shared_key(client, request_headers, "text anonymous") as shared_key_id,
+            created_style(client, request_headers, style_body(style_name, sharedkey=shared_key_id)) as style_id,
+        ):
+            by_id = client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_headers)
+            by_name = client.get(f"/api/v2/styles/text_by_name/{style_name}", headers=anonymous_headers)
+
+            assert by_id.status_code == 200, by_id.get_data(as_text=True)
+            assert by_id.get_json()["shared_key"] is None
+            assert by_name.status_code == 200, by_name.get_data(as_text=True)
+            assert by_name.get_json()["shared_key"] is None
+
+    def test_the_anonymous_key_is_served_as_an_anonymous_caller(self, client, request_headers: dict[str, str]) -> None:
+        """A generated client sends the anonymous key when none is configured, and gets the public body from the shared cache."""
+        anonymous_key_headers = {"apikey": "0000000000", "Client-Agent": request_headers["Client-Agent"]}
+        style_name = f"text anonymous key {uuid.uuid4().hex[:8]}"
+        with (
+            created_shared_key(client, request_headers, "text anonymous key") as shared_key_id,
+            created_style(client, request_headers, style_body(style_name, sharedkey=shared_key_id)) as style_id,
+        ):
+            by_id = client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_key_headers)
+            by_name = client.get(f"/api/v2/styles/text_by_name/{style_name}", headers=anonymous_key_headers)
+
+            assert by_id.status_code == 200, by_id.get_data(as_text=True)
+            assert by_id.get_json()["shared_key"] is None
+            assert "Cache-Control" not in by_id.headers
+            assert by_name.status_code == 200, by_name.get_data(as_text=True)
+            assert by_name.get_json()["shared_key"] is None
+            assert "Cache-Control" not in by_name.headers
+
+    def test_the_cached_anonymous_response_is_not_served_to_the_owner(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        anonymous_headers = {"Client-Agent": request_headers["Client-Agent"]}
+        with (
+            created_shared_key(client, request_headers, "text cache order") as shared_key_id,
+            created_style(client, request_headers, style_body("text cache order", sharedkey=shared_key_id)) as style_id,
+        ):
+            anonymous_response = client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_headers)
+            owner_response = client.get(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+            later_anonymous_response = client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_headers)
+
+            assert anonymous_response.get_json()["shared_key"] is None
+            assert owner_response.get_json()["shared_key"]["id"] == shared_key_id
+            assert later_anonymous_response.get_json()["shared_key"] is None
+
+    def test_the_style_list_serves_null_to_the_owner(self, client, request_headers: dict[str, str]) -> None:
+        list_tag = f"sharedkeylist{uuid.uuid4().hex[:8]}"
+        body_overrides = {"public": True, "tags": [list_tag]}
+        with (
+            created_shared_key(client, request_headers, "text list") as shared_key_id,
+            created_style(
+                client,
+                request_headers,
+                style_body("text list", sharedkey=shared_key_id, **body_overrides),
+            ) as style_id,
+        ):
+            response = client.get(f"/api/v2/styles/text?tag={list_tag}", headers=request_headers)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            listed_styles = {listed_style["id"]: listed_style for listed_style in response.get_json()}
+            assert listed_styles[style_id]["shared_key"] is None
