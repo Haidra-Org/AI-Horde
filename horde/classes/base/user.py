@@ -72,7 +72,8 @@ class UserProblemJobs(db.Model):
         nullable=False,
     )
     worker = db.relationship("Worker", back_populates="problem_jobs")
-    ipaddr = db.Column(db.String(39), nullable=False, index=True)
+    ipaddr = db.Column(db.String(39), nullable=True, index=True)
+    """The submitting request's IP subject (``CounterMeasures.ip_subject``)."""
     proxied_account = db.Column(db.String(255), nullable=True, index=True)
     # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
     job_id = db.Column(uuid_column_type(), nullable=False)
@@ -1282,8 +1283,7 @@ class User(db.Model):
         # We do not report the admin as they do dev work often.
         if self.id == 1:
             return
-        if CounterMeasures.is_ipv6(ipaddr):
-            ipaddr = CounterMeasures.extract_ipv6_subnet(ipaddr)
+        ipaddr = CounterMeasures.ip_subject(ipaddr)
         new_problem_job = UserProblemJobs(
             user_id=self.id,
             ipaddr=ipaddr,

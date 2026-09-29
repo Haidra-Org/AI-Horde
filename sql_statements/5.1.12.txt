@@ -18,3 +18,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_sharedkey_id
 SET lock_timeout = '5s';
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS submitted_prompt TEXT;
 RESET lock_timeout;
+
+-- A request origin that is not an IP address has no IP subject, so user_problem_jobs stores no
+-- address for it. Dropping NOT NULL is metadata-only; the lock timeout fails rather than
+-- queueing behind a long transaction.
+SET lock_timeout = '5s';
+ALTER TABLE user_problem_jobs ALTER COLUMN ipaddr DROP NOT NULL;
+RESET lock_timeout;

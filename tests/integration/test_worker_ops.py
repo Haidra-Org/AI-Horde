@@ -258,3 +258,83 @@ class TestSubmit:
 
         # Clean up the queued request.
         client.delete(f"/api/v2/generate/text/status/{req_id}", headers=_headers(api_key))
+
+
+# --------------------------------------------------------------------------- #
+# Worker IP blocks                                                            #
+# --------------------------------------------------------------------------- #
+
+
+class TestWorkerIPBlock:
+    @pytest.mark.parametrize(
+        ("worker_ipaddr", "timeout_key"),
+        [
+            ("198.51.100.40", "198.51.100.40"),
+            ("::ffff:198.51.100.41", "198.51.100.41"),
+            ("2001:db8:7:8::9", "ipblock_2001:db8:7:8::/64"),
+        ],
+    )
+    def test_blocking_a_worker_times_out_its_ip_subject(
+        self,
+        client,
+        app,
+        api_key,
+        make_api_user,
+        monkeypatch,
+        worker_ipaddr: str,
+        timeout_key: str,
+    ):
+        """A worker IP block times out the worker's IP subject, and removing it clears that timeout.
+
+        An IPv4-mapped address is the IPv4 client, so its IPv4 address is timed out; an IPv6 address blocks its /64.
+        A job pop checks the worker's address as the request reported it, so that address reads as timed out.
+        """
+        import fakeredis
+
+        from horde import countermeasures
+        from horde.classes.kobold.worker import TextWorker
+        from horde.flask import db
+
+        timeouts = fakeredis.FakeStrictRedis()
+        monkeypatch.setattr(countermeasures, "ip_t_r", timeouts)
+        monkeypatch.setattr(countermeasures, "ip_s_r", fakeredis.FakeStrictRedis())
+        owner = make_api_user()
+        with app.app_context():
+            worker = TextWorker(user_id=owner.id, name=f"ci-blocked-worker-{owner.id}", max_context_length=4096, ipaddr=worker_ipaddr)
+            db.session.add(worker)
+            db.session.commit()
+            worker_id = str(worker.id)
+        url = f"/api/v2/operations/block_worker_ipaddr/{worker_id}"
+
+        blocked = client.put(url, json={"days": 1}, headers=_headers(api_key))
+        assert blocked.status_code == 200, blocked.get_data(as_text=True)
+        assert timeouts.keys() == [timeout_key.encode()]
+        assert countermeasures.CounterMeasures.retrieve_timeout(worker_ipaddr) > 0
+
+        released = client.delete(url, headers=_headers(api_key))
+        assert released.status_code == 200, released.get_data(as_text=True)
+        assert timeouts.keys() == []
+        assert countermeasures.CounterMeasures.retrieve_timeout(worker_ipaddr) == 0
+
+    def test_a_worker_origin_that_is_not_an_address_is_not_blocked(self, client, app, api_key, make_api_user, monkeypatch):
+        """A worker whose recorded origin is not an address has no IP subject, so neither route touches a timeout."""
+        import fakeredis
+
+        from horde import countermeasures
+        from horde.classes.kobold.worker import TextWorker
+        from horde.flask import db
+
+        timeouts = fakeredis.FakeStrictRedis()
+        monkeypatch.setattr(countermeasures, "ip_t_r", timeouts)
+        monkeypatch.setattr(countermeasures, "ip_s_r", fakeredis.FakeStrictRedis())
+        owner = make_api_user()
+        with app.app_context():
+            worker = TextWorker(user_id=owner.id, name=f"ci-unblockable-worker-{owner.id}", max_context_length=4096, ipaddr="unknown")
+            db.session.add(worker)
+            db.session.commit()
+            worker_id = str(worker.id)
+        url = f"/api/v2/operations/block_worker_ipaddr/{worker_id}"
+
+        for response in (client.put(url, json={"days": 1}, headers=_headers(api_key)), client.delete(url, headers=_headers(api_key))):
+            assert response.status_code == 200, response.get_data(as_text=True)
+            assert timeouts.keys() == []

@@ -25,6 +25,11 @@ def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             connection.execute(sqlalchemy.text("CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT)"))
             connection.execute(
                 sqlalchemy.text(
+                    "CREATE TABLE user_problem_jobs (id INTEGER PRIMARY KEY, ipaddr VARCHAR(39) NOT NULL, created TIMESTAMP NOT NULL)",
+                )
+            )
+            connection.execute(
+                sqlalchemy.text(
                     "INSERT INTO waiting_prompts (id, prompt) VALUES ('00000000-0000-0000-0000-000000000001', 'effective')",
                 )
             )
@@ -41,6 +46,9 @@ def test_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             predicate = sharedkey_index.get("dialect_options", {}).get("postgresql_where")
             assert predicate is not None
             assert "sharedkey_id IS NOT NULL" in str(predicate)
+            problem_job_columns = {column["name"]: column for column in sqlalchemy.inspect(connection).get_columns("user_problem_jobs")}
+            # An origin with no IP subject stores no address.
+            assert problem_job_columns["ipaddr"]["nullable"]
     finally:
         engine.dispose()
         drop_schema(pg_dsn, schema_name)

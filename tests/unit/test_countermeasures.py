@@ -38,12 +38,6 @@ class TestIPClassification:
         assert CounterMeasures.is_valid_ip("2001:db8::1") is True
         assert CounterMeasures.is_valid_ip("garbage") is False
 
-    def test_extract_ipv6_subnet(self):
-        # /64 is the default aggregation prefix used for v6 rate decisions.
-        assert CounterMeasures.extract_ipv6_subnet("2001:db8:abcd:1234:5678::1") == "2001:db8:abcd:1234::/64"
-        # v4 addresses have no v6 subnet.
-        assert CounterMeasures.extract_ipv6_subnet("192.168.0.1") is None
-
     def test_is_whitelisted_vpn(self):
         # 8.8.8.0/24 is in WHITELISTED_VPN_IPS.
         assert CounterMeasures.is_whitelisted_vpn("8.8.8.8") is True

@@ -2770,9 +2770,12 @@ class OperationsBlockWorkerIP(Resource):
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
-        blocked_ip = self.worker.ipaddr
-        if CounterMeasures.is_ipv6(self.worker.ipaddr):
-            blocked_ip = CounterMeasures.extract_ipv6_subnet(self.worker.ipaddr)
+        blocked_ip = CounterMeasures.ip_subject(self.worker.ipaddr)
+        if blocked_ip is None:
+            # The origin comes from the proxy's forwarding header, which nothing validates as an address.
+            logger.warning(f"Worker {worker_id} has no IP subject ({self.worker.ipaddr!r}), so no IP timeout was set")
+            return ({"message": "Worker has no IP address to block"}, 200)
+        if CounterMeasures.is_ipv6(blocked_ip):
             CounterMeasures.set_block_timeout(blocked_ip, minutes=60 * 24 * self.args.days)
         else:
             CounterMeasures.set_timeout(blocked_ip, minutes=60 * 24 * self.args.days)
@@ -2811,9 +2814,11 @@ class OperationsBlockWorkerIP(Resource):
         self.worker = database.find_worker_by_id(worker_id)
         if self.worker is None:
             raise e.WorkerNotFound(worker_id)
-        blocked_ip = self.worker.ipaddr
-        if CounterMeasures.is_ipv6(self.worker.ipaddr):
-            blocked_ip = CounterMeasures.extract_ipv6_subnet(self.worker.ipaddr)
+        blocked_ip = CounterMeasures.ip_subject(self.worker.ipaddr)
+        if blocked_ip is None:
+            logger.warning(f"Worker {worker_id} has no IP subject ({self.worker.ipaddr!r}), so no IP timeout was removed")
+            return ({"message": "Worker has no IP address to unblock"}, 200)
+        if CounterMeasures.is_ipv6(blocked_ip):
             CounterMeasures.delete_block_timeout(blocked_ip)
         CounterMeasures.delete_timeout(blocked_ip)
         logger.info(f"Worker {worker_id} with IP {blocked_ip} removed from IP timeout by {mod.get_unique_alias()} ")
