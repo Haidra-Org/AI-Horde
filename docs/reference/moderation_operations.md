@@ -1,6 +1,6 @@
 ---
 title: "Moderation operations reference"
-summary: "What the horde retains when a prompt is rejected or a worker reports a job, how retention removes text, address and identity on schedule, and the moderator API that lists it and attaches notes."
+summary: "What the horde retains when a prompt is rejected or a worker reports a job or draws suspicion, when retention removes it, and the moderator API for it and for promotion and paused-worker review."
 topics: [requests, moderation, operations]
 order: 65
 ---
@@ -21,6 +21,9 @@ A rejected prompt or a worker's report on a job writes an event that outlasts th
 can review it after the request expired or the account was deleted. Wiping the account keeps its events, their notes
 and its worker report records. A replacement that succeeded and then generated is never recorded. Moderators list events and
 attach notes to them.
+
+Every worker suspicion report also writes a history row that outlasts a suspicion reset and the worker itself. The
+same moderator API lists that history and the current promotion and paused-worker review queues.
 
 ## Code map
 
@@ -45,6 +48,9 @@ attach notes to them.
 | Rejection countermeasures   | `horde/countermeasures.py`, `horde/apis/v2/base.py` | `CounterMeasures.count_model_rejection`, `CounterMeasures.claim_model_rejection_notice`, `GenerateTemplate._handle_prompt_rejection` |
 | Countermeasure policy       | `horde/database/prompt_moderation.py`       | `MODEL_REJECTION_TIMEOUT_THRESHOLD`, `load_positive_setting` |
 | Detection gauges            | `horde/metrics.py`, `horde/database/prompt_moderation.py` | `moderation_*` instruments, `pending_text_health`, `recent_rejection_activity` |
+| Worker suspicion history    | `horde/classes/base/worker.py`              | `WorkerSuspicionEvent`, written by `WorkerTemplate.report_suspicion` |
+| Promotion criteria          | `horde/classes/base/user.py`                | `User.promotion_status`, `User.promotion_queue_criteria`, `PromotionStatus` |
+| Review queues, history      | `horde/database/moderation.py`              | `get_moderation_overview`, `get_worker_suspicion_events` |
 
 The schema is `sql_statements/5.1.12.txt`. Tests build the tables from the models, so
 `test_orm_models_build_the_same_moderation_tables_as_the_migration` in
@@ -182,6 +188,52 @@ Each subject filter reads its own index, newest `id` first: `(user_id, id)`, `(p
 and `(ip_subject_key, id)`, the last three partial on a non-null value. Events without a pseudonym keep a partial
 `(ipaddr, id)` index for the `ipaddr` fallback, which stays small while the deployment has a private secret.
 
+### Promotion and paused-worker review
+
+`GET` on the base path returns `promotion_threshold` (the kudos trust threshold, `null` when none is configured),
+`suspicion_threshold` (`User.SUSPICION_THRESHOLD`), `worker_suspicion_threshold` (`WorkerTemplate.suspicion_threshold`),
+`promotion_blocked_users`, `promotion_eligible_users`, `paused_workers`, and `paused_workers_total`. `limit` 1-500
+(default 100) applies independently to each queue. Each promotion row carries the account's kudos, age, and worker
+totals, and its current suspicion reasons (`id`, `name`, `description`, `count`).
+
+The automatic promotion criteria are: not yet trusted, above the kudos trust threshold, at least
+`User.PROMOTION_MIN_ACCOUNT_AGE` (seven days) old, and not anonymous. An account that meets every criterion but has
+reached `User.SUSPICION_THRESHOLD` suspicions is blocked; one below it is eligible. Without a configured trust
+threshold both promotion lists are empty.
+
+The criteria have two forms side by side in `horde/classes/base/user.py`. `User.promotion_status` is the Python
+decision `check_for_trust` promotes on. `User.promotion_queue_criteria` is the SQL filter for one queue.
+`test_promotion_queues_match_check_for_trust` checks that each queue holds exactly the accounts `check_for_trust`
+would promote now, or once their suspicions were cleared, including the threshold and suspicion boundaries. A change
+to either form must be made to both.
+
+Each queue is one query ordered by evaluating kudos, highest first, then account ID, and limited to `limit` rows.
+It walks `ix_users_evaluating_kudos_rank` (`users (evaluating_kudos DESC, id) WHERE evaluating_kudos > 0`) from the
+threshold upward and checks trust, age, the anonymous account and the suspicion count per row, so its cost follows
+the number of accounts above the threshold, not the size of `users`. The blocked queue is usually short, so it
+normally reads that whole range. Roles, suspicions and workers are loaded for the returned rows only. A negative
+threshold does not imply the index predicate, so the query cannot use the index.
+
+Paused rows carry the worker and owner context, models, and current suspicion reasons in the same shape. Filters
+are repeatable `worker_type` (`image`, `text`, `interrogation`), repeatable `suspicion_id`, and `online` (check-in
+within five minutes). Sort by `last_check_in` (default), `suspicion`, `name`, or `owner`. `paused_workers_total`
+counts all matches before the limit. An unknown `suspicion_id` returns `400 InvalidSuspicionID`.
+
+### Suspicion history listing
+
+`GET /worker_suspicion_events` filters by worker UUID (`worker_id`) or owning account (`user_id`). It returns `id`,
+`created`, `worker_id`, `worker_name`, `user_id`, `suspicion_id`, `reason` and `detail`, newest first, with `limit`
+1-500 (default 100) and the same `before_id` cursor as `/prompts`. A `worker_id` that is not a UUID returns `400 InvalidWorkerID`.
+
+## Worker suspicion history
+
+`worker_suspicions` is the resettable current score: it cascades away with the worker and a moderator reset clears
+it. `worker_suspicion_events` is the history. `report_suspicion` appends one row per newly recorded suspicion, with
+the worker's id and name, the owning account, the suspicion reason, and the formatted diagnostic. The name column is
+bounded to `MAX_WORKER_NAME_CHARACTERS` (100), the workers table's name length. It has no foreign keys, so deleting the worker or resetting its suspicion leaves the rows
+in place, and `User.wipe` does not delete them. A reason `report_suspicion` already deduplicates (a non-accumulating
+reason the worker carries) produces no row.
+
 ## Retention
 
 Retention never deletes an event by age. Each part of an event not under moderation action decays on its own schedule,
@@ -245,14 +297,28 @@ Each step reads a partial index on `(created, id)` that excludes events it alrea
 rescan finished rows, and a repeated pass changes nothing. Two steps then treat worker report records the same way:
 one deletes at most 1,000 past the ceiling through their `created` index, and one nulls the address of at most 1,000
 past the address window through `ix_user_problem_jobs_ipaddr_pending`
-(`WHERE ipaddr IS NOT NULL OR origin_text IS NOT NULL`).
+(`WHERE ipaddr IS NOT NULL OR origin_text IS NOT NULL`). When
+`HORDE_WORKER_SUSPICION_RETENTION_DAYS` is set, a last step deletes at most 1,000 worker suspicion history rows past
+that window, oldest first, through `ix_worker_suspicion_events_created`, unless the owning account is flagged or
+suspicious. At 1,000 rows per step an hour, each step drains 24,000 rows a day. Each step repeats its full condition,
+including the moderation-action exemption, in the `UPDATE` or `DELETE` itself as well as in the subquery that picks
+the batch.
+
+Worker suspicion history (`worker_suspicion_events`) is worker diagnostics, not prompt evidence, so it has no text or
+address window and the ceiling does not apply. It is kept indefinitely unless `HORDE_WORKER_SUSPICION_RETENTION_DAYS`
+is a positive whole number of days, at most 36,500 (`MAX_WORKER_SUSPICION_RETENTION_DAYS`), after which rows are
+deleted, except rows whose owning account is flagged or suspicious. The bound keeps the pass's cutoff inside the
+date range; a longer window would be no different from leaving
+the variable unset. `none`, a value above the bound, or any malformed value raises `ValueError` at import and stops
+startup. Unset, the table grows with suspicion volume.
 
 Wiping an account (`User.wipe`) touches no event, note or worker report record. They keep their `user_id`, so the
 account's records stay listed and filterable, and retention treats them as any other account's.
 
-The privacy document (`/api/v2/documents/privacy`) renders the same windows in its "Moderation records" section, and
-links the source code at `HORDE_REPOSITORY` (`horde.vars.horde_repository`, default
-`https://github.com/Haidra-Org/AI-Horde`).
+The privacy document (`/api/v2/documents/privacy`) renders the same evidence windows in its "Moderation records"
+section, links the source code at `HORDE_REPOSITORY` (`horde.vars.horde_repository`, default
+`https://github.com/Haidra-Org/AI-Horde`), and states what the worker suspicion history records and its period from
+the same policy (`RetentionPolicy.worker_suspicion_days`).
 
 ### Retention effects
 
@@ -268,7 +334,8 @@ only to rows not under [moderation action](#moderation-action).
 | Address window | `ipaddr` and `origin_text` nulled; `ipaddr_redacted` set; `ip_subject_key` kept. `user_problem_jobs.ipaddr` and `user_problem_jobs.origin_text` nulled | The listing returns a null `ipaddr` and `origin_text`, and the same `ip_subject_key`. The `ipaddr` filter, including another address in the same IPv6 /64, still finds an event with a pseudonym; an event without one no longer matches it. Problem-job alerts, which count the last hour or day, are unaffected. |
 | Ceiling | Text and address columns, `text_sha256`, `text_chars`, `ip_subject_key`, `user_id`, `proxied_account`, `request_id` and `job_id` nulled; `evidence/<id>.json` deleted; `text_state` set `none`; all three flags set; notes kept. `user_problem_jobs` rows past the ceiling deleted | The `user_id`, `proxied_account`, `ipaddr` and `ip_subject_key` filters no longer find the event; `worker_id`, `since` and `until` do. A later report of the same job no longer matches `job_id` and records a new event. Notes stay listed, and a later note is stored. |
 | `User.wipe` | None | The account's events, notes and worker report records stay, with `user_id` intact. Reports its deleted workers made stay, with `worker_id` intact. |
-| Any window setting | None | The privacy document and the listing's `retention` report the same values. A `none` window is `null` in `retention` and "kept with the record" in the document. |
+| Worker suspicion window | `worker_suspicion_events` rows older than the window deleted, unless the owning account is flagged or suspicious | The rows leave `/worker_suspicion_events`. Unset, no row is deleted. The privacy document states the window, or that the history is kept indefinitely. |
+| Any evidence window setting | None | The privacy document and the listing's `retention` report the same values. A `none` window is `null` in `retention` and "kept with the record" in the document. |
 
 ## Evidence store
 
@@ -384,8 +451,13 @@ endpoints under `/operations/ipaddr`; rate limits at the deployment's edge, whic
   events. The same secret salts stored API keys, so it never rotates.
 - **Privileged accounts are recorded.** Moderator rejections and administrator problem jobs produce evidence, though
   moderators are exempt from the IP blocking and the administrator from the problem-job alerts.
+- **Worker history is committed with the owner's suspicion.** Unlike prompt evidence, the suspicion event is added to
+  the request's session, and `User.report_suspicion` commits it right after adding the owner's suspicion. When the owner
+  is anonymous or already carries a non-accumulating reason, `User.report_suspicion` returns without committing, and
+  the event is committed or rolled back with the rest of the request's session.
 
-`tests/integration/test_prompt_moderation.py` covers these contracts.
+`tests/integration/test_prompt_moderation.py` and `tests/integration/test_moderation_operations.py` cover these
+contracts.
 
 ## Related
 
