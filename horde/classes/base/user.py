@@ -4,13 +4,16 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 import dateutil.relativedelta
-from sqlalchemy import Enum, UniqueConstraint, and_, exists, func
+from sqlalchemy import Enum, UniqueConstraint, and_, exists, false, func, select
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, relationship
@@ -404,6 +407,17 @@ class UserSharedKey(db.Model):
         return True, None
 
 
+class PromotionStatus(StrEnum):
+    """Represent the outcome of the automatic trust promotion decision for one account."""
+
+    PROMOTE = "promote"
+    """Every criterion holds, so ``check_for_trust`` promotes the account."""
+    BLOCKED_BY_SUSPICION = "blocked_by_suspicion"
+    """Every criterion but suspicion holds; the account waits in the blocked review queue."""
+    NOT_A_CANDIDATE = "not_a_candidate"
+    """Automatic promotion is disabled, or the account is below the threshold, trusted, anonymous or too new."""
+
+
 class User(db.Model):
     __tablename__ = "users"
     __table_args__ = (
@@ -420,8 +434,24 @@ class User(db.Model):
             "id",
             postgresql_where=db.text("evaluating_kudos > 0"),
         ),
+        # Backs the moderation promotion queues (``promotion_queue_criteria``). Each
+        # queue reads the range above the trust threshold highest first and stops at
+        # its limit, so the cost follows that range, not the size of this table. Every
+        # non-negative threshold implies the partial predicate, so the index stays limited
+        # to the evaluating population.
+        db.Index(
+            "ix_users_evaluating_kudos_rank",
+            db.text("evaluating_kudos DESC"),
+            "id",
+            postgresql_where=db.text("evaluating_kudos > 0"),
+        ),
     )
     SUSPICION_THRESHOLD = 5
+    PROMOTION_MIN_ACCOUNT_AGE: timedelta = timedelta(days=7)
+    """The age an account needs before automatic promotion, the week ``check_for_trust`` has always required.
+
+    Kudos earned in a burst by a new account do not promote it before moderators can notice the account.
+    """
     SAME_IP_WORKER_THRESHOLD = 3
     SAME_IP_TRUSTED_WORKER_THRESHOLD = 20
 
@@ -932,20 +962,83 @@ class User(db.Model):
         self.modify_kudos(kudos, "styled", commit=False, entry_type=KudosEntryType.STYLE_REWARD)
         db.session.commit()
 
+    def promotion_status(self, threshold: int | float | Decimal | None) -> PromotionStatus:
+        """Decide automatic promotion to trusted without applying it.
+
+        ``check_for_trust`` promotes on PROMOTE. ``promotion_queue_criteria`` is the
+        SQL form of the same decision for the moderation review queues; a change here
+        must be mirrored there.
+
+        Args:
+            threshold: Evaluating-kudos level that opens promotion, or None when
+                automatic promotion is disabled.
+
+        Returns:
+            PROMOTE when every criterion holds, BLOCKED_BY_SUSPICION when suspicion
+            alone withholds it, NOT_A_CANDIDATE otherwise.
+        """
+        if threshold is None or self.evaluating_kudos <= threshold:
+            return PromotionStatus.NOT_A_CANDIDATE
+        if self.trusted or self.is_anon():
+            return PromotionStatus.NOT_A_CANDIDATE
+        if datetime.utcnow() - self.created < self.PROMOTION_MIN_ACCOUNT_AGE:
+            return PromotionStatus.NOT_A_CANDIDATE
+        if self.is_suspicious():
+            return PromotionStatus.BLOCKED_BY_SUSPICION
+        return PromotionStatus.PROMOTE
+
+    @classmethod
+    def promotion_queue_criteria(
+        cls,
+        threshold: int | float | Decimal | None,
+        status: PromotionStatus,
+    ) -> ColumnElement[bool]:
+        """Return the SQL filter selecting accounts whose ``promotion_status`` is ``status``.
+
+        This mirrors ``promotion_status`` so a review queue is one bounded query instead
+        of a Python pass over every candidate. The evaluating-kudos bound is a plain
+        range on ``ix_users_evaluating_kudos_rank``; the remaining terms are checked per
+        row inside that range.
+
+        Args:
+            threshold: Evaluating-kudos level that opens promotion, or None when
+                automatic promotion is disabled.
+            status: PROMOTE or BLOCKED_BY_SUSPICION.
+
+        Returns:
+            A filter for ``User`` rows. It matches nothing when ``threshold`` is None.
+
+        Raises:
+            ValueError: If ``status`` is NOT_A_CANDIDATE, which is the complement of
+                both queues and has no bounded form.
+        """
+        if status is PromotionStatus.NOT_A_CANDIDATE:
+            raise ValueError("NOT_A_CANDIDATE has no queue filter")
+        if threshold is None:
+            return false()
+        # evaluating_kudos is an integer, so ``> threshold`` equals ``> floor(threshold)``.
+        # Binding an integer keeps the comparison on the integer column; a numeric
+        # literal would cast the column and defeat the index.
+        integer_threshold = math.floor(threshold)
+        suspicion_count = select(func.count(UserSuspicions.id)).where(UserSuspicions.user_id == cls.id).correlate(cls).scalar_subquery()
+        if status is PromotionStatus.BLOCKED_BY_SUSPICION:
+            suspicion_criterion = suspicion_count >= cls.SUSPICION_THRESHOLD
+        else:
+            suspicion_criterion = suspicion_count < cls.SUSPICION_THRESHOLD
+        return and_(
+            cls.evaluating_kudos > integer_threshold,
+            ~cls.trusted,
+            cls.oauth_id != "anon",
+            cls.created <= datetime.utcnow() - cls.PROMOTION_MIN_ACCOUNT_AGE,
+            suspicion_criterion,
+        )
+
     def check_for_trust(self) -> None:
         """After a user passes the evaluation threshold (?? kudos)
         All the evaluating Kudos added to their total and they automatically become trusted
         Suspicious users do not automatically pass evaluation
         """
-        threshold = get_kudos_trust_threshold()
-        if threshold is None or self.evaluating_kudos <= threshold:
-            return
-        if self.is_suspicious():
-            return
-        if self.is_anon():
-            return
-        # An account has to exist for at least 1 week to become trusted automatically
-        if (datetime.utcnow() - self.created).total_seconds() < 86400 * 7:
+        if self.promotion_status(get_kudos_trust_threshold()) is not PromotionStatus.PROMOTE:
             return
         # The escrow-to-balance movement is applier-owned: the fold rule is that a
         # trusted user's evaluation escrow always drains to the spendable balance,

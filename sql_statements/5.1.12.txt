@@ -110,3 +110,10 @@ RESET lock_timeout;
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_user_problem_jobs_ipaddr_pending
   ON user_problem_jobs (created, id)
   WHERE ipaddr IS NOT NULL OR origin_text IS NOT NULL;
+
+-- The moderation promotion queues read users above the trust threshold, highest evaluating
+-- kudos first, and stop at their limit. Build without blocking user writes, before deploying
+-- the moderation overview.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_users_evaluating_kudos_rank
+  ON users (evaluating_kudos DESC, id)
+  WHERE evaluating_kudos > 0;

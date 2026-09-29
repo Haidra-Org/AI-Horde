@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Expose moderator-only review of retained prompt evidence.
+"""Expose moderator-only review of retained evidence and promotion candidates.
 
 Every resource here requires a moderator ``apikey`` and answers with
 ``Cache-Control: private, no-store``: the payloads carry account identity,
@@ -23,6 +23,7 @@ from horde import r2
 from horde.apis.v2.base import api, check_for_mod, models
 from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS, EvidenceTextState
 from horde.countermeasures import CounterMeasures
+from horde.database import moderation as moderation_db
 from horde.database import prompt_moderation as evidence_db
 from horde.flask import db
 from horde.limiter import limiter
@@ -37,6 +38,12 @@ MAX_EVIDENCE_PAGE: int = 100
 
 An event carries up to three prompt stages of ``MAX_EVIDENCE_CHARACTERS`` each, so 100 events bound a page near five
 million characters of prompt text.
+"""
+MAX_OPERATIONS_PAGE: int = 500
+"""The most rows one overview queue or suspicion history page returns.
+
+Each overview row loads its account's or worker's relationships, so the bound caps the rows those reads return and the
+time one request holds a database connection, while one page still covers the whole of a normal review queue.
 """
 IP_SUBJECT_KEY_PATTERN: re.Pattern[str] = re.compile(r"[0-9a-f]{64}")
 """The form of an address pseudonym, the hex HMAC-SHA256 digest ``CounterMeasures.ip_subject_key`` returns."""
@@ -276,3 +283,35 @@ class OperationsPromptNotes(Resource):
         if stored is None:
             raise e.ModerationEventNotFound(event_id)
         return stored, 201, PRIVATE_HEADERS
+
+
+class OperationsModeration(Resource):
+    """Expose current promotion review queues to moderators."""
+
+    decorators = _moderator_limits()
+
+    get_parser = reqparse.RequestParser()
+    _add_moderator_credentials(get_parser)
+    get_parser.add_argument(
+        "limit",
+        default=100,
+        type=int,
+        required=False,
+        help="Maximum rows returned in each review section (1-500).",
+        location="args",
+    )
+
+    @api.expect(get_parser)
+    @api.marshal_with(models.response_model_moderation_overview, code=200, description="Moderation operations review")
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(403, "Access Denied", models.response_model_error)
+    def get(self) -> tuple[moderation_db.ModerationOverview, int, dict[str, str]]:
+        """Return promotion exceptions for moderator review."""
+        self.args = self.get_parser.parse_args()
+        check_for_mod(self.args.apikey, "GET OperationsModeration")
+        _assert_page_bounds(self.args.limit, None, MAX_OPERATIONS_PAGE)
+        overview = moderation_db.get_moderation_overview(limit=self.args.limit)
+        # The queues are fully materialized; release the pooled connection before marshalling.
+        db.session.remove()
+        return overview, 200, PRIVATE_HEADERS

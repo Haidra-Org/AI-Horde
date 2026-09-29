@@ -20,6 +20,8 @@ MIGRATION_PATH = Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.1
 """The migration that creates the moderation tables in production."""
 WAITING_PROMPTS_STUB = "CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT)"
 """The pre-change columns of ``waiting_prompts`` the migration alters or indexes."""
+USERS_STUB = "CREATE TABLE users (id INTEGER PRIMARY KEY, evaluating_kudos INTEGER NOT NULL)"
+"""The pre-change columns of ``users`` the migration indexes."""
 WORKERS_STUB = "CREATE TABLE workers (id UUID PRIMARY KEY)"
 """The key ``user_problem_jobs.worker_id`` referenced before the migration."""
 USER_PROBLEM_JOBS_STUB = (
@@ -55,6 +57,7 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
         with engine.connect() as connection:
             connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
             connection.execute(sqlalchemy.text(WORKERS_STUB))
+            connection.execute(sqlalchemy.text(USERS_STUB))
             connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
             connection.execute(
                 sqlalchemy.text(
@@ -107,6 +110,14 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             assert not columns["text_state"]["nullable"]
             assert columns["text_sha256"]["nullable"] and columns["text_chars"]["nullable"]
             assert "ix_prompt_moderation_notes_event_id" in {index["name"] for index in inspector.get_indexes("prompt_moderation_notes")}
+            user_indexes = {index["name"]: index for index in inspector.get_indexes("users")}
+            assert "ix_users_evaluating_kudos_rank" in user_indexes
+            rank_index = user_indexes["ix_users_evaluating_kudos_rank"]
+            assert rank_index["column_names"] == ["evaluating_kudos", "id"]
+            assert rank_index.get("column_sorting") == {"evaluating_kudos": ("desc",)}
+            rank_predicate = rank_index.get("dialect_options", {}).get("postgresql_where")
+            assert rank_predicate is not None
+            assert "evaluating_kudos > 0" in str(rank_predicate)
             problem_job_columns = {column["name"]: column for column in inspector.get_columns("user_problem_jobs")}
             # Retention removes a worker report's address before it deletes the report.
             assert problem_job_columns["ipaddr"]["nullable"]
@@ -214,6 +225,7 @@ def _moderation_catalogs(pg_dsn: str) -> Iterator[tuple[dict[str, Any], dict[str
         with migration_engine.connect() as connection:
             connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
             connection.execute(sqlalchemy.text(WORKERS_STUB))
+            connection.execute(sqlalchemy.text(USERS_STUB))
             connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
             _apply_migration(connection)
             migration_catalog = _catalog(connection, migration_schema)
