@@ -77,6 +77,11 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             assert {"prompt_moderation_events", "prompt_moderation_notes"} <= tables
             columns = {column["name"]: column for column in inspector.get_columns("prompt_moderation_events")}
             assert {"ipaddr", "ip_subject_key", "models"} <= set(columns)
+            # Retention removes identity at the ceiling, so the account column accepts null.
+            assert columns["user_id"]["nullable"]
+            for flag in ("text_redacted", "ipaddr_redacted", "anonymized"):
+                assert not columns[flag]["nullable"], flag
+                assert str(columns[flag]["default"]).lower() == "false", flag
             event_indexes = {index["name"]: index for index in inspector.get_indexes("prompt_moderation_events")}
             assert {
                 "ix_prompt_moderation_created",
@@ -87,10 +92,28 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
                 "ix_prompt_moderation_worker_id",
             } <= set(event_indexes)
             assert event_indexes["ix_prompt_moderation_proxied_account_id"]["column_names"] == ["proxied_account", "id"]
+            for index_name, flag in (
+                ("ix_prompt_moderation_text_pending", "text_redacted"),
+                ("ix_prompt_moderation_ipaddr_pending", "ipaddr_redacted"),
+                ("ix_prompt_moderation_anonymize_pending", "anonymized"),
+            ):
+                retention_index = event_indexes[index_name]
+                assert retention_index["column_names"] == ["created", "id"], index_name
+                retention_predicate = str(retention_index.get("dialect_options", {}).get("postgresql_where"))
+                assert f"NOT {flag}" in retention_predicate, (index_name, retention_predicate)
             assert "ix_prompt_moderation_notes_event_id" in {index["name"] for index in inspector.get_indexes("prompt_moderation_notes")}
             problem_job_columns = {column["name"]: column for column in inspector.get_columns("user_problem_jobs")}
-            # An origin with no IP subject stores no address.
+            # Retention removes a worker report's address before it deletes the report.
             assert problem_job_columns["ipaddr"]["nullable"]
+            problem_job_indexes = {index["name"]: index for index in inspector.get_indexes("user_problem_jobs")}
+            pending_index = problem_job_indexes["ix_user_problem_jobs_ipaddr_pending"]
+            assert pending_index["column_names"] == ["created", "id"]
+            assert problem_job_columns["origin_text"]["nullable"]
+            pending_predicate = str(pending_index.get("dialect_options", {}).get("postgresql_where"))
+            assert "ipaddr IS NOT NULL" in pending_predicate
+            assert "origin_text IS NOT NULL" in pending_predicate
+            # Deleting a worker keeps the reports it made, which are evidence about other accounts.
+            assert inspector.get_foreign_keys("user_problem_jobs") == []
     finally:
         engine.dispose()
         drop_schema(pg_dsn, schema_name)

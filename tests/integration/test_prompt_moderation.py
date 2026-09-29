@@ -2,7 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Exercise prompt provenance and rollback-safe evidence capture."""
+"""Exercise prompt provenance, rollback-safe evidence, tiered retention and account wipes.
+
+Retention skips events under moderation action, so that exemption is exercised with each retention step.
+
+Worker report records (``user_problem_jobs``) follow the evidence retention, so their retention is exercised here too.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +29,9 @@ from horde.classes.base.user import UserProblemJobs
 from horde.countermeasures import CounterMeasures
 from horde.database.prompt_moderation import (
     PromptEvidence,
+    RetentionPassResult,
+    RetentionPolicy,
+    apply_evidence_retention,
     record_prompt_evidence,
 )
 from tests.fixture_types import ApiUser, MakeApiUser
@@ -420,8 +428,41 @@ def test_subjectless_origin_past_the_ip_threshold_sends_no_ip_alert(app, make_ap
     assert messages == []
 
 
-def test_an_origin_that_is_not_an_address_records_no_address_or_pseudonym(app, make_api_user) -> None:
-    """Free text where an address belongs, as a trusted proxy's ``Proxied-For`` can carry, is neither stored nor keyed.
+def test_repeated_job_report_returns_existing_event_until_anonymized(app, make_api_user) -> None:
+    """A second report for the same job returns the stored event's ID and adds no row.
+
+    Anonymization clears the job ID, so a report after it no longer matches the unique key and records a new event.
+    """
+    from horde.flask import db
+
+    submitter = make_api_user()
+    job_id = str(uuid4())
+    evidence = PromptEvidence(
+        user_id=submitter.id,
+        reason=PromptModerationReason.WORKER_CSAM,
+        submitted_prompt="original",
+        moderation_prompt=None,
+        effective_prompt="effective",
+        job_id=job_id,
+    )
+    with app.app_context():
+        first = record_prompt_evidence(evidence)
+        second = record_prompt_evidence(evidence)
+        assert first is not None
+        assert second == first
+        assert db.session.query(PromptModerationEvent).filter_by(job_id=job_id).count() == 1
+        db.session.get(PromptModerationEvent, first).created = datetime.utcnow() - timedelta(days=31)
+        db.session.commit()
+        assert apply_evidence_retention(_policy(text=None, ipaddr=None, ceiling=30)).anonymized >= 1
+        after_anonymization = record_prompt_evidence(evidence)
+        assert after_anonymization not in (None, first)
+        db.session.expire_all()
+        assert db.session.execute(select(PromptModerationEvent.id).filter_by(job_id=job_id)).scalar_one() == after_anonymization
+        assert db.session.get(PromptModerationEvent, first).anonymized
+
+
+def test_an_origin_that_is_not_an_address_is_kept_as_text_without_address_or_pseudonym(app, make_api_user) -> None:
+    """Free text where an address belongs, as a trusted proxy's ``Proxied-For`` can carry, is kept as clipped text.
 
     It is neither an address nor keyed, on the event and on the worker report record.
     """
@@ -545,6 +586,45 @@ def test_evidence_text_is_clipped_at_the_length_limit(app, make_api_user) -> Non
         assert len(event.submitted_prompt) == MAX_EVIDENCE_CHARACTERS
 
 
+@pytest.fixture
+def _no_prior_evidence(app) -> None:
+    """Start from empty evidence and worker report tables, so a retention pass counts only the rows the test records.
+
+    The schema belongs to this module, and no other module records worker reports, so no other module's data is
+    removed.
+    """
+    from sqlalchemy import delete
+
+    from horde.flask import db
+
+    with app.app_context():
+        db.session.execute(delete(PromptModerationEvent))
+        db.session.execute(delete(UserProblemJobs))
+        db.session.commit()
+
+
+def _record_aged(app, *, user_id: int, age_days: float, **evidence: Any) -> int:
+    """Record a filter rejection with every identifying field set, captured ``age_days`` ago, and return its ID."""
+    from horde.flask import db
+
+    fields: dict[str, Any] = {
+        "reason": PromptModerationReason.FILTER_REJECTION,
+        "submitted_prompt": "submitted",
+        "moderation_prompt": "moderated",
+        "effective_prompt": None,
+        "proxied_account": "proxied-subject",
+        "ipaddr": _unique_ip(),
+        "models": ["model a"],
+        **evidence,
+    }
+    with app.app_context():
+        event_id = record_prompt_evidence(PromptEvidence(user_id=user_id, **fields))
+        assert event_id is not None
+        db.session.get(PromptModerationEvent, event_id).created = datetime.utcnow() - timedelta(days=age_days)
+        db.session.commit()
+    return event_id
+
+
 def _stored(app, event_id: int) -> PromptModerationEvent:
     from horde.flask import db
 
@@ -553,6 +633,254 @@ def _stored(app, event_id: int) -> PromptModerationEvent:
         assert event is not None
         db.session.expunge(event)
     return event
+
+
+def _policy(*, text: int | None, ipaddr: int | None, ceiling: int) -> RetentionPolicy:
+    return RetentionPolicy(
+        text=timedelta(days=text) if text is not None else None,
+        ipaddr=timedelta(days=ipaddr) if ipaddr is not None else None,
+        ceiling=timedelta(days=ceiling),
+    )
+
+
+def _pass_result(**counts: int) -> RetentionPassResult:
+    """Return a pass result with the given counts and zero for every other step."""
+    return RetentionPassResult(
+        **{
+            "anonymized": 0,
+            "text_redacted": 0,
+            "ipaddr_redacted": 0,
+            "problem_jobs_deleted": 0,
+            "problem_job_ipaddr_redacted": 0,
+            **counts,
+        },
+    )
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_text_and_address_are_removed_after_their_windows(app, make_api_user) -> None:
+    """Each window removes only its own values; identity stays until the ceiling and a repeat pass changes nothing."""
+    submitter = make_api_user()
+    fresh = _record_aged(app, user_id=submitter.id, age_days=5)
+    past_address = _record_aged(app, user_id=submitter.id, age_days=15)
+    past_both = _record_aged(app, user_id=submitter.id, age_days=25)
+    policy = _policy(text=20, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(text_redacted=1, ipaddr_redacted=2)
+        assert apply_evidence_retention(policy) == _pass_result()
+
+    untouched = _stored(app, fresh)
+    assert untouched.submitted_prompt == "submitted"
+    assert untouched.ipaddr is not None
+    assert not (untouched.text_redacted or untouched.ipaddr_redacted or untouched.anonymized)
+
+    address_removed = _stored(app, past_address)
+    assert address_removed.ipaddr is None
+    assert address_removed.ipaddr_redacted
+    assert address_removed.submitted_prompt == "submitted"
+    assert address_removed.moderation_prompt == "moderated"
+    assert not address_removed.text_redacted
+
+    both_removed = _stored(app, past_both)
+    assert (both_removed.submitted_prompt, both_removed.moderation_prompt, both_removed.effective_prompt) == (None, None, None)
+    assert both_removed.ipaddr is None
+    assert both_removed.text_redacted and both_removed.ipaddr_redacted
+    for event in (address_removed, both_removed):
+        assert event.user_id == submitter.id
+        assert event.proxied_account == "proxied-subject"
+        assert not event.anonymized
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_none_windows_keep_text_and_address_until_the_ceiling(app, make_api_user) -> None:
+    submitter = make_api_user()
+    within_ceiling = _record_aged(app, user_id=submitter.id, age_days=29)
+    past_ceiling = _record_aged(app, user_id=submitter.id, age_days=31)
+    with app.app_context():
+        result = apply_evidence_retention(_policy(text=None, ipaddr=None, ceiling=30))
+    assert result == _pass_result(anonymized=1)
+    kept = _stored(app, within_ceiling)
+    assert kept.submitted_prompt == "submitted"
+    assert kept.ipaddr is not None
+    assert not (kept.text_redacted or kept.ipaddr_redacted)
+    assert _stored(app, past_ceiling).anonymized
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_redaction_steps_change_one_batch_oldest_first(app, make_api_user) -> None:
+    submitter = make_api_user()
+    oldest, middle, newest = (_record_aged(app, user_id=submitter.id, age_days=age) for age in (50, 49, 48))
+    policy = _policy(text=10, ipaddr=10, ceiling=100)
+    with app.app_context():
+        first_pass = apply_evidence_retention(policy, batch_size=2)
+        assert first_pass == _pass_result(text_redacted=2, ipaddr_redacted=2)
+        assert [_stored(app, event_id).text_redacted for event_id in (oldest, middle, newest)] == [True, True, False]
+        assert [_stored(app, event_id).ipaddr_redacted for event_id in (oldest, middle, newest)] == [True, True, False]
+        second_pass = apply_evidence_retention(policy, batch_size=2)
+        assert second_pass == _pass_result(text_redacted=1, ipaddr_redacted=1)
+        assert apply_evidence_retention(policy, batch_size=2).total == 0
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_anonymization_changes_one_batch_oldest_first(app, make_api_user) -> None:
+    submitter = make_api_user()
+    oldest, middle, newest = (_record_aged(app, user_id=submitter.id, age_days=age) for age in (50, 49, 48))
+    policy = _policy(text=None, ipaddr=None, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy, batch_size=2).anonymized == 2
+        assert [_stored(app, event_id).anonymized for event_id in (oldest, middle, newest)] == [True, True, False]
+        assert apply_evidence_retention(policy, batch_size=2).anonymized == 1
+        assert apply_evidence_retention(policy, batch_size=2).total == 0
+
+
+def _record_problem_job(
+    app,
+    *,
+    user_id: int,
+    worker_id: str,
+    ipaddr: str | None,
+    age_days: float = 0,
+    origin_text: str | None = None,
+) -> int:
+    """Record a worker report record captured ``age_days`` ago and return its ID."""
+    from horde.flask import db
+
+    with app.app_context():
+        record = UserProblemJobs(
+            user_id=user_id,
+            worker_id=worker_id,
+            ipaddr=ipaddr,
+            origin_text=origin_text,
+            job_id=str(uuid4()),
+            created=datetime.utcnow() - timedelta(days=age_days),
+        )
+        db.session.add(record)
+        db.session.commit()
+        return record.id
+
+
+def _synthetic_worker(app, owner_id: int, name: str) -> str:
+    """Register a text worker for ``owner_id`` and return its ID."""
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    with app.app_context():
+        worker = TextWorker(user_id=owner_id, name=f"{name}-{owner_id}-{uuid4().hex[:8]}", max_context_length=4096)
+        db.session.add(worker)
+        db.session.commit()
+        return str(worker.id)
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_worker_reports_lose_their_address_at_the_window_and_are_deleted_at_the_ceiling(app, make_api_user) -> None:
+    """Worker report records follow the evidence address window and ceiling, oldest first in bounded batches."""
+    from horde.flask import db
+
+    submitter, worker_owner = make_api_user(), make_api_user()
+    worker_id = _synthetic_worker(app, worker_owner.id, "synthetic-report-worker")
+    fresh = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=1)
+    past_window = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=15)
+    past_ceiling = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=31)
+    policy = _policy(text=None, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(problem_jobs_deleted=1, problem_job_ipaddr_redacted=1)
+        assert apply_evidence_retention(policy) == _pass_result()
+        assert db.session.get(UserProblemJobs, fresh).ipaddr is not None
+        assert db.session.get(UserProblemJobs, past_window).ipaddr is None
+        assert db.session.get(UserProblemJobs, past_window).user_id == submitter.id
+        assert db.session.get(UserProblemJobs, past_ceiling) is None
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_worker_reports_keep_their_address_until_the_ceiling_under_a_none_window(app, make_api_user) -> None:
+    from horde.flask import db
+
+    submitter, worker_owner = make_api_user(), make_api_user()
+    worker_id = _synthetic_worker(app, worker_owner.id, "synthetic-report-worker")
+    kept = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=29)
+    oldest, newest = (
+        _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=age) for age in (50, 40)
+    )
+    policy = _policy(text=None, ipaddr=None, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy, batch_size=1) == _pass_result(problem_jobs_deleted=1)
+        assert db.session.get(UserProblemJobs, oldest) is None
+        assert db.session.get(UserProblemJobs, newest) is not None
+        assert apply_evidence_retention(policy, batch_size=1) == _pass_result(problem_jobs_deleted=1)
+        assert apply_evidence_retention(policy, batch_size=1) == _pass_result()
+        assert db.session.get(UserProblemJobs, kept).ipaddr is not None
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_origin_text_is_removed_with_the_address(app, make_api_user) -> None:
+    """The address window clears the origin text of events and worker report records, and flags the event."""
+    from horde.flask import db
+
+    submitter, worker_owner = make_api_user(), make_api_user()
+    event_id = _record_aged(app, user_id=submitter.id, age_days=15, ipaddr="client behind proxy")
+    assert _stored(app, event_id).origin_text == "client behind proxy"
+    worker_id = _synthetic_worker(app, worker_owner.id, "synthetic-report-worker")
+    report = _record_problem_job(
+        app,
+        user_id=submitter.id,
+        worker_id=worker_id,
+        ipaddr=None,
+        age_days=15,
+        origin_text="client behind proxy",
+    )
+    policy = _policy(text=None, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(ipaddr_redacted=1, problem_job_ipaddr_redacted=1)
+        assert apply_evidence_retention(policy) == _pass_result()
+        assert db.session.get(UserProblemJobs, report).origin_text is None
+    removed = _stored(app, event_id)
+    assert removed.origin_text is None
+    assert removed.ipaddr_redacted
+
+
+def test_deleting_a_worker_keeps_its_worker_reports(app, make_api_user) -> None:
+    """A worker report record is evidence about the reported account, so it outlives the worker that made it."""
+    from horde.classes.base.worker import WorkerTemplate
+    from horde.flask import db
+
+    submitter, worker_owner = make_api_user(), make_api_user()
+    worker_id = _synthetic_worker(app, worker_owner.id, "synthetic-deleted-worker")
+    report = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip())
+    with app.app_context():
+        db.session.get(WorkerTemplate, worker_id).delete()
+        db.session.expire_all()
+        assert db.session.get(WorkerTemplate, worker_id) is None
+        record = db.session.get(UserProblemJobs, report)
+        assert record is not None
+        assert (record.user_id, str(record.worker_id)) == (submitter.id, worker_id)
+
+
+def test_wipe_of_an_account_with_a_worker_keeps_its_evidence_and_worker_reports(client, app, make_api_user) -> None:
+    """Wiping deletes the account's worker and keeps its events and every worker report record.
+
+    The account's own worker reported one of the account's jobs; that record survives the worker with its worker ID.
+    """
+    from horde.classes.base.user import User
+    from horde.classes.base.worker import WorkerTemplate
+    from horde.flask import db
+
+    wiped, other = make_api_user(), make_api_user()
+    own_worker = _synthetic_worker(app, wiped.id, "synthetic-wiped-worker")
+    other_worker = _synthetic_worker(app, other.id, "synthetic-other-worker")
+    (wiped_event,) = _seed(app, user_id=wiped.id)
+    self_reported = _record_problem_job(app, user_id=wiped.id, worker_id=own_worker, ipaddr=_unique_ip())
+    reported_by_other = _record_problem_job(app, user_id=wiped.id, worker_id=other_worker, ipaddr=_unique_ip())
+    others_record = _record_problem_job(app, user_id=other.id, worker_id=other_worker, ipaddr=_unique_ip())
+    with app.app_context():
+        db.session.get(User, wiped.id).wipe()
+        db.session.expire_all()
+        assert db.session.get(PromptModerationEvent, wiped_event).user_id == wiped.id
+        assert db.session.get(UserProblemJobs, reported_by_other).user_id == wiped.id
+        self_reported_record = db.session.get(UserProblemJobs, self_reported)
+        assert self_reported_record is not None
+        assert (self_reported_record.user_id, str(self_reported_record.worker_id)) == (wiped.id, own_worker)
+        assert db.session.get(UserProblemJobs, others_record) is not None
+        assert db.session.get(WorkerTemplate, own_worker) is None
 
 
 def test_database_failure_does_not_accept_rejected_prompt(client, app, make_api_user, settle_kudos, monkeypatch) -> None:

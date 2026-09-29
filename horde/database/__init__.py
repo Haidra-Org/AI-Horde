@@ -55,6 +55,8 @@ def start_background_threads():
     PrimaryTimedFunction(30, threads.refresh_worker_speeds, quorum=quorum)
     PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
     PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
+    # Rows under moderation action never get a retention flag, so every pass rescans them; see CLEANUP_BATCH_SIZE.
+    PrimaryTimedFunction(3600, threads.apply_moderation_retention, quorum=quorum)
     PrimaryTimedFunction(3600, threads.prune_compiled_stats, quorum=quorum)
     PrimaryTimedFunction(10, threads.increment_extra_priority, quorum=quorum)
     PrimaryTimedFunction(10, threads.store_compiled_filter_regex, quorum=quorum)

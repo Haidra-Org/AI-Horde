@@ -489,6 +489,22 @@ def prune_stats():
         prune_expired_stats()
 
 
+@logger.catch(reraise=True)
+def apply_moderation_retention() -> None:
+    """Run one bounded retention pass over prompt moderation evidence and worker reports."""
+    from horde.database.prompt_moderation import apply_evidence_retention
+
+    with get_app().app_context():
+        result = apply_evidence_retention()
+        if result.total:
+            logger.info(
+                f"Moderation evidence retention: anonymized {result.anonymized}, removed text from {result.text_redacted}, "
+                f"removed addresses from {result.ipaddr_redacted} events; "
+                f"deleted {result.problem_jobs_deleted} worker reports, "
+                f"removed addresses from {result.problem_job_ipaddr_redacted} worker reports",
+            )
+
+
 # The compiled_* stats tables accumulate a new snapshot on each compile run (totals every minute,
 # models daily) and are otherwise never pruned. Reads only ever use the latest snapshot, so we only
 # need to retain a short rolling window.
