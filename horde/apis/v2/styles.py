@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from flask import request
 from flask_restx import Resource, reqparse
 
 import horde.apis.limiter_api as lim
@@ -15,6 +16,7 @@ from horde.classes.base.style_contract import (
     serialize_parameter_policy,
     serialize_template_fields,
 )
+from horde.consts import ANONYMOUS_API_KEY
 from horde.database import functions as database
 from horde.flask import cache, db
 from horde.limiter import limiter
@@ -23,6 +25,20 @@ from horde.style_contract_document import published_style_contract
 from horde.utils import ensure_clean
 
 ## Styles
+
+
+def request_carries_a_user_key() -> bool:
+    """Report whether the request names a key other than the anonymous one.
+
+    The single-style routes leave the shared response cache only for a request that can be served
+    something the cache does not hold. The anonymous user owns no style, so a request carrying its key
+    gets the same body as one carrying none, and generated clients send that key whenever none is
+    configured.
+
+    Returns:
+        True when an owner lookup could change the response.
+    """
+    return request.headers.get("apikey", ANONYMOUS_API_KEY) != ANONYMOUS_API_KEY
 
 
 class StyleContractArgs:
@@ -157,13 +173,50 @@ class StyleTemplate(Resource):
 class SingleStyleTemplateGet(Resource):
     gentype = "template"
 
+    get_parser = reqparse.RequestParser()
+    get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=False,
+        location="headers",
+        help="The style owner's API key, to include the style's shared key.",
+    )
+    get_parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+
     def get_existing_style(self):
+        """Return the resolved style, with its shared key only when the caller owns the style.
+
+        A request carrying an ``apikey`` header is not served from the shared response cache, so the
+        response is marked private to keep an owner's shared key out of any other cache as well.
+
+        Returns:
+            tuple[dict, int, dict]: The style's details, the success status, and the response headers.
+
+        Raises:
+            horde.exceptions.BadRequest: If the style is not of this endpoint's type.
+        """
         if self.existing_style.style_type != self.gentype:
             raise e.BadRequest(
                 f"Style was found but was of the wrong type: {self.existing_style.style_type} != {self.gentype}",
                 "StyleGetMistmatch",
             )
-        return self.existing_style.get_details()
+        self.args = self.get_parser.parse_args()
+        caller = None
+        if request_carries_a_user_key():
+            caller = database.find_user_by_api_key(self.args.apikey)
+        caller_owns_style = caller is not None and caller.id == self.existing_style.user_id
+        details = self.existing_style.get_details(include_shared_key=caller_owns_style)
+        response_headers = {}
+        if request_carries_a_user_key():
+            response_headers = {"Cache-Control": "private, no-store"}
+        return details, 200, response_headers
 
     def get_through_id(self, style_id):
         self.existing_style = database.get_style_by_uuid(style_id, is_collection=False)

@@ -13,6 +13,7 @@ from horde.apis.v2.styles import (
     StyleContractArgs,
     StyleTemplate,
     api,
+    request_carries_a_user_key,
 )
 from horde.classes.base.style import Style, StyleExample
 from horde.classes.base.style_contract import StyleContractVocabulary
@@ -187,8 +188,8 @@ class ImageStyle(ImageStyleContractArgs, StyleTemplate):
 class SingleImageStyle(ImageStyleContractArgs, SingleStyleTemplate):
     gentype = "image"
 
-    @cache.cached(timeout=30)
-    @api.expect(parsers.basic_parser)
+    @cache.cached(timeout=30, unless=request_carries_a_user_key)
+    @api.expect(SingleStyleTemplateGet.get_parser)
     @api.marshal_with(
         models.response_model_style,
         code=200,
@@ -258,8 +259,8 @@ class SingleImageStyle(ImageStyleContractArgs, SingleStyleTemplate):
 class SingleImageStyleByName(SingleStyleTemplateGet):
     gentype = "image"
 
-    @cache.cached(timeout=30)
-    @api.expect(parsers.basic_parser)
+    @cache.cached(timeout=30, unless=request_carries_a_user_key)
+    @api.expect(SingleStyleTemplateGet.get_parser)
     @api.marshal_with(
         models.response_model_style,
         code=200,

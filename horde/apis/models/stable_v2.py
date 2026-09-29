@@ -1511,6 +1511,15 @@ class ImageModels(v2.Models):
                     description="When this style was last modified, so a client can tell whether a cached copy is stale.",
                 ),
                 "examples": fields.List(fields.Nested(self.response_model_style_example, skip_none=True)),
-                "shared_key": fields.Nested(self.response_model_sharedkey_details, skip_none=True, allow_null=True),
+                "shared_key": fields.Nested(
+                    self.response_model_sharedkey_details,
+                    skip_none=True,
+                    allow_null=True,
+                    description=(
+                        "The shared key requests using this style generate under. Served only on the single-style routes"
+                        " to the style's owner, authenticated by the apikey header; null for every other caller and on"
+                        " the style list."
+                    ),
+                ),
             },
         )

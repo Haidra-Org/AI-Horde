@@ -284,6 +284,16 @@ always present on a served style, null when the style declares neither. The `par
 `skip_none`, so it carries only the params the style actually sets; for a text style that includes
 `max_length` and `max_context_length`.
 
+`shared_key` is served only to the style's owner, and only on the single-style routes:
+`/v2/styles/text/{style_id}`, `/v2/styles/text_by_name/{style_name}`, `/v2/styles/image/{style_id}` and
+`/v2/styles/image_by_name/{style_name}`. These take an optional `apikey` header. When the key resolves
+to the style's owner, `shared_key` carries the shared key's details; for every other caller it is null.
+A request carrying a key other than the anonymous one bypasses the 30-second response cache those
+routes share across
+callers, and its response carries `Cache-Control: private, no-store`. The list routes,
+`/v2/styles/text` and `/v2/styles/image`, serve `shared_key` as null to every caller, the owner
+included. `Style.get_details(include_shared_key=...)` is the switch, and it defaults to off.
+
 The patch parser's arguments have no defaults, so a key a `PATCH` omits leaves the stored value alone.
 A key that is present replaces the whole JSON column.
 
@@ -390,6 +400,7 @@ receives falls back to its own defaults rather than applying the document.
 | Worker context ceiling | `horde/database/functions.py` | `get_highest_text_worker_max_context_length` |
 | Text pricing | `horde/classes/kobold/waiting_prompt.py` | `TextWaitingPrompt.calculate_kudos` |
 | Style columns | `horde/classes/base/style.py` | `Style.parameter_policy`, `Style.template_fields` |
+| The owner-only `shared_key` on a served style | `horde/apis/v2/styles.py`, `horde/classes/base/style.py` | `SingleStyleTemplateGet.get_existing_style`, `Style.get_details` |
 | The dry-run quote cache key | `horde/apis/v2/base.py`, `horde/apis/v2/stable.py`, `horde/apis/v2/kobold.py` | `GenerateTemplate.get_hashed_params_dict`, `ImageAsyncGenerate.get_hashed_params_dict`, `TextAsyncGenerate.get_hashed_params_dict` |
 
 ## Tests
@@ -422,6 +433,7 @@ receives falls back to its own defaults rather than applying the document.
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
 | The quote cache key tells a styled request apart and is stable across validation | `tests/unit/test_dry_run_kudos_quote.py`, `TestQuoteCacheKey`, `TestTextQuoteCacheKey` |
+| `shared_key` served to the owner only, and never on the list | `tests/integration/test_text_styles.py`, `TestTextStyleSharedKeyVisibility`; `tests/integration/test_image_styles.py`, `TestImageStyleSharedKeyVisibility` |
 
 ## Sharp edges
 

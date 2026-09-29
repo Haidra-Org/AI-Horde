@@ -14,6 +14,7 @@ from horde.apis.v2.styles import (
     StyleContractArgs,
     StyleTemplate,
     api,
+    request_carries_a_user_key,
 )
 from horde.classes.base.style import Style
 from horde.classes.base.style_contract import StyleContractVocabulary
@@ -192,8 +193,8 @@ class TextStyle(TextStyleContractArgs, StyleTemplate):
 class SingleTextStyle(TextStyleContractArgs, SingleStyleTemplate):
     gentype = "text"
 
-    @cache.cached(timeout=30)
-    @api.expect(parsers.basic_parser)
+    @cache.cached(timeout=30, unless=request_carries_a_user_key)
+    @api.expect(SingleStyleTemplateGet.get_parser)
     @api.marshal_with(
         models.response_model_style,
         code=200,
@@ -266,8 +267,8 @@ class SingleTextStyle(TextStyleContractArgs, SingleStyleTemplate):
 class SingleImageStyleByName(SingleStyleTemplateGet):
     gentype = "text"
 
-    @cache.cached(timeout=30)
-    @api.expect(parsers.basic_parser)
+    @cache.cached(timeout=30, unless=request_carries_a_user_key)
+    @api.expect(SingleStyleTemplateGet.get_parser)
     @api.doc("get_single_text_style_by_name")
     @api.marshal_with(
         models.response_model_style,
