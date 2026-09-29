@@ -37,6 +37,7 @@ procedure for one subject sit together.
 - How-to: [Add extended image controls to a frontend](how-to/extended_image_frontend.md)
 - How-to: [Add a sampler, scheduler, solver control, or annotator](how-to/add_sampler_or_annotator.md)
 - How-to: [Add an image baseline](how-to/add_image_baseline.md)
+- How-to: [Use the style endpoints](how-to/use_style_endpoints.md)
 - Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader reference](reference/model_reference.md)
@@ -63,6 +64,7 @@ procedure for one subject sit together.
 ### requests
 
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
+- How-to: [Use the style endpoints](how-to/use_style_endpoints.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)

@@ -42,6 +42,7 @@ nav = [
         { "Extended image frontend" = "how-to/extended_image_frontend.md" },
         { "Add a sampler or annotator" = "how-to/add_sampler_or_annotator.md" },
         { "Add an image baseline" = "how-to/add_image_baseline.md" },
+        { "Use the style endpoints" = "how-to/use_style_endpoints.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
     { "Concepts" = [

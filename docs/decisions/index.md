@@ -27,6 +27,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Treat image job TTL as a conservative prefetch lease](0013-image-job-ttl-is-a-prefetch-lease.md) | accepted | 2026-08-18 |
 | [Quarantine deterministically invalid statistic events without stopping the projector](0014-quarantine-deterministically-invalid-statistic-events.md) | accepted | 2026-08-30 |
 | [Decay moderation evidence in tiers under an anonymizing ceiling](0015-tiered-moderation-evidence-retention.md) | accepted | 2026-09-29 |
+| [Protect koboldcpp instruct placeholders and publish the style contract](0017-protect-koboldcpp-placeholders-and-publish-the-style-contract.md) | accepted | 2026-09-13 |
 | [Keep evidence text in object storage and bound rejection floods with countermeasures](0018-evidence-text-in-object-storage-behind-countermeasures.md) | accepted | 2026-09-30 |
 
 ## Relationships
@@ -50,6 +51,7 @@ flowchart TD
     r0013["0013: Treat image job TTL as a conservative…"]
     r0014["0014: Quarantine deterministically invalid…"]
     r0015["0015: Decay moderation evidence in tiers un…"]
+    r0017["0017: Protect koboldcpp instruct placeholde…"]
     r0018["0018: Keep evidence text in object storage…"]
     r0001 --> r0003
     r0001 --> r0004
@@ -76,5 +78,6 @@ flowchart TD
     r0013 --> r0011
     r0014 --> r0003
     r0014 --> r0007
+    r0017 --> r0012
     r0018 --> r0015
 ```
