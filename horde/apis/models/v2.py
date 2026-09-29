@@ -1954,6 +1954,30 @@ class Models:
                 "admin_comment": self.response_model_user_details["admin_comment"],
             },
         )
+        self.response_model_paused_worker_review = api.inherit(
+            "PausedWorkerReview",
+            self.response_model_worker_details_lite,
+            {
+                "owner_id": fields.Integer(description="The owning account's ID."),
+                "owner": self.response_model_worker_details["owner"],
+                "last_check_in": UTCDateTime(description="The UTC time the worker last checked in."),
+                "maintenance_mode": self.response_model_worker_details["maintenance_mode"],
+                "maintenance_msg": fields.String(description="The maintenance message."),
+                "suspicious": self.response_model_worker_details["suspicious"],
+                "suspicion_reasons": fields.List(
+                    fields.Nested(self.response_model_moderation_suspicion_reason),
+                    description="The active suspicion reasons, by code.",
+                ),
+                "owner_suspicion": self.response_model_user_details["suspicious"],
+                "owner_trusted": fields.Boolean(description="Whether the owning account is trusted."),
+                "owner_flagged": self.response_model_user_details["flagged"],
+                "requests_fulfilled": self.response_model_worker_details["requests_fulfilled"],
+                "aborted_jobs": fields.Integer(description="The number of jobs the worker aborted."),
+                "bridge_agent": self.response_model_worker_details["bridge_agent"],
+                "models": self.response_model_worker_details["models"],
+                "contact": self.response_model_worker_details["contact"],
+            },
+        )
         self.response_model_moderation_overview = api.model(
             "ModerationOverview",
             {
@@ -1974,6 +1998,35 @@ class Models:
                     fields.Nested(self.response_model_promotion_review_user),
                     description="Accounts automatic promotion will trust, highest evaluating kudos first.",
                 ),
+                "paused_workers": fields.List(
+                    fields.Nested(self.response_model_paused_worker_review),
+                    description="Paused workers matching the filters, in the requested order.",
+                ),
+                "paused_workers_total": fields.Integer(
+                    description="Paused workers matching the filters, including those past the limit.",
+                ),
+            },
+        )
+        self.response_model_worker_suspicion_event = api.model(
+            "WorkerSuspicionEvent",
+            {
+                "id": fields.Integer(description="The record identifier, also the pagination cursor."),
+                "created": UTCDateTime(description="UTC time the suspicion was recorded."),
+                "worker_id": fields.String(description="The UUID of the worker the suspicion was raised against."),
+                "worker_name": fields.String(description="The worker's name when the suspicion was recorded."),
+                "user_id": fields.Integer(description="The account that owned the worker when the suspicion was recorded."),
+                "suspicion_id": fields.Integer(description="The numeric suspicion reason code."),
+                "reason": fields.String(
+                    description="The reason's Suspicions name, or UNKNOWN_<id> for a code this version does not define.",
+                ),
+                "detail": fields.String(description="The suspicion's diagnostic text."),
+            },
+        )
+        self.response_model_worker_suspicion_events = api.model(
+            "WorkerSuspicionEvents",
+            {
+                "events": fields.List(fields.Nested(self.response_model_worker_suspicion_event)),
+                "next_cursor": fields.Integer(description="Pass as before_id to read the next page; null on the last page."),
             },
         )
         self.input_model_add_ip_timeout = api.model(

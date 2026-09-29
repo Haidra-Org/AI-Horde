@@ -3680,6 +3680,7 @@ class DocsPrivacy(Resource):
             # Read per request: the evidence store is configured at startup, and the policy must describe it.
             moderation_text_in_object_storage=r2.evidence_client is not None,
             repository_url=horde_repository,
+            worker_suspicion_days=retention.worker_suspicion_days,
         )
         if self.args.format == "markdown":
             return {"markdown": markdownify(html_template).strip("\n")}, 200

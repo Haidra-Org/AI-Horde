@@ -783,6 +783,7 @@ def _pass_result(**counts: int) -> RetentionPassResult:
             "ipaddr_redacted": 0,
             "problem_jobs_deleted": 0,
             "problem_job_ipaddr_redacted": 0,
+            "worker_suspicion_deleted": 0,
             **counts,
         },
     )
@@ -1484,6 +1485,33 @@ def test_privacy_document_discloses_the_configured_retention(client, api_key, mo
         period = f"removed after {days} days" if days is not None else "kept with the record"
         assert f"{subject} is {period}," in document
     assert f"After {retention['ceiling_days']} days, a record" in document
+
+
+@pytest.mark.parametrize(
+    ("worker_suspicion_days", "period"),
+    [
+        (None, "These records are kept indefinitely, including after the Worker or its Account is deleted."),
+        (
+            730,
+            "These records are kept for 730 days, including after the Worker or its Account is deleted, unless the "
+            "Worker's Account is subject to moderation action, in which case they are kept for as long as that requires.",
+        ),
+    ],
+)
+def test_privacy_document_discloses_worker_suspicion_history(client, monkeypatch, worker_suspicion_days, period) -> None:
+    """The privacy document states what worker suspicion history records and the period the retention pass applies."""
+    from horde.database import prompt_moderation
+
+    policy = RetentionPolicy(
+        text=None,
+        ipaddr=timedelta(days=30),
+        ceiling=timedelta(days=365),
+        worker_suspicion=timedelta(days=worker_suspicion_days) if worker_suspicion_days is not None else None,
+    )
+    monkeypatch.setattr(prompt_moderation, "MODERATION_RETENTION_POLICY", policy)
+    document = client.get("/api/v2/documents/privacy", query_string={"format": "markdown"}).get_json()["markdown"]
+    assert "We record the Worker's name, the Account that owns it, the kind of suspicion and its details" in document
+    assert period in document
 
 
 @pytest.mark.parametrize("document_format", ["html", "markdown"])

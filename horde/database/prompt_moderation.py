@@ -58,6 +58,7 @@ from horde.classes.base.prompt_moderation import (
     PromptModerationReason,
 )
 from horde.classes.base.user import User, UserProblemJobs, UserRole, UserSuspicions
+from horde.classes.base.worker import WorkerSuspicionEvent
 from horde.countermeasures import CounterMeasures
 from horde.enums import UserRoleTypes
 from horde.flask import db
@@ -70,6 +71,19 @@ IPADDR_RETENTION_ENV: str = "HORDE_MODERATION_IPADDR_RETENTION_DAYS"
 """The environment variable for IP address retention."""
 EVIDENCE_CEILING_ENV: str = "HORDE_MODERATION_EVIDENCE_CEILING_DAYS"
 """The environment variable for the evidence ceiling."""
+WORKER_SUSPICION_RETENTION_ENV: str = "HORDE_WORKER_SUSPICION_RETENTION_DAYS"
+"""The environment variable for worker suspicion history retention.
+
+Unset keeps the history indefinitely. The history is worker diagnostics rather than prompt evidence, so the evidence
+ceiling does not bound it.
+"""
+MAX_WORKER_SUSPICION_RETENTION_DAYS: int = 36500
+"""The longest worker suspicion history window in days, about 100 years.
+
+The retention pass subtracts the window from the current time, which overflows past year 1, and ``timedelta`` itself
+overflows at 999,999,999 days, so an unbounded value would fail the pass or startup with an unrelated error. A longer
+window is indistinguishable from keeping the history, which leaving the variable unset already does.
+"""
 
 DEFAULT_TEXT_RETENTION_DAYS: int | None = None
 """The default text retention window in days, or None to keep text until the ceiling.
@@ -165,14 +179,14 @@ _last_no_store_warning: float | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class RetentionPolicy:
-    """Represent how long each part of prompt evidence is kept, measured from capture.
+    """Represent how long each part of prompt evidence, and worker suspicion history, is kept, measured from capture.
 
     Every window and the ceiling apply only to events not under moderation action; those events and every note are
     kept without limit.
 
     Raises:
-        ValueError: A window is not a positive number of days, a window exceeds the ceiling, or the ceiling exceeds
-            ``MAX_EVIDENCE_CEILING_DAYS``.
+        ValueError: A window is not a positive number of days, a window exceeds the ceiling, the ceiling exceeds
+            ``MAX_EVIDENCE_CEILING_DAYS``, or the worker suspicion window exceeds ``MAX_WORKER_SUSPICION_RETENTION_DAYS``.
     """
 
     text: timedelta | None
@@ -181,6 +195,11 @@ class RetentionPolicy:
     """The IP address retention window, or None to keep IP addresses until the ceiling."""
     ceiling: timedelta
     """The anonymization ceiling, after which an event not under moderation action keeps no identifying data."""
+    worker_suspicion: timedelta | None = None
+    """The age at which worker suspicion history rows are deleted, or None to keep them.
+
+    The ceiling does not bound it, since the rows are worker diagnostics, not prompt evidence.
+    """
 
     def __post_init__(self) -> None:
         # Messages name the environment variables because operators set the policy through them.
@@ -193,6 +212,12 @@ class RetentionPolicy:
                 raise ValueError(f"{variable} must be a positive whole number of days, got {window}")
             if window > self.ceiling:
                 raise ValueError(f"{variable} ({window.days} days) exceeds {EVIDENCE_CEILING_ENV} ({self.ceiling.days} days)")
+        if self.worker_suspicion is not None and self.worker_suspicion <= timedelta(0):
+            raise ValueError(f"{WORKER_SUSPICION_RETENTION_ENV} must be a positive whole number of days, got {self.worker_suspicion}")
+        if self.worker_suspicion is not None and self.worker_suspicion > timedelta(days=MAX_WORKER_SUSPICION_RETENTION_DAYS):
+            raise ValueError(
+                f"{WORKER_SUSPICION_RETENTION_ENV} must be at most {MAX_WORKER_SUSPICION_RETENTION_DAYS} days, got {self.worker_suspicion}",
+            )
 
     @property
     def text_days(self) -> int | None:
@@ -208,6 +233,11 @@ class RetentionPolicy:
     def ceiling_days(self) -> int:
         """Return the anonymization ceiling in whole days."""
         return self.ceiling.days
+
+    @property
+    def worker_suspicion_days(self) -> int | None:
+        """Return the worker suspicion history window in whole days, or None when the history is kept."""
+        return self.worker_suspicion.days if self.worker_suspicion is not None else None
 
 
 def _parse_positive_whole_number(variable: str, raw: str, unit: str) -> int:
@@ -249,8 +279,8 @@ def load_retention_policy(environ: Mapping[str, str] = os.environ) -> RetentionP
         The validated policy.
 
     Raises:
-        ValueError: A variable is malformed, the ceiling is disabled or above ``MAX_EVIDENCE_CEILING_DAYS``, or a
-            window exceeds the ceiling.
+        ValueError: A variable is malformed, the ceiling is disabled or above ``MAX_EVIDENCE_CEILING_DAYS``, a
+            window exceeds the ceiling, or the worker suspicion window exceeds ``MAX_WORKER_SUSPICION_RETENTION_DAYS``.
     """
     raw_ceiling = environ.get(EVIDENCE_CEILING_ENV)
     if raw_ceiling is None:
@@ -259,10 +289,22 @@ def load_retention_policy(environ: Mapping[str, str] = os.environ) -> RetentionP
         raise ValueError(f"{EVIDENCE_CEILING_ENV} cannot be disabled; set at most {MAX_EVIDENCE_CEILING_DAYS} days")
     else:
         ceiling_days = _parse_positive_whole_number(EVIDENCE_CEILING_ENV, raw_ceiling, "days")
+    raw_worker_suspicion = environ.get(WORKER_SUSPICION_RETENTION_ENV)
+    worker_suspicion = None
+    if raw_worker_suspicion is not None:
+        worker_suspicion_days = _parse_positive_whole_number(WORKER_SUSPICION_RETENTION_ENV, raw_worker_suspicion, "days")
+        # Checked before building the timedelta, which itself overflows on a large enough value.
+        if worker_suspicion_days > MAX_WORKER_SUSPICION_RETENTION_DAYS:
+            raise ValueError(
+                f"{WORKER_SUSPICION_RETENTION_ENV} must be at most {MAX_WORKER_SUSPICION_RETENTION_DAYS} days, "
+                f"got {raw_worker_suspicion!r}",
+            )
+        worker_suspicion = timedelta(days=worker_suspicion_days)
     return RetentionPolicy(
         text=_parse_window(environ, TEXT_RETENTION_ENV, DEFAULT_TEXT_RETENTION_DAYS),
         ipaddr=_parse_window(environ, IPADDR_RETENTION_ENV, DEFAULT_IPADDR_RETENTION_DAYS),
         ceiling=timedelta(days=ceiling_days),
+        worker_suspicion=worker_suspicion,
     )
 
 
@@ -439,11 +481,20 @@ class RetentionPassResult:
     """The number of worker report records deleted at the ceiling."""
     problem_job_ipaddr_redacted: int
     """The number of worker report records with IP addresses redacted."""
+    worker_suspicion_deleted: int
+    """The number of worker suspicion history rows deleted."""
 
     @property
     def total(self) -> int:
         """Return the number of rows changed or deleted across all steps."""
-        return self.anonymized + self.text_redacted + self.ipaddr_redacted + self.problem_jobs_deleted + self.problem_job_ipaddr_redacted
+        return (
+            self.anonymized
+            + self.text_redacted
+            + self.ipaddr_redacted
+            + self.problem_jobs_deleted
+            + self.problem_job_ipaddr_redacted
+            + self.worker_suspicion_deleted
+        )
 
     def filled_batch(self, batch_size: int) -> bool:
         """Return whether any step changed or deleted ``batch_size`` rows, so more rows may remain for that step."""
@@ -455,6 +506,7 @@ class RetentionPassResult:
                 self.ipaddr_redacted,
                 self.problem_jobs_deleted,
                 self.problem_job_ipaddr_redacted,
+                self.worker_suspicion_deleted,
             )
         )
 
@@ -970,6 +1022,15 @@ def _redact_problem_job_ipaddr_batch(cutoff: datetime, batch_size: int) -> int:
     return result.rowcount
 
 
+def _delete_worker_suspicion_batch(cutoff: datetime, batch_size: int) -> int:
+    """Delete the oldest worker suspicion history rows past the window whose owner is not under moderation action."""
+    due = and_(WorkerSuspicionEvent.created < cutoff, ~_account_restricted(WorkerSuspicionEvent.user_id))
+    expired = select(WorkerSuspicionEvent.id).where(due).order_by(WorkerSuspicionEvent.created, WorkerSuspicionEvent.id).limit(batch_size)
+    with db.engine.begin() as connection:
+        result = connection.execute(delete(WorkerSuspicionEvent).where(WorkerSuspicionEvent.id.in_(expired), due))
+    return result.rowcount
+
+
 def apply_evidence_retention(
     policy: RetentionPolicy | None = None,
     *,
@@ -981,7 +1042,8 @@ def apply_evidence_retention(
     its own transaction, and skips events it already finished, so repeated passes drain a backlog and then do nothing.
     Anonymizing first leaves the later steps nothing to do for those events. The worker report records follow the
     same ceiling and address window: a step deletes at most ``batch_size`` of them past the ceiling, then another
-    removes the address from at most ``batch_size`` past the address window. A step whose window is None does not
+    removes the address from at most ``batch_size`` past the address window. A last step deletes at most
+    ``batch_size`` worker suspicion history rows past their window, oldest first. A step whose window is None does not
     run.
 
     Every step skips rows under moderation action (``_under_moderation_action``, or ``_account_restricted`` for a
@@ -1012,12 +1074,16 @@ def apply_evidence_retention(
     problem_job_ipaddr_redacted = 0
     if policy.ipaddr is not None:
         problem_job_ipaddr_redacted = _redact_problem_job_ipaddr_batch(now - policy.ipaddr, batch_size)
+    worker_suspicion_deleted = 0
+    if policy.worker_suspicion is not None:
+        worker_suspicion_deleted = _delete_worker_suspicion_batch(now - policy.worker_suspicion, batch_size)
     return RetentionPassResult(
         anonymized=anonymized,
         text_redacted=text_redacted,
         ipaddr_redacted=ipaddr_redacted,
         problem_jobs_deleted=problem_jobs_deleted,
         problem_job_ipaddr_redacted=problem_job_ipaddr_redacted,
+        worker_suspicion_deleted=worker_suspicion_deleted,
     )
 
 

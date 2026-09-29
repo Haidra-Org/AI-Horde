@@ -4,10 +4,11 @@
 
 """Parse the moderation evidence retention settings, refusing any value that would weaken the ceiling.
 
-Also parse the per-subject countermeasure settings, which accept only positive whole numbers.
+Also parse the per-subject countermeasure settings, which accept only positive whole numbers, and the worker
+suspicion history window.
 
-Also check that every event column has a decided retention fate, and that the evidence tables build outside
-PostgreSQL with UTC capture-time defaults.
+Also check that every event column has a decided retention fate, and that the evidence and worker history tables
+build outside PostgreSQL with UTC capture-time defaults.
 """
 
 from __future__ import annotations
@@ -18,14 +19,17 @@ import pytest
 import sqlalchemy
 
 from horde.classes.base.prompt_moderation import PromptModerationEvent, PromptModerationNote
+from horde.classes.base.worker import WorkerSuspicionEvent
 from horde.database.prompt_moderation import (
     DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD,
     EVENT_COLUMN_RETENTION,
     EVIDENCE_CEILING_ENV,
     IPADDR_RETENTION_ENV,
+    MAX_WORKER_SUSPICION_RETENTION_DAYS,
     MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV,
     REMOVAL_FLAGS,
     TEXT_RETENTION_ENV,
+    WORKER_SUSPICION_RETENTION_ENV,
     RetentionFate,
     RetentionPolicy,
     load_positive_setting,
@@ -65,7 +69,7 @@ def test_window_equal_to_the_ceiling_is_accepted() -> None:
     assert policy.text == policy.ipaddr == policy.ceiling
 
 
-@pytest.mark.parametrize("variable", [TEXT_RETENTION_ENV, IPADDR_RETENTION_ENV, EVIDENCE_CEILING_ENV])
+@pytest.mark.parametrize("variable", [TEXT_RETENTION_ENV, IPADDR_RETENTION_ENV, EVIDENCE_CEILING_ENV, WORKER_SUSPICION_RETENTION_ENV])
 @pytest.mark.parametrize("raw", ["", "0", "-5", "1.5", "thirty", "30d"])
 def test_malformed_values_are_refused_with_the_variable_name(variable: str, raw: str) -> None:
     with pytest.raises(ValueError, match=variable):
@@ -120,6 +124,62 @@ def test_policy_constructed_directly_enforces_the_same_bounds(
 ) -> None:
     with pytest.raises(ValueError):
         RetentionPolicy(text=text, ipaddr=ipaddr, ceiling=ceiling)
+
+
+def test_worker_suspicion_history_is_kept_when_unset() -> None:
+    assert load_retention_policy({}).worker_suspicion is None
+
+
+def test_worker_suspicion_window_is_read_in_days_and_not_bounded_by_the_ceiling() -> None:
+    policy = load_retention_policy(
+        {
+            TEXT_RETENTION_ENV: "none",
+            IPADDR_RETENTION_ENV: "none",
+            EVIDENCE_CEILING_ENV: "30",
+            WORKER_SUSPICION_RETENTION_ENV: " 730 ",
+        },
+    )
+
+    assert policy.worker_suspicion == timedelta(days=730)
+
+
+@pytest.mark.parametrize("spelling", ["none", "None"])
+def test_worker_suspicion_window_has_no_none_spelling(spelling: str) -> None:
+    with pytest.raises(ValueError, match=WORKER_SUSPICION_RETENTION_ENV):
+        load_retention_policy({WORKER_SUSPICION_RETENTION_ENV: spelling})
+
+
+def test_policy_constructed_directly_refuses_a_non_positive_worker_suspicion_window() -> None:
+    with pytest.raises(ValueError, match=WORKER_SUSPICION_RETENTION_ENV):
+        RetentionPolicy(text=None, ipaddr=None, ceiling=timedelta(days=30), worker_suspicion=timedelta(0))
+
+
+def test_the_longest_worker_suspicion_window_is_accepted_and_its_cutoff_computes() -> None:
+    policy = load_retention_policy({WORKER_SUSPICION_RETENTION_ENV: str(MAX_WORKER_SUSPICION_RETENTION_DAYS)})
+
+    assert policy.worker_suspicion_days == MAX_WORKER_SUSPICION_RETENTION_DAYS
+    assert policy.worker_suspicion is not None
+    assert datetime.utcnow() - policy.worker_suspicion < datetime.utcnow()
+
+
+@pytest.mark.parametrize("raw", [str(MAX_WORKER_SUSPICION_RETENTION_DAYS + 1), "999999999", "99999999999999999999"])
+def test_a_worker_suspicion_window_past_the_bound_is_refused_with_the_variable_name(raw: str) -> None:
+    with pytest.raises(ValueError, match=f"{WORKER_SUSPICION_RETENTION_ENV} must be at most"):
+        load_retention_policy({WORKER_SUSPICION_RETENTION_ENV: raw})
+
+
+def test_policy_constructed_directly_refuses_a_worker_suspicion_window_past_the_bound() -> None:
+    with pytest.raises(ValueError, match=f"{WORKER_SUSPICION_RETENTION_ENV} must be at most"):
+        RetentionPolicy(
+            text=None,
+            ipaddr=None,
+            ceiling=timedelta(days=30),
+            worker_suspicion=timedelta(days=MAX_WORKER_SUSPICION_RETENTION_DAYS + 1),
+        )
+
+
+def test_an_unset_worker_suspicion_window_reports_no_days() -> None:
+    assert load_retention_policy({}).worker_suspicion_days is None
 
 
 def test_every_event_column_has_a_retention_fate() -> None:
@@ -197,3 +257,20 @@ def test_text_location_is_reset_with_the_text_and_has_no_flag_of_its_own() -> No
     assert text_location == ["text_state"]
     assert RetentionFate.TEXT_LOCATION not in REMOVAL_FLAGS
     assert {"text_sha256", "text_chars"} <= {column for column, fate in EVENT_COLUMN_RETENTION.items() if fate == RetentionFate.TEXT}
+
+
+def test_worker_suspicion_table_builds_on_sqlite_with_utc_capture_default() -> None:
+    engine = sqlalchemy.create_engine("sqlite://")
+    WorkerSuspicionEvent.metadata.create_all(engine, tables=[WorkerSuspicionEvent.__table__])
+    before = datetime.utcnow().replace(microsecond=0)
+    with engine.begin() as connection:
+        connection.execute(
+            sqlalchemy.text(
+                "INSERT INTO worker_suspicion_events (worker_id, worker_name, user_id, suspicion_id, detail) "
+                "VALUES ('00000000-0000-0000-0000-000000000001', 'w', 1, 2, 'd')",
+            ),
+        )
+        created = connection.execute(sqlalchemy.text("SELECT created FROM worker_suspicion_events")).scalar_one()
+    engine.dispose()
+    after = datetime.utcnow() + timedelta(seconds=1)
+    assert before <= datetime.fromisoformat(str(created)) <= after

@@ -32,7 +32,7 @@ USER_PROBLEM_JOBS_STUB = (
 
 The worker key is unnamed, as ``db.create_all()`` built it, so PostgreSQL gives it the default name the migration drops.
 """
-MODERATION_TABLES = ("prompt_moderation_events", "prompt_moderation_notes")
+MODERATION_TABLES = ("prompt_moderation_events", "prompt_moderation_notes", "worker_suspicion_events")
 """The tables the migration creates, which the ORM models must build identically."""
 
 
@@ -77,7 +77,7 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             assert "sharedkey_id IS NOT NULL" in str(predicate)
             inspector = sqlalchemy.inspect(connection)
             tables = set(inspector.get_table_names())
-            assert {"prompt_moderation_events", "prompt_moderation_notes"} <= tables
+            assert {"prompt_moderation_events", "prompt_moderation_notes", "worker_suspicion_events"} <= tables
             columns = {column["name"]: column for column in inspector.get_columns("prompt_moderation_events")}
             assert {"ipaddr", "ip_subject_key", "models"} <= set(columns)
             # Retention removes identity at the ceiling, so the account column accepts null.
@@ -118,6 +118,7 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             rank_predicate = rank_index.get("dialect_options", {}).get("postgresql_where")
             assert rank_predicate is not None
             assert "evaluating_kudos > 0" in str(rank_predicate)
+            assert "ix_worker_suspicion_events_user_id" in {index["name"] for index in inspector.get_indexes("worker_suspicion_events")}
             problem_job_columns = {column["name"]: column for column in inspector.get_columns("user_problem_jobs")}
             # Retention removes a worker report's address before it deletes the report.
             assert problem_job_columns["ipaddr"]["nullable"]
@@ -142,6 +143,7 @@ def test_events_captured_before_the_text_location_columns_are_queued_for_upload(
     engine = _schema_engine(pg_dsn, schema_name)
     try:
         with engine.connect() as connection:
+            connection.execute(sqlalchemy.text(USERS_STUB))
             connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
             connection.execute(sqlalchemy.text(WORKERS_STUB))
             connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
@@ -213,6 +215,7 @@ def _catalog(connection: sqlalchemy.Connection, schema_name: str) -> dict[str, A
 def _moderation_catalogs(pg_dsn: str) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
     """Build the moderation tables from the migration and from the ORM models in two schemas and return both catalogs."""
     from horde.classes.base.prompt_moderation import PromptModerationEvent, PromptModerationNote
+    from horde.classes.base.worker import WorkerSuspicionEvent
 
     migration_schema = new_test_schema_name("horde_moderation_parity_sql")
     orm_schema = new_test_schema_name("horde_moderation_parity_orm")
@@ -230,7 +233,7 @@ def _moderation_catalogs(pg_dsn: str) -> Iterator[tuple[dict[str, Any], dict[str
             _apply_migration(connection)
             migration_catalog = _catalog(connection, migration_schema)
         with orm_engine.connect() as connection:
-            for table in (PromptModerationEvent.__table__, PromptModerationNote.__table__):
+            for table in (PromptModerationEvent.__table__, PromptModerationNote.__table__, WorkerSuspicionEvent.__table__):
                 table.create(connection)
             orm_catalog = _catalog(connection, orm_schema)
         yield migration_catalog, orm_catalog

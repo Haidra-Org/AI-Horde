@@ -61,6 +61,7 @@ api.add_resource(base.OperationsBlockWorkerIP, "/operations/block_worker_ipaddr/
 api.add_resource(moderation.OperationsModeration, "/operations/moderation")
 api.add_resource(moderation.OperationsPromptEvents, "/operations/moderation/prompts")
 api.add_resource(moderation.OperationsPromptNotes, "/operations/moderation/prompts/<int:event_id>/notes")
+api.add_resource(moderation.OperationsWorkerSuspicionEvents, "/operations/moderation/worker_suspicion_events")
 api.add_resource(stable.Interrogate, "/interrogate/async")
 api.add_resource(stable.InterrogationStatus, "/interrogate/status/<string:id>")
 api.add_resource(stable.InterrogatePop, "/interrogate/pop")
