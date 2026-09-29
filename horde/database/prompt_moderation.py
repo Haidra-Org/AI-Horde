@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Capture actionable prompt evidence and decay it on schedule.
+"""Capture actionable prompt evidence, list it for moderators, and decay it on schedule.
 
 Evidence writes use a separate transaction, with no foreign-key dependency on
 the submitting transaction. A rejected submission rollback cannot erase them.
@@ -24,17 +24,19 @@ retention pass and the privacy document read it when they run. ``EVENT_COLUMN_RE
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum, auto
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypedDict
 
 from sqlalchemy import ColumnElement, Select, and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from horde.classes.base.prompt_moderation import (
     MAX_ORIGIN_TEXT_CHARACTERS,
@@ -51,15 +53,10 @@ from horde.logger import logger
 
 TEXT_RETENTION_ENV: str = "HORDE_MODERATION_TEXT_RETENTION_DAYS"
 """The environment variable for text retention."""
-
-
 IPADDR_RETENTION_ENV: str = "HORDE_MODERATION_IPADDR_RETENTION_DAYS"
 """The environment variable for IP address retention."""
-
-
 EVIDENCE_CEILING_ENV: str = "HORDE_MODERATION_EVIDENCE_CEILING_DAYS"
 """The environment variable for the evidence ceiling."""
-
 
 DEFAULT_TEXT_RETENTION_DAYS: int | None = None
 """The default text retention window in days, or None to keep text until the ceiling.
@@ -67,22 +64,17 @@ DEFAULT_TEXT_RETENTION_DAYS: int | None = None
 Text is kept until the ceiling by default so that evidence no moderator has reviewed yet stays reviewable for the whole
 evidence period. An operator can set a shorter window.
 """
-
-
 DEFAULT_IPADDR_RETENTION_DAYS: int = 30
 """The default IP address retention window in days.
 
 The raw address serves the review of recent activity. After the window the address pseudonym still links the event
 to the same IP subject, so the address itself is not kept.
 """
-
-
 DEFAULT_EVIDENCE_CEILING_DAYS: int = 365
 """The default evidence ceiling in days, the longest ``MAX_EVIDENCE_CEILING_DAYS`` permits.
 
 The ceiling anonymizes only events not under moderation action.
 """
-
 
 MAX_EVIDENCE_CEILING_DAYS: int = 365
 """The maximum evidence ceiling in days.
@@ -91,10 +83,8 @@ Identifying data on an event that no moderation action has touched is kept for a
 moderation action are exempt from the ceiling, so it bounds only records that serve no enforcement purpose.
 """
 
-
 NO_SEPARATE_WINDOW: str = "none"
 """Indicate that there is no separate retention window for this type of data."""
-
 
 MAX_EVIDENCE_CHARACTERS: int = 16000
 """The most characters of each prompt stage an event keeps.
@@ -103,7 +93,6 @@ It bounds the size of an event row and of a listing page, which returns up to 10
 longer stage is clipped and the event marked ``text_truncated``.
 """
 
-
 MAX_PROXIED_ACCOUNT_CHARACTERS: int = 1000
 """The most characters of a proxied account an event keeps.
 
@@ -111,7 +100,6 @@ The request parser does not bound the value, and an accepted request stores it i
 request never reaches that column, so this keeps every value an accepted request could carry while bounding what a
 refused one writes.
 """
-
 
 CLEANUP_BATCH_SIZE: int = 1000
 """The most rows each retention step changes or deletes in one pass.
@@ -278,7 +266,6 @@ a column of an event under moderation action, and notes are separate rows no ste
 a column without a fate, so a new column cannot be retained or cleared by accident.
 """
 
-
 REMOVAL_FLAGS: Mapping[RetentionFate, str] = MappingProxyType(
     {
         RetentionFate.TEXT: "text_redacted",
@@ -384,6 +371,19 @@ class PromptEvidence:
     """The model names the request asked for."""
 
 
+class NoteRecord(TypedDict):
+    """Represent a moderator note as the listing and the note endpoint return it."""
+
+    id: int
+    """The ID of the note record."""
+    author_id: int
+    """The ID of the author of the note."""
+    note: str
+    """The content of the note."""
+    created: datetime
+    """The timestamp when the note was created."""
+
+
 def subjectless_origin_text(origin: str | None, ip_subject: str | None) -> str | None:
     """Return the origin text evidence keeps for an origin that is not blank and has no IP subject.
 
@@ -454,6 +454,149 @@ def record_prompt_evidence(evidence: PromptEvidence) -> int | None:
         # SQLAlchemy's exception string can contain bound prompt text. Do not log it.
         logger.error("Prompt moderation evidence write failed ({})", type(error).__name__)
         return None
+
+
+def _ip_subject_criterion(ip_subject: str) -> ColumnElement[bool]:
+    """Return the filter selecting the events of one IP subject.
+
+    An event with an address pseudonym matches by it alone. An event without one, captured while the deployment had no
+    usable secret, matches by its address. Each branch has its own partial index.
+    """
+    unkeyed_match = and_(PromptModerationEvent.ip_subject_key.is_(None), PromptModerationEvent.ipaddr == ip_subject)
+    subject_key = CounterMeasures.ip_subject_key(ip_subject)
+    if subject_key is None:
+        return unkeyed_match
+    return or_(PromptModerationEvent.ip_subject_key == subject_key, unkeyed_match)
+
+
+def get_prompt_events(
+    *,
+    limit: int,
+    before_id: int | None = None,
+    event_id: int | None = None,
+    user_id: int | None = None,
+    proxied_account: str | None = None,
+    ip_subject: str | None = None,
+    ip_subject_key: str | None = None,
+    worker_id: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> dict[str, Any]:
+    """Return a bounded, newest-first page of evidence with its notes.
+
+    Args:
+        limit: Maximum number of events in the page.
+        before_id: Exclusive descending cursor; only events with a lower ID are returned.
+        event_id: Restrict to one event.
+        user_id: Restrict to one account.
+        proxied_account: Restrict to one proxied account.
+        ip_subject: Restrict to one IP subject (``CounterMeasures.parse_ip_subject``). It matches by address
+            pseudonym, so an event stays selected after its address is removed.
+        ip_subject_key: Restrict to one address pseudonym, matched exactly.
+        worker_id: Restrict to one reporting worker.
+        since: Inclusive naive UTC lower bound on the capture time.
+        until: Exclusive naive UTC upper bound on the capture time.
+
+    Returns:
+        ``events``, each with its notes oldest first, and ``next_cursor``, the ``before_id`` of the next page or None.
+    """
+    statement = select(PromptModerationEvent)
+    if before_id is not None:
+        statement = statement.where(PromptModerationEvent.id < before_id)
+    if event_id is not None:
+        statement = statement.where(PromptModerationEvent.id == event_id)
+    if user_id is not None:
+        statement = statement.where(PromptModerationEvent.user_id == user_id)
+    if proxied_account is not None:
+        statement = statement.where(PromptModerationEvent.proxied_account == proxied_account)
+    if ip_subject is not None:
+        statement = statement.where(_ip_subject_criterion(ip_subject))
+    if ip_subject_key is not None:
+        statement = statement.where(PromptModerationEvent.ip_subject_key == ip_subject_key)
+    if worker_id is not None:
+        statement = statement.where(PromptModerationEvent.worker_id == worker_id)
+    if since is not None:
+        statement = statement.where(PromptModerationEvent.created >= since)
+    if until is not None:
+        statement = statement.where(PromptModerationEvent.created < until)
+    statement = statement.order_by(PromptModerationEvent.id.desc()).limit(limit + 1)
+    rows = list(db.session.execute(statement).scalars())
+    notes: dict[int, list[NoteRecord]] = defaultdict(list)
+    if rows[:limit]:
+        for note in db.session.execute(
+            select(PromptModerationNote)
+            .where(PromptModerationNote.event_id.in_([evidence.id for evidence in rows[:limit]]))
+            .order_by(PromptModerationNote.id),
+        ).scalars():
+            notes[note.event_id].append(_note_record(note))
+    events = []
+    for evidence in rows[:limit]:
+        # Deliberate allowlist: never serialize ORM __dict__ or arbitrary relationships.
+        events.append(
+            {
+                "id": evidence.id,
+                "created": evidence.created,
+                "user_id": evidence.user_id,
+                "request_id": evidence.request_id,
+                "worker_id": evidence.worker_id,
+                "proxied_account": evidence.proxied_account,
+                "ipaddr": evidence.ipaddr,
+                "ip_subject_key": evidence.ip_subject_key,
+                "origin_text": evidence.origin_text,
+                "models": evidence.models,
+                "reason": evidence.reason,
+                "outcome": evidence.outcome,
+                "submitted_prompt": evidence.submitted_prompt,
+                "moderation_prompt": evidence.moderation_prompt,
+                "effective_prompt": evidence.effective_prompt,
+                "text_truncated": evidence.text_truncated,
+                "text_redacted": evidence.text_redacted,
+                "ipaddr_redacted": evidence.ipaddr_redacted,
+                "anonymized": evidence.anonymized,
+                "notes": notes.get(evidence.id, []),
+            }
+        )
+    return {
+        "events": events,
+        "next_cursor": events[-1]["id"] if len(rows) > limit else None,
+    }
+
+
+def _note_record(note: PromptModerationNote) -> NoteRecord:
+    return {
+        "id": note.id,
+        "author_id": note.author_id,
+        "note": note.note,
+        "created": note.created,
+    }
+
+
+def add_prompt_note(*, event_id: int, author_id: int, note: str) -> NoteRecord | None:
+    """Attach a note to an event.
+
+    An anonymized event takes notes too, and they are stored. Postgres checks the note's foreign key with a key-share
+    lock on the event row, held until commit, which orders the note against ``_anonymize_batch``.
+
+    Args:
+        event_id: Event the note is about.
+        author_id: Moderator writing the note.
+        note: Validated note text.
+
+    Returns:
+        The stored note, or None when the event does not exist.
+    """
+    # Own this transaction explicitly; unrelated ORM mutations must not be committed here.
+    # Own this transaction explicitly; unrelated ORM mutations must not be committed here. Events are never deleted,
+    # so an event that exists here still exists when the note is inserted.
+    with Session(db.engine, expire_on_commit=False) as session, session.begin():
+        event = session.execute(
+            select(PromptModerationEvent.id).where(PromptModerationEvent.id == event_id),
+        ).scalar_one_or_none()
+        if event is None:
+            return None
+        record = PromptModerationNote(event_id=event_id, author_id=author_id, note=note)
+        session.add(record)
+    return _note_record(record)
 
 
 def _account_restricted(user_id: ColumnElement[int]) -> ColumnElement[bool]:

@@ -156,6 +156,7 @@ handle_request_not_found = api.errorhandler(e.RequestNotFound)(e.handle_bad_requ
 handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_requests)
 handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
 handle_thing_not_found = api.errorhandler(e.ThingNotFound)(e.handle_bad_requests)
+handle_moderation_event_not_found = api.errorhandler(e.ModerationEventNotFound)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
 handle_aborted_gen = api.errorhandler(e.AbortedGen)(e.handle_bad_requests)

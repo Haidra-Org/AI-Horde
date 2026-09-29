@@ -2,8 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from datetime import UTC, datetime
+from typing import Any, override
+
 from flask_restx import fields, reqparse
 
+from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS, PromptModerationOutcome, PromptModerationReason
 from horde.enums import WarningMessage
 from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
@@ -40,6 +44,23 @@ def derive_submitted_request_model(api, name, input_model, overrides=None):
     )
     fields_by_name.update(overrides or {})
     return api.model(name, fields_by_name)
+
+
+class UTCDateTime(fields.DateTime):
+    """ISO 8601 timestamp that always carries an explicit ``+00:00`` offset.
+
+    Timestamps are stored as naive UTC. flask-restx formats a naive value without an offset, which clients then read
+    as their local time, so a naive value is marked as UTC before formatting.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(dt_format="iso8601", **kwargs)
+
+    @override
+    def format_iso8601(self, dt: datetime) -> str:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat()
 
 
 class Parsers:
@@ -1771,6 +1792,104 @@ class Models:
                     description="The IP address or CIDR to remove from timeout.",
                     min_length=7,
                     max_length=40,
+                ),
+            },
+        )
+        self.response_model_prompt_moderation_note = api.model(
+            "PromptModerationNote",
+            {
+                "id": fields.Integer(description="Note identifier."),
+                "author_id": fields.Integer(description="Moderator who wrote the note."),
+                "note": fields.String(description=f"Note text, at most {MAX_NOTE_CHARACTERS} characters."),
+                "created": UTCDateTime(description="UTC time the note was written."),
+            },
+        )
+        self.input_model_prompt_moderation_note = api.model(
+            "PromptModerationNoteInput",
+            {
+                "note": fields.String(required=True, description=f"Note text, 1 to {MAX_NOTE_CHARACTERS} characters."),
+            },
+        )
+        self.response_model_prompt_moderation_event = api.model(
+            "PromptModerationEvent",
+            {
+                "id": fields.Integer(description="Evidence identifier, also the pagination cursor."),
+                "created": UTCDateTime(description="UTC capture time in ISO 8601 with a +00:00 offset."),
+                "user_id": fields.Integer(description="Submitting account; null once the event is anonymized."),
+                "request_id": fields.String(description="Waiting request ID; null for a rejected submission."),
+                "worker_id": fields.String(
+                    description="Worker that reported the job, for worker reports; it identifies the reporter, not the subject.",
+                ),
+                "proxied_account": fields.String(description="Service-account subject, when one was supplied."),
+                "ipaddr": fields.String(
+                    description="Submitting address; an IPv6 address is recorded as its /64 network.",
+                ),
+                "ip_subject_key": fields.String(
+                    description="Address pseudonym, equal for events from the same IPv4 address or IPv6 /64; it "
+                    "outlives ipaddr and is null once the event is anonymized. Group or filter events by it; it is not "
+                    "an address.",
+                ),
+                "origin_text": fields.String(
+                    description="The origin as a trusted proxy reported it when it was not an IP address; null "
+                    "otherwise or once the address window has passed.",
+                ),
+                "models": fields.List(fields.String, description="Model names the request asked for."),
+                "reason": fields.String(
+                    description="Why the evidence was retained.",
+                    enum=[reason.value for reason in PromptModerationReason],
+                ),
+                "outcome": fields.String(
+                    description="What happened to the request.",
+                    enum=[outcome.value for outcome in PromptModerationOutcome],
+                ),
+                "submitted_prompt": fields.String(description="Original submission; null when provenance is unknown."),
+                "moderation_prompt": fields.String(description="Moderation input after style expansion, when known."),
+                "effective_prompt": fields.String(description="Prompt a worker received; null for a rejection."),
+                "text_truncated": fields.Boolean(description="A prompt stage exceeded the evidence length limit."),
+                "text_redacted": fields.Boolean(
+                    description="Retention ran its text step on the event, past the text window or at anonymization, "
+                    "whether or not there was prompt text to remove.",
+                ),
+                "ipaddr_redacted": fields.Boolean(
+                    description="Retention ran its address step on the event, past the address window or at "
+                    "anonymization, whether or not there was an address to remove.",
+                ),
+                "anonymized": fields.Boolean(
+                    description="Retention removed the account, proxied account, address, address pseudonym, request "
+                    "and job identifiers and prompt stages; notes are kept.",
+                ),
+                "notes": fields.List(
+                    fields.Nested(self.response_model_prompt_moderation_note),
+                    description="Moderator notes, oldest first.",
+                ),
+            },
+        )
+        self.response_model_prompt_moderation_retention = api.model(
+            "PromptModerationRetention",
+            {
+                "text_days": fields.Integer(
+                    description="Days until prompt stages are removed from an event not under moderation action; null "
+                    "keeps them until anonymization.",
+                ),
+                "ipaddr_days": fields.Integer(
+                    description="Days until the address is removed from an event not under moderation action; null "
+                    "keeps it until anonymization.",
+                ),
+                "ceiling_days": fields.Integer(
+                    description="Days until an event not under moderation action is anonymized; the reason, outcome, "
+                    "models, capture time, reporting worker and notes are kept. An event with a note, or of a flagged "
+                    "or suspicious account, is kept whole.",
+                ),
+            },
+        )
+        self.response_model_prompt_moderation_events = api.model(
+            "PromptModerationEvents",
+            {
+                "events": fields.List(fields.Nested(self.response_model_prompt_moderation_event)),
+                "next_cursor": fields.Integer(description="Pass as before_id to read the next page; null on the last page."),
+                "retention": fields.Nested(
+                    self.response_model_prompt_moderation_retention,
+                    description="Retention windows in force, counted from capture; they apply only to events not under moderation action.",
                 ),
             },
         )
