@@ -1920,6 +1920,62 @@ class Models:
                 ),
             },
         )
+        self.response_model_moderation_suspicion_reason = api.model(
+            "ModerationSuspicionReason",
+            {
+                "id": fields.Integer(description="Stable numeric suspicion reason code."),
+                "name": fields.String(description="Stable symbolic suspicion reason name."),
+                "description": fields.String(description="Human-readable reason."),
+                "count": fields.Integer(description="Number of currently active reports for this reason."),
+            },
+        )
+        self.response_model_promotion_review_user = api.model(
+            "PromotionReviewUser",
+            {
+                "id": self.response_model_user_details["id"],
+                "username": self.response_model_user_details["username"],
+                "last_active": UTCDateTime(description="The UTC time the account was last active."),
+                "account_age": self.response_model_user_details["account_age"],
+                "kudos": self.response_model_user_details["kudos"],
+                "evaluating_kudos": self.response_model_user_details["evaluating_kudos"],
+                "suspicious": self.response_model_user_details["suspicious"],
+                "suspicion_reasons": fields.List(
+                    fields.Nested(self.response_model_moderation_suspicion_reason),
+                    description="The active suspicion reasons, by code.",
+                ),
+                "flagged": self.response_model_user_details["flagged"],
+                "deleted": self.response_model_user_details["deleted"],
+                "vpn": self.response_model_user_details["vpn"],
+                "worker_count": self.response_model_user_details["worker_count"],
+                "paused_worker_count": fields.Integer(description="The number of the account's workers that are paused."),
+                "worker_kudos": fields.Float(description="The kudos the account's workers earned."),
+                "worker_fulfilments": fields.Integer(description="The number of jobs the account's workers fulfilled."),
+                "contact": self.response_model_user_details["contact"],
+                "admin_comment": self.response_model_user_details["admin_comment"],
+            },
+        )
+        self.response_model_moderation_overview = api.model(
+            "ModerationOverview",
+            {
+                "promotion_threshold": fields.Float(
+                    description="The evaluating kudos above which automatic promotion applies; null when it has no configured threshold.",
+                ),
+                "suspicion_threshold": fields.Integer(
+                    description="The report count at which an account counts as suspicious.",
+                ),
+                "worker_suspicion_threshold": fields.Integer(
+                    description="The report count at which a worker counts as suspicious.",
+                ),
+                "promotion_blocked_users": fields.List(
+                    fields.Nested(self.response_model_promotion_review_user),
+                    description="Accounts that meet every promotion criterion but suspicion, highest evaluating kudos first.",
+                ),
+                "promotion_eligible_users": fields.List(
+                    fields.Nested(self.response_model_promotion_review_user),
+                    description="Accounts automatic promotion will trust, highest evaluating kudos first.",
+                ),
+            },
+        )
         self.input_model_add_ip_timeout = api.model(
             "AddTimeoutIPInput",
             {
