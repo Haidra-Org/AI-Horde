@@ -8,7 +8,8 @@ Account/request identifiers deliberately have no foreign keys: rejected requests
 have no waiting row, and evidence must survive request expiry or account deletion.
 Only notes reference evidence, so deleting an event removes its notes.
 
-Captured values never change.
+Captured values never change. Retention removes text, address and identity on schedule and records each removal in
+a flag, so a null value reads as removed rather than never known.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import column, false
+from sqlalchemy import column, false, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped
 
@@ -64,7 +65,11 @@ class PromptModerationEvent(db.Model):
 
     __tablename__ = "prompt_moderation_events"
     __table_args__ = (
-        # Serves time-bounded browsing (since/until).
+        # One partial index per retention step, so each pass reads only events that step has not finished.
+        db.Index("ix_prompt_moderation_text_pending", "created", "id", postgresql_where=text("NOT text_redacted")),
+        db.Index("ix_prompt_moderation_ipaddr_pending", "created", "id", postgresql_where=text("NOT ipaddr_redacted")),
+        db.Index("ix_prompt_moderation_anonymize_pending", "created", "id", postgresql_where=text("NOT anonymized")),
+        # Serves time-bounded browsing (since/until), which the partial indexes cannot once events finish a step.
         db.Index("ix_prompt_moderation_created", "created"),
         db.Index("ix_prompt_moderation_user_id", "user_id", "id"),
         # Serves a proxied-account filter with or without an account; only service accounts supply one.
@@ -100,12 +105,12 @@ class PromptModerationEvent(db.Model):
     id: Mapped[int] = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True)
     """The event identifier, also the listing's descending cursor."""
     created: Mapped[datetime] = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, server_default=UtcNow())
-    """The naive UTC capture time.
+    """The naive UTC capture time, from which every retention window counts.
 
     The server default repeats the migration's, so a schema built from the models matches production.
     """
-    user_id: Mapped[int] = db.Column(db.Integer, nullable=False)
-    """The submitting account."""
+    user_id: Mapped[int | None] = db.Column(db.Integer)
+    """The submitting account; null once the event is anonymized."""
     request_id: Mapped[str | None] = db.Column(db.String(36))
     """The waiting request; null for a rejected submission, which never became one."""
     job_id: Mapped[str | None] = db.Column(db.String(36), unique=True)
@@ -119,7 +124,8 @@ class PromptModerationEvent(db.Model):
     ip_subject_key: Mapped[str | None] = db.Column(db.String(IP_SUBJECT_KEY_CHARACTERS))
     """The address pseudonym of ``ipaddr`` (``CounterMeasures.ip_subject_key``).
 
-    It is null when the origin has no IP subject or the deployment had no usable secret at capture.
+    It outlives the address, so the address filter keeps matching the event until it is anonymized. It is null when
+    the origin was not an IP subject or the deployment had no usable secret at capture.
     """
     origin_text: Mapped[str | None] = db.Column(db.String(MAX_ORIGIN_TEXT_CHARACTERS))
     """The request origin as a trusted proxy reported it, when it was not blank and had no IP subject.
@@ -146,10 +152,25 @@ class PromptModerationEvent(db.Model):
     """The prompt a worker received; null for a rejection."""
     text_truncated: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
     """Whether a prompt stage exceeded the evidence length limit and was clipped."""
+    text_redacted: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
+    """Whether retention ran its text step on the event, past the text window or at the ceiling.
+
+    It is set whether or not the event had prompt text to remove.
+    """
+    ipaddr_redacted: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
+    """Whether retention ran its address step on the event, past the address window or at the ceiling.
+
+    It is set whether or not the event had an address or origin text to remove.
+    """
+    anonymized: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
+    """Whether retention removed every identifying value at the ceiling."""
 
 
 class PromptModerationNote(db.Model):
-    """Represent a moderator's note on one event; notes never modify the captured evidence."""
+    """Represent a moderator's note on one event; notes never modify the captured evidence.
+
+    Retention and account wipes never delete a note, and a note exempts its event from retention.
+    """
 
     __tablename__ = "prompt_moderation_notes"
     __table_args__ = (db.Index("ix_prompt_moderation_notes_event_id", "event_id", "id"),)

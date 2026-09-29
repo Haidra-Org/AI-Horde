@@ -58,15 +58,33 @@ _USER_RECORD_UNITS: dict[UserRecordTypes, KudosUnit] = {
 
 
 class UserProblemJobs(db.Model):
+    """Represent one job a worker reported as suspected child sexual abuse material, counted for the problem alerts.
+
+    Moderation retention removes the address after the evidence address window and deletes the record at the
+    evidence ceiling, unless the account is under moderation action; wiping the account keeps its records.
+    """
+
     __tablename__ = "user_problem_jobs"
+    __table_args__ = (
+        # Lets the retention address step read only records that still carry an address.
+        db.Index(
+            "ix_user_problem_jobs_ipaddr_pending",
+            "created",
+            "id",
+            postgresql_where=db.text("ipaddr IS NOT NULL OR origin_text IS NOT NULL"),
+        ),
+    )
     id = db.Column(db.Integer, primary_key=True)
+    """The record identifier."""
     user_id = db.Column(
         db.Integer,
         db.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    """The account that submitted the job."""
     user = db.relationship("User", back_populates="problem_jobs")
+    """The account that submitted the job."""
     worker_id = db.Column(
         uuid_column_type(),
         nullable=False,
@@ -76,16 +94,24 @@ class UserProblemJobs(db.Model):
     It has no foreign key: the record is evidence about the reported account, so deleting the worker keeps it.
     """
     ipaddr = db.Column(db.String(39), nullable=True, index=True)
-    """The submitting request's IP subject (``CounterMeasures.ip_subject``)."""
+    """The submitting request's IP subject (``CounterMeasures.ip_subject``).
+
+    It is null when the origin was not an IP subject, and once retention removed it.
+    """
     origin_text = db.Column(db.String(MAX_ORIGIN_TEXT_CHARACTERS), nullable=True)
     """The request origin as a trusted proxy reported it, when it was not blank and had no IP subject.
 
     It is null when the origin had a subject, and once retention removed it with the address.
     """
     proxied_account = db.Column(db.String(255), nullable=True, index=True)
-    # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
+    """The account a service account submitted for, when it supplied one."""
     job_id = db.Column(uuid_column_type(), nullable=False)
+    """The reported job.
+
+    This is not a foreign key, so the job ID stays traceable in the logs after the job is deleted.
+    """
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    """The naive UTC time the report was recorded; the alert windows and retention count from it."""
 
 
 class UserStats(db.Model):

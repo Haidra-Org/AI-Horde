@@ -20,11 +20,12 @@ ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS submitted_prompt TEXT;
 RESET lock_timeout;
 
 -- No account or request foreign keys: a rejected submission has no waiting row, and
--- evidence must outlive request expiry and account deletion.
+-- evidence must outlive request expiry and account deletion. user_id is nullable because
+-- retention removes identity at the ceiling; the flags record which values retention removed.
 CREATE TABLE IF NOT EXISTS prompt_moderation_events (
   id BIGSERIAL PRIMARY KEY,
   created TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT timezone('utc', now()),
-  user_id INTEGER NOT NULL,
+  user_id INTEGER,
   request_id VARCHAR(36),
   job_id VARCHAR(36) UNIQUE,
   worker_id VARCHAR(36),
@@ -38,8 +39,19 @@ CREATE TABLE IF NOT EXISTS prompt_moderation_events (
   submitted_prompt TEXT,
   moderation_prompt TEXT,
   effective_prompt TEXT,
-  text_truncated BOOLEAN NOT NULL DEFAULT false
+  text_truncated BOOLEAN NOT NULL DEFAULT false,
+  text_redacted BOOLEAN NOT NULL DEFAULT false,
+  ipaddr_redacted BOOLEAN NOT NULL DEFAULT false,
+  anonymized BOOLEAN NOT NULL DEFAULT false
 );
+-- One partial index per retention step, so each pass reads only the events that step has
+-- not finished rather than rescanning every event older than its window.
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_text_pending
+  ON prompt_moderation_events (created, id) WHERE NOT text_redacted;
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_ipaddr_pending
+  ON prompt_moderation_events (created, id) WHERE NOT ipaddr_redacted;
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_anonymize_pending
+  ON prompt_moderation_events (created, id) WHERE NOT anonymized;
 -- Time-bounded browsing (since/until) reads every event, so it keeps a plain creation-time index.
 CREATE INDEX IF NOT EXISTS ix_prompt_moderation_created ON prompt_moderation_events (created);
 CREATE INDEX IF NOT EXISTS ix_prompt_moderation_user_id ON prompt_moderation_events (user_id, id);
@@ -55,7 +67,8 @@ CREATE INDEX IF NOT EXISTS ix_prompt_moderation_unkeyed_ipaddr_id
 CREATE INDEX IF NOT EXISTS ix_prompt_moderation_worker_id
   ON prompt_moderation_events (worker_id, id) WHERE worker_id IS NOT NULL;
 
--- Notes are separate so that writing one never edits captured evidence.
+-- Notes are separate so that writing one never edits captured evidence. Retention and account
+-- wipes never delete a note.
 CREATE TABLE IF NOT EXISTS prompt_moderation_notes (
   id BIGSERIAL PRIMARY KEY,
   event_id BIGINT NOT NULL REFERENCES prompt_moderation_events (id) ON DELETE CASCADE,
@@ -65,12 +78,18 @@ CREATE TABLE IF NOT EXISTS prompt_moderation_notes (
 );
 CREATE INDEX IF NOT EXISTS ix_prompt_moderation_notes_event_id ON prompt_moderation_notes (event_id, id);
 
--- A request origin that is not an IP address has no IP subject, so user_problem_jobs stores no
--- address for it. Dropping NOT NULL is metadata-only; the lock timeout fails rather than
--- queueing behind a long transaction.
+-- Worker report records follow the evidence address window and ceiling: retention nulls the
+-- address and origin text, then deletes the row, unless the account is under moderation action.
+-- Dropping NOT NULL or a constraint and adding a nullable column without a default are
+-- metadata-only; the lock timeout fails rather than queueing behind a long transaction. The
+-- partial index lets the address step read only rows that still carry an address or origin
+-- text; the ceiling step uses the existing created index.
 SET lock_timeout = '5s';
 ALTER TABLE user_problem_jobs ALTER COLUMN ipaddr DROP NOT NULL;
 ALTER TABLE user_problem_jobs ADD COLUMN IF NOT EXISTS origin_text VARCHAR(255);
 -- Worker report records are evidence about the reported account and must outlive the reporting worker.
 ALTER TABLE user_problem_jobs DROP CONSTRAINT IF EXISTS user_problem_jobs_worker_id_fkey;
 RESET lock_timeout;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_user_problem_jobs_ipaddr_pending
+  ON user_problem_jobs (created, id)
+  WHERE ipaddr IS NOT NULL OR origin_text IS NOT NULL;
