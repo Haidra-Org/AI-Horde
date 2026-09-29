@@ -34,6 +34,7 @@ from horde.classes.base.worker import Worker, WorkerMessage
 from horde.consts import HORDE_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
+from horde.database import prompt_moderation
 from horde.database.prompt_moderation import PromptEvidence, PromptModerationReason, record_prompt_evidence
 from horde.detection import prompt_checker
 from horde.discord import send_problem_user_notification
@@ -74,7 +75,7 @@ from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.telemetry import pyroscope_tag
 from horde.utils import datetime_parser, hash_api_key, hash_dictionary, is_profane, sanitize_string
-from horde.vars import horde_contact_email, horde_title, horde_url
+from horde.vars import horde_contact_email, horde_repository, horde_title, horde_url
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -3600,11 +3601,17 @@ class DocsPrivacy(Resource):
         self.args = self.get_parser.parse_args()
         if self.args.format not in ["html", "markdown"]:
             raise e.BadRequest("'format' needs to be one of ['html', 'markdown']")
+        # The disclosed windows come from the policy the retention pass applies, so they cannot drift apart.
+        retention = prompt_moderation.MODERATION_RETENTION_POLICY
         html_template = render_template(
             os.getenv("HORDE_HTML_PRIVACY", "privacy_policy.html"),
             horde_title=horde_title,
             horde_url=horde_url,
             horde_contact_email=horde_contact_email,
+            moderation_text_days=retention.text_days,
+            moderation_ipaddr_days=retention.ipaddr_days,
+            moderation_ceiling_days=retention.ceiling_days,
+            repository_url=horde_repository,
         )
         if self.args.format == "markdown":
             return {"markdown": markdownify(html_template).strip("\n")}, 200

@@ -43,20 +43,10 @@ from tests.integration.test_request_parameters import IMAGE_REQUEST
 
 EVENTS_URL = "/api/v2/operations/moderation/prompts"
 """The moderator evidence listing."""
-
-
 UNLISTED_EVENT_COLUMNS = frozenset({"job_id"})
 """Event columns the listing omits; the job ID is internal deduplication state."""
-
-
 LISTING_ONLY_EVENT_KEYS = frozenset({"notes"})
 """Listed event keys that are not event columns."""
-
-
-LISTED_EVENT_COLUMN_NAMES = {"ip_subject_key": "ip_subject"}
-"""Event columns the listing exposes under another name; the pseudonym is an opaque token, not a key to reuse."""
-
-
 TEST_IP_SUBJECT_SECRET = b"integration-test deployment secret"
 """The private secret the tests key address pseudonyms with, since the test environment sets none."""
 
@@ -1341,6 +1331,87 @@ def test_wipe_of_an_account_with_a_worker_keeps_its_evidence_and_worker_reports(
         assert (self_reported_record.user_id, str(self_reported_record.worker_id)) == (wiped.id, own_worker)
         assert db.session.get(UserProblemJobs, others_record) is not None
         assert db.session.get(WorkerTemplate, own_worker) is None
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_the_retention_pass_and_the_privacy_document_read_the_policy_when_they_run(client, app, make_api_user, monkeypatch) -> None:
+    """The scheduled pass applies the policy in force at the call, which is the policy the privacy document states."""
+    from horde.database import prompt_moderation, threads
+
+    submitter = make_api_user()
+    past_window = _record_aged(app, user_id=submitter.id, age_days=8)
+    assert _stored(app, past_window).ipaddr is not None
+    monkeypatch.setattr(prompt_moderation, "MODERATION_RETENTION_POLICY", _policy(text=None, ipaddr=7, ceiling=300))
+    threads.apply_moderation_retention()
+    redacted = _stored(app, past_window)
+    assert redacted.ipaddr is None
+    assert redacted.ipaddr_redacted
+    assert not redacted.anonymized
+    document = client.get("/api/v2/documents/privacy", query_string={"format": "markdown"}).get_json()["markdown"]
+    assert "the IP address is removed after 7 days," in document
+    assert "After 300 days, a record that is not subject to moderation action is anonymized" in document
+
+
+@pytest.mark.parametrize("document_format", ["html", "markdown"])
+def test_privacy_document_discloses_the_configured_retention(client, api_key, monkeypatch, document_format: str) -> None:
+    """The privacy document states the periods the moderator listing reports for the same policy, including a none window."""
+    from horde.database import prompt_moderation
+
+    monkeypatch.setattr(prompt_moderation, "MODERATION_RETENTION_POLICY", _policy(text=45, ipaddr=None, ceiling=200))
+    response = client.get("/api/v2/documents/privacy", query_string={"format": document_format})
+    assert response.status_code == 200, response.get_json()
+    document = response.get_json()[document_format]
+    assert "Moderation records" in document
+    assert "are not removed when an Account is deleted" in document
+    assert "The Prompt text is removed after 45 days, and the IP address is kept with the record," in document
+    assert "unless the record is subject to moderation action or We are required to retain it" in document
+    assert "After 200 days, a record that is not subject to moderation action is anonymized" in document
+    for recorded in (
+        "Your Account",
+        "any proxied account",
+        "Your IP address",
+        "a pseudonym of Your IP address",
+        "the request and job identifiers",
+        "the reporting Worker",
+        "the requested models",
+        "the Prompt",
+        "any notes moderators add",
+    ):
+        assert recorded in document, recorded
+    assert "The pseudonym of the IP address is a keyed hash" in document
+    assert "the reporting Worker and any moderator notes are kept" in document
+    assert "The reporting Worker identifies who made the report, not You." in document
+    assert "Your Account automatically receives a suspicion mark and Your IP address is placed in a temporary timeout" in document
+    assert "A human moderator reviews the records and decides any further action." in document
+    assert "the same 200-day period, with the same exception for moderation action." in document
+    listing = client.get(EVENTS_URL, query_string={"limit": 1}, headers={"apikey": api_key})
+    assert listing.status_code == 200, listing.get_json()
+    retention = listing.get_json()["retention"]
+    assert retention == {"text_days": 45, "ipaddr_days": None, "ceiling_days": 200}
+    for subject, days in (("The Prompt text", retention["text_days"]), ("the IP address", retention["ipaddr_days"])):
+        period = f"removed after {days} days" if days is not None else "kept with the record"
+        assert f"{subject} is {period}," in document
+    assert f"After {retention['ceiling_days']} days, a record" in document
+
+
+@pytest.mark.parametrize("document_format", ["html", "markdown"])
+def test_privacy_document_links_the_source_code(client, monkeypatch, document_format: str) -> None:
+    """The document links the configured source repository, which defaults to the AI-Horde repository."""
+    import os
+
+    from horde import vars as horde_vars
+    from horde.apis.v2 import base
+
+    assert horde_vars.horde_repository == os.getenv("HORDE_REPOSITORY", "https://github.com/Haidra-Org/AI-Horde")
+    document = client.get("/api/v2/documents/privacy", query_string={"format": document_format}).get_json()[document_format]
+    assert "The Service is open source." in document
+    assert horde_vars.horde_repository in document
+    configured = "https://example.invalid/horde-source"
+    monkeypatch.setattr(base, "horde_repository", configured)
+    document = client.get("/api/v2/documents/privacy", query_string={"format": document_format}).get_json()[document_format]
+    assert configured in document
+    if document_format == "html":
+        assert f'<a href="{configured}">{configured}</a>' in document
 
 
 def test_database_failure_does_not_accept_rejected_prompt(client, app, make_api_user, settle_kudos, monkeypatch) -> None:
