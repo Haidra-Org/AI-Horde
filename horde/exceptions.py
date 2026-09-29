@@ -173,6 +173,13 @@ KNOWN_RC = [
     "SamplerKnobOutOfRange",
     "SamplerSolverTypeUnsupported",
     "SamplerSchedulerMismatch",
+    "InvalidOperationsLimit",
+    "InvalidOperationsCursor",
+    "InvalidModerationTimeRange",
+    "InvalidModerationAddressFilter",
+    "InvalidModerationEventID",
+    "InvalidModerationNote",
+    "ModerationEventNotFound",
     "SchedulerBaselineMismatch",
     "FlowShiftInapplicable",
     "FlowShiftOutOfRange",
@@ -530,6 +537,13 @@ class TeamNotFound(wze.NotFound):
     def __init__(self, team_id, rc="TeamNotFound"):
         self.specific = f"Team with ID '{team_id}' not found."
         self.log = f"Attempted to retrieve team with non-existent ID '{team_id}'"
+        self.rc = rc
+
+
+class ModerationEventNotFound(wze.NotFound):
+    def __init__(self, event_id, rc="ModerationEventNotFound"):
+        self.specific = f"Moderation event with ID '{event_id}' not found."
+        self.log = None
         self.rc = rc
 
 

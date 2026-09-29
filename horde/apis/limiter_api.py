@@ -57,6 +57,16 @@ def get_request_api_key():
     return f"{apikey}@{request.method}@{request.path}"
 
 
+def get_request_api_key_per_method():
+    """Key a limit by the hashed API key and method alone.
+
+    A decorated limit is already scoped to its route's endpoint, so leaving the concrete path out makes a route with a
+    path parameter, such as one event's notes, share one budget across every value of the parameter.
+    """
+    apikey = hash_api_key(request.headers.get("apikey", "0000000000"))
+    return f"{apikey}@{request.method}"
+
+
 def get_request_limit_per_apikey():
     apikey = request.headers.get("apikey", "0000000000")
     if apikey == "0000000000" or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr()):

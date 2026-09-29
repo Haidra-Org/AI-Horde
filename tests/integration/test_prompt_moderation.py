@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Exercise prompt provenance, rollback-safe evidence, tiered retention and account wipes.
+"""Exercise prompt provenance, rollback-safe evidence, tiered retention, account wipes, and the moderator evidence endpoints.
 
 Retention skips events under moderation action, so that exemption is exercised with each retention step.
 
@@ -23,19 +23,39 @@ from sqlalchemy import select
 from horde.classes.base.prompt_moderation import (
     MAX_ORIGIN_TEXT_CHARACTERS,
     PromptModerationEvent,
+    PromptModerationNote,
     PromptModerationReason,
 )
 from horde.classes.base.user import UserProblemJobs
 from horde.countermeasures import CounterMeasures
 from horde.database.prompt_moderation import (
+    EVENT_COLUMN_RETENTION,
     PromptEvidence,
+    RetentionFate,
     RetentionPassResult,
     RetentionPolicy,
     apply_evidence_retention,
+    get_prompt_events,
     record_prompt_evidence,
 )
 from tests.fixture_types import ApiUser, MakeApiUser
 from tests.integration.test_request_parameters import IMAGE_REQUEST
+
+EVENTS_URL = "/api/v2/operations/moderation/prompts"
+"""The moderator evidence listing."""
+
+
+UNLISTED_EVENT_COLUMNS = frozenset({"job_id"})
+"""Event columns the listing omits; the job ID is internal deduplication state."""
+
+
+LISTING_ONLY_EVENT_KEYS = frozenset({"notes"})
+"""Listed event keys that are not event columns."""
+
+
+LISTED_EVENT_COLUMN_NAMES = {"ip_subject_key": "ip_subject"}
+"""Event columns the listing exposes under another name; the pseudonym is an opaque token, not a key to reuse."""
+
 
 TEST_IP_SUBJECT_SECRET = b"integration-test deployment secret"
 """The private secret the tests key address pseudonyms with, since the test environment sets none."""
@@ -234,6 +254,51 @@ def test_failed_replacement_is_recorded(client, app, make_api_user, settle_kudos
     assert event.effective_prompt is None
     assert event.ipaddr == ipaddr
     assert event.models == IMAGE_REQUEST["models"]
+
+
+def test_evidence_survives_rollback_and_notes_are_separate(client, app, api_key, make_api_user) -> None:
+    from horde.classes.base.user import User
+    from horde.flask import db
+
+    submitter = make_api_user()
+    with app.app_context():
+        account = db.session.get(User, submitter.id)
+        old_name = account.username
+        account.username = "uncommitted-change"
+        db.session.flush()
+        event_id = record_prompt_evidence(
+            PromptEvidence(
+                user_id=submitter.id,
+                reason=PromptModerationReason.FILTER_REJECTION,
+                submitted_prompt="original",
+                moderation_prompt="styled original",
+                effective_prompt=None,
+            )
+        )
+        assert event_id is not None
+        db.session.rollback()
+        assert db.session.get(User, submitter.id).username == old_name
+        assert db.session.get(PromptModerationEvent, event_id).submitted_prompt == "original"
+
+    notes_url = f"{EVENTS_URL}/{event_id}/notes"
+    assert client.get(EVENTS_URL).status_code == 400
+    assert client.get(EVENTS_URL, headers={"apikey": submitter.api_key}).status_code == 403
+    assert client.post(notes_url, json={"note": "x"}, headers={"apikey": submitter.api_key}).status_code == 403
+    headers = {"apikey": api_key}
+    note = client.post(notes_url, json={"note": "synthetic false positive"}, headers=headers)
+    assert note.status_code == 201, note.get_json()
+    assert note.headers["Cache-Control"] == "private, no-store"
+    assert set(note.get_json()) == {"id", "author_id", "note", "created"}
+    page = client.get(EVENTS_URL, query_string={"user_id": submitter.id}, headers=headers)
+    assert page.status_code == 200, page.get_json()
+    assert page.headers["Cache-Control"] == "private, no-store"
+    (event,) = page.get_json()["events"]
+    assert event["notes"] == [note.get_json()]
+    with app.app_context():
+        assert db.session.get(PromptModerationEvent, event_id).submitted_prompt == "original"
+        stored = db.session.get(PromptModerationNote, note.get_json()["id"])
+        assert stored.event_id == event_id
+        assert stored.author_id == note.get_json()["author_id"]
 
 
 def test_worker_problem_jobs_preserve_evidence_without_duplicate_rows(app, make_api_user) -> None:
@@ -496,6 +561,71 @@ def test_an_origin_that_is_not_an_address_is_kept_as_text_without_address_or_pse
         assert (problem_job.ipaddr, problem_job.origin_text) == (None, clipped)
 
 
+def test_event_listing_exposes_documented_fields_with_utc_offsets(client, app, api_key, make_api_user, monkeypatch) -> None:
+    """Each listed event carries exactly the documented field allowlist, and stored naive UTC times carry a zero offset.
+
+    The page also reports the retention windows in force, with null for a window kept until the ceiling.
+    """
+    from horde.database import prompt_moderation
+
+    monkeypatch.setattr(prompt_moderation, "MODERATION_RETENTION_POLICY", _policy(text=None, ipaddr=12, ceiling=90))
+    submitter = make_api_user()
+    (event_id,) = _seed(app, user_id=submitter.id)
+    headers = {"apikey": api_key}
+    note = client.post(f"{EVENTS_URL}/{event_id}/notes", json={"note": "checked"}, headers=headers)
+    assert note.status_code == 201, note.get_json()
+    page = client.get(EVENTS_URL, query_string={"user_id": submitter.id}, headers=headers)
+    assert page.status_code == 200, page.get_json()
+    assert set(page.get_json()) == {"events", "next_cursor", "retention"}
+    assert page.get_json()["retention"] == {"text_days": None, "ipaddr_days": 12, "ceiling_days": 90}
+    (event,) = page.get_json()["events"]
+    assert event["id"] == event_id
+    assert (event["text_redacted"], event["ipaddr_redacted"], event["anonymized"]) == (False, False, False)
+    assert set(event) == {
+        "id",
+        "created",
+        "user_id",
+        "request_id",
+        "worker_id",
+        "proxied_account",
+        "ipaddr",
+        "ip_subject_key",
+        "origin_text",
+        "models",
+        "reason",
+        "outcome",
+        "submitted_prompt",
+        "moderation_prompt",
+        "effective_prompt",
+        "text_truncated",
+        "text_redacted",
+        "ipaddr_redacted",
+        "anonymized",
+        "notes",
+    }
+    for value in (event["created"], event["notes"][0]["created"]):
+        assert value.endswith(("+00:00", "Z")), value
+        assert datetime.fromisoformat(value).utcoffset() == timedelta(0), value
+
+
+def test_event_listing_and_api_model_carry_every_column_except_the_unlisted(app, make_api_user) -> None:
+    """A new event column fails this until it is listed and documented, or declared unlisted.
+
+    The listing and the API model are explicit field lists, so a column never reaches moderators by accident, and one
+    meant for them is never silently missing.
+    """
+    from horde.apis.v2.base import models
+
+    listed_columns = set(PromptModerationEvent.__table__.columns.keys()) - UNLISTED_EVENT_COLUMNS
+    expected = listed_columns | LISTING_ONLY_EVENT_KEYS
+    submitter = make_api_user()
+    _seed(app, user_id=submitter.id)
+    with app.app_context():
+        (listed,) = get_prompt_events(limit=1, user_id=submitter.id)["events"]
+    assert set(listed) == expected
+    assert set(models.response_model_prompt_moderation_event) == expected
+
+
 def test_worker_csam_submission_records_event(client, app, make_api_user, settle_kudos, monkeypatch) -> None:
     """An image job submitted with csam censorship metadata records one worker_csam event for that job and worker."""
     from horde.classes.stable import processing_generation, waiting_prompt
@@ -692,6 +822,310 @@ def test_text_and_address_are_removed_after_their_windows(app, make_api_user) ->
 
 
 @pytest.mark.usefixtures("_no_prior_evidence")
+def test_anonymization_removes_identity_and_keeps_the_record_and_its_notes(client, app, api_key, make_api_user) -> None:
+    """Past the ceiling an event keeps its reason, outcome, models, capture time, reporting worker and notes.
+
+    A note written on the anonymized event is stored, and a later pass keeps it.
+    """
+    from horde.flask import db
+
+    submitter = make_api_user()
+    worker_id = str(uuid4())
+    expired = _record_aged(
+        app,
+        user_id=submitter.id,
+        age_days=31,
+        reason=PromptModerationReason.WORKER_CSAM,
+        effective_prompt="effective",
+        request_id=str(uuid4()),
+        job_id=str(uuid4()),
+        worker_id=worker_id,
+    )
+    kept = _record_aged(app, user_id=submitter.id, age_days=1)
+    with app.app_context():
+        # Capture stores an address or an origin text, never both; setting both covers every removable column.
+        db.session.get(PromptModerationEvent, expired).origin_text = "client behind proxy"
+        db.session.commit()
+    headers = {"apikey": api_key}
+    kept_note = client.post(f"{EVENTS_URL}/{kept}/notes", json={"note": "unrelated"}, headers=headers)
+    assert kept_note.status_code == 201, kept_note.get_json()
+    before = _stored(app, expired)
+    removable_fates = (RetentionFate.TEXT, RetentionFate.IPADDR, RetentionFate.IDENTITY)
+    for column, fate in EVENT_COLUMN_RETENTION.items():
+        if fate in removable_fates:
+            assert getattr(before, column) is not None, column
+    policy = _policy(text=20, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(anonymized=1)
+        assert apply_evidence_retention(policy).total == 0
+        assert db.session.get(PromptModerationNote, kept_note.get_json()["id"]) is not None
+
+    after = _stored(app, expired)
+    for identifying in (
+        "user_id",
+        "proxied_account",
+        "ipaddr",
+        "request_id",
+        "job_id",
+        "submitted_prompt",
+        "moderation_prompt",
+        "effective_prompt",
+    ):
+        assert getattr(after, identifying) is None, identifying
+    assert after.text_redacted and after.ipaddr_redacted and after.anonymized
+    for column, fate in EVENT_COLUMN_RETENTION.items():
+        if fate in removable_fates:
+            assert getattr(after, column) is None, column
+        elif fate == RetentionFate.KEPT:
+            assert getattr(after, column) == getattr(before, column), column
+        else:
+            assert getattr(after, column) is True, column
+    assert (after.reason, after.outcome, after.models, after.created, after.text_truncated, after.worker_id) == (
+        "worker_csam",
+        "censored",
+        ["model a"],
+        before.created,
+        before.text_truncated,
+        worker_id,
+    )
+    assert _stored(app, kept).user_id == submitter.id
+
+    (listed,) = client.get(EVENTS_URL, query_string={"worker_id": worker_id}, headers=headers).get_json()["events"]
+    assert listed["id"] == expired
+    assert listed["user_id"] is None
+    assert listed["ip_subject_key"] is None
+    assert (listed["text_redacted"], listed["ipaddr_redacted"], listed["anonymized"]) == (True, True, True)
+    assert listed["notes"] == []
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_a_note_on_an_anonymized_event_is_stored(client, app, api_key, make_api_user) -> None:
+    """An anonymized event takes a note, and later passes keep the note and change nothing else."""
+    from horde.flask import db
+
+    submitter = make_api_user()
+    worker_id = str(uuid4())
+    expired = _record_aged(app, user_id=submitter.id, age_days=31, worker_id=worker_id)
+    policy = _policy(text=20, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(anonymized=1)
+    headers = {"apikey": api_key}
+    late_note = client.post(f"{EVENTS_URL}/{expired}/notes", json={"note": "after anonymization"}, headers=headers)
+    assert late_note.status_code == 201, late_note.get_json()
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result()
+        assert db.session.get(PromptModerationNote, late_note.get_json()["id"]) is not None
+    (listed,) = client.get(EVENTS_URL, query_string={"worker_id": worker_id}, headers=headers).get_json()["events"]
+    assert listed["anonymized"]
+    assert listed["notes"] == [late_note.get_json()]
+
+
+def _flag(app, user_id: int) -> None:
+    """Flag the account, as a moderator does."""
+    from horde.classes.base.user import User
+    from horde.flask import db
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        user.set_flagged(True)
+        db.session.expire_all()
+        assert db.session.get(User, user_id).flagged
+
+
+def _add_suspicions(app, user_id: int, count: int) -> None:
+    """Give the account ``count`` distinct suspicions."""
+    from horde.classes.base.user import UserSuspicions
+    from horde.flask import db
+
+    with app.app_context():
+        for suspicion_id in range(count):
+            db.session.add(UserSuspicions(user_id=user_id, suspicion_id=suspicion_id))
+        db.session.commit()
+
+
+def _make_suspicious(app, user_id: int) -> None:
+    """Give the account the suspicions ``User.is_suspicious`` needs to report it suspicious."""
+    from horde.classes.base.user import User
+    from horde.flask import db
+
+    _add_suspicions(app, user_id, User.SUSPICION_THRESHOLD)
+    with app.app_context():
+        assert db.session.get(User, user_id).is_suspicious()
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+@pytest.mark.parametrize("action", ["note", "flagged", "suspicious"])
+def test_events_under_moderation_action_are_skipped_by_every_retention_step(client, app, api_key, make_api_user, action: str) -> None:
+    """An event with a note, or of a flagged or suspicious account, keeps every value past every window and the ceiling.
+
+    An unactioned event of the same age is anonymized in the same pass, so the pass did run.
+    """
+    submitter, bystander = make_api_user(), make_api_user()
+    actioned = _record_aged(app, user_id=submitter.id, age_days=400)
+    unactioned = _record_aged(app, user_id=bystander.id, age_days=400)
+    if action == "note":
+        note = client.post(f"{EVENTS_URL}/{actioned}/notes", json={"note": "under review"}, headers={"apikey": api_key})
+        assert note.status_code == 201, note.get_json()
+    elif action == "flagged":
+        _flag(app, submitter.id)
+    else:
+        _make_suspicious(app, submitter.id)
+    before = _stored(app, actioned)
+    policy = _policy(text=10, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(anonymized=1)
+        assert apply_evidence_retention(policy) == _pass_result()
+    after = _stored(app, actioned)
+    for column in EVENT_COLUMN_RETENTION:
+        assert getattr(after, column) == getattr(before, column), column
+    assert after.user_id == submitter.id
+    assert after.submitted_prompt == "submitted"
+    assert after.ipaddr is not None
+    assert not (after.text_redacted or after.ipaddr_redacted or after.anonymized)
+    assert _stored(app, unactioned).anonymized
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_a_trusted_account_at_the_suspicion_threshold_is_not_exempt(app, make_api_user) -> None:
+    """``User.is_suspicious`` never reports a trusted account, so its events and worker reports follow every window."""
+    from horde.classes.base.user import User
+    from horde.flask import db
+
+    trusted = make_api_user(trusted=True)
+    _add_suspicions(app, trusted.id, User.SUSPICION_THRESHOLD)
+    with app.app_context():
+        user = db.session.get(User, trusted.id)
+        assert len(user.suspicions) >= User.SUSPICION_THRESHOLD
+        assert not user.is_suspicious()
+    event = _record_aged(app, user_id=trusted.id, age_days=400)
+    worker_id = _synthetic_worker(app, make_api_user().id, "synthetic-report-worker")
+    report = _record_problem_job(app, user_id=trusted.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=400)
+    with app.app_context():
+        assert apply_evidence_retention(_policy(text=10, ipaddr=10, ceiling=30)) == _pass_result(
+            anonymized=1,
+            problem_jobs_deleted=1,
+        )
+        assert db.session.get(UserProblemJobs, report) is None
+    assert _stored(app, event).anonymized
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+@pytest.mark.parametrize("action", ["flagged", "suspicious"])
+def test_worker_reports_of_an_account_under_moderation_action_survive_the_ceiling(app, make_api_user, action: str) -> None:
+    """A worker report record of a flagged or suspicious account keeps its address and row past both windows."""
+    from horde.flask import db
+
+    submitter, bystander, worker_owner = make_api_user(), make_api_user(), make_api_user()
+    worker_id = _synthetic_worker(app, worker_owner.id, "synthetic-report-worker")
+    ipaddr = _unique_ip()
+    past_window = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=ipaddr, age_days=15)
+    past_ceiling = _record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=ipaddr, age_days=400)
+    unactioned = _record_problem_job(app, user_id=bystander.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=400)
+    if action == "flagged":
+        _flag(app, submitter.id)
+    else:
+        _make_suspicious(app, submitter.id)
+    policy = _policy(text=None, ipaddr=10, ceiling=30)
+    with app.app_context():
+        assert apply_evidence_retention(policy) == _pass_result(problem_jobs_deleted=1)
+        assert apply_evidence_retention(policy) == _pass_result()
+        for record in (past_window, past_ceiling):
+            stored = db.session.get(UserProblemJobs, record)
+            assert stored is not None
+            assert (stored.user_id, stored.ipaddr) == (submitter.id, ipaddr)
+        assert db.session.get(UserProblemJobs, unactioned) is None
+
+
+def _listed_ids(app, **filters: Any) -> set[int]:
+    """Return the IDs of the events the filters select; an ``ipaddr`` filter is parsed as the API parses it."""
+    if "ipaddr" in filters:
+        filters["ip_subject"] = CounterMeasures.parse_ip_subject(filters.pop("ipaddr"))
+    with app.app_context():
+        return {event["id"] for event in get_prompt_events(limit=100, **filters)["events"]}
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_address_redaction_keeps_events_in_address_filters(app, make_api_user) -> None:
+    """Past the address window the address, and another address in its IPv6 /64, still find the event by its pseudonym."""
+    submitter = make_api_user()
+    worker_id = str(uuid4())
+    proxied_account = f"proxied-{uuid4()}"
+    common = {
+        "user_id": submitter.id,
+        "age_days": 15,
+        "worker_id": worker_id,
+        "proxied_account": proxied_account,
+    }
+    ipv4 = _unique_ip()
+    ipv4_event = _record_aged(app, ipaddr=ipv4, **common)
+    ipv6_event = _record_aged(app, ipaddr="2001:db8:5:6::1", **common)
+    ipv6_sibling = "2001:db8:5:6::ffff"
+    now = datetime.utcnow()
+    retained_filters: list[dict[str, Any]] = [
+        {"user_id": submitter.id},
+        {"proxied_account": proxied_account},
+        {"worker_id": worker_id},
+        {"since": now - timedelta(days=16), "until": now - timedelta(days=14)},
+    ]
+    assert _listed_ids(app, ipaddr=ipv4) == {ipv4_event}
+    assert _listed_ids(app, ipaddr=ipv6_sibling) == {ipv6_event}
+    with app.app_context():
+        assert apply_evidence_retention(_policy(text=None, ipaddr=10, ceiling=30)).ipaddr_redacted == 2
+    assert _stored(app, ipv4_event).ipaddr is None
+    assert _listed_ids(app, ipaddr=ipv4) == {ipv4_event}
+    assert _listed_ids(app, ipaddr=f"::ffff:{ipv4}") == {ipv4_event}
+    assert _listed_ids(app, ipaddr=ipv6_sibling) == {ipv6_event}
+    assert _listed_ids(app, ipaddr="2001:db8:5:6::/64") == {ipv6_event}
+    for filters in retained_filters:
+        assert _listed_ids(app, **filters) == {ipv4_event, ipv6_event}, filters
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_events_without_a_pseudonym_match_by_address_until_it_is_removed(app, make_api_user, monkeypatch) -> None:
+    """An event captured without a usable secret has no pseudonym, so only its address matches the address filter."""
+    from horde import countermeasures
+
+    submitter = make_api_user()
+    ipaddr = _unique_ip()
+    monkeypatch.setattr(countermeasures, "IP_SUBJECT_KEY_SECRET", None)
+    unkeyed = _record_aged(app, user_id=submitter.id, age_days=15, ipaddr=ipaddr)
+    monkeypatch.setattr(countermeasures, "IP_SUBJECT_KEY_SECRET", TEST_IP_SUBJECT_SECRET)
+    keyed = _record_aged(app, user_id=submitter.id, age_days=1, ipaddr=ipaddr)
+    assert _stored(app, unkeyed).ip_subject_key is None
+    assert _listed_ids(app, ipaddr=ipaddr) == {unkeyed, keyed}
+    with app.app_context():
+        assert apply_evidence_retention(_policy(text=None, ipaddr=10, ceiling=30)).ipaddr_redacted == 1
+    assert _listed_ids(app, ipaddr=ipaddr) == {keyed}
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_anonymization_removes_events_from_subject_filters_only(app, make_api_user) -> None:
+    """Past the ceiling the account and proxied-account filters no longer find the event; worker and time filters do."""
+    submitter = make_api_user()
+    worker_id = str(uuid4())
+    proxied_account = f"proxied-{uuid4()}"
+    expired = _record_aged(app, user_id=submitter.id, age_days=31, worker_id=worker_id, proxied_account=proxied_account)
+    now = datetime.utcnow()
+    subject_filters: list[dict[str, Any]] = [
+        {"user_id": submitter.id},
+        {"proxied_account": proxied_account},
+    ]
+    retained_filters: list[dict[str, Any]] = [
+        {"worker_id": worker_id},
+        {"since": now - timedelta(days=32)},
+        {"until": now - timedelta(days=30)},
+    ]
+    for filters in subject_filters + retained_filters:
+        assert _listed_ids(app, **filters) == {expired}, filters
+    with app.app_context():
+        assert apply_evidence_retention(_policy(text=None, ipaddr=None, ceiling=30)).anonymized == 1
+    for filters in subject_filters:
+        assert _listed_ids(app, **filters) == set(), filters
+    for filters in retained_filters:
+        assert _listed_ids(app, **filters) == {expired}, filters
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
 def test_none_windows_keep_text_and_address_until_the_ceiling(app, make_api_user) -> None:
     submitter = make_api_user()
     within_ceiling = _record_aged(app, user_id=submitter.id, age_days=29)
@@ -731,6 +1165,32 @@ def test_anonymization_changes_one_batch_oldest_first(app, make_api_user) -> Non
         assert [_stored(app, event_id).anonymized for event_id in (oldest, middle, newest)] == [True, True, False]
         assert apply_evidence_retention(policy, batch_size=2).anonymized == 1
         assert apply_evidence_retention(policy, batch_size=2).total == 0
+
+
+def test_wipe_keeps_the_accounts_evidence_and_notes(client, app, api_key, make_api_user) -> None:
+    """Wiping an account leaves its live and anonymized events, their notes and their account in place."""
+    from horde.classes.base.user import User
+    from horde.flask import db
+
+    wiped, other = make_api_user(), make_api_user()
+    anonymized_event = _record_aged(app, user_id=wiped.id, age_days=31)
+    with app.app_context():
+        apply_evidence_retention(_policy(text=None, ipaddr=None, ceiling=30))
+    assert _stored(app, anonymized_event).anonymized
+    wiped_events = _seed(app, user_id=wiped.id, count=2)
+    (other_event,) = _seed(app, user_id=other.id)
+    note = client.post(f"{EVENTS_URL}/{wiped_events[0]}/notes", json={"note": "about the account"}, headers={"apikey": api_key})
+    assert note.status_code == 201, note.get_json()
+    with app.app_context():
+        db.session.get(User, wiped.id).wipe()
+        db.session.expire_all()
+        assert db.session.get(User, wiped.id).is_wiped
+        for event_id in wiped_events:
+            assert db.session.get(PromptModerationEvent, event_id).user_id == wiped.id
+        assert db.session.get(PromptModerationNote, note.get_json()["id"]) is not None
+        assert db.session.get(PromptModerationEvent, other_event).user_id == other.id
+        assert db.session.get(PromptModerationEvent, anonymized_event).anonymized
+    assert set(wiped_events) <= _listed_ids(app, user_id=wiped.id)
 
 
 def _record_problem_job(
@@ -906,3 +1366,88 @@ def test_database_failure_does_not_accept_rejected_prompt(client, app, make_api_
     )
     assert response.status_code == 400, response.get_json()
     assert errors == ["Prompt moderation evidence write failed (OperationalError)"]
+
+
+def test_prompt_event_pagination_filters_and_invalid_notes(client, app, api_key, make_api_user) -> None:
+    submitter = make_api_user()
+    ipaddr = _unique_ip()
+    identifiers = _seed(app, user_id=submitter.id, count=3, proxied_account="proxied-listing", ipaddr=ipaddr)
+    headers = {"apikey": api_key}
+    query = {"user_id": submitter.id, "limit": 2}
+    first = client.get(EVENTS_URL, query_string=query, headers=headers).get_json()
+    assert [event["id"] for event in first["events"]] == identifiers[:0:-1]
+    second = client.get(EVENTS_URL, query_string={**query, "before_id": first["next_cursor"]}, headers=headers).get_json()
+    assert [event["id"] for event in second["events"]] == identifiers[:1]
+    assert second["next_cursor"] is None
+    by_address = client.get(EVENTS_URL, query_string={"ipaddr": ipaddr}, headers=headers).get_json()
+    assert [event["id"] for event in by_address["events"]] == identifiers[::-1]
+    subject_key = CounterMeasures.ip_subject_key(ipaddr)
+    assert {event["ip_subject_key"] for event in by_address["events"]} == {subject_key}
+    by_key = client.get(EVENTS_URL, query_string={"ip_subject_key": subject_key}, headers=headers).get_json()
+    assert [event["id"] for event in by_key["events"]] == identifiers[::-1]
+    by_event = client.get(EVENTS_URL, query_string={"event_id": identifiers[1]}, headers=headers).get_json()
+    assert [event["id"] for event in by_event["events"]] == [identifiers[1]]
+    blank_address = client.get(EVENTS_URL, query_string={**query, "ipaddr": "  "}, headers=headers).get_json()
+    assert [event["id"] for event in blank_address["events"]] == identifiers[:0:-1]
+    by_proxied = client.get(
+        EVENTS_URL,
+        query_string={"user_id": submitter.id, "proxied_account": "proxied-listing"},
+        headers=headers,
+    ).get_json()
+    assert len(by_proxied["events"]) == 3
+    future = client.get(EVENTS_URL, query_string={**query, "since": "2100-01-01T00:00:00Z"}, headers=headers)
+    assert future.get_json()["events"] == []
+    for invalid, rc in (
+        ({"limit": 101}, "InvalidOperationsLimit"),
+        ({"before_id": 0}, "InvalidOperationsCursor"),
+        ({"since": "2026-01-01"}, "InvalidModerationTimeRange"),
+        ({"since": "2026-01-02T00:00:00Z", "until": "2026-01-01T00:00:00Z"}, "InvalidModerationTimeRange"),
+        ({"ipaddr": "not an address"}, "InvalidModerationAddressFilter"),
+        ({"ipaddr": "198.51.100.0/24"}, "InvalidModerationAddressFilter"),
+        ({"ipaddr": "2001:db8::/48"}, "InvalidModerationAddressFilter"),
+        ({"ip_subject_key": "not a pseudonym"}, "InvalidModerationAddressFilter"),
+        ({"ip_subject_key": "A" * 64}, "InvalidModerationAddressFilter"),
+        ({"event_id": 0}, "InvalidModerationEventID"),
+    ):
+        response = client.get(EVENTS_URL, query_string=invalid, headers=headers)
+        assert response.status_code == 400, invalid
+        assert response.get_json()["rc"] == rc, invalid
+    notes_url = f"{EVENTS_URL}/{identifiers[0]}/notes"
+    for invalid in ({}, {"note": None}, {"note": ""}, {"note": " "}, {"note": "x" * 2001}, {"note": "nul \x00"}):
+        response = client.post(notes_url, json=invalid, headers=headers)
+        assert response.status_code == 400, invalid
+        assert response.get_json()["rc"] == "InvalidModerationNote", invalid
+    missing = client.post(f"{EVENTS_URL}/0/notes", json={"note": "gone"}, headers=headers)
+    assert missing.status_code == 404
+    assert missing.get_json()["rc"] == "ModerationEventNotFound"
+
+
+def test_moderator_limits_count_per_key(client, app, api_key, make_api_user) -> None:
+    from horde.limiter import limiter
+
+    other = make_api_user()
+    limiter.enabled = True
+    try:
+        headers = {"apikey": api_key}
+        for _ in range(120):
+            assert client.get(EVENTS_URL, query_string={"limit": 1}, headers=headers).status_code == 200
+        limited = client.get(EVENTS_URL, query_string={"limit": 1}, headers={**headers, "Origin": "http://localhost:4277"})
+        assert limited.status_code == 429
+        # A cross-origin client can read how long to wait.
+        assert limited.headers["Access-Control-Allow-Origin"] == "*"
+        exposed = {name.strip() for name in limited.headers["Access-Control-Expose-Headers"].split(",")}
+        assert {"Retry-After", "X-RateLimit-Reset"} <= exposed
+        assert int(limited.headers["Retry-After"]) > 0
+        # Another key has its own count.
+        assert client.get(EVENTS_URL, headers={"apikey": other.api_key}).status_code == 403
+        # Notes on every event draw on one write budget: the count follows the key and the resource, not the event.
+        first, second = _seed(app, user_id=other.id, count=2)
+        for index in range(30):
+            event_id = first if index % 2 else second
+            response = client.post(f"{EVENTS_URL}/{event_id}/notes", json={"note": "limit"}, headers=headers)
+            assert response.status_code == 201, response.get_json()
+        for event_id in (first, second):
+            assert client.post(f"{EVENTS_URL}/{event_id}/notes", json={"note": "limit"}, headers=headers).status_code == 429
+    finally:
+        limiter.enabled = False
+        limiter.reset()

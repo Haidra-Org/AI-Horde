@@ -189,6 +189,9 @@ def create_app(config: dict[str, object] | None = None) -> Flask:
             "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, apikey, "
             "Client-Agent, X-Fields, X-Forwarded-For, Proxied-For, Proxy-Authorization"
         )
+        # A browser hides every other response header from cross-origin scripts, and a client waiting out a 429 needs
+        # the rate limit headers flask-limiter sets.
+        response.headers["Access-Control-Expose-Headers"] = "Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset"
         response.headers["Horde-Node"] = f"{socket.gethostname()}:{args.port}:{HORDE_VERSION}"
 
         if response.content_type == "application/json":
