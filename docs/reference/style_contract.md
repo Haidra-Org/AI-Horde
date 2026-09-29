@@ -43,16 +43,20 @@ The style's params are the starting point and the request's params are discarded
 `n`, the number of takes requested, always comes from the request and defaults to 1. `n` is listed in
 `NON_OVERRIDABLE_PARAMETER_NAMES`, so a policy cannot cover it either.
 
-The two gentypes differ in how the template is filled. A text style's prompt is formatted directly.
-An image style's prompt has every brace doubled first and only `{p}`, `{np}` and the placeholders the
-style declares are put back, so a wildcard or a workflow string in braces reaches the worker as
-written. An image request's prompt is split at `###` into the positive and negative halves before
-formatting, and a template carrying `{np}` without a `###` of its own gets one in front of the
-negative half.
+The two gentypes differ in how the template is filled, covered under [prompt template
+rules](#prompt-template-rules) below. An image request's prompt is split at `###` into the positive
+and negative halves before formatting, and a template carrying `{np}` without a `###` of its own gets
+one in front of the negative half.
 
-Using a style credits its owner with 2 kudos (`User.record_style`) and adds the same 2 to the
-request's quote, through the `kudos_adjustment` argument that `GenerateTemplate` passes to
-`WaitingPrompt.activate` and to `extrapolate_dry_run_kudos`.
+Using someone else's style credits its owner with 2 kudos (`User.record_style`) and adds the same 2
+to the request's quote, through the `kudos_adjustment` argument that `GenerateTemplate` passes to
+`WaitingPrompt.activate` and to `extrapolate_dry_run_kudos`. A request running under its own author's
+style is neither charged the surcharge nor credits the author.
+
+The comparison needs both the style and the requesting user, and `apply_style` runs before the user is
+resolved, so it is made separately in `credit_style_owner` on each gentype, after the shared
+`super().validate()`. The two rows are compared by id, since the shared validation resolves the user
+inside an app context of its own.
 
 A style may carry a shared key. When it does and the key is valid, `GenerateTemplate.apply_style`
 adopts it as the request's key, so the style's owner pays. The per-job limits on that key are then not
@@ -61,6 +65,50 @@ enforced against the request, since its owner chose to attach the key to the sty
 
 `apply_style` runs inside each gentype's `validate`, before the shared `super().validate()` that
 resolves the user. For a text request `apply_context_fit` runs immediately after it.
+
+## Prompt template rules
+
+Both types fill their template with `str.format_map` over a `defaultdict(str)`, so `{p}` and the
+placeholders the style declares are format specifiers and a placeholder nothing fills becomes the
+empty string. What differs is how much of the rest of the template is left alone.
+
+| | Text | Image |
+| --- | --- | --- |
+| Filled by the horde | `{p}` | `{p}`, `{np}` |
+| Declared placeholders filled | Yes | Yes |
+| A brace outside those | A format specifier: `{{` and `}}` are one literal brace each, and `{anything}` is a placeholder that empties when nothing fills it | Literal: every brace is doubled before formatting and only the filled placeholders are put back |
+| Protected patterns | `\{\{\[[A-Z_]+\]\}\}` | None |
+
+A text template is formatted directly, so a template written for a Python format string keeps working:
+`{{` is one literal brace. An image template has every brace doubled first and only `{p}`, `{np}` and
+its declared placeholders put back, so a wildcard or a workflow string in braces reaches the worker as
+written.
+
+### The protected pattern
+
+`{{[NAME]}}`, with uppercase letters and underscores between the brackets, is an instruct placeholder
+a text backend such as koboldcpp fills in when it builds its own prompt. Formatting a text template
+would turn `{{[INPUT]}}` into `{[INPUT]}` and strip it out of a template written against that backend.
+`format_text_style_prompt` therefore replaces each match of `PROTECTED_TEXT_PLACEHOLDER_PATTERN`
+(`\{\{\[[A-Z_]+\]\}\}`) with a marker before formatting and puts the original text back after it, so
+the token reaches the worker exactly as written.
+
+The marker carries a random part drawn per call, so a value supplied through `template_fields` cannot
+be written to land on one and be turned into a placeholder on the way out.
+
+The pattern is exactly as wide as the regular expression. A lowercase name (`{{[input]}}`) or a name
+with anything but uppercase letters and underscores in it (`{{[IN PUT]}}`) is ordinary template text
+and formats under the usual rule, collapsing to one brace each side. A doubled brace anywhere else in
+the template still becomes one brace.
+
+An image template protects nothing, because it needs nothing: every brace outside a filled placeholder
+is already literal.
+
+The rule is stated in three places that have to move together: `format_text_style_prompt`, the
+published contract document, and this page. Changing it means raising the document's
+`SCHEMA_VERSION` and rewriting all three. [ADR
+17](../decisions/0017-protect-koboldcpp-placeholders-and-publish-the-style-contract.md) records why
+the pattern is protected rather than the text rule being replaced with the image one.
 
 ## `parameter_policy`
 
@@ -213,6 +261,83 @@ always present on a served style, null when the style declares neither. The `par
 The patch parser's arguments have no defaults, so a key a `PATCH` omits leaves the stored value alone.
 A key that is present replaces the whole JSON column.
 
+## The published contract
+
+`GET /api/v2/status/style_contract` serves everything above that a client has to know before it can
+offer style authoring or send a request under someone else's style. It needs no API key and is exempt
+from the rate limiter. `horde/style_contract_document.py` compiles it from the same
+`StyleContractVocabulary` objects the style endpoints validate against and the same formatting
+constants the request path uses, so the published rule and the enforced one come from one place. The
+document is a pure function of the installed code, so it is compiled once per process and handed to
+every caller rather than cached between processes.
+
+The body has three keys: `schema_version`, and one section each for `text` and `image`.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Which version of the contract is being served. Starts at 1 and is raised whenever what is published changes meaning: a key added, removed or renamed, a rule stated differently, or a rule the horde enforces differently than before. |
+| `text`, `image` | What a style of that type may declare, and what becomes of the braces in its prompt. |
+| `placeholders` | The placeholders the horde fills itself, written without braces. `["p"]` for text, `["p", "np"]` for image. Neither can be declared in `template_fields`. |
+| `declared_fields_are_placeholders` | Whether a placeholder declared in `template_fields` is filled from the request's own `template_fields` object. True for both types. |
+| `protected_patterns` | Template text formatting leaves exactly as written, each an object of `pattern` (a regular expression) and `description`. Empty for a type that protects nothing. |
+| `brace_handling` | One sentence stating what the braces in this type's prompt template mean. |
+| `overridable_parameters` | Every param a policy of this type may put in `overridable`, sorted. Anything outside this list is refused at declaration time. |
+| `ceiling_parameters` | The params a policy of this type may cap, each an object of `minimum` and `maximum` giving the range that ceiling may be set to. A null bound means the param has none. |
+| `context_fit_modes` | How a request of this type may be sized against its prompt. Null for image, which cannot be sized. |
+| `style_write_rate_limits` | Every limit a client writing a style of this type is held to. All of them apply at once, and a whitelisted service address is allowed more. |
+
+The `text` section as served:
+
+```json
+{
+  "schema_version": 1,
+  "text": {
+    "placeholders": [
+      "p"
+    ],
+    "declared_fields_are_placeholders": true,
+    "protected_patterns": [
+      {
+        "pattern": "\\{\\{\\[[A-Z_]+\\]\\}\\}",
+        "description": "An instruct placeholder a text backend fills in when it builds its own prompt, such as '{{[INPUT]}}' or '{{[OUTPUT]}}'."
+      }
+    ],
+    "brace_handling": "A doubled brace is one literal brace, '{p}' and the placeholders this style declares are filled in, and a placeholder nothing fills becomes the empty string. The protected patterns below are the exception and are left exactly as written.",
+    "overridable_parameters": [
+      "dynatemp_exponent", "dynatemp_range", "frmtadsnsp", "frmtrmblln", "frmtrmspch",
+      "frmttriminc", "max_context_length", "max_length", "min_p", "rep_pen", "rep_pen_range",
+      "rep_pen_slope", "sampler_order", "singleline", "smoothing_factor", "stop_sequence",
+      "temperature", "tfs", "top_a", "top_k", "top_p", "typical", "use_default_badwordsids"
+    ],
+    "ceiling_parameters": {
+      "max_context_length": { "minimum": 80, "maximum": 1048576 },
+      "max_length": { "minimum": 16, "maximum": 4096 },
+      "n": { "minimum": 1, "maximum": 20 }
+    },
+    "context_fit_modes": [
+      "ignore",
+      "reject",
+      "grow"
+    ],
+    "style_write_rate_limits": [
+      "20/hour",
+      "2/second"
+    ]
+  }
+}
+```
+
+The `image` section has the same keys with different values: `placeholders` is `["p", "np"]`,
+`protected_patterns` is empty, `brace_handling` states that every brace is literal except the filled
+placeholders, `context_fit_modes` is null, `style_write_rate_limits` is `["90/minute", "2/second"]`,
+`ceiling_parameters` covers `width` and `height` (64 to 3072), `steps` (1 to 500) and `n` (1 to 20),
+and `overridable_parameters` is the 34 params of the image payload model, from `cfg_scale` through
+`workflow`.
+
+A client pins `schema_version` and re-reads the document when it moves. A version rise can add fields
+and can change what an existing field means, so a client that cannot make sense of a version it
+receives falls back to its own defaults rather than applying the document.
+
 ## Code map
 
 | Concept | File | Symbol |
@@ -221,6 +346,11 @@ A key that is present replaces the whole JSON column.
 | Declaration validation and storage | `horde/classes/base/style_contract.py` | `parse_parameter_policy`, `parse_template_fields`, `serialize_parameter_policy`, `load_parameter_policy` |
 | Param merge and ceilings | `horde/classes/base/style_application.py` | `merge_client_parameters` |
 | Placeholder resolution | `horde/classes/base/style_application.py` | `resolve_template_field_values` |
+| Text template formatting and the protected pattern | `horde/classes/base/style_application.py` | `format_text_style_prompt`, `PROTECTED_TEXT_PLACEHOLDER_PATTERN` |
+| The published contract | `horde/style_contract_document.py` | `compile_style_contract`, `published_style_contract`, `SCHEMA_VERSION` |
+| The endpoint that serves it | `horde/apis/v2/styles.py` | `StyleContract.get` |
+| The contract's response shape | `horde/apis/models/v2.py` | `response_model_style_contract`, `model_style_contract_type` |
+| The style surcharge and the owner comparison | `horde/apis/v2/kobold.py`, `horde/apis/v2/stable.py` | `TextAsyncGenerate.credit_style_owner`, `ImageAsyncGenerate.credit_style_owner` |
 | Token estimate and fit rule | `horde/classes/kobold/request_fit.py` | `estimate_prompt_tokens`, `prompt_fits_context` |
 | Context sizing and its bound | `horde/classes/kobold/request_fit.py` | `fit_context_length`, `context_growth_upper_bound` |
 | Shared merge, resolution and dry-run body | `horde/apis/v2/base.py` | `GenerateTemplate.apply_style_contract`, `GenerateTemplate.get_resolved_request`, `GenerateTemplate.dry_run_answerable_from_cache` |
@@ -254,16 +384,25 @@ A key that is present replaces the whole JSON column.
 | `context_fit` end to end | `tests/integration/test_text_style_application.py`, `TestContextFit` |
 | The text dry-run `resolved` body and what growth costs | `tests/integration/test_text_style_application.py`, `TestTextDryRunResolvedRequest` |
 | A text style with neither declaration behaves as before | `tests/integration/test_text_style_application.py`, `TestTextStyleApplicationCompatibility` |
+| The text brace rule, the protected pattern and the forms it does not cover | `tests/unit/test_style_application.py`, `TestTextPromptFormatting` |
+| An instruct placeholder reaching a live text request unchanged | `tests/integration/test_text_style_application.py`, `TestTextStyleInstructPlaceholders` |
+| The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
+| The published contract matches the vocabulary the endpoints validate against | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
 
 ## Sharp edges
 
-- The style surcharge applies to the style's owner too. `apply_style` compares the style's user against
-  `self.user`, and it runs before the shared validator resolves the user, so `self.user` is still
-  `None` and the comparison is always unequal. Every styled request is charged the 2 kudos and credits
-  the owner.
+- A style does not keep the order of its models. `Style.parse_models` returns a `set` after trimming
+  the list to five, and `set_models` writes the rows from that set, so the order a style is created
+  with is not the order `get_model_names` reads back. A request that uses the style has its own model
+  list replaced by that unordered one, and text pricing is based on whichever model is first, so the
+  quote for a multi-model text style depends on an order the author did not choose.
+- Style writes are rate limited per address, not per account. A text style write is held to 20 an hour
+  and 2 a second, an image style write to 90 a minute and 2 a second; both limits are keyed on the
+  request path and the address. A client creating several styles in a loop hits the per-second limit
+  first, and the published `style_write_rate_limits` is what it should pace against.
 - The token estimate runs no tokenizer. `ceil(len(prompt) / 3)` is a conservative character count, so
   `reject` can refuse a prompt a real tokenizer would have fitted, and `grow` can buy context a request
   does not need. Per-model tokenization would make the estimate exact.
