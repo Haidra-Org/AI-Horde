@@ -23,6 +23,7 @@ from horde.classes.base.kudos import (
     emit_kudos_stat_event,
     get_kudos_trust_threshold,
 )
+from horde.classes.base.prompt_moderation import MAX_ORIGIN_TEXT_CHARACTERS
 from horde.countermeasures import CounterMeasures
 from horde.database.kudos_legacy_projection import (
     consume_user_reservation,
@@ -32,7 +33,7 @@ from horde.database.kudos_legacy_projection import (
     project_user_record,
     touch_user_activity,
 )
-from horde.discord import send_problem_user_notification
+from horde.discord import moderation_event_url, send_problem_user_notification
 from horde.enums import KudosAuditDetail, KudosEntryType, KudosStatRecord, KudosUnit, UserRecordTypes, UserRoleTypes
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
@@ -68,12 +69,19 @@ class UserProblemJobs(db.Model):
     user = db.relationship("User", back_populates="problem_jobs")
     worker_id = db.Column(
         uuid_column_type(),
-        db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    worker = db.relationship("Worker", back_populates="problem_jobs")
+    """The worker that reported the job.
+
+    It has no foreign key: the record is evidence about the reported account, so deleting the worker keeps it.
+    """
     ipaddr = db.Column(db.String(39), nullable=True, index=True)
     """The submitting request's IP subject (``CounterMeasures.ip_subject``)."""
+    origin_text = db.Column(db.String(MAX_ORIGIN_TEXT_CHARACTERS), nullable=True)
+    """The request origin as a trusted proxy reported it, when it was not blank and had no IP subject.
+
+    It is null when the origin had a subject, and once retention removed it with the address.
+    """
     proxied_account = db.Column(db.String(255), nullable=True, index=True)
     # This is not a foreign key, to allow us to be able to track the job ID in the logs after it's deleted
     job_id = db.Column(uuid_column_type(), nullable=False)
@@ -1280,13 +1288,55 @@ class User(db.Model):
             return None
 
     def record_problem_job(self, procgen, ipaddr, worker, prompt):
+        """Capture worker-reported evidence, record the problem job, and notify moderators past the thresholds.
+
+        Args:
+            procgen: Reported generation and its waiting request.
+            ipaddr: Request origin.
+            worker: Worker making the report.
+            prompt: Effective worker input, not original submission provenance.
+
+        Side Effects:
+            Persists evidence independently of this session, records the problem job, and may send a Discord alert.
+        """
+        from horde.classes.base.waiting_prompt import SubmittedPromptPurpose
+        from horde.database.prompt_moderation import (
+            PromptEvidence,
+            PromptModerationReason,
+            record_prompt_evidence,
+            subjectless_origin_text,
+        )
+
+        # Capture every worker-reported problem job before notification thresholds
+        # or account exceptions return. The pre-moderation stage is unavailable here;
+        # never invent it from either the raw submission or the effective prompt.
+        models = procgen.wp.get_model_names()
+        event_id = record_prompt_evidence(
+            PromptEvidence(
+                user_id=self.id,
+                reason=PromptModerationReason.WORKER_CSAM,
+                submitted_prompt=procgen.wp.read_privileged_submitted_prompt(
+                    purpose=SubmittedPromptPurpose.MODERATION_EVIDENCE,
+                ),
+                moderation_prompt=None,
+                effective_prompt=prompt,
+                request_id=str(procgen.wp.id),
+                job_id=str(procgen.id),
+                worker_id=str(worker.id),
+                proxied_account=procgen.wp.proxied_account,
+                ipaddr=ipaddr,
+                models=models,
+            ),
+        )
         # We do not report the admin as they do dev work often.
         if self.id == 1:
             return
-        ipaddr = CounterMeasures.ip_subject(ipaddr)
+        origin = ipaddr
+        ipaddr = CounterMeasures.ip_subject(origin)
         new_problem_job = UserProblemJobs(
             user_id=self.id,
             ipaddr=ipaddr,
+            origin_text=subjectless_origin_text(origin, ipaddr),
             job_id=procgen.id,
             worker_id=worker.id,
             proxied_account=procgen.wp.proxied_account,
@@ -1300,13 +1350,29 @@ class User(db.Model):
         if self.service:
             redis_id = f"{self.id}:{procgen.wp.proxied_account}"
             latest_user = f"{self.get_unique_alias()}:{procgen.wp.proxied_account}"
-        loras = ""
-        if "loras" in procgen.wp.params:
-            loras = f"\nLatest LoRas: {[lor['name'] for lor in procgen.wp.params['loras']]}."
+        loras = [lor["name"] for lor in procgen.wp.params.get("loras", [])]
+
+        def alert(subject: str, count: int, threshold: int, window: str) -> str:
+            # The prompt and the address stay in the evidence row. A Discord message outlives the
+            # evidence retention window and cannot be redacted, so the alert carries only the event ID
+            # and identifiers a moderator needs to open it. The mute matches the Redis key set below.
+            lines = [
+                f"CSAM censor threshold: {subject}",
+                f"{count} worker reports in the past {window} (threshold {threshold}). Muted for this subject for 1 {window}.",
+                f"Latest: event {event_id if event_id is not None else 'unavailable (evidence write failed)'}, "
+                f"job {procgen.id}, worker {worker.name} ({worker.id})",
+                f"Models: {', '.join(models) or 'none'}. LoRAs: {', '.join(loras) or 'none'}.",
+            ]
+            if event_id is not None:
+                review_url = moderation_event_url(event_id)
+                lines.append(f"Review: {review_url}" if review_url else f"Review: event {event_id} in the frontpage Prompts tab.")
+            return "\n".join(lines)
+
         # Manual exception for pawky as they won't add proxied_accounts for a while
         # And I'm tired of seeing reports from their user instead of from IPs
         # TODO: Remove id check once pawkygame adds proxied_accounts
         if not self.is_anon() and self.id != 1560:
+            account_subject = f"account {latest_user}"
             user_count_q = UserProblemJobs.query.filter_by(
                 user_id=self.id,
                 proxied_account=procgen.wp.proxied_account,
@@ -1317,12 +1383,7 @@ class User(db.Model):
             if user_hourly > HOURLY_THRESHOLD:
                 if hr.horde_r_get(f"user_{redis_id}_hourly_problem_notified"):
                     return
-                send_problem_user_notification(
-                    f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                    f"Job ID: {procgen.id}. Worker: {worker.name}({worker.id})\n"
-                    f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}.{loras}",
-                )
+                send_problem_user_notification(alert(account_subject, user_hourly, HOURLY_THRESHOLD, "hour"))
                 hr.horde_r_setex(f"user_{redis_id}_hourly_problem_notified", timedelta(hours=1), 1)
                 return
             user_daily = user_count_q.filter(
@@ -1332,14 +1393,18 @@ class User(db.Model):
                 # We don't want to spam notifications
                 if hr.horde_r_get(f"user_{redis_id}_daily_problem_notified"):
                     return
-                send_problem_user_notification(
-                    f"User {self.get_unique_alias()} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past day.\n"
-                    f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
-                    f"Latest IP: {ipaddr}.\n"
-                    f"Latest Prompt: {prompt}.{loras}",
-                )
+                send_problem_user_notification(alert(account_subject, user_daily, DAILY_THRESHOLD, "day"))
                 hr.horde_r_setex(f"user_{redis_id}_daily_problem_notified", timedelta(days=1), 1)
                 return
+        # Without a subject the records match no address, and counting ipaddr=None would pool every subjectless
+        # report from every account into one alert and one mute key.
+        if ipaddr is None:
+            return
+        # The pseudonym prefix lets a moderator match repeat alerts for one address in the channel without the
+        # address itself appearing there. No pseudonym exists under a placeholder secret.
+        subject_key = CounterMeasures.ip_subject_key(ipaddr)
+        ip_subject = f"IP subject {subject_key[:12]}" if subject_key else "one IP subject"
+        ip_subject = f"{ip_subject}, latest account {latest_user}"
         ip_count_q = UserProblemJobs.query.filter_by(ipaddr=ipaddr)
         ip_hourly = ip_count_q.filter(
             UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1),
@@ -1347,25 +1412,15 @@ class User(db.Model):
         if ip_hourly > HOURLY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_hourly_problem_notified"):
                 return
-            send_problem_user_notification(
-                f"IP {ipaddr} had more than {HOURLY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
-                f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}.{loras}",
-            )
+            send_problem_user_notification(alert(ip_subject, ip_hourly, HOURLY_THRESHOLD, "hour"))
             hr.horde_r_setex(f"ip_{ipaddr}_hourly_problem_notified", timedelta(hours=1), 1)
             return
         ip_daily = ip_count_q.filter(
-            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(hours=+1),
+            UserProblemJobs.created > datetime.utcnow() - dateutil.relativedelta.relativedelta(days=+1),
         ).count()
         if ip_daily > DAILY_THRESHOLD:
             if hr.horde_r_get(f"ip_{ipaddr}_daily_problem_notified"):
                 return
-            send_problem_user_notification(
-                f"IP {ipaddr} had more than {DAILY_THRESHOLD} jobs csam-censored in the past hour.\n"
-                f"Job ID: {procgen.id}. Worker ID: {worker.name}({worker.id}\n"
-                f"Latest User: {latest_user}.\n"
-                f"Latest Prompt: {prompt}.{loras}",
-            )
+            send_problem_user_notification(alert(ip_subject, ip_daily, DAILY_THRESHOLD, "day"))
             hr.horde_r_setex(f"ip_{ipaddr}_daily_problem_notified", timedelta(days=1), 1)
             return
