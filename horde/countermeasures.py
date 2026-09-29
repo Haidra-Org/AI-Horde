@@ -2,9 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import hashlib
+import hmac
 import ipaddress
 import os
 import time as _time
+from collections.abc import Mapping
 from datetime import timedelta
 
 import logfire
@@ -43,6 +46,55 @@ test_timeout = 0
 # Redis is unavailable; caps the resulting IP timeout at MAX_TEST_TIMEOUT * 3
 # seconds so a Redis outage cannot escalate into effectively permanent bans.
 MAX_TEST_TIMEOUT = 300
+
+IPV6_SUBJECT_PREFIX_LENGTH: int = 64
+"""The IPv6 prefix length an address is judged, blocked and keyed by.
+
+IPv6 clients commonly receive a /64 and rotate addresses within it, so a single IPv6 address does not follow a client.
+"""
+
+IP_SUBJECT_SECRET_ENV: str = "secret_key"
+"""The environment variable holding the deployment secret that keys address pseudonyms.
+
+``hash_api_key`` in ``horde.utils`` salts stored API keys with the same secret, so every deployment sets it and it never
+rotates: rotating it would invalidate every stored API key.
+"""
+PLACEHOLDER_SECRETS: frozenset[str] = frozenset(
+    {
+        "changeme",
+        "s0m3s3cr3t",
+    },
+)
+"""Published values of the deployment secret: the ``.env_template`` placeholder and ``hash_api_key``'s fallback.
+
+The IPv4 space is small enough to enumerate, so a pseudonym keyed with a published secret reverses to its address.
+"""
+IP_SUBJECT_KEY_LABEL: bytes = b"AI-Horde moderation IP subject key"
+"""The domain-separation label hashed before every IP subject, so no other use of the secret yields the same value."""
+
+
+def load_ip_subject_key_secret(environ: Mapping[str, str] = os.environ) -> bytes | None:
+    """Return the secret that keys address pseudonyms, or None when the deployment has no private secret.
+
+    Logs one warning when the secret is unset or one of ``PLACEHOLDER_SECRETS``.
+
+    Args:
+        environ: Variables to read; the process environment by default.
+
+    Returns:
+        The encoded secret, or None when pseudonyms must not be produced.
+    """
+    secret = environ.get(IP_SUBJECT_SECRET_ENV)
+    if not secret or secret in PLACEHOLDER_SECRETS:
+        logger.warning(
+            f"{IP_SUBJECT_SECRET_ENV} is unset or a published placeholder, so moderation records store no IP subject key",
+        )
+        return None
+    return secret.encode()
+
+
+IP_SUBJECT_KEY_SECRET: bytes | None = load_ip_subject_key_secret()
+"""The secret keying ``CounterMeasures.ip_subject_key``, read from the environment at import, or None when unusable."""
 
 
 class CounterMeasures:
@@ -177,17 +229,26 @@ class CounterMeasures:
 
     @staticmethod
     def retrieve_timeout(ipaddr, ignore_blocks=False):
-        """Checks if an IP address is still in timeout"""
+        """Checks if an IP address is still in timeout.
+
+        A timeout set on the address's IP subject applies as well, so an IPv4 client that reaches the horde as an
+        IPv4-mapped IPv6 address is held by a timeout on its IPv4 address.
+        """
         if not ip_t_r:
             return 0
             # return test_timeout * 3 * 60
-        has_timeout = ip_t_r.get(ipaddr)
-        if not bool(has_timeout):
-            if ignore_blocks is True:
-                return 0
-            return CounterMeasures.retrieve_block_timeout(ipaddr)
-        ttl = ip_t_r.ttl(ipaddr)
-        return int(ttl)
+        subject = CounterMeasures.ip_subject(ipaddr)
+        timeout_keys = [ipaddr]
+        if subject is not None and subject != ipaddr:
+            timeout_keys.append(subject)
+        for timeout_key in timeout_keys:
+            if bool(ip_t_r.get(timeout_key)):
+                return int(ip_t_r.ttl(timeout_key))
+        if ignore_blocks is True:
+            return 0
+        # An IPv6 subject is a network, so a block range is matched against the address itself.
+        block_address = subject if subject is not None and "/" not in subject else ipaddr
+        return CounterMeasures.retrieve_block_timeout(block_address)
 
     @staticmethod
     def delete_timeout(ipaddr):
@@ -290,10 +351,75 @@ class CounterMeasures:
         return False
 
     @staticmethod
-    def extract_ipv6_subnet(ipaddr, subnet_prefix_length=64):
-        try:
-            ip = ipaddress.IPv6Address(ipaddr)
-            network = ipaddress.IPv6Network(f"{ip.exploded}/{subnet_prefix_length}", strict=False)
-            return str(network)
-        except ipaddress.AddressValueError:
+    def parse_ip_subject(ipaddr: str) -> str:
+        """Parse an address, or an IPv6 network of at most one /64, into the subject it is judged as.
+
+        - An IPv4 address is its own subject.
+        - An IPv4-mapped IPv6 address, as dual-stack sockets report IPv4 clients, is its IPv4 address.
+        - An IPv6 address, or an IPv6 network of /64 or narrower, is its /64 network. An already normalized subject
+          parses to itself.
+
+        Args:
+            ipaddr: Address or network text; surrounding whitespace is ignored.
+
+        Returns:
+            The IPv4 address or the IPv6 /64 network, as text.
+
+        Raises:
+            ValueError: The value is not an address, or is a network wider than one subject (any IPv4 network other
+                than a /32, an IPv6 network wider than /64, or an IPv4-mapped network other than a /128).
+        """
+        network = ipaddress.ip_network(ipaddr.strip(), strict=False)
+        is_single_address = network.prefixlen == network.max_prefixlen
+        if isinstance(network, ipaddress.IPv4Network):
+            if not is_single_address:
+                raise ValueError(f"{ipaddr!r} is an IPv4 network, not an address")
+            return str(network.network_address)
+        mapped_address = network.network_address.ipv4_mapped
+        if mapped_address is not None:
+            if not is_single_address:
+                raise ValueError(f"{ipaddr!r} is an IPv4-mapped network, not an address")
+            return str(mapped_address)
+        if network.prefixlen < IPV6_SUBJECT_PREFIX_LENGTH:
+            raise ValueError(f"{ipaddr!r} is wider than one IPv6 /{IPV6_SUBJECT_PREFIX_LENGTH}")
+        return str(network.supernet(new_prefix=IPV6_SUBJECT_PREFIX_LENGTH))
+
+    @staticmethod
+    def ip_subject(ipaddr: str | None) -> str | None:
+        """Return the subject an address is judged, blocked and keyed as, or None when it is not one.
+
+        A value ``parse_ip_subject`` accepts becomes its subject. Any other value, such as free text in a trusted
+        proxy's ``Proxied-For`` header or a network wider than one subject, has no subject: it is not keyed or blocked;
+        capture keeps the text as origin_text.
+
+        Args:
+            ipaddr: Request origin as the request reported it, or None when unknown.
+
+        Returns:
+            The IPv4 address or the IPv6 /64 network, or None when the value is blank or does not parse.
+        """
+        if ipaddr is None or not ipaddr.strip():
             return None
+        try:
+            return CounterMeasures.parse_ip_subject(ipaddr)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def ip_subject_key(subject: str | None) -> str | None:
+        """Return the address pseudonym of an IP subject: equal for equal subjects, and irreversible without the secret.
+
+        The pseudonym is HMAC-SHA256 under ``IP_SUBJECT_KEY_SECRET`` over ``IP_SUBJECT_KEY_LABEL``, a NUL byte and the
+        subject.
+
+        Args:
+            subject: A value ``ip_subject`` returned.
+
+        Returns:
+            The pseudonym as 64 hexadecimal characters, or None when the subject is None or the deployment has no
+            usable secret.
+        """
+        if subject is None or IP_SUBJECT_KEY_SECRET is None:
+            return None
+        message = IP_SUBJECT_KEY_LABEL + b"\x00" + subject.encode()
+        return hmac.new(IP_SUBJECT_KEY_SECRET, message, hashlib.sha256).hexdigest()
