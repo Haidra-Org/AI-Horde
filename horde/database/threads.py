@@ -491,7 +491,7 @@ def prune_stats():
 
 @logger.catch(reraise=True)
 def apply_moderation_retention() -> None:
-    """Apply moderation retention to prompt moderation evidence and worker reports.
+    """Apply moderation retention to prompt moderation evidence, worker reports and worker suspicion history.
 
     Runs on the quorum node. A tick repeats bounded retention passes while any step fills its batch, up to
     ``RETENTION_MAX_CATCHUP_CYCLES``, so a backlog drains at many batches a tick while each pass keeps its short
@@ -516,6 +516,7 @@ def apply_moderation_retention() -> None:
             "ipaddr_redacted",
             "problem_jobs_deleted",
             "problem_job_ipaddr_redacted",
+            "worker_suspicion_deleted",
         ),
         0,
     )
@@ -548,7 +549,8 @@ def apply_moderation_retention() -> None:
                 f"removed text from {totals['text_redacted']}, "
                 f"removed addresses from {totals['ipaddr_redacted']} events; "
                 f"deleted {totals['problem_jobs_deleted']} worker reports, "
-                f"removed addresses from {totals['problem_job_ipaddr_redacted']} worker reports",
+                f"removed addresses from {totals['problem_job_ipaddr_redacted']} worker reports; "
+                f"deleted {totals['worker_suspicion_deleted']} worker suspicion events",
             )
 
 

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, relationship
 from horde import vars as hv
 from horde.classes.base import settings
 from horde.classes.base.kudos import KudosStatEvent, emit_kudos_stat_event, kudos_event
+from horde.classes.base.sql_constructs import UtcNow
 from horde.database.kudos_legacy_projection import (
     project_worker_contribution,
     project_worker_fulfilment,
@@ -40,6 +41,18 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 # Kept as a named baseline so a fresh worker's speed reproduces the historical
 # substitution the old speed expression applied whenever the sample average was NULL.
 SPEED_BASELINE_THINGS_PER_SEC = 1
+
+MAX_WORKER_NAME_CHARACTERS: int = 100
+"""The longest worker name the workers table stores; ``check_for_bad_actor`` cuts longer names to it.
+
+The suspicion history copies the worker's name, so its column has the same length and a copy never exceeds it.
+"""
+
+WORKER_ONLINE_SECONDS: int = 300
+"""How recently a worker must have checked in to count as online rather than stale.
+
+``WorkerTemplate.is_stale`` and the moderator overview's online filter both read it, so the two agree.
+"""
 
 
 class WorkerStats(db.Model):
@@ -102,6 +115,37 @@ class WorkerSuspicions(db.Model):
     suspicion_id = db.Column(db.Integer, primary_key=False)
 
 
+class WorkerSuspicionEvent(db.Model):
+    """Represent the retained moderation record of one worker suspicion report.
+
+    ``WorkerSuspicions`` is the worker's resettable current score and cascades
+    away with the worker. This table has no foreign keys so the history remains
+    available after a moderator reset or worker deletion.
+    """
+
+    __tablename__ = "worker_suspicion_events"
+    __table_args__ = (
+        db.Index("ix_worker_suspicion_events_created", "created"),
+        db.Index("ix_worker_suspicion_events_worker_id", "worker_id", "id"),
+        db.Index("ix_worker_suspicion_events_user_id", "user_id", "id"),
+    )
+
+    id: Mapped[int] = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True)
+    """The record identifier, also the history's descending cursor."""
+    created: Mapped[datetime] = db.Column(db.DateTime, default=datetime.utcnow, server_default=UtcNow(), nullable=False)
+    """The naive UTC time the suspicion was reported; the retention window counts from it."""
+    worker_id: Mapped[uuid.UUID | str] = db.Column(uuid_column_type(), nullable=False)
+    """The worker the suspicion was raised against; not a foreign key, so the record outlives the worker."""
+    worker_name: Mapped[str] = db.Column(db.String(MAX_WORKER_NAME_CHARACTERS), nullable=False)
+    """The worker's name when the suspicion was reported, cut to ``MAX_WORKER_NAME_CHARACTERS``."""
+    user_id: Mapped[int] = db.Column(db.Integer, nullable=False)
+    """The account that owned the worker when the suspicion was reported."""
+    suspicion_id: Mapped[int] = db.Column(db.Integer, nullable=False)
+    """The kind of suspicion, a ``Suspicions`` value."""
+    detail: Mapped[str] = db.Column(db.Text, nullable=False)
+    """The suspicion's diagnostic text, the kind's log template filled for this report."""
+
+
 class WorkerModel(db.Model):
     __tablename__ = "worker_models"
     # wp_has_valid_workers probes this table per worker through an EXISTS
@@ -150,7 +194,7 @@ class WorkerTemplate(db.Model):
     worker_type = db.Column(db.String(30), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"))
     user: Mapped[User] = relationship("User", back_populates="workers")
-    name = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    name = db.Column(db.String(MAX_WORKER_NAME_CHARACTERS), unique=True, nullable=False, index=True)
     info = db.Column(db.String(1000))
     ipaddr = db.Column(db.String(39))
     created = db.Column(db.DateTime, default=datetime.utcnow)
@@ -268,25 +312,47 @@ class WorkerTemplate(db.Model):
 
     def check_for_bad_actor(self):
         # Each worker starts at the suspicion level of its user
-        if len(self.name) > 100:
+        if len(self.name) > MAX_WORKER_NAME_CHARACTERS:
             if len(self.name) > 200:
                 self.report_suspicion(reason=Suspicions.WORKER_NAME_EXTREME)
-            self.name = self.name[:100]
+            self.name = self.name[:MAX_WORKER_NAME_CHARACTERS]
             self.report_suspicion(reason=Suspicions.WORKER_NAME_LONG)
         if is_profane(self.name):
             self.report_suspicion(reason=Suspicions.WORKER_PROFANITY, formats=[self.name])
 
-    def report_suspicion(self, amount=1, reason=Suspicions.WORKER_PROFANITY, formats=None):
+    def report_suspicion(
+        self,
+        amount: int = 1,
+        reason: Suspicions = Suspicions.WORKER_PROFANITY,
+        formats: list[Any] | None = None,
+    ) -> None:
+        """Record suspicion in the resettable scores and in the retained worker history.
+
+        Args:
+            amount: Suspicion amount attributed to the owner.
+            reason: Suspicion category.
+            formats: Values interpolated into the category's diagnostic template.
+        """
         if not formats:
             formats = []
         # Unreasonable Fast can be added multiple times and it increases suspicion each time
         if reason not in [Suspicions.UNREASONABLY_FAST, Suspicions.TOO_MANY_JOBS_ABORTED] and int(reason) in self.get_suspicion_reasons():
             return
+        reason_log = SUSPICION_LOGS[reason].format(*formats)
         new_suspicion = WorkerSuspicions(worker_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)
+        db.session.add(
+            WorkerSuspicionEvent(
+                worker_id=self.id,
+                # The column is bounded to the worker name limit.
+                worker_name=self.name[:MAX_WORKER_NAME_CHARACTERS],
+                user_id=self.user_id,
+                suspicion_id=int(reason),
+                detail=reason_log,
+            ),
+        )
         self.user.report_suspicion(amount, reason, formats)
         if reason:
-            reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"Worker '{self.id}' suspicion increased. Reason: {reason_log}")
         if self.is_suspicious() and not self.paused:
             self.paused = True
@@ -321,7 +387,7 @@ class WorkerTemplate(db.Model):
             return "OK"
         if is_profane(new_name):
             return "Profanity"
-        if len(new_name) > 100:
+        if len(new_name) > MAX_WORKER_NAME_CHARACTERS:
             return "Too Long"
         new_name = sanitize_string(new_name)
         # Worker.name carries a unique constraint (ix_workers_name). Detect the
@@ -581,7 +647,7 @@ class WorkerTemplate(db.Model):
 
     def is_stale(self):
         try:
-            if (datetime.utcnow() - self.last_check_in).total_seconds() > 300:
+            if (datetime.utcnow() - self.last_check_in).total_seconds() > WORKER_ONLINE_SECONDS:
                 return True
         # If the last_check_in isn't set, it's a new worker, so it's stale by default
         except AttributeError:
