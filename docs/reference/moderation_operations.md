@@ -1,0 +1,278 @@
+---
+title: "Moderation operations reference"
+summary: "What the horde retains when a prompt is rejected or a worker reports a job, how retention removes text, address and identity on schedule, and the moderator API that lists it and attaches notes."
+topics: [requests, moderation, operations]
+order: 65
+---
+
+<!--
+SPDX-FileCopyrightText: 2026 Tazlin
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+# Moderation operations reference
+
+<!-- BEGIN GENERATED: topics (gen_doc_index.py) -->
+Topics: [moderation](../topics.md#moderation), [operations](../topics.md#operations), [requests](../topics.md#requests)
+<!-- END GENERATED: topics -->
+
+A rejected prompt or a worker's report on a job writes an event that outlasts the request it came from, so a moderator
+can review it after the request expired or the account was deleted. Wiping the account keeps its events, their notes
+and its worker report records. A replacement that succeeded and then generated is never recorded. Moderators list events and
+attach notes to them.
+
+## Code map
+
+| Concept                     | File                                        | Symbol                               |
+| --------------------------- | ------------------------------------------- | ------------------------------------ |
+| Evidence row, notes         | `horde/classes/base/prompt_moderation.py`   | `PromptModerationEvent`, `PromptModerationNote` |
+| Capture                     | `horde/database/prompt_moderation.py`       | `record_prompt_evidence`             |
+| Rejection capture hook      | `horde/apis/v2/base.py`                     | `GenerateTemplate._record_prompt_rejection` |
+| Worker report capture       | `horde/classes/base/user.py`                | `User.record_problem_job`, `UserProblemJobs` |
+| Alert review link           | `horde/discord.py`                          | `moderation_event_url`               |
+| IP subject and pseudonym    | `horde/countermeasures.py`                  | `CounterMeasures.ip_subject`, `CounterMeasures.parse_ip_subject`, `CounterMeasures.ip_subject_key`, `IP_SUBJECT_KEY_SECRET` |
+| Listing and notes           | `horde/database/prompt_moderation.py`       | `get_prompt_events`, `add_prompt_note` |
+| Retention policy            | `horde/database/prompt_moderation.py`       | `RetentionPolicy`, `load_retention_policy`, `MODERATION_RETENTION_POLICY` |
+| Column retention map        | `horde/database/prompt_moderation.py`       | `EVENT_COLUMN_RETENTION`, `RetentionFate`, `REMOVAL_FLAGS` |
+| Retention pass              | `horde/database/prompt_moderation.py`, `horde/database/threads.py` | `apply_evidence_retention`, `apply_moderation_retention` |
+| Moderation-action exemption | `horde/database/prompt_moderation.py`       | `_under_moderation_action`, `_account_restricted` |
+| Privacy disclosure          | `horde/apis/v2/base.py`, `horde/templates/privacy_policy.html` | `DocsPrivacy`                        |
+| Endpoints and limits        | `horde/apis/v2/moderation.py`               | `Operations*` resources, `_moderator_limits` |
+| Rate limit key              | `horde/apis/limiter_api.py`                 | `get_request_api_key_per_method`     |
+
+The schema is `sql_statements/5.1.12.txt`. Tests build the tables from the models, so
+`test_orm_models_build_the_same_moderation_tables_as_the_migration` in
+`tests/integration/test_moderation_migration.py` requires both to produce the same columns, defaults, constraints and
+indexes.
+
+## Recorded events
+
+An event holds the account, any proxied account, the submitting address and its pseudonym (or, for an origin that is
+not an address, its text), the requested model names, whichever request, job and worker identifiers exist, the reason,
+the outcome, and the known prompt stages.
+
+| Reason             | Outcome    | Raised by                                                  |
+| ------------------ | ---------- | ---------------------------------------------------------- |
+| `filter_rejection` | `rejected` | The prompt filter rejected the prompt, or the replacement filter emptied it or was asked to replace more than 7000 characters |
+| `model_rejection`  | `rejected` | The NSFW-model replacement emptied the prompt, for an NSFW model or for a flagged account on any model |
+| `worker_csam`      | `censored` | An image worker reported the job                            |
+
+A `worker_csam` event records that a worker reported the job. It carries no finding about the account.
+
+The address is the IP subject (`CounterMeasures.ip_subject`) of the request origin the rejection or the waiting
+request saw. The same function normalizes worker report records, the `ipaddr` filter and worker IP blocks:
+
+| Origin                                            | Recorded as                         |
+| ------------------------------------------------- | ----------------------------------- |
+| IPv4 address                                      | The address                         |
+| IPv4-mapped IPv6 address (`::ffff:a.b.c.d`)       | The IPv4 address                    |
+| IPv6 address, or IPv6 network of /64 or narrower  | Its /64 network, since IPv6 clients rotate addresses inside it |
+| Blank                                             | `null`                              |
+| Anything else, such as free text in `Proxied-For` or a wider network | `null`, with no pseudonym; the text is kept as `origin_text` (blank is nothing) |
+
+A value with no subject is never keyed or blocked: blocking a worker whose recorded origin has no subject sets
+no timeout and logs a warning. Capture keeps its text in `origin_text` on the event and the worker report record,
+clipped to 255 characters (`MAX_ORIGIN_TEXT_CHARACTERS`); `origin_text` is `null` when the origin had a subject.
+
+Capture also stores `ip_subject_key`, the address pseudonym: HMAC-SHA256 under the deployment's `secret_key`, over a
+moderation label and the subject. It is equal for equal subjects and outlives the address, so address filters keep
+matching an event after its address is removed. The IPv4 space is small enough to enumerate, so a pseudonym under a
+published secret reverses to its address: when `secret_key` is unset or equals the `.env_template` placeholder or
+`hash_api_key`'s fallback, startup logs one warning and events are captured without a pseudonym. `models` lists the
+models the request asked for, not the model a worker ran.
+
+| Stage               | Meaning                                              | Rejection | `worker_csam`                     |
+| ------------------- | ---------------------------------------------------- | --------- | --------------------------------- |
+| `submitted_prompt`  | The original submission, before styles or moderation | Recorded  | Recorded when the request kept it |
+| `moderation_prompt` | The text moderation evaluated, after styles          | Recorded  | `null`                            |
+| `effective_prompt`  | The prompt a worker received                         | `null`    | Recorded                          |
+
+A stage that is unknown or does not exist is `null`, never a copy of another stage. A rejected submission has no
+waiting-request ID, since no row was created. A worker report cannot recover the styled pre-moderation prompt, so
+`moderation_prompt` stays `null`. A rejection never has an effective prompt: it happens either before any replacement
+ran or after a replacement emptied the prompt, and a replacement that produces text lets the request through without an
+event. The text a rejection refused is `moderation_prompt`.
+
+Each stage is clipped to 16,000 characters behind a `text_truncated` flag. The limit applies to evidence alone; the
+original submission on the waiting request keeps its full length. `job_id` is unique, so a repeated worker report for
+one job resolves to the existing event rather than a second row. A rejected attempt has no request ID, so each attempt
+is a separate row.
+
+Captured values never change; retention removes text, address and identity on schedule (see [Retention](#retention)).
+A moderator can attach notes to an event, including an anonymized one; a note is a separate row that is never
+deleted, and it exempts its event from retention (see [Moderation action](#moderation-action)).
+
+Worker reports write `user_problem_jobs`, and the problem-job Discord alerts count that table: the account alerts
+over the past hour or day, and the IP alerts over the past hour or day for one IP subject. Each alert carries the
+event ID and, when configured, the review link (see [Problem-job alerts](#problem-job-alerts)). A report whose origin
+has no IP subject is counted for its account only, since records without an address cannot be told apart by IP.
+Those records follow the evidence address window and ceiling (see [Retention](#retention)).
+
+### Problem-job alerts
+
+An alert identifies its subject (the account alias, or the IP subject by the first 12 hex characters of its pseudonym
+with the latest account), the count over the window, the threshold, the mute period, the latest job, worker and
+models, the LoRA names, and the event ID of the evidence just captured. It carries no prompt text and no address: a
+Discord message outlives the evidence retention window and cannot be redacted, and Discord drops content over 2,000
+characters, which lost long-prompt alerts while their mute key was set. If `HORDE_MODERATION_FRONTPAGE_URL` is set
+to an absolute HTTP URL, the alert links to `<url>/admin/review?tab=prompts&event_id=<id>`; otherwise it says to
+open the event in the frontpage Prompts tab. When the evidence write failed, the alert says so in place of the event
+ID and has no review line. Under a placeholder secret there is no pseudonym and the IP subject is unnamed.
+
+## Moderator API
+
+All paths below are under `/api/v2/operations/moderation`.
+
+### Conventions
+
+Every endpoint requires the moderator `apikey` header and responds with `Cache-Control: private, no-store`. Every
+timestamp returned is ISO 8601 in UTC with an explicit `+00:00` offset; times sent must carry an explicit timezone.
+Responses are built from explicit field lists, since these tables hold prompt text and a future column must not appear
+in the API by accident.
+
+Rate limits count per API key and method (`get_request_api_key_per_method`), not per address, since moderators share
+office addresses and VPN exits: 120 reads (`GET`) and 30 writes (`POST`) a minute on each endpoint. Each limit is
+scoped to its endpoint rather than the concrete path, so notes on every event share one budget. A request without the
+header counts against the anonymous key's bucket for that endpoint and is refused by the missing header, so keyless
+traffic cannot spend a moderator's allowance. Every response lists `Retry-After`, `X-RateLimit-Limit`,
+`X-RateLimit-Remaining` and `X-RateLimit-Reset` in `Access-Control-Expose-Headers`, so a browser client can read how
+long to wait after a `429`.
+
+### Events and notes
+
+- `GET /prompts` filters by `event_id`, `user_id`, `proxied_account`, `ipaddr`, `ip_subject_key`, `worker_id`,
+  `since` (inclusive) and `until` (exclusive). `event_id` selects that one event; the `event_id` in an alert's review
+  link is meant for it, and a value below 1 returns `400 InvalidModerationEventID`. `ipaddr` takes an address or an IPv6 network of
+  /64 or narrower and selects its IP subject, so an IPv6 address selects its /64 and an IPv4-mapped address its IPv4
+  address. It matches events by pseudonym, so an event whose address retention removed still matches until it is
+  anonymized; an event without a pseudonym matches by its address. A blank `ipaddr` filters nothing, and a value that
+  is not one subject returns `400 InvalidModerationAddressFilter`. `ip_subject_key` takes a pseudonym as the listing
+  returns it (64 lowercase hex characters) and matches events carrying exactly that pseudonym; any other value returns
+  `400 InvalidModerationAddressFilter`. The page returns event identity, reason/outcome, the three prompt stages,
+  `text_truncated`, correlation fields except the internal `job_id`, `ip_subject_key` (the pseudonym, equal for events
+  of one subject, never an address), the retention flags `text_redacted`, `ipaddr_redacted` and `anonymized`, and
+  notes ordered oldest first. A retention flag is set once its step ran on the event, whether or not there was a value
+  to remove. `user_id` and `ip_subject_key` are `null` on an anonymized event. The page also carries
+  `retention`: `text_days`, `ipaddr_days` (each `null` when that window is `none`) and `ceiling_days`, the policy in
+  force. It takes `limit` 1-100 (default 50) and an exclusive descending `before_id` cursor, and returns
+  `next_cursor` or `null`. An out-of-range page
+  returns `400 InvalidOperationsLimit` or `400 InvalidOperationsCursor`; a bound without a timezone, or `since` not
+  earlier than `until`, returns `400 InvalidModerationTimeRange`.
+- `POST /prompts/<id>/notes` accepts `{note}`: 1-2,000 characters, nonblank, without NUL; anything else returns
+  `400 InvalidModerationNote`. It returns the note with reviewer attribution and creation time. A note on an
+  anonymized event is stored like any other; an event ID that does not exist returns `404 ModerationEventNotFound`.
+
+Each subject filter reads its own index, newest `id` first: `(user_id, id)`, `(proxied_account, id)`, `(worker_id, id)`
+and `(ip_subject_key, id)`, the last three partial on a non-null value. Events without a pseudonym keep a partial
+`(ipaddr, id)` index for the `ipaddr` fallback, which stays small while the deployment has a private secret.
+
+## Retention
+
+Retention never deletes an event by age. Each part of an event not under moderation action decays on its own schedule,
+counted from capture, under a hard ceiling that applies to every reason:
+
+| Variable                                  | Default | Removes at that age                                   | `none`                  |
+| ----------------------------------------- | ------- | ----------------------------------------------------- | ----------------------- |
+| `HORDE_MODERATION_TEXT_RETENTION_DAYS`    | `none`  | The three prompt stages; sets `text_redacted`         | Kept until the ceiling  |
+| `HORDE_MODERATION_IPADDR_RETENTION_DAYS`  | 30      | `ipaddr` (the pseudonym stays); sets `ipaddr_redacted` | Kept until the ceiling  |
+| `HORDE_MODERATION_EVIDENCE_CEILING_DAYS`  | 365     | Identity; sets all three flags (below)                | Refused                 |
+
+The ceiling anonymizes the event: it clears `user_id`, `proxied_account`, `ipaddr`, `ip_subject_key`, `request_id`,
+`job_id` and the prompt stages. It keeps `reason`, `outcome`, `models`, `created`, `text_truncated`, the notes and
+`worker_id`, which identifies the reporting worker rather than the subject, so counts by reason, outcome, model and
+worker stay derivable from the rows.
+
+### Moderation action
+
+Every retention step skips an event under moderation action, with no cap, for as long as the condition holds.
+`_under_moderation_action` is the single definition. An event is under moderation action when any of these holds:
+
+| Condition | Source |
+| --------- | ------ |
+| The event has at least one note | `prompt_moderation_notes.event_id` |
+| The event's account is flagged | `user_roles` row `FLAGGED` with `value` true |
+| The event's account is suspicious: not trusted, and at least `User.SUSPICION_THRESHOLD` (5) suspicions | `user_roles` row `TRUSTED`, count of `user_suspicions`, as `User.is_suspicious` judges it |
+
+Worker report records use the account conditions only (`_account_restricted`). The records exist to identify accounts
+attempting to generate illegal content and to enforce the restrictions that follow, which cannot be enforced once the
+record is gone; the ceiling bounds only unactioned events. See
+[ADR 0015](../decisions/0015-tiered-moderation-evidence-retention.md).
+
+The exemption is evaluated at each pass. Once an event has no note and its account is neither flagged nor suspicious,
+the next pass applies every window already elapsed. Values already removed stay removed if the account is flagged
+later.
+
+The variables are read once at startup into `MODERATION_RETENTION_POLICY`; the retention pass and the privacy
+document both read that policy when they run. A window is a positive whole number of days or `none` (any case); the
+ceiling is a positive whole number of days, at most 365, and cannot be disabled. A window longer than the ceiling,
+or any malformed value, raises `ValueError` at import and stops startup.
+
+Worker report records (`user_problem_jobs`) follow the same address window and ceiling: past the address window their
+`ipaddr` and `origin_text` are nulled, and past the ceiling the record is deleted, unless the account is flagged or
+suspicious. They have no foreign key to the reporting worker, so deleting a worker, including through an account
+wipe, keeps the reports it made. Their
+alerts count the last hour or day only, so
+neither step changes an alert.
+
+The primary node's maintenance loop runs one pass an hour (`apply_moderation_retention`). A pass anonymizes, then
+removes text, then removes addresses; each step changes at most 1,000 events, oldest first, in its own transaction.
+Each step reads a partial index on `(created, id)` that excludes events it already finished, so a pass does not
+rescan finished rows, and a repeated pass changes nothing. Two steps then treat worker report records the same way:
+one deletes at most 1,000 past the ceiling through their `created` index, and one nulls the address of at most 1,000
+past the address window through `ix_user_problem_jobs_ipaddr_pending`
+(`WHERE ipaddr IS NOT NULL OR origin_text IS NOT NULL`).
+
+Wiping an account (`User.wipe`) touches no event, note or worker report record. They keep their `user_id`, so the
+account's records stay listed and filterable, and retention treats them as any other account's.
+
+The privacy document (`/api/v2/documents/privacy`) renders the same windows in its "Moderation records" section, and
+links the source code at `HORDE_REPOSITORY` (`horde.vars.horde_repository`, default
+`https://github.com/Haidra-Org/AI-Horde`).
+
+### Retention effects
+
+`EVENT_COLUMN_RETENTION` in `horde/database/prompt_moderation.py` is the source of truth for which columns each step
+clears: the steps build their updates from it, and startup fails when an event column has no fate.
+`test_every_event_column_has_a_retention_fate` in `tests/unit/test_moderation_retention_policy.py` locks its coverage,
+and `test_anonymization_removes_identity_and_keeps_the_record_and_its_notes` its effect. Every row below applies
+only to rows not under [moderation action](#moderation-action).
+
+| Setting or event | Columns and tables changed | Readers affected |
+| ---------------- | -------------------------- | ---------------- |
+| Text window | `submitted_prompt`, `moderation_prompt`, `effective_prompt` nulled; `text_redacted` set | The listing returns null stages. No filter reads text. |
+| Address window | `ipaddr` and `origin_text` nulled; `ipaddr_redacted` set; `ip_subject_key` kept. `user_problem_jobs.ipaddr` and `user_problem_jobs.origin_text` nulled | The listing returns a null `ipaddr` and `origin_text`, and the same `ip_subject_key`. The `ipaddr` filter, including another address in the same IPv6 /64, still finds an event with a pseudonym; an event without one no longer matches it. Problem-job alerts, which count the last hour or day, are unaffected. |
+| Ceiling | Text and address columns, `ip_subject_key`, `user_id`, `proxied_account`, `request_id` and `job_id` nulled; all three flags set; notes kept. `user_problem_jobs` rows past the ceiling deleted | The `user_id`, `proxied_account`, `ipaddr` and `ip_subject_key` filters no longer find the event; `worker_id`, `since` and `until` do. A later report of the same job no longer matches `job_id` and records a new event. Notes stay listed, and a later note is stored. |
+| `User.wipe` | None | The account's events, notes and worker report records stay, with `user_id` intact. Reports its deleted workers made stay, with `worker_id` intact. |
+| Any window setting | None | The privacy document and the listing's `retention` report the same values. A `none` window is `null` in `retention` and "kept with the record" in the document. |
+
+## Sharp edges
+
+- **Evidence can be lost.** The write uses a separate transaction on a second pooled connection, so rolling back a
+  rejected submission cannot erase it. A pool or database failure logs the exception type alone, never the bound
+  prompt text, and preserves the rejection. Monitor those failure logs and pool capacity.
+- **The rejection path takes a second pooled connection.** Rejections spike during an abuse flood, when the pool is
+  already contended.
+- **No foreign keys.** A rejected submission has no waiting row, and evidence must outlive request expiry and account
+  deletion. Only notes reference an event, and nothing deletes an event.
+- **Retention is eventual and never deletes by age.** A backlog larger than one batch an hour leaves text, addresses
+  or identity past their windows until the loop catches up; monitor the maintenance loop for failures and backlog.
+  Anonymized events stay, so row count grows with rejection and problem-job volume.
+  Events and worker report records under moderation action are never redacted or anonymized. Redaction and anonymization
+  change live rows only and leave backups alone.
+- **Rows under moderation action are rescanned on every pass.** They never get a retention flag, so the partial
+  indexes keep them, and each pass reads them again before the exemption filters them out. That is why the pass runs
+  hourly and each step is bounded to 1,000 rows.
+- **Changing a window changes the disclosure.** The privacy document renders the configured values; a shorter window
+  applies to existing events on the next pass, a longer one cannot restore removed values.
+- **The pseudonym needs a private secret.** Without one, events carry no pseudonym and the `ipaddr` filter stops
+  finding them once their address is removed. Setting a private `secret_key` later does not add pseudonyms to earlier
+  events. The same secret salts stored API keys, so it never rotates.
+- **Privileged accounts are recorded.** Moderator rejections and administrator problem jobs produce evidence, though
+  moderators are exempt from the IP blocking and the administrator from the problem-job alerts.
+
+`tests/integration/test_prompt_moderation.py` covers these contracts.
+
+## Related
+
+- [Prompt provenance reference](prompt_provenance.md)

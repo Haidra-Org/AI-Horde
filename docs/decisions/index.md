@@ -26,6 +26,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Publish versioned sampler contracts from one authoritative registry](0012-publish-versioned-sampler-contracts.md) | accepted | 2026-08-18 |
 | [Treat image job TTL as a conservative prefetch lease](0013-image-job-ttl-is-a-prefetch-lease.md) | accepted | 2026-08-18 |
 | [Quarantine deterministically invalid statistic events without stopping the projector](0014-quarantine-deterministically-invalid-statistic-events.md) | accepted | 2026-08-30 |
+| [Decay moderation evidence in tiers under an anonymizing ceiling](0015-tiered-moderation-evidence-retention.md) | accepted | 2026-09-29 |
 
 ## Relationships
 
@@ -47,6 +48,7 @@ flowchart TD
     r0012["0012: Publish versioned sampler contracts f…"]
     r0013["0013: Treat image job TTL as a conservative…"]
     r0014["0014: Quarantine deterministically invalid…"]
+    r0015["0015: Decay moderation evidence in tiers un…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005
