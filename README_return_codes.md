@@ -195,9 +195,16 @@ The errors returned by the AI horde are always in this json format
 | NonServiceForbidden | Only service accounts can set a proxy passkey |
 | NotUserOrMod | Only the user themselves or a moderator can delete a user |
 | NulByteInPayload | The request payload may not contain NUL bytes |
+| PromptExceedsContext | The prompt does not fit the context length the request would run under |
 | SharedKeyAssignedStyles | This shared key is restricted to specific styles |
+| StyleParameterAboveCeiling | A requested parameter is above the ceiling the style puts on it |
+| StyleParameterNotOverridable | The style does not let the request set this parameter |
+| StylePolicyOverridableMisplaced | A style's overridable list is only read under the 'listed' override mode |
 | StylesAnonForbidden | Anonymous users cannot create styles |
 | StylesRequiresCustomizer | Only customizers and trusted users can create styles |
+| TemplateFieldMissing | The style requires a template field the request did not supply |
+| TemplateFieldUnknown | The request supplied a template field the style does not declare |
+| TemplateFieldsRequireStyle | Template fields can only be sent alongside a style |
 | ThingNotFound | No item exists with the given ID |
 | TokenOverflow | More tokens were requested than the context length allows |
 | TooManyExtraSourceImages | At most 5 extra source images can be sent |

@@ -1,0 +1,22 @@
+-- Run with psql in its default autocommit mode. Pass -v ON_ERROR_STOP=1 so a
+-- failure stops the migration.
+--
+-- Two optional declarations a style can carry alongside its prompt and params:
+-- which params a request may still set and the ceilings it may not exceed
+-- (parameter_policy), and the placeholders the style's prompt accepts
+-- (template_fields). Both are nullable, so an existing style keeps its current
+-- behaviour with both columns null. Adding a nullable column with no default is
+-- a catalogue-only change in PostgreSQL: no table rewrite, and only a brief
+-- AccessExclusiveLock. An older application version ignores the columns, so this
+-- migration can be applied before the code that reads them is deployed.
+SET lock_timeout = '3s';
+
+ALTER TABLE styles
+  ADD COLUMN IF NOT EXISTS parameter_policy JSONB NULL;
+ALTER TABLE styles
+  ADD COLUMN IF NOT EXISTS template_fields JSONB NULL;
+
+COMMENT ON COLUMN styles.parameter_policy IS
+  'Which generation params a request under this style may set, and the ceilings it may not exceed. Null means none.';
+COMMENT ON COLUMN styles.template_fields IS
+  'The placeholders this style''s prompt accepts from the request, beyond {p}. Null means none.';

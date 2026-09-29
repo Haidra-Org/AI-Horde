@@ -193,6 +193,13 @@ KNOWN_RC = [
     "ThingNotFound",
     "TooManyWorkers",
     "TooManyWorkersTrusted",
+    "StylePolicyOverridableMisplaced",
+    "StyleParameterAboveCeiling",
+    "StyleParameterNotOverridable",
+    "TemplateFieldsRequireStyle",
+    "TemplateFieldUnknown",
+    "TemplateFieldMissing",
+    "PromptExceedsContext",
 ]
 
 

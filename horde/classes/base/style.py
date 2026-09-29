@@ -142,6 +142,12 @@ class Style(db.Model):
     nsfw = db.Column(db.Boolean, default=False, nullable=False)
     prompt = db.Column(db.Text, nullable=False)
     params = db.Column(MutableDict.as_mutable(json_column_type), default={}, nullable=False)
+    # Both are null for a style that declares neither, which is how every style created before these
+    # columns existed behaves: a request cannot change the style's params, and the prompt takes no
+    # placeholder beyond {p}. horde/classes/base/style_contract.py holds the shape of both, for the
+    # style endpoints that accept them and the request path that applies them.
+    parameter_policy = db.Column(json_column_type, nullable=True)
+    template_fields = db.Column(json_column_type, nullable=True)
 
     use_count = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
     votes = db.Column(db.Integer, default=0, nullable=False, server_default=expression.literal(0), index=True)
