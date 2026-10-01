@@ -4,12 +4,14 @@
 
 import json
 import os
+from collections.abc import Collection, Mapping
 from io import BytesIO
 from uuid import uuid4
 
 import boto3
 import logfire
-from botocore.exceptions import ClientError
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 from PIL import Image
 
 from horde.logger import logger
@@ -229,3 +231,167 @@ def check_shared_image(filename):
 def file_exists(client, bucket, filename):
     # If the return of check_file is an int, it means it encountered an error
     return not isinstance(check_file(client, bucket, filename), int)
+
+
+# Moderation evidence text. These objects live in their own bucket under EVIDENCE_OBJECT_PREFIX and share no client,
+# bucket or key scheme with the image and prompt objects above.
+
+EVIDENCE_ACCOUNT_ENV: str = "R2_EVIDENCE_ACCOUNT"
+"""The environment variable holding the evidence store's S3 endpoint URL."""
+EVIDENCE_BUCKET_ENV: str = "R2_EVIDENCE_BUCKET"
+"""The environment variable holding the evidence bucket name."""
+EVIDENCE_ACCESS_KEY_ID_ENV: str = "EVIDENCE_AWS_ACCESS_KEY_ID"
+"""The environment variable holding the access key id of the token scoped to the evidence bucket."""
+EVIDENCE_SECRET_ACCESS_KEY_ENV: str = "EVIDENCE_AWS_SECRET_ACCESS_KEY"
+"""The environment variable holding the secret of the token scoped to the evidence bucket."""
+EVIDENCE_REGION_ENV: str = "R2_EVIDENCE_REGION"
+"""The environment variable holding the signing region of the evidence store.
+
+R2 signs with the region ``auto``, the default. Another S3-compatible store rejects a signature for a region it does not
+serve, so a deployment on one sets its region here.
+"""
+EVIDENCE_OBJECT_PREFIX: str = "evidence/"
+"""The key prefix of every evidence object; ``evidence_object_key`` builds keys only under it."""
+EVIDENCE_CONNECT_TIMEOUT_SECONDS: int = 3
+"""How long an evidence request waits to connect.
+
+Only the background upload and retention jobs call the store, and a short timeout lets a tick give up on an
+unreachable store and retry on the next one.
+"""
+EVIDENCE_READ_TIMEOUT_SECONDS: int = 10
+"""How long an evidence request waits for a response; an object is at most a few tens of kilobytes."""
+EVIDENCE_MAX_ATTEMPTS: int = 2
+"""The attempts per evidence request, including the first; the jobs retry anything left on their next tick."""
+EVIDENCE_MAX_POOL_CONNECTIONS: int = 8
+"""The connections the evidence client keeps; one job uploads at a time, so a small pool suffices."""
+EVIDENCE_DELETE_BATCH_SIZE: int = 1000
+"""The most keys one ``DeleteObjects`` request takes, the S3 limit."""
+EVIDENCE_TEXT_URL_SECONDS: int = 600
+"""How long a moderator's signed evidence text URL stays valid.
+
+Ten minutes covers opening a listing page and reading its events, while a leaked URL stops working soon after.
+"""
+
+
+def build_evidence_client(environ: Mapping[str, str] = os.environ):
+    """Return the evidence store client, or None unless the endpoint, bucket, access key id and secret are all set.
+
+    Without credentials boto3 falls back to the default credential chain, which the image clients use, so a partial
+    configuration builds no client rather than signing evidence requests with another token. Logs one warning naming
+    the unset variables.
+
+    Args:
+        environ: Variables to read; the process environment by default.
+    """
+    required = (
+        EVIDENCE_ACCOUNT_ENV,
+        EVIDENCE_BUCKET_ENV,
+        EVIDENCE_ACCESS_KEY_ID_ENV,
+        EVIDENCE_SECRET_ACCESS_KEY_ENV,
+    )
+    missing = [variable for variable in required if not environ.get(variable)]
+    if missing:
+        logger.warning(f"{', '.join(missing)} unset; moderation evidence text stays in the database")
+        return None
+    return boto3.client(
+        "s3",
+        endpoint_url=environ[EVIDENCE_ACCOUNT_ENV],
+        aws_access_key_id=environ[EVIDENCE_ACCESS_KEY_ID_ENV],
+        aws_secret_access_key=environ[EVIDENCE_SECRET_ACCESS_KEY_ENV],
+        region_name=environ.get(EVIDENCE_REGION_ENV) or "auto",
+        config=Config(
+            signature_version="s3v4",
+            connect_timeout=EVIDENCE_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=EVIDENCE_READ_TIMEOUT_SECONDS,
+            retries={"max_attempts": EVIDENCE_MAX_ATTEMPTS},
+            max_pool_connections=EVIDENCE_MAX_POOL_CONNECTIONS,
+        ),
+    )
+
+
+r2_evidence_bucket: str | None = os.getenv(EVIDENCE_BUCKET_ENV) or None
+"""The evidence bucket, or None when unset."""
+evidence_client = build_evidence_client()
+"""The evidence store client, or None when any of its endpoint, bucket and credential variables is unset.
+
+Without it, prompt text stays in the database (``pending``), the upload job idles and the listing returns no text URL.
+"""
+
+
+def evidence_object_key(event_id: int) -> str:
+    """Return the object key of one event's evidence text; the only way an evidence key is built."""
+    return f"{EVIDENCE_OBJECT_PREFIX}{int(event_id)}.json"
+
+
+def put_evidence_text(event_id: int, body: bytes) -> bool:
+    """Store one event's canonical evidence text object.
+
+    Returns:
+        Whether the store accepted the object. False when no client is configured or the request failed; the failure
+        is logged by type only, never with the body.
+    """
+    if evidence_client is None:
+        return False
+    try:
+        evidence_client.put_object(
+            Bucket=r2_evidence_bucket,
+            Key=evidence_object_key(event_id),
+            Body=body,
+            ContentType="application/json",
+        )
+    except (BotoCoreError, ClientError) as error:
+        logger.warning(f"Evidence text upload failed ({type(error).__name__})")
+        return False
+    return True
+
+
+def delete_evidence_texts(event_ids: Collection[int]) -> set[int]:
+    """Delete the evidence text objects of the given events.
+
+    A key that does not exist counts as deleted, so deleting an event that never had an object succeeds.
+
+    Returns:
+        The IDs whose object could not be deleted; every ID when no client is configured.
+
+    Raises:
+        BotoCoreError: The store could not be reached.
+        ClientError: The store refused a whole request.
+    """
+    ids = sorted({int(event_id) for event_id in event_ids})
+    if evidence_client is None:
+        return set(ids)
+    failed: set[int] = set()
+    for start in range(0, len(ids), EVIDENCE_DELETE_BATCH_SIZE):
+        chunk = {evidence_object_key(event_id): event_id for event_id in ids[start : start + EVIDENCE_DELETE_BATCH_SIZE]}
+        response = evidence_client.delete_objects(
+            Bucket=r2_evidence_bucket,
+            Delete={"Objects": [{"Key": key} for key in chunk], "Quiet": True},
+        )
+        for error in response.get("Errors", []):
+            if error.get("Code") == "NoSuchKey":
+                continue
+            event_id = chunk.get(error.get("Key", ""))
+            if event_id is not None:
+                failed.add(event_id)
+    return failed
+
+
+def evidence_text_url(event_id: int) -> str | None:
+    """Return a short-lived signed URL to one event's evidence text, or None when no client is configured.
+
+    Signing is local, so this makes no request. The response is marked private and uncacheable, and served as UTF-8
+    JSON.
+    """
+    if evidence_client is None:
+        return None
+    return generate_presigned_url(
+        evidence_client,
+        "get_object",
+        {
+            "Bucket": r2_evidence_bucket,
+            "Key": evidence_object_key(event_id),
+            "ResponseCacheControl": "private, no-store",
+            "ResponseContentType": "application/json; charset=utf-8",
+        },
+        expires_in=EVIDENCE_TEXT_URL_SECONDS,
+    )

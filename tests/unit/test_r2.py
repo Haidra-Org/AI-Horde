@@ -104,3 +104,76 @@ class TestFileExistence:
         assert r2.check_file(_Missing(), "bucket", "missing.webp") is False
         # file_exists treats any non-dict (here a bool) as "absent".
         assert r2.file_exists(_Missing(), "bucket", "missing.webp") is False
+
+
+class TestEvidenceText:
+    @pytest.fixture
+    def evidence_store(self, monkeypatch) -> _FakeS3:
+        store = _FakeS3("evidence")
+        monkeypatch.setattr(r2, "evidence_client", store)
+        monkeypatch.setattr(r2, "r2_evidence_bucket", "evidence-bucket")
+        return store
+
+    @pytest.mark.parametrize("event_id", [7, "7"])
+    def test_key_is_the_event_id_under_the_evidence_prefix(self, event_id) -> None:
+        assert r2.evidence_object_key(event_id) == f"evidence/{int(event_id)}.json"
+
+    def test_key_refuses_anything_but_an_integer(self) -> None:
+        with pytest.raises(ValueError):
+            r2.evidence_object_key("../prompts/x")
+
+    def test_text_url_is_a_short_private_json_read_of_the_event_key(self, evidence_store) -> None:
+        url = r2.evidence_text_url(42)
+
+        assert url == "https://evidence/evidence-bucket/evidence/42.json?method=get_object"
+        (call,) = evidence_store.calls
+        assert call["expires"] == r2.EVIDENCE_TEXT_URL_SECONDS == 600
+        assert call["params"] == {
+            "Bucket": "evidence-bucket",
+            "Key": "evidence/42.json",
+            "ResponseCacheControl": "private, no-store",
+            "ResponseContentType": "application/json; charset=utf-8",
+        }
+
+    def test_no_text_url_without_an_evidence_store(self, monkeypatch) -> None:
+        monkeypatch.setattr(r2, "evidence_client", None)
+
+        assert r2.evidence_text_url(42) is None
+
+
+class TestEvidenceClientConfiguration:
+    COMPLETE: dict[str, str] = {
+        r2.EVIDENCE_ACCOUNT_ENV: "https://evidence.invalid",
+        r2.EVIDENCE_BUCKET_ENV: "evidence-bucket",
+        r2.EVIDENCE_ACCESS_KEY_ID_ENV: "key-id",
+        r2.EVIDENCE_SECRET_ACCESS_KEY_ENV: "secret",
+    }
+    """A configuration with every variable the evidence client requires."""
+
+    @pytest.fixture
+    def warnings(self, monkeypatch) -> list[str]:
+        logged: list[str] = []
+
+        class _Logger:
+            def warning(self, message: str) -> None:
+                logged.append(message)
+
+        monkeypatch.setattr(r2, "logger", _Logger())
+        return logged
+
+    def test_complete_configuration_builds_a_client(self, warnings) -> None:
+        client = r2.build_evidence_client(self.COMPLETE)
+
+        assert client is not None
+        assert client.meta.endpoint_url == "https://evidence.invalid"
+        assert warnings == []
+
+    @pytest.mark.parametrize("unset", [r2.EVIDENCE_ACCESS_KEY_ID_ENV, r2.EVIDENCE_SECRET_ACCESS_KEY_ENV])
+    def test_missing_credentials_build_no_client(self, warnings, unset: str) -> None:
+        """Without its scoped token the client would sign with the default credential chain, so none is built."""
+        environ = {variable: value for variable, value in self.COMPLETE.items() if variable != unset}
+
+        assert r2.build_evidence_client(environ) is None
+        (warning,) = warnings
+        assert unset in warning
+        assert r2.EVIDENCE_ACCOUNT_ENV not in warning

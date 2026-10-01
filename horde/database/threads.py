@@ -505,6 +505,61 @@ def apply_moderation_retention() -> None:
             )
 
 
+@logger.catch(reraise=True)
+def upload_moderation_evidence_text() -> None:
+    """Move pending prompt evidence text to object storage and record the evidence gauges.
+
+    Runs on the quorum node. A tick keeps uploading while a cycle fills its batch, up to
+    ``EVIDENCE_UPLOAD_MAX_CATCHUP_CYCLES``. The gauges are sampled before the uploads, so they describe the backlog the
+    job faces, and are recorded even when no evidence store is configured, so a growing backlog stays visible. A
+    session-level advisory lock on a dedicated connection keeps a second process from uploading the same batch; no
+    transaction is open while the job uploads.
+    """
+    from horde import r2
+    from horde.database import prompt_moderation as evidence_db
+    from horde.metrics import (
+        moderation_evidence_oldest_pending_seconds,
+        moderation_evidence_pending_rows,
+        moderation_evidence_upload_failures,
+        moderation_evidence_uploads,
+        moderation_evidence_write_failures,
+        moderation_observation_timestamp,
+        moderation_rejecting_subjects,
+        moderation_rejections_per_minute,
+    )
+
+    with get_app().app_context():
+        health = evidence_db.pending_text_health()
+        moderation_evidence_pending_rows.set(health["pending_rows"])
+        moderation_evidence_oldest_pending_seconds.set(health["oldest_pending_seconds"])
+        activity = evidence_db.recent_rejection_activity()
+        moderation_rejections_per_minute.set(activity["rejections_per_minute"])
+        moderation_rejecting_subjects.set(activity["rejecting_subjects"])
+        # Every process keeps exporting the last value it set, so a former quorum node's stale gauges persist; the
+        # timestamp lets recording rules pick the freshest process, as kudos_applier_observation_timestamp does.
+        moderation_observation_timestamp.set(time.time())
+        # Rare-event counters export nothing until they first change, so a zero add per tick keeps their series
+        # visible to increase()-based alerts, as in apply_kudos_ledger.
+        moderation_evidence_write_failures.add(0)
+        moderation_evidence_upload_failures.add(0)
+        moderation_evidence_uploads.add(0)
+        if r2.evidence_client is None:
+            return
+        with db.engine.connect() as lock_connection:
+            if not evidence_db.try_evidence_upload_lock(lock_connection):
+                return
+            try:
+                for _ in range(evidence_db.EVIDENCE_UPLOAD_MAX_CATCHUP_CYCLES):
+                    result = evidence_db.upload_pending_text(evidence_db.EVIDENCE_UPLOAD_BATCH_SIZE)
+                    moderation_evidence_uploads.add(result.stored)
+                    moderation_evidence_upload_failures.add(result.failed)
+                    # A failed upload means the store is struggling; leave the rest for the next tick.
+                    if result.failed or result.claimed < evidence_db.EVIDENCE_UPLOAD_BATCH_SIZE:
+                        break
+            finally:
+                evidence_db.release_evidence_upload_lock(lock_connection)
+
+
 # The compiled_* stats tables accumulate a new snapshot on each compile run (totals every minute,
 # models daily) and are otherwise never pruned. Reads only ever use the latest snapshot, so we only
 # need to retain a short rolling window.

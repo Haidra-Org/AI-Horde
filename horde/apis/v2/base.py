@@ -21,6 +21,7 @@ from sqlalchemy.orm.exc import StaleDataError
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
+from horde import r2
 from horde.apis.models.v2 import Models, Parsers
 from horde.apis.request_utils import get_current_passkey_owner, get_remoteaddr
 from horde.argparser import args
@@ -32,12 +33,12 @@ from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.base.worker import Worker, WorkerMessage
 from horde.consts import HORDE_VERSION
-from horde.countermeasures import CounterMeasures
+from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
 from horde.database import prompt_moderation
 from horde.database.prompt_moderation import PromptEvidence, PromptModerationReason, record_prompt_evidence
 from horde.detection import prompt_checker
-from horde.discord import send_problem_user_notification
+from horde.discord import moderation_event_url, send_problem_user_notification
 from horde.enums import KudosEntryType
 from horde.flask import cache, db, get_app
 from horde.horde_redis import horde_redis as hr
@@ -52,6 +53,7 @@ from horde.metrics import (
     generate_validate_find_user_duration,
     generate_validate_prompt_filter_duration,
     generate_validate_wp_count_duration,
+    moderation_countermeasures,
     pop_candidates,
     pop_check_in_duration,
     pop_duration,
@@ -472,14 +474,14 @@ class GenerateTemplate(Resource):
                 # if replacement filter mode is enabled AND prompt is short enough, do that instead
                 if self.args.replacement_filter or self.user.education:
                     if not prompt_checker.check_prompt_replacement_length(self.prompt):
-                        self._record_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
+                        self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
                         raise e.BadRequest("Prompt has to be below 7000 chars when replacement filter is on")
                     self.prompt = prompt_checker.apply_replacement_filter(self.prompt)
                     # If it returns None, it means it replaced everything with an empty string
                     if self.prompt is not None:
                         prompt_replaced = True
                 if not prompt_replaced:
-                    self._record_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
+                    self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
                     # Moderators do not get ip blocked to allow for experiments
                     if not self.user.moderator:
                         prompt_dict = {
@@ -516,7 +518,7 @@ class GenerateTemplate(Resource):
                     prompt_replaced = True
                 # This will only trigger if the prompt after replacements is an empty string
                 if not prompt_replaced:
-                    self._record_prompt_rejection(moderation_prompt, PromptModerationReason.MODEL_REJECTION)
+                    self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.MODEL_REJECTION)
                     msg = (
                         "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. "
                         "Please select another model and try again."
@@ -546,11 +548,101 @@ class GenerateTemplate(Resource):
             #                       "unethical images on its own and as such has had to be prevented from use. "
             #                        "Thank you for understanding.")
 
-    def _record_prompt_rejection(self, moderation_prompt: str, reason: PromptModerationReason) -> None:
+    def _handle_prompt_rejection(self, moderation_prompt: str, reason: PromptModerationReason) -> None:
+        """Count a prompt rejection against the request's IP subject, record its evidence and apply the countermeasures.
+
+        Past ``SUBJECT_TEXT_CAP_PER_HOUR`` rejections in the window, the subject's events keep a digest and character
+        count but no text. A model rejection past ``MODEL_REJECTION_TIMEOUT_THRESHOLD``, or any model rejection in raid mode,
+        times out the address. A moderator's rejections are exempt from both. A filter rejection's timeout stays with its
+        caller. The first time either countermeasure applies to a subject in the window, moderators get one notice.
+
+        Args:
+            moderation_prompt: Moderation input the rejection was decided on.
+            reason: Why the prompt was rejected.
+        """
+        rejection_count = CounterMeasures.count_rejection(self.user_ip)
+        text_cap = prompt_moderation.SUBJECT_TEXT_CAP_PER_HOUR
+        # Moderators probe the filter on purpose, and the evidence of their own probing is theirs to review in full.
+        text_capped = rejection_count > text_cap and not self.user.moderator
+        event_id = self._record_prompt_rejection(moderation_prompt, reason, store_text=not text_capped)
+        actions: list[str] = []
+        if text_capped:
+            actions.append("text_capped")
+        timeout_threshold = prompt_moderation.MODEL_REJECTION_TIMEOUT_THRESHOLD
+        if reason is PromptModerationReason.MODEL_REJECTION and not self.user.moderator:
+            # Raid mode times out every model rejection, as the filter path always does; the flag is one
+            # single-row query on a path that is already refusing the request.
+            if settings.mode_raid():
+                timeout_threshold = 0
+            if rejection_count > timeout_threshold:
+                logger.info(f"IP Address {self.user_ip} from user {self.username} going into timeout!")
+                CounterMeasures.report_suspicion(self.user_ip)
+                actions.append("timeout")
+        self._notify_rejection_countermeasures(actions, rejection_count, reason, timeout_threshold, event_id)
+
+    def _notify_rejection_countermeasures(
+        self,
+        actions: list[str],
+        rejection_count: int,
+        reason: PromptModerationReason,
+        timeout_threshold: int,
+        event_id: int | None,
+    ) -> None:
+        """Send moderators one notice for the countermeasures first applied to the request's IP subject in the window.
+
+        Args:
+            actions: Countermeasures this rejection applied, as ``moderation_countermeasures`` actions.
+            rejection_count: The subject's rejections in the window.
+            reason: Why the latest prompt was rejected.
+            timeout_threshold: Model rejections the subject was allowed before the timeout.
+            event_id: The evidence event of the latest rejection, or None when its write failed.
+        """
+        due = [action for action in actions if CounterMeasures.claim_rejection_notice(self.user_ip, action)]
+        if not due:
+            return
+        for action in due:
+            moderation_countermeasures.add(1, {"horde.action": action})
+        # A Discord message outlives evidence retention and cannot be redacted, so the notice carries no prompt or
+        # address. The pseudonym prefix matches the subject's events in the moderation listing.
+        subject_key = CounterMeasures.ip_subject_key(CounterMeasures.ip_subject(self.user_ip))
+        subject = f"IP subject {subject_key[:12]}" if subject_key else "one IP subject"
+        lines = [
+            f"Prompt rejection countermeasures: {subject}",
+            f"{rejection_count} prompt rejections in the past hour; latest reason {reason.value}.",
+        ]
+        if "text_capped" in due:
+            lines.append(
+                f"Text capped: rejections past {prompt_moderation.SUBJECT_TEXT_CAP_PER_HOUR} per hour keep only a digest "
+                "and character count.",
+            )
+        if "timeout" in due:
+            if timeout_threshold == 0:
+                lines.append("IP timeout: every model rejection times out the address (raid mode).")
+            else:
+                lines.append(f"IP timeout: model rejections past {timeout_threshold} per hour time out the address.")
+        # The event carries the full pseudonym, so its review link is what lets a moderator list the subject's
+        # events; the notice itself shows only a prefix.
+        if event_id is None:
+            lines.append("Latest: event unavailable (evidence write failed).")
+        else:
+            review_url = moderation_event_url(event_id)
+            lines.append(f"Latest: event {event_id}.")
+            lines.append(f"Review: {review_url}" if review_url else f"Review: event {event_id} in the frontpage Prompts tab.")
+        mute_minutes = int(REJECTION_WINDOW.total_seconds() // 60)
+        lines.append(f"Muted for this subject and countermeasure for {mute_minutes} minutes.")
+        send_problem_user_notification("\n".join(lines))
+
+    def _record_prompt_rejection(
+        self,
+        moderation_prompt: str,
+        reason: PromptModerationReason,
+        *,
+        store_text: bool = True,
+    ) -> int | None:
         # The effective prompt is text a worker would receive. Every rejection in validate() happens
         # either before any replacement ran or after a replacement emptied the prompt, so a rejection
         # never has one; self.prompt at this point is either the moderation input or None.
-        record_prompt_evidence(
+        return record_prompt_evidence(
             PromptEvidence(
                 user_id=self.user.id,
                 reason=reason,
@@ -561,6 +653,7 @@ class GenerateTemplate(Resource):
                 ipaddr=self.user_ip,
                 models=self.models,
             ),
+            store_text=store_text,
         )
 
     def get_size_too_big_message(self):
@@ -3611,6 +3704,8 @@ class DocsPrivacy(Resource):
             moderation_text_days=retention.text_days,
             moderation_ipaddr_days=retention.ipaddr_days,
             moderation_ceiling_days=retention.ceiling_days,
+            # Read per request: the evidence store is configured at startup, and the policy must describe it.
+            moderation_text_in_object_storage=r2.evidence_client is not None,
             repository_url=horde_repository,
         )
         if self.args.format == "markdown":

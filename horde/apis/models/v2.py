@@ -7,7 +7,12 @@ from typing import Any, override
 
 from flask_restx import fields, reqparse
 
-from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS, PromptModerationOutcome, PromptModerationReason
+from horde.classes.base.prompt_moderation import (
+    MAX_NOTE_CHARACTERS,
+    EvidenceTextState,
+    PromptModerationOutcome,
+    PromptModerationReason,
+)
 from horde.enums import WarningMessage
 from horde.exceptions import KNOWN_RC
 from horde.vars import horde_noun, horde_title
@@ -1842,9 +1847,31 @@ class Models:
                     description="What happened to the request.",
                     enum=[outcome.value for outcome in PromptModerationOutcome],
                 ),
-                "submitted_prompt": fields.String(description="Original submission; null when provenance is unknown."),
-                "moderation_prompt": fields.String(description="Moderation input after style expansion, when known."),
-                "effective_prompt": fields.String(description="Prompt a worker received; null for a rejection."),
+                "submitted_prompt": fields.String(
+                    description="Original submission; null when provenance is unknown or text_state is not pending.",
+                ),
+                "moderation_prompt": fields.String(
+                    description="Moderation input after style expansion, when known; null when text_state is not pending.",
+                ),
+                "effective_prompt": fields.String(
+                    description="Prompt a worker received; null for a rejection or when text_state is not pending.",
+                ),
+                "text_state": fields.String(
+                    description="Where the prompt stages are held: pending (inline in this event until uploaded), "
+                    "stored (in object storage, read through text_url) or none (no text is held).",
+                    enum=[state.value for state in EvidenceTextState],
+                ),
+                "text_url": fields.String(
+                    description="Short-lived link to the stored prompt stages as JSON; null unless text_state is "
+                    "stored and object storage is configured.",
+                ),
+                "text_sha256": fields.String(
+                    description="Hex SHA-256 of the stored object, the canonical JSON of the clipped prompt stages. It "
+                    "is recorded even when capture kept no text, and retention removes it with the text.",
+                ),
+                "text_chars": fields.Integer(
+                    description="Total characters of the clipped prompt stages; retention removes it with the text.",
+                ),
                 "text_truncated": fields.Boolean(description="A prompt stage exceeded the evidence length limit."),
                 "text_redacted": fields.Boolean(
                     description="Retention ran its text step on the event, past the text window or at anonymization, "

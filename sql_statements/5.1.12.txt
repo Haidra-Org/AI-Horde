@@ -39,11 +39,28 @@ CREATE TABLE IF NOT EXISTS prompt_moderation_events (
   submitted_prompt TEXT,
   moderation_prompt TEXT,
   effective_prompt TEXT,
+  text_state VARCHAR(8) NOT NULL DEFAULT 'pending',
+  text_sha256 VARCHAR(64),
+  text_chars INTEGER,
   text_truncated BOOLEAN NOT NULL DEFAULT false,
   text_redacted BOOLEAN NOT NULL DEFAULT false,
   ipaddr_redacted BOOLEAN NOT NULL DEFAULT false,
-  anonymized BOOLEAN NOT NULL DEFAULT false
+  anonymized BOOLEAN NOT NULL DEFAULT false,
+  CONSTRAINT ck_prompt_moderation_text_state CHECK (text_state IN ('pending', 'stored', 'none'))
 );
+-- Prompt text moves from the row to object storage. text_state records where it is held; an event created before
+-- the column existed defaults to pending, so its text is uploaded. A constant default is metadata-only. The lock
+-- timeout bounds the wait for the table lock; the check then validates every existing row while that lock is held,
+-- which is quick only while the table is small.
+SET lock_timeout = '5s';
+ALTER TABLE prompt_moderation_events ADD COLUMN IF NOT EXISTS text_state VARCHAR(8) NOT NULL DEFAULT 'pending'
+  CONSTRAINT ck_prompt_moderation_text_state CHECK (text_state IN ('pending', 'stored', 'none'));
+ALTER TABLE prompt_moderation_events ADD COLUMN IF NOT EXISTS text_sha256 VARCHAR(64);
+ALTER TABLE prompt_moderation_events ADD COLUMN IF NOT EXISTS text_chars INTEGER;
+RESET lock_timeout;
+-- The upload job reads only events whose text awaits upload.
+CREATE INDEX IF NOT EXISTS ix_prompt_moderation_text_state_pending
+  ON prompt_moderation_events (id) WHERE text_state = 'pending';
 -- One partial index per retention step, so each pass reads only the events that step has
 -- not finished rather than rescanning every event older than its window.
 CREATE INDEX IF NOT EXISTS ix_prompt_moderation_text_pending

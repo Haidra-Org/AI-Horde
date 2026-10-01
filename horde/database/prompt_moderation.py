@@ -19,10 +19,18 @@ leaves its events and worker report records in place.
 ``MODERATION_RETENTION_POLICY`` is read from the environment at import, so an invalid setting fails startup; the
 retention pass and the privacy document read it when they run. ``EVENT_COLUMN_RETENTION`` assigns every event column a
 ``RetentionFate``, and the retention steps clear columns from it; a column without a fate fails import.
+
+Capture writes prompt text to the event row. The upload job (``upload_pending_text``) then moves it to object storage
+(``horde.r2``) and empties the text columns, so no request waits on object storage. A retention step that removes text
+deletes the stored object before it flags the event. When the delete fails, an event whose text is ``stored`` is left
+for the next pass and the others are flagged.
+``MODEL_REJECTION_TIMEOUT_THRESHOLD`` and ``SUBJECT_TEXT_CAP_PER_HOUR`` are read from the environment at import too.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
@@ -32,14 +40,17 @@ from enum import StrEnum, auto
 from types import MappingProxyType
 from typing import Any, TypedDict
 
-from sqlalchemy import ColumnElement, Select, and_, delete, exists, func, or_, select, update
+from botocore.exceptions import BotoCoreError, ClientError
+from sqlalchemy import ColumnElement, Connection, Select, and_, case, delete, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from horde import r2
 from horde.classes.base.prompt_moderation import (
     MAX_ORIGIN_TEXT_CHARACTERS,
+    EvidenceTextState,
     PromptModerationEvent,
     PromptModerationNote,
     PromptModerationOutcome,
@@ -50,6 +61,7 @@ from horde.countermeasures import CounterMeasures
 from horde.enums import UserRoleTypes
 from horde.flask import db
 from horde.logger import logger
+from horde.metrics import moderation_evidence_captured, moderation_evidence_write_failures
 
 TEXT_RETENTION_ENV: str = "HORDE_MODERATION_TEXT_RETENTION_DAYS"
 """The environment variable for text retention."""
@@ -99,6 +111,31 @@ MAX_PROXIED_ACCOUNT_CHARACTERS: int = 1000
 The request parser does not bound the value, and an accepted request stores it in a 255-character column. A refused
 request never reaches that column, so this keeps every value an accepted request could carry while bounding what a
 refused one writes.
+"""
+
+EVIDENCE_UPLOAD_BATCH_SIZE: int = 50
+"""The most events one upload cycle moves to object storage.
+
+Each event is one PUT made outside any transaction, and the cycle stops at the first failed PUT, so an unreachable store
+costs one request timeout per cycle. The text columns of one cycle are emptied by one short UPDATE.
+"""
+EVIDENCE_UPLOAD_MAX_CATCHUP_CYCLES: int = 10
+"""The most upload cycles one tick runs while each cycle fills its batch.
+
+At ``EVIDENCE_UPLOAD_BATCH_SIZE`` events per cycle and one tick every 5 seconds, a backlog drains at up to 100 events a
+second, well above the intake, while one tick still ends in bounded time.
+"""
+EVIDENCE_UPLOAD_LOCK: int = 0x45564944454E4345
+"""The session-level advisory lock key held for one upload tick, the ASCII bytes of ``EVIDENCE``.
+
+It keeps a second process that briefly believes it holds the quorum from PUTting the same rows. Should two runs upload
+the same row anyway, the conditional UPDATE in ``mark_text_stored`` records one of them, and ``upload_pending_text``
+re-reads the state of the rows it did not record, so the losing run never deletes the object the winning run stored.
+"""
+REJECTION_ACTIVITY_WINDOW: timedelta = timedelta(minutes=5)
+"""The trailing window over which the rejection rate and the count of rejecting IP subjects are measured.
+
+Five minutes smooths single bursts while still showing a flood within one dashboard refresh.
 """
 
 CLEANUP_BATCH_SIZE: int = 1000
@@ -157,19 +194,19 @@ class RetentionPolicy:
         return self.ceiling.days
 
 
-def _parse_positive_days(variable: str, raw: str) -> int:
-    """Parse a positive whole number of days from an environment value.
+def _parse_positive_whole_number(variable: str, raw: str, unit: str) -> int:
+    """Parse a positive whole number of ``unit`` from an environment value.
 
     Raises:
         ValueError: The value is not a positive integer.
     """
     try:
-        days = int(raw.strip())
+        number = int(raw.strip())
     except ValueError as err:
-        raise ValueError(f"{variable} must be a positive whole number of days, got {raw!r}") from err
-    if days < 1:
-        raise ValueError(f"{variable} must be a positive whole number of days, got {raw!r}")
-    return days
+        raise ValueError(f"{variable} must be a positive whole number of {unit}, got {raw!r}") from err
+    if number < 1:
+        raise ValueError(f"{variable} must be a positive whole number of {unit}, got {raw!r}")
+    return number
 
 
 def _parse_window(environ: Mapping[str, str], variable: str, default_days: int | None) -> timedelta | None:
@@ -183,7 +220,7 @@ def _parse_window(environ: Mapping[str, str], variable: str, default_days: int |
         return timedelta(days=default_days) if default_days is not None else None
     if raw.strip().lower() == NO_SEPARATE_WINDOW:
         return None
-    return timedelta(days=_parse_positive_days(variable, raw))
+    return timedelta(days=_parse_positive_whole_number(variable, raw, "days"))
 
 
 def load_retention_policy(environ: Mapping[str, str] = os.environ) -> RetentionPolicy:
@@ -205,7 +242,7 @@ def load_retention_policy(environ: Mapping[str, str] = os.environ) -> RetentionP
     elif raw_ceiling.strip().lower() == NO_SEPARATE_WINDOW:
         raise ValueError(f"{EVIDENCE_CEILING_ENV} cannot be disabled; set at most {MAX_EVIDENCE_CEILING_DAYS} days")
     else:
-        ceiling_days = _parse_positive_days(EVIDENCE_CEILING_ENV, raw_ceiling)
+        ceiling_days = _parse_positive_whole_number(EVIDENCE_CEILING_ENV, raw_ceiling, "days")
     return RetentionPolicy(
         text=_parse_window(environ, TEXT_RETENTION_ENV, DEFAULT_TEXT_RETENTION_DAYS),
         ipaddr=_parse_window(environ, IPADDR_RETENTION_ENV, DEFAULT_IPADDR_RETENTION_DAYS),
@@ -215,6 +252,62 @@ def load_retention_policy(environ: Mapping[str, str] = os.environ) -> RetentionP
 
 MODERATION_RETENTION_POLICY: RetentionPolicy = load_retention_policy()
 """The retention policy used for moderation evidence, loaded from the environment."""
+
+MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV: str = "HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD"
+"""The environment variable for ``MODEL_REJECTION_TIMEOUT_THRESHOLD``."""
+SUBJECT_TEXT_CAP_PER_HOUR_ENV: str = "HORDE_MODERATION_SUBJECT_TEXT_CAP_PER_HOUR"
+"""The environment variable for ``SUBJECT_TEXT_CAP_PER_HOUR``."""
+DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD: int = 5
+"""The default number of rejections per IP subject in an hour before a model rejection starts the IP timeout.
+
+A few rejections in an hour fit a person rewording a prompt; a subject past five is treated as probing the filter.
+"""
+DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR: int = 5
+"""The default number of rejection events per IP subject in an hour that keep their prompt text.
+
+Five texts show a moderator what one subject attempted. Past them, one subject flooding rejections would fill the
+evidence store with near-identical text, so later events keep the digest and length only.
+"""
+
+
+def load_positive_setting(environ: Mapping[str, str], variable: str, default: int, unit: str) -> int:
+    """Return a positive whole-number setting from the operator's environment, or ``default`` when it is absent.
+
+    Args:
+        environ: Variables to read.
+        variable: The variable holding the setting.
+        default: The value when the variable is absent.
+        unit: What the number counts, for the error message.
+
+    Raises:
+        ValueError: The value is not a positive integer.
+    """
+    raw = environ.get(variable)
+    if raw is None:
+        return default
+    return _parse_positive_whole_number(variable, raw, unit)
+
+
+MODEL_REJECTION_TIMEOUT_THRESHOLD: int = load_positive_setting(
+    os.environ,
+    MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV,
+    DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD,
+    "rejections",
+)
+"""The rejections per IP subject in an hour after which a model rejection times out the IP subject.
+
+Raid mode times out every model rejection. It is loaded from the environment at import, so an invalid value fails startup.
+"""
+SUBJECT_TEXT_CAP_PER_HOUR: int = load_positive_setting(
+    os.environ,
+    SUBJECT_TEXT_CAP_PER_HOUR_ENV,
+    DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR,
+    "events",
+)
+"""The rejection events per IP subject in an hour that keep their prompt text; later ones keep digest and length only.
+
+It is loaded from the environment at import, so an invalid value fails startup.
+"""
 
 
 class RetentionFate(StrEnum):
@@ -230,6 +323,8 @@ class RetentionFate(StrEnum):
     """Cleared at the ceiling only, and only on an event not under moderation action."""
     RETENTION_FLAG = auto()
     """Set once retention clears the columns it records, so a null reads as removed rather than never known."""
+    TEXT_LOCATION = auto()
+    """Set to ``none`` whenever the text columns are cleared, since the step also deletes the stored object."""
 
 
 EVENT_COLUMN_RETENTION: Mapping[str, RetentionFate] = MappingProxyType(
@@ -245,6 +340,9 @@ EVENT_COLUMN_RETENTION: Mapping[str, RetentionFate] = MappingProxyType(
         "submitted_prompt": RetentionFate.TEXT,
         "moderation_prompt": RetentionFate.TEXT,
         "effective_prompt": RetentionFate.TEXT,
+        "text_sha256": RetentionFate.TEXT,
+        "text_chars": RetentionFate.TEXT,
+        "text_state": RetentionFate.TEXT_LOCATION,
         "ipaddr": RetentionFate.IPADDR,
         "origin_text": RetentionFate.IPADDR,
         # Outlives the address, so address filters keep matching the event until the ceiling.
@@ -300,7 +398,7 @@ def validate_column_retention(
     if missing or unknown:
         raise ValueError(f"Event column retention has no fate for {sorted(missing)} and no column for {sorted(unknown)}")
     flag_columns = {column for column, fate in column_retention.items() if fate == RetentionFate.RETENTION_FLAG}
-    removable_fates = set(RetentionFate) - {RetentionFate.KEPT, RetentionFate.RETENTION_FLAG}
+    removable_fates = set(RetentionFate) - {RetentionFate.KEPT, RetentionFate.RETENTION_FLAG, RetentionFate.TEXT_LOCATION}
     if set(removal_flags) != removable_fates or set(removal_flags.values()) != flag_columns:
         raise ValueError(f"Removal flags {dict(removal_flags)} must map each removable fate to one of {sorted(flag_columns)}")
 
@@ -309,9 +407,20 @@ validate_column_retention(EVENT_COLUMN_RETENTION, REMOVAL_FLAGS, PromptModeratio
 
 
 def _removal_values(*fates: RetentionFate) -> dict[str, Any]:
-    """Return update values that clear every column of the given fates and set their flags."""
+    """Return update values that clear every column of the given fates and set their flags.
+
+    Clearing text also records that no text is held anywhere, since the step deletes the stored object first.
+    """
     values: dict[str, Any] = {column: None for column, fate in EVENT_COLUMN_RETENTION.items() if fate in fates}
     values.update(dict.fromkeys((REMOVAL_FLAGS[fate] for fate in fates), True))
+    if RetentionFate.TEXT in fates:
+        values.update(
+            {
+                column: EvidenceTextState.NONE.value
+                for column, fate in EVENT_COLUMN_RETENTION.items()
+                if fate == RetentionFate.TEXT_LOCATION
+            },
+        )
     return values
 
 
@@ -402,17 +511,61 @@ def subjectless_origin_text(origin: str | None, ip_subject: str | None) -> str |
     return origin[:MAX_ORIGIN_TEXT_CHARACTERS]
 
 
-def record_prompt_evidence(evidence: PromptEvidence) -> int | None:
+def encode_evidence_text(
+    submitted: str | None,
+    moderation: str | None,
+    effective: str | None,
+) -> tuple[bytes, str, int] | None:
+    """Return the canonical evidence text object of the clipped prompt stages, its digest and its length.
+
+    The object is compact JSON with sorted keys and unescaped Unicode, so the same stages always encode to the same
+    bytes and digest: at capture, which records the digest and length, and at upload, which stores the bytes.
+
+    Args:
+        submitted: The clipped submitted stage, or None when unknown.
+        moderation: The clipped moderation stage, or None when unknown.
+        effective: The clipped effective stage, or None when unknown.
+
+    Returns:
+        The UTF-8 object bytes, their hexadecimal SHA-256 digest, and the total characters of the known stages; None
+        when every stage is None.
+    """
+    stages = (submitted, moderation, effective)
+    if all(stage is None for stage in stages):
+        return None
+    body = json.dumps(
+        {
+            "submitted_prompt": submitted,
+            "moderation_prompt": moderation,
+            "effective_prompt": effective,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return body, hashlib.sha256(body).hexdigest(), sum(len(stage) for stage in stages if stage is not None)
+
+
+def record_prompt_evidence(evidence: PromptEvidence, *, store_text: bool = True) -> int | None:
     """Persist evidence independently of the caller's transaction.
+
+    The text goes to the event row, ``pending`` upload to object storage; this makes no network call. The digest and
+    length of the clipped stages are recorded whether or not the text is kept.
 
     Args:
         evidence: Prompt stages and identifiers known at capture time.
+        store_text: Whether to keep the prompt text. When False the text columns stay null and the event's
+            ``text_state`` is ``none``.
 
     Returns:
         The event ID; for a job already reported, the existing event's ID; None when the write failed.
     """
     prompts = (evidence.submitted_prompt, evidence.moderation_prompt, evidence.effective_prompt)
     clipped = [prompt[:MAX_EVIDENCE_CHARACTERS] if prompt is not None else None for prompt in prompts]
+    encoded = encode_evidence_text(*clipped)
+    keeps_text = store_text and encoded is not None
+    text_state = EvidenceTextState.PENDING if keeps_text else EvidenceTextState.NONE
+    stored_stages = clipped if keeps_text else [None, None, None]
     ip_subject = CounterMeasures.ip_subject(evidence.ipaddr)
     if evidence.reason == PromptModerationReason.WORKER_CSAM:
         outcome = PromptModerationOutcome.CENSORED
@@ -426,9 +579,12 @@ def record_prompt_evidence(evidence: PromptEvidence) -> int | None:
             user_id=evidence.user_id,
             reason=evidence.reason.value,
             outcome=outcome.value,
-            submitted_prompt=clipped[0],
-            moderation_prompt=clipped[1],
-            effective_prompt=clipped[2],
+            submitted_prompt=stored_stages[0],
+            moderation_prompt=stored_stages[1],
+            effective_prompt=stored_stages[2],
+            text_state=text_state.value,
+            text_sha256=encoded[1] if encoded is not None else None,
+            text_chars=encoded[2] if encoded is not None else None,
             text_truncated=any(prompt is not None and len(prompt) > MAX_EVIDENCE_CHARACTERS for prompt in prompts),
             request_id=evidence.request_id,
             job_id=evidence.job_id,
@@ -444,16 +600,20 @@ def record_prompt_evidence(evidence: PromptEvidence) -> int | None:
     )
     try:
         with db.engine.begin() as connection:
-            event_id = connection.execute(statement).scalar_one_or_none()
+            inserted_id = connection.execute(statement).scalar_one_or_none()
+            event_id = inserted_id
             if event_id is None and evidence.job_id is not None:
                 event_id = connection.execute(
                     select(PromptModerationEvent.id).where(PromptModerationEvent.job_id == evidence.job_id),
                 ).scalar_one_or_none()
-            return event_id
     except SQLAlchemyError as error:
         # SQLAlchemy's exception string can contain bound prompt text. Do not log it.
         logger.error("Prompt moderation evidence write failed ({})", type(error).__name__)
+        moderation_evidence_write_failures.add(1)
         return None
+    if inserted_id is not None:
+        moderation_evidence_captured.add(1, {"horde.reason": evidence.reason.value, "horde.text_state": text_state.value})
+    return event_id
 
 
 def _ip_subject_criterion(ip_subject: str) -> ColumnElement[bool]:
@@ -549,6 +709,9 @@ def get_prompt_events(
                 "submitted_prompt": evidence.submitted_prompt,
                 "moderation_prompt": evidence.moderation_prompt,
                 "effective_prompt": evidence.effective_prompt,
+                "text_state": evidence.text_state,
+                "text_sha256": evidence.text_sha256,
+                "text_chars": evidence.text_chars,
                 "text_truncated": evidence.text_truncated,
                 "text_redacted": evidence.text_redacted,
                 "ipaddr_redacted": evidence.ipaddr_redacted,
@@ -585,7 +748,6 @@ def add_prompt_note(*, event_id: int, author_id: int, note: str) -> NoteRecord |
     Returns:
         The stored note, or None when the event does not exist.
     """
-    # Own this transaction explicitly; unrelated ORM mutations must not be committed here.
     # Own this transaction explicitly; unrelated ORM mutations must not be committed here. Events are never deleted,
     # so an event that exists here still exists when the note is inserted.
     with Session(db.engine, expire_on_commit=False) as session, session.begin():
@@ -631,9 +793,9 @@ def _under_moderation_action() -> ColumnElement[bool]:
 
 # Each predicate is the single definition of which rows a retention step selects. The negated flag, or the non-null
 # address, matches the step's partial index predicate, so the planner reads only rows the step has not finished; the
-# moderation-action exemption then filters those rows. Each step applies its predicate twice: in the subquery that
-# picks the oldest due ids, and again in the WHERE of the UPDATE or DELETE itself. Under READ COMMITTED, when a picked
-# row was changed by a concurrent transaction while the statement waited for its lock, Postgres re-checks that WHERE
+# moderation-action exemption then filters those rows. Each step applies its predicate twice: in the query that picks
+# the oldest due ids, and again in the WHERE of the UPDATE or DELETE itself. Under READ COMMITTED, when a picked row
+# was changed by a concurrent transaction while the statement waited for its lock, Postgres re-checks that WHERE
 # against the committed row, so a row another pass already finished is not changed twice.
 def _anonymization_due(cutoff: datetime) -> ColumnElement[bool]:
     return and_(PromptModerationEvent.created < cutoff, ~PromptModerationEvent.anonymized, ~_under_moderation_action())
@@ -667,34 +829,95 @@ def _oldest_due(
     return select(model.id).where(predicate).order_by(model.created, model.id).limit(batch_size)
 
 
+def _stored_event_ids(connection: Connection, event_ids: Collection[int]) -> set[int]:
+    """Return the given events whose text is ``stored`` in object storage."""
+    return set(
+        connection.execute(
+            select(PromptModerationEvent.id).where(
+                PromptModerationEvent.id.in_(list(event_ids)),
+                PromptModerationEvent.text_state == EvidenceTextState.STORED.value,
+            ),
+        ).scalars(),
+    )
+
+
+def _text_objects_deleted(connection: Connection, event_ids: list[int]) -> list[int]:
+    """Delete the stored text objects of locked events and return the IDs whose text may now be flagged removed.
+
+    Every ID is deleted, whatever its ``text_state``: a ``pending`` event may have an object the upload job stored but
+    has not recorded yet, and a missing object counts as deleted. An event whose text is ``stored`` is flagged only once
+    its object is deleted; without a configured store, or when the store fails, it is left for a later pass.
+
+    Removal of identity never waits on the store for an event without a stored object. A ``pending`` event flagged
+    while the store fails is safe: an upload that stored its object finds the row removed in ``mark_text_stored`` and
+    deletes the object itself.
+
+    Returns:
+        The IDs to flag.
+    """
+    if r2.evidence_client is None:
+        stored = _stored_event_ids(connection, event_ids)
+        if stored:
+            logger.warning("{} stored evidence rows kept past their window: no evidence store is configured", len(stored))
+        return [event_id for event_id in event_ids if event_id not in stored]
+    try:
+        failed = r2.delete_evidence_texts(event_ids)
+    except (BotoCoreError, ClientError) as error:
+        # The exception message can carry request details, so only its type and the store's error code are logged.
+        code = error.response.get("Error", {}).get("Code") if isinstance(error, ClientError) else None
+        logger.error(
+            "Evidence text deletion failed ({}, code {}); stored evidence rows wait for the next pass",
+            type(error).__name__,
+            code,
+        )
+        stored = _stored_event_ids(connection, event_ids)
+        return [event_id for event_id in event_ids if event_id not in stored]
+    return [event_id for event_id in event_ids if event_id not in failed]
+
+
 def _anonymize_batch(cutoff: datetime, batch_size: int) -> int:
-    """Remove identity, address and text from the oldest events past the ceiling; their notes are kept."""
+    """Remove identity, address and text from the oldest events past the ceiling; their notes are kept.
+
+    An event whose stored text could not be deleted keeps every value until a later pass.
+    """
     due = _anonymization_due(cutoff)
     with db.engine.begin() as connection:
         # FOR UPDATE conflicts with the key-share lock a note insert takes on its event through the foreign key, so
         # this select waits for a note transaction in progress on a picked event, and a note begun after it waits for
         # this transaction. The UPDATE is a later statement, which under READ COMMITTED sees every note committed
         # while the select waited, and it re-checks the due predicate, so such a note exempts its event. A note that
-        # waited on this transaction is stored on the anonymized event.
+        # waited on this transaction is stored on the anonymized event. The lock also holds the upload job's
+        # conditional UPDATE until this transaction ends, so the job then finds the text removed and deletes its object.
         event_ids = list(connection.execute(_oldest_due(PromptModerationEvent, due, batch_size).with_for_update()).scalars())
         if not event_ids:
             return 0
+        deleted_ids = _text_objects_deleted(connection, event_ids)
+        if not deleted_ids:
+            return 0
         result = connection.execute(
             update(PromptModerationEvent)
-            .where(PromptModerationEvent.id.in_(event_ids), due)
+            .where(PromptModerationEvent.id.in_(deleted_ids), due)
             .values(_removal_values(RetentionFate.TEXT, RetentionFate.IPADDR, RetentionFate.IDENTITY)),
         )
     return result.rowcount
 
 
 def _redact_text_batch(cutoff: datetime, batch_size: int) -> int:
-    """Remove the prompt stages from the oldest events past the text window."""
+    """Remove the prompt stages and their stored object from the oldest events past the text window.
+
+    An event whose stored text could not be deleted keeps its text until a later pass.
+    """
     due = _text_redaction_due(cutoff)
     with db.engine.begin() as connection:
+        # The row locks hold the upload job's conditional UPDATE until this transaction ends, as in _anonymize_batch.
+        event_ids = list(connection.execute(_oldest_due(PromptModerationEvent, due, batch_size).with_for_update()).scalars())
+        if not event_ids:
+            return 0
+        deleted_ids = _text_objects_deleted(connection, event_ids)
+        if not deleted_ids:
+            return 0
         result = connection.execute(
-            update(PromptModerationEvent)
-            .where(PromptModerationEvent.id.in_(_oldest_due(PromptModerationEvent, due, batch_size)), due)
-            .values(_removal_values(RetentionFate.TEXT)),
+            update(PromptModerationEvent).where(PromptModerationEvent.id.in_(deleted_ids), due).values(_removal_values(RetentionFate.TEXT)),
         )
     return result.rowcount
 
@@ -755,6 +978,10 @@ def apply_evidence_retention(
     worker report record or worker suspicion history row), so the ceiling bounds only records that serve no enforcement
     purpose, and actioned records are kept without limit.
 
+    The anonymization and text steps delete an event's stored text object before flagging it
+    (``_text_objects_deleted``). An event whose text is ``stored`` keeps every value while its object cannot be deleted,
+    because no store is configured or the store failed; the other events of the batch proceed.
+
     Run periodically in an application context.
 
     Args:
@@ -782,3 +1009,217 @@ def apply_evidence_retention(
         problem_jobs_deleted=problem_jobs_deleted,
         problem_job_ipaddr_redacted=problem_job_ipaddr_redacted,
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PendingText:
+    """Represent one event's text awaiting upload, as its canonical object."""
+
+    event_id: int
+    """The event the text belongs to."""
+    body: bytes
+    """The canonical evidence text object (``encode_evidence_text``)."""
+    text_sha256: str
+    """The hexadecimal SHA-256 digest of ``body``."""
+    text_chars: int
+    """The total characters of the known stages."""
+
+
+class PendingTextHealth(TypedDict):
+    """Represent the upload backlog for the upload job's gauges."""
+
+    pending_rows: int
+    """The number of events whose text awaits upload."""
+    oldest_pending_seconds: float
+    """The age of the oldest event awaiting upload, or 0 when none does."""
+
+
+class RejectionActivity(TypedDict):
+    """Represent recent rejection volume for the upload job's gauges."""
+
+    rejections_per_minute: float
+    """The rejection events captured over ``REJECTION_ACTIVITY_WINDOW``, per minute."""
+    rejecting_subjects: int
+    """The distinct address pseudonyms among those events, which separates one subject's burst from a wide flood."""
+
+
+def claim_pending_text(batch_size: int) -> list[PendingText]:
+    """Return the oldest events whose text awaits upload, as canonical objects.
+
+    An event with no text stage holds nothing to upload and moves straight to ``none``. The claim locks no row:
+    ``EVIDENCE_UPLOAD_LOCK`` keeps a second runner from PUTting the same rows, the conditional UPDATE in
+    ``mark_text_stored`` records one upload per event, and ``upload_pending_text`` re-checks the state before deleting
+    an unrecorded object, so the loser of a double run never deletes the winner's object.
+
+    Args:
+        batch_size: The most events to return.
+    """
+    with db.engine.begin() as connection:
+        rows = connection.execute(
+            select(
+                PromptModerationEvent.id,
+                PromptModerationEvent.submitted_prompt,
+                PromptModerationEvent.moderation_prompt,
+                PromptModerationEvent.effective_prompt,
+            )
+            .where(PromptModerationEvent.text_state == EvidenceTextState.PENDING.value)
+            .order_by(PromptModerationEvent.id)
+            .limit(batch_size),
+        ).all()
+        pending: list[PendingText] = []
+        empty_ids: list[int] = []
+        for event_id, submitted, moderation, effective in rows:
+            encoded = encode_evidence_text(submitted, moderation, effective)
+            if encoded is None:
+                empty_ids.append(event_id)
+            else:
+                body, digest, chars = encoded
+                pending.append(PendingText(event_id=event_id, body=body, text_sha256=digest, text_chars=chars))
+        if empty_ids:
+            connection.execute(
+                update(PromptModerationEvent)
+                .where(
+                    PromptModerationEvent.id.in_(empty_ids),
+                    PromptModerationEvent.text_state == EvidenceTextState.PENDING.value,
+                )
+                .values(text_state=EvidenceTextState.NONE.value),
+            )
+    return pending
+
+
+def mark_text_stored(uploaded: Collection[PendingText]) -> list[int]:
+    """Record that the given events' text is in object storage and empty their text columns.
+
+    Only events still ``pending`` change, so an event retention removed meanwhile is left alone and the upload stays
+    exactly-once. An event captured before ``text_sha256`` and ``text_chars`` existed gets them from its uploaded
+    object; a recorded value is kept.
+
+    Returns:
+        The IDs that changed. An uploaded ID missing here has an object nothing records, which the caller deletes.
+    """
+    if not uploaded:
+        return []
+    digests = {item.event_id: item.text_sha256 for item in uploaded}
+    lengths = {item.event_id: item.text_chars for item in uploaded}
+    with db.engine.begin() as connection:
+        return list(
+            connection.execute(
+                update(PromptModerationEvent)
+                .where(
+                    PromptModerationEvent.id.in_(list(digests)),
+                    PromptModerationEvent.text_state == EvidenceTextState.PENDING.value,
+                )
+                .values(
+                    submitted_prompt=None,
+                    moderation_prompt=None,
+                    effective_prompt=None,
+                    text_state=EvidenceTextState.STORED.value,
+                    text_sha256=func.coalesce(
+                        PromptModerationEvent.text_sha256,
+                        case(digests, value=PromptModerationEvent.id),
+                    ),
+                    text_chars=func.coalesce(
+                        PromptModerationEvent.text_chars,
+                        case(lengths, value=PromptModerationEvent.id),
+                    ),
+                )
+                .returning(PromptModerationEvent.id),
+            ).scalars(),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class UploadCycleResult:
+    """Represent what one upload cycle did."""
+
+    claimed: int
+    """The events with text the cycle claimed for upload."""
+    stored: int
+    """The events now recorded as ``stored``."""
+    failed: int
+    """The uploads the store refused or could not take, at most one because the cycle stops at the first.
+
+    The failed event and every claimed event after it stay ``pending`` for a later cycle.
+    """
+
+
+def upload_pending_text(batch_size: int = EVIDENCE_UPLOAD_BATCH_SIZE) -> UploadCycleResult:
+    """Move one batch of pending text to object storage.
+
+    The PUTs run outside any transaction, in ID order, and stop at the first failure: a store that refuses one object
+    is likely to refuse the next, and an unreachable one would cost a timeout per event. When retention removed an
+    event's text while its PUT was in flight, the stored object is orphaned and is deleted here; retention has already
+    flagged that event and does not revisit it, so an orphan this delete misses is logged by event ID for an operator to
+    remove. An unrecorded event another run has since recorded as ``stored`` owns its object and is not deleted.
+
+    Args:
+        batch_size: The most events to upload.
+    """
+    pending = claim_pending_text(batch_size)
+    uploaded: list[PendingText] = []
+    for item in pending:
+        if not r2.put_evidence_text(item.event_id, item.body):
+            break
+        uploaded.append(item)
+    stored = mark_text_stored(uploaded)
+    orphaned = {item.event_id for item in uploaded} - set(stored)
+    if orphaned:
+        with db.engine.connect() as connection:
+            orphaned -= _stored_event_ids(connection, orphaned)
+    if orphaned:
+        try:
+            undeleted = r2.delete_evidence_texts(orphaned)
+        except (BotoCoreError, ClientError) as error:
+            logger.error("Orphaned evidence text deletion failed ({})", type(error).__name__)
+            undeleted = orphaned
+        if undeleted:
+            logger.error("Evidence text objects of removed events remain for events {}", sorted(undeleted))
+    failed = 1 if len(uploaded) < len(pending) else 0
+    return UploadCycleResult(claimed=len(pending), stored=len(stored), failed=failed)
+
+
+def try_evidence_upload_lock(connection: Connection) -> bool:
+    """Take the upload job's session-level advisory lock on ``connection`` without waiting.
+
+    The lock outlives the connection's transactions, so no transaction stays open while the job uploads. SQLite has no
+    advisory locks and a single writer, so there it always succeeds.
+    """
+    if connection.dialect.name != "postgresql":
+        return True
+    acquired = bool(connection.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": EVIDENCE_UPLOAD_LOCK}).scalar())
+    connection.commit()
+    return acquired
+
+
+def release_evidence_upload_lock(connection: Connection) -> None:
+    """Release the lock ``try_evidence_upload_lock`` took on ``connection``."""
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": EVIDENCE_UPLOAD_LOCK})
+    connection.commit()
+
+
+def pending_text_health() -> PendingTextHealth:
+    """Return the upload backlog: the events awaiting upload and the age of the oldest."""
+    is_pending = PromptModerationEvent.text_state == EvidenceTextState.PENDING.value
+    with db.engine.connect() as connection:
+        pending_rows = connection.execute(select(func.count(PromptModerationEvent.id)).where(is_pending)).scalar_one()
+        # IDs are assigned in capture order, so the lowest pending ID is the oldest pending event, and the partial
+        # index on pending IDs finds it without reading every pending row as MIN(created) would.
+        oldest = connection.execute(
+            select(PromptModerationEvent.created).where(is_pending).order_by(PromptModerationEvent.id).limit(1),
+        ).scalar()
+    oldest_seconds = max((datetime.utcnow() - oldest).total_seconds(), 0.0) if oldest is not None else 0.0
+    return {"pending_rows": int(pending_rows), "oldest_pending_seconds": oldest_seconds}
+
+
+def recent_rejection_activity(window: timedelta = REJECTION_ACTIVITY_WINDOW) -> RejectionActivity:
+    """Return the rejection rate and the distinct rejecting IP subjects over the trailing ``window``."""
+    with db.engine.connect() as connection:
+        events, subjects = connection.execute(
+            select(func.count(PromptModerationEvent.id), func.count(PromptModerationEvent.ip_subject_key.distinct())).where(
+                PromptModerationEvent.created >= datetime.utcnow() - window,
+                PromptModerationEvent.outcome == PromptModerationOutcome.REJECTED.value,
+            ),
+        ).one()
+    return {"rejections_per_minute": int(events) / (window.total_seconds() / 60), "rejecting_subjects": int(subjects)}

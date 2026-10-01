@@ -19,8 +19,9 @@ from flask_restx import Resource, reqparse
 
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
+from horde import r2
 from horde.apis.v2.base import api, check_for_mod, models
-from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS
+from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS, EvidenceTextState
 from horde.countermeasures import CounterMeasures
 from horde.database import prompt_moderation as evidence_db
 from horde.flask import db
@@ -215,6 +216,9 @@ class OperationsPromptEvents(Resource):
             since=since,
             until=until,
         )
+        # Signing a link is local computation, so a full page costs no object storage round trip.
+        for event in events["events"]:
+            event["text_url"] = r2.evidence_text_url(event["id"]) if event["text_state"] == EvidenceTextState.STORED else None
         policy = evidence_db.MODERATION_RETENTION_POLICY
         events["retention"] = {
             "text_days": policy.text_days,
